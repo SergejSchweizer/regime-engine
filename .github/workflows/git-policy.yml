@@ -1,0 +1,59 @@
+name: Git Policy
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  git-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR, branch, and commit naming
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${HEAD_REF}" =~ ^pr/(PR-[0-9]{3}-[a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
+            echo "Branch must match pr/PR-###-kebab-case-slug; got: ${HEAD_REF}" >&2
+            exit 1
+          fi
+
+          PR_NAME="${BASH_REMATCH[1]}"
+
+          if [[ "${PR_TITLE}" != "${PR_NAME}: "* ]]; then
+            echo "PR title must start with '${PR_NAME}: '; got: ${PR_TITLE}" >&2
+            exit 1
+          fi
+
+          mapfile -t COMMIT_SUBJECTS < <(git log --format='%s' "${BASE_SHA}..${HEAD_SHA}")
+          if [[ ${#COMMIT_SUBJECTS[@]} -eq 0 ]]; then
+            echo "No PR commits found between ${BASE_SHA} and ${HEAD_SHA}." >&2
+            exit 1
+          fi
+
+          COMMIT_RE="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\(${PR_NAME}\\)!?: .+"
+
+          for SUBJECT in "${COMMIT_SUBJECTS[@]}"; do
+            if [[ ! "${SUBJECT}" =~ ${COMMIT_RE} ]]; then
+              echo "Invalid commit subject: ${SUBJECT}" >&2
+              echo "Expected Conventional Commit with exact PR scope, e.g.:" >&2
+              echo "feat(${PR_NAME}): implement focused change" >&2
+              exit 1
+            fi
+          done
+
+          echo "Git policy validated for ${PR_NAME}."
