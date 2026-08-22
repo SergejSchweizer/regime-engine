@@ -6,44 +6,47 @@ This backlog defines the complete implementation plan for `market-regime-engine`
 
 The repository owns model training, causal HMM inference, walk-forward validation, MLflow tracking/registry integration, immutable prediction artifacts, and batch/realtime inference APIs. It does **not** own market-data acquisition or portfolio optimization.
 
-Upstream/downstream boundary:
-
 ```text
 market-regime-loader
     -> immutable causal feature data
     -> market-regime-engine
-    -> RegimePrediction.v1 / MLflow models / OOS prediction artifacts / API
+    -> MLflow Model Registry + RegimePrediction.v1 + OOS prediction artifacts + API
     -> portfell and future consumers
 ```
 
-`market-regime-loader` remains the reusable data product. `portfell` remains the Xetra ETF portfolio application. `market-regime-engine` must stay consumer-agnostic so the same registered HMM models and API can be reused by future BTC, equity, rates, covered-call, or other projects.
+`market-regime-loader` remains the reusable data product. `portfell` remains the Xetra ETF portfolio application. `market-regime-engine` must stay consumer-agnostic so registered HMM models can later be reused by BTC, equity, rates, covered-call, or other projects.
 
 ## Repository bootstrap facts
 
 - Default branch: `main`.
-- The repository started empty before this backlog was created.
 - Stable Python feature release selected for this repository: **Python 3.14.7**.
 - Local development environment: repository-local `.venv`; `.venv/` is never committed.
 - Python compatibility target for MVP: `>=3.14,<3.15`.
-- All implementation PRs start from a clean, up-to-date `main` after their declared dependencies are merged.
-- Agents must not edit `BACKLOG.md` from implementation PRs. Backlog status is maintained only by the orchestrator to prevent merge conflicts.
+- Shared production MLflow Tracking Server / Model Registry: **`http://10.10.1.3:5000`**.
+- Production/NAS examples use `MLFLOW_TRACKING_URI=http://10.10.1.3:5000`.
+- Library/domain code still obtains the URI through configuration/environment so unit and integration tests can use isolated local stores.
+- The shared MLflow infrastructure itself, including its PostgreSQL backend and deployment lifecycle, is external to this repository.
+- All implementation PRs start from a clean, up-to-date `main` after declared dependencies are merged.
+- Agents must not edit `BACKLOG.md`; backlog status is maintained only by the orchestrator.
 
 ## Non-negotiable architecture rules
 
-1. No provider HTTP clients, CBOE/FRED/ECB/STOXX acquisition logic, or EODHD portfolio data acquisition in this repository.
-2. No portfolio optimizer, ETF weighting, Sharpe/Sortino selection, transaction-cost model, or trading logic in this repository.
-3. Model training may use only data available inside the declared training window.
-4. Backtest-safe inference uses filtered probabilities only. Retrospective smoothed probabilities must never be exposed as causal OOS predictions.
+1. No provider HTTP clients, CBOE/FRED/ECB/STOXX acquisition logic, or EODHD portfolio-data acquisition in this repository.
+2. No portfolio optimizer, ETF weighting, Sharpe/Sortino application selection, transaction-cost model, or trading logic in this repository.
+3. Model training may use only observations available inside the declared training window.
+4. Backtest-safe inference uses filtered probabilities only. Retrospective smoothed probabilities are diagnostic-only.
 5. All preprocessing parameters are fit on training data only.
-6. Raw HMM state numbers are not stable consumer semantics. Persistent state identity must be produced by state alignment.
+6. Raw HMM state numbers are not stable consumer semantics; persistent state identity requires state alignment.
 7. Every registered model carries exact feature order, preprocessing state, model parameters, state mapping, source/build lineage, package version, and Git commit.
-8. Historical OOS predictions and fixed-model replay are different products and must never be conflated.
-9. MLflow URI, credentials, storage locations, and API bind settings come from configuration/environment; no infrastructure URL or secret is hard-coded.
-10. Public consumer contracts are versioned. Initial prediction contract is `RegimePrediction.v1`.
+8. Historical `walk_forward_oos` predictions and `fixed_model_replay` are different products and must never be conflated.
+9. The shared production MLflow endpoint is `http://10.10.1.3:5000`; deployment/configuration examples must use it. Application source code reads the URI from `MLFLOW_TRACKING_URI` so hermetic tests remain local and future infrastructure migration does not require model-code changes.
+10. MLflow credentials/tokens, if ever needed, are never committed.
+11. Public consumer contracts are versioned. Initial prediction contract is `RegimePrediction.v1`.
+12. MLflow Model Registry is the authoritative repository for promoted trained models; Git is authoritative for source/configuration, not fitted binary model artifacts.
 
 ## Git discipline for every PR
 
-Every PR entry below has an explicit branch and Git status. The following rules apply to every PR without exception:
+Every PR below has an explicit branch and Git status.
 
 ```text
 Before work:
@@ -51,19 +54,19 @@ Before work:
   git pull --ff-only
   git status --short
 
-Required result before branch creation:
+Required before branch creation:
   <empty output>
 
-Create the exact branch named in the PR entry.
+Create exactly the branch declared by the PR.
 
 Before final push:
   git status --short
 
-Required result after all intended files are committed:
+Required after all intended files are committed:
   <empty output>
 ```
 
-An agent must stop if `git status --short` is non-empty before branch creation, if a declared prerequisite is not merged, or if work requires files outside the PR's allowed-file scope.
+An agent stops if the working tree is not clean, a dependency is not merged, or work requires files outside the PR's allowed-file scope.
 
 ## CI and merge policy target
 
@@ -71,9 +74,7 @@ Two independent GitHub Actions workflows are required.
 
 ### Push gate
 
-Trigger: every branch push.
-
-Parallel required jobs:
+Trigger: every branch push. Required parallel jobs:
 
 ```text
 lint
@@ -82,13 +83,11 @@ lint
  integration
 ```
 
-The four jobs run independently and in parallel. A final `push-gate` job depends on all four and succeeds only when all four succeed.
+A final job named exactly `push-gate` depends on all four.
 
 ### Merge gate
 
-Trigger: pull requests targeting `main`.
-
-Parallel required jobs:
+Trigger: pull requests targeting `main`. Required parallel jobs:
 
 ```text
 lint
@@ -97,62 +96,58 @@ lint
  integration
 ```
 
-The four jobs run independently and in parallel. A final `merge-gate` job depends on all four and succeeds only when all four succeed.
+A final job named exactly `merge-gate` depends on all four.
+
+Required CI must remain hermetic: neither push nor merge gates may require access to `10.10.1.3`, MLflow, market-data providers, or any other external service. External MLflow verification is an explicit opt-in smoke test.
 
 ### Protected `main`
 
-After the merge workflow exists on `main`, repository governance must enforce:
+After `merge-gate` exists on `main`, governance must enforce:
 
 - changes to `main` only through pull requests;
-- required status check `merge-gate` with strict/up-to-date branch requirement;
+- required status check `merge-gate`, strict/up-to-date;
 - force pushes disabled;
 - branch deletion disabled;
 - conversation resolution required;
 - administrators included in protection;
 - repository auto-merge enabled;
-- squash merge is the automated merge method;
-- feature branch deleted after merge;
-- auto-merge/auto-complete is enabled on implementation PRs after creation;
-- a PR reaches `main` only after `merge-gate` succeeds.
+- squash merge as merge method;
+- merged feature branches deleted;
+- auto-merge enabled on implementation PRs;
+- merge only after successful `merge-gate`.
 
-The bootstrap/governance PRs are the only temporary exception while the repository is establishing the checks that protection itself requires.
+The initial bootstrap/governance sequence is the only temporary exception while the required check is being established.
 
 ---
 
 # Wave 0 — Bootstrap and governance
 
-Only PR-001 starts immediately. PR-002 and PR-003 may start in parallel after PR-001. PR-004 starts after PR-003 is merged because branch protection must reference an existing required check.
+Only PR-001 starts immediately. PR-002 and PR-003 start in parallel after PR-001. PR-004 follows PR-003.
 
 ## PR-001 — Bootstrap Python 3.14.7 project and local `.venv`
 
 - **Status:** TODO
-- **Git status:** PLANNED — must start and finish with `git status --short` empty.
+- **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/001-bootstrap-python314`
 - **Depends on:** none
 - **Allowed files:** `.python-version`, `.gitignore`, `pyproject.toml`, `README.md`, `src/market_regime_engine/__init__.py`, `tests/unit/test_package_smoke.py`, `tests/conftest.py`, `scripts/bootstrap_venv.sh`, `scripts/bootstrap_venv.ps1`
 
-### Scope
-
-Create the smallest installable Python package and deterministic local environment bootstrap. Establish tool configuration used by every later PR.
-
 ### Acceptance criteria
 
 - [ ] `.python-version` contains `3.14.7`.
-- [ ] `pyproject.toml` defines package name `market-regime-engine` and `requires-python = ">=3.14,<3.15"`.
+- [ ] `pyproject.toml` defines `market-regime-engine` and `requires-python = ">=3.14,<3.15"`.
 - [ ] Source layout is `src/market_regime_engine`.
-- [ ] Runtime dependency set includes the libraries required by the planned engine layers: Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, and a Gaussian-HMM implementation dependency that successfully installs on Python 3.14.7.
-- [ ] Dev dependency set includes pytest, pytest-cov, pytest-xdist, Ruff, mypy, and build tooling.
-- [ ] Ruff is configured for Python 3.14 and 100-character lines.
-- [ ] mypy is strict for `src/market_regime_engine`.
-- [ ] pytest defines `unit`, `integration`, and `external_service` markers.
-- [ ] `.gitignore` ignores `.venv/`, Python caches, test caches, coverage output, build output, local MLflow state, local prediction artifacts, and IDE-local files.
-- [ ] `scripts/bootstrap_venv.sh` creates `.venv` with Python 3.14.7, upgrades packaging tools, installs the project editable with dev dependencies, and fails if the interpreter is not Python 3.14.x.
-- [ ] `scripts/bootstrap_venv.ps1` provides equivalent Windows behavior using `py -3.14`/Python 3.14 and `.venv`.
-- [ ] Neither bootstrap script activates the venv implicitly; both print the correct activation command on success.
-- [ ] `README.md` documents the exact bootstrap command for Linux/macOS and Windows.
-- [ ] `tests/unit/test_package_smoke.py` verifies the package imports and exposes `__version__`.
-- [ ] From a clean checkout, `.venv` can be created and `python -m pytest tests/unit/test_package_smoke.py` passes.
-- [ ] `.venv/` is not tracked by Git.
+- [ ] Runtime dependencies include Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, and a Python-3.14-compatible Gaussian-HMM implementation.
+- [ ] Dev dependencies include pytest, pytest-cov, pytest-xdist, Ruff, mypy, and build tooling.
+- [ ] Ruff targets Python 3.14; mypy is strict.
+- [ ] pytest markers include `unit`, `integration`, and `external_service`.
+- [ ] `.gitignore` excludes `.venv/`, caches, coverage/build output, local MLflow state, local prediction artifacts, and IDE files.
+- [ ] Shell and PowerShell bootstrap scripts create `.venv` with Python 3.14, upgrade packaging tools, and install editable dev dependencies.
+- [ ] Bootstrap scripts fail on the wrong interpreter and print the activation command without activating implicitly.
+- [ ] README documents exact Linux/macOS and Windows bootstrap commands.
+- [ ] Smoke test verifies import and `__version__`.
+- [ ] Clean-checkout `.venv` bootstrap and smoke test pass.
+- [ ] `.venv/` is never tracked.
 
 ## PR-002 — Add parallel push quality gate
 
@@ -162,23 +157,18 @@ Create the smallest installable Python package and deterministic local environme
 - **Depends on:** PR-001
 - **Allowed files:** `.github/workflows/push-gate.yml`
 
-### Scope
-
-Add the push workflow only. Do not add branch protection or PR merge policy here.
-
 ### Acceptance criteria
 
-- [ ] Workflow triggers on pushes to repository branches.
-- [ ] `lint`, `type`, `unit`, and `integration` are four separate jobs with no dependency on each other.
+- [ ] Runs on every branch push.
+- [ ] `lint`, `type`, `unit`, `integration` are independent parallel jobs.
 - [ ] All jobs use Python 3.14.7.
-- [ ] `lint` runs Ruff check and Ruff format-check.
+- [ ] `lint` runs Ruff check and format-check.
 - [ ] `type` runs strict mypy.
-- [ ] `unit` runs tests excluding the `integration` and `external_service` markers.
-- [ ] `integration` runs tests marked `integration` and excludes `external_service`.
-- [ ] External-service tests are never required for the push gate.
-- [ ] A final job named exactly `push-gate` has `needs: [lint, type, unit, integration]` and fails if any required job fails.
-- [ ] Workflow uses per-ref concurrency with cancellation of superseded runs.
-- [ ] No secrets are required for this workflow.
+- [ ] `unit` excludes `integration` and `external_service`.
+- [ ] `integration` includes only `integration` and excludes `external_service`.
+- [ ] No external network/MLflow dependency is required.
+- [ ] Final job is exactly `push-gate` with all four jobs in `needs`.
+- [ ] Superseded runs on the same ref are cancelled.
 
 ## PR-003 — Add parallel merge quality gate
 
@@ -188,20 +178,16 @@ Add the push workflow only. Do not add branch protection or PR merge policy here
 - **Depends on:** PR-001
 - **Allowed files:** `.github/workflows/merge-gate.yml`
 
-### Scope
-
-Add the pull-request workflow that will become the protected-branch required check.
-
 ### Acceptance criteria
 
-- [ ] Workflow triggers only for pull requests targeting `main`.
-- [ ] `lint`, `type`, `unit`, and `integration` are separate parallel jobs.
+- [ ] Runs only for pull requests targeting `main`.
+- [ ] `lint`, `type`, `unit`, `integration` are independent parallel jobs.
 - [ ] All jobs use Python 3.14.7.
-- [ ] Commands and marker policy are equivalent to the push gate.
-- [ ] A final job named exactly `merge-gate` depends on all four required jobs.
-- [ ] `merge-gate` cannot succeed when any required job is failed, cancelled, or skipped unexpectedly.
-- [ ] Workflow uses PR concurrency with cancellation when a newer commit is pushed to the same PR.
-- [ ] No deployment, MLflow, network provider, or repository-admin secret is required.
+- [ ] Commands/marker policy match push gate.
+- [ ] Final job is exactly `merge-gate` and depends on all four jobs.
+- [ ] Failure/cancellation/unexpected skip of a required job prevents success.
+- [ ] Superseded runs for the same PR are cancelled.
+- [ ] No external network, MLflow, NAS, provider, deployment, or admin secret is required.
 
 ## PR-004 — Configure protected `main` and repository auto-merge
 
@@ -211,34 +197,26 @@ Add the pull-request workflow that will become the protected-branch required che
 - **Depends on:** PR-003
 - **Allowed files:** `scripts/configure_github_governance.sh`, `docs/repository_governance.md`
 
-### Scope
-
-Provide a deterministic, auditable one-time repository-admin command using the GitHub CLI/API to apply and verify repository settings. The script must not contain a token.
-
 ### Acceptance criteria
 
-- [ ] Script requires authenticated `gh` CLI and fails clearly if authentication/admin permission is missing.
-- [ ] Script targets exactly `SergejSchweizer/market-regime-engine` and branch `main`.
-- [ ] Script enables repository auto-merge.
-- [ ] Script enables squash merge as the automated merge method and configures deletion of merged feature branches.
-- [ ] Script protects `main` and requires pull requests.
-- [ ] Required status check is exactly `merge-gate` with strict/up-to-date branch enforcement.
-- [ ] Force pushes to `main` are disabled.
-- [ ] Deletion of `main` is disabled.
-- [ ] Conversation resolution is required.
-- [ ] Protection applies to administrators.
-- [ ] Documentation states that the governance script is run **after this PR is merged**, because the required `merge-gate` check must already exist on `main`.
-- [ ] Documentation gives an exact verification command for repository auto-merge state and branch protection state.
-- [ ] Post-merge verification confirms the protected `main` policy matches every target above.
-- [ ] All later PRs are created with auto-merge enabled so GitHub completes the squash merge automatically after `merge-gate` succeeds.
+- [ ] Script requires authenticated `gh` and fails without admin permission.
+- [ ] Script targets exactly `SergejSchweizer/market-regime-engine` / `main`.
+- [ ] Repository auto-merge is enabled.
+- [ ] Squash merge and delete-branch-after-merge are configured.
+- [ ] `main` requires pull requests and required check exactly `merge-gate` with strict/up-to-date branches.
+- [ ] Force pushes and deletion of `main` are disabled.
+- [ ] Conversation resolution is required and admins are included.
+- [ ] Documentation states the script is executed after this PR merges.
+- [ ] Exact verification commands are documented.
+- [ ] Post-merge verification confirms every target setting.
 
 ---
 
 # Wave 1 — Public contracts and boundaries
 
-After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 through PR-013 may run in parallel because they own disjoint modules/files.
+After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 through PR-013 may run in parallel.
 
-## PR-005 — Document durable architecture and repository boundaries
+## PR-005 — Document durable architecture and MLflow ownership boundary
 
 - **Status:** BLOCKED by PR-001
 - **Git status:** PLANNED — clean before/after.
@@ -248,14 +226,17 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] `ARCHITECTURE.md` defines the engine as a reusable model platform, not a data loader or portfolio optimizer.
-- [ ] Architecture documents ports/adapters around feature input, model adapters, MLflow, prediction persistence, and API.
-- [ ] Architecture explicitly separates `fixed_model_replay` from `walk_forward_oos` predictions.
-- [ ] Architecture states filtered probabilities are required for causal inference and smoothed probabilities are diagnostic-only.
-- [ ] Architecture defines persistent state alignment as mandatory for consumer-facing predictions.
-- [ ] Architecture defines `market-regime-loader -> engine -> consumers` dependency direction without Python package imports between repositories.
-- [ ] `docs/model_lifecycle.md` defines candidate, validated, engine-champion, and consumer-specific production aliases.
-- [ ] README contains a short system diagram and links to architecture/lifecycle docs.
+- [ ] Architecture defines the engine as reusable model platform, not data loader or portfolio optimizer.
+- [ ] Documents ports/adapters around feature input, model adapters, MLflow, prediction persistence, and API.
+- [ ] Documents shared production MLflow Tracking Server / Registry as `http://10.10.1.3:5000`.
+- [ ] States that MLflow/PostgreSQL deployment is external infrastructure and not owned by this repo.
+- [ ] States that source code resolves MLflow through `MLFLOW_TRACKING_URI`; production/NAS value is the shared endpoint above.
+- [ ] Separates `fixed_model_replay` from `walk_forward_oos`.
+- [ ] Requires filtered probabilities for causal inference; smoothing is diagnostic-only.
+- [ ] Requires persistent state alignment for consumer-facing predictions.
+- [ ] Defines `market-regime-loader -> engine -> consumers` dependency direction without package coupling.
+- [ ] Model lifecycle defines `candidate`, `validated`, `engine-champion`, `challenger`, and consumer-specific aliases such as `portfell-production`.
+- [ ] README includes system diagram and links.
 
 ## PR-006 — Define versioned core domain contracts
 
@@ -267,14 +248,14 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Define immutable `FeatureFrameRef`/feature metadata contract with source dataset, source build ID, as-of range, feature version, and ordered feature names.
-- [ ] Define immutable `ModelSpec` with model family, state count, covariance mode, feature profile/version, random/multi-start policy, and training-window policy.
-- [ ] Define immutable model lineage with engine version, Git SHA, training interval, source build ID, and preprocessing version.
-- [ ] Define `RegimePredictionV1` with as-of timestamp, profile ID, model name/version, persistent state IDs, probability vector, dominant state, entropy, confidence, lineage, and data-quality status.
-- [ ] Contract validation rejects probabilities outside `[0,1]`, non-finite values, duplicate state IDs, and probability vectors that do not sum to one within declared tolerance.
-- [ ] Raw library state labels are not accepted as persistent consumer semantics without an alignment identifier.
-- [ ] Serialization round-trip tests exist for every public contract.
-- [ ] Contract tests contain no model-library, MLflow, filesystem, FastAPI, or provider dependency.
+- [ ] Immutable feature reference includes source dataset/build, as-of range, feature version, and ordered feature names.
+- [ ] Immutable `ModelSpec` includes family, state count, covariance mode, profile/version, seeds/multi-start, and training-window policy.
+- [ ] Lineage includes engine version, Git SHA, training interval, source build, preprocessing version, and profile hash.
+- [ ] `RegimePredictionV1` includes as-of, profile, model/version, persistent state IDs, probabilities, dominant state, entropy, confidence, lineage, and data-quality status.
+- [ ] Validation rejects invalid/non-finite probabilities, duplicates, and non-normalized vectors.
+- [ ] Raw library state labels cannot become consumer semantics without alignment ID.
+- [ ] Serialization round-trip tests cover all public contracts.
+- [ ] Contract layer has no model-library, MLflow, filesystem, FastAPI, or provider dependency.
 
 ## PR-007 — Add model-profile configuration schema and loader
 
@@ -286,13 +267,12 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Profile schema declares profile ID/version, frequency, exact ordered feature list, candidate model specs, training-window policy, inference policy, state-quality thresholds, and selection policy.
-- [ ] YAML loading is deterministic and validated before any model work starts.
-- [ ] Unknown keys fail closed.
-- [ ] Duplicate feature names fail validation.
-- [ ] Unsupported model family/covariance/state-count values fail validation with actionable messages.
-- [ ] Profile content has a deterministic hash used for lineage.
-- [ ] Unit tests cover valid config, malformed YAML, unknown field, duplicate feature, unsupported model, and stable hashing.
+- [ ] Schema declares profile ID/version, frequency, exact ordered features, candidate specs, training policy, inference policy, quality thresholds, and selection policy.
+- [ ] YAML loading is deterministic and validated before model work.
+- [ ] Unknown keys and duplicate features fail closed.
+- [ ] Unsupported family/covariance/state count fails clearly.
+- [ ] Profile has deterministic content hash.
+- [ ] Unit tests cover valid, malformed, unknown, duplicate, unsupported, and hash cases.
 
 ## PR-008 — Add generic Parquet feature-source port and adapter
 
@@ -304,13 +284,13 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Define a narrow `FeatureSource` protocol independent of `market-regime-loader` Python code.
-- [ ] Initial adapter reads a Parquet dataset plus explicit lineage metadata/manifest input.
-- [ ] Adapter selects profile features in exact declared order.
-- [ ] Duplicate timestamps, non-monotonic timestamps, missing required features, duplicate columns, and non-finite values fail validation.
-- [ ] Adapter never forward-fills, backward-fills, interpolates, or silently imputes values.
-- [ ] Source build ID and feature version are preserved into the returned feature reference.
-- [ ] Integration test proves a loader-shaped immutable Gold Parquet fixture can be consumed without importing `market-regime-loader`.
+- [ ] Narrow `FeatureSource` protocol has no `market-regime-loader` import.
+- [ ] Parquet adapter reads data plus explicit lineage/manifest input.
+- [ ] Selects features in exact profile order.
+- [ ] Duplicate/non-monotonic timestamps, missing/duplicate features, and non-finite values fail.
+- [ ] No forward-fill, backward-fill, interpolation, or silent imputation.
+- [ ] Source build and feature version are preserved.
+- [ ] Integration fixture proves loader-shaped Gold data can be consumed without upstream package dependency.
 
 ## PR-009 — Add train-only preprocessing pipeline
 
@@ -322,12 +302,12 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Define a serializable preprocessing contract.
-- [ ] Implement standard scaling with means/scales fit only from the provided training slice.
-- [ ] Transform preserves exact feature order.
-- [ ] Zero-variance and non-finite feature handling is explicit and fail-closed.
-- [ ] Fitted preprocessing parameters serialize/deserialize deterministically.
-- [ ] Unit test proves test/future rows cannot change fitted training parameters.
+- [ ] Serializable preprocessing contract.
+- [ ] Standard scaling fit only on provided training slice.
+- [ ] Exact feature order is preserved.
+- [ ] Zero variance and non-finite values fail explicitly.
+- [ ] Deterministic serialize/deserialize.
+- [ ] Test proves future rows cannot alter training parameters.
 
 ## PR-010 — Define model-adapter and fitted-model artifact protocols
 
@@ -339,11 +319,11 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Define model adapter methods for fit, score, fitted parameter extraction, and artifact reconstruction.
-- [ ] Fitted artifact contains initial-state probabilities, transition matrix, emission parameters, feature order, state count, model family, preprocessing reference, and convergence metadata.
-- [ ] Artifact validation checks matrix shapes, finite values, normalized probability rows, and feature/model consistency.
+- [ ] Adapter protocol defines fit, score, parameter extraction, reconstruction, and filtered-inference capability boundary.
+- [ ] Fitted artifact contains initial probabilities, transition matrix, emissions, feature order, K, family, preprocessing reference, and convergence metadata.
+- [ ] Artifact validation checks shapes, finite values, normalized rows, and feature/model consistency.
 - [ ] Protocol has no MLflow, HTTP, filesystem, or portfolio dependency.
-- [ ] Serialization/reconstruction contract tests use a deterministic dummy adapter.
+- [ ] Deterministic dummy adapter proves serialization/reconstruction contract.
 
 ## PR-011 — Add immutable prediction-store port and local Parquet adapter
 
@@ -355,29 +335,32 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] Define immutable prediction-set metadata with prediction mode (`walk_forward_oos` or `fixed_model_replay`), profile/version, model/version, date range, lineage, and build ID.
-- [ ] Parquet adapter writes predictions atomically to a versioned build directory.
-- [ ] Existing immutable builds cannot be overwritten.
-- [ ] Manifest and data agree on row count, date range, profile, model, and prediction mode.
-- [ ] Reader can resolve an explicit build ID; no silent `latest` behavior in research APIs.
-- [ ] Integration test covers write, reload, checksum/metadata validation, and attempted overwrite failure.
+- [ ] Prediction metadata distinguishes `walk_forward_oos` and `fixed_model_replay`.
+- [ ] Includes profile/version, model/version, range, lineage, and build ID.
+- [ ] Parquet writes are atomic and versioned.
+- [ ] Immutable builds cannot be overwritten.
+- [ ] Manifest/data metadata agree.
+- [ ] Research reader requires explicit build ID; no silent latest.
+- [ ] Integration test covers write/reload/checksum and overwrite failure.
 
-## PR-012 — Add MLflow configuration and client boundary
+## PR-012 — Bind MLflow client boundary to shared NAS Tracking Server / Registry
 
 - **Status:** BLOCKED by PR-006
 - **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/012-mlflow-client-boundary`
 - **Depends on:** PR-006
-- **Allowed files:** `src/market_regime_engine/mlflow_support/__init__.py`, `src/market_regime_engine/mlflow_support/settings.py`, `src/market_regime_engine/mlflow_support/ports.py`, `tests/unit/mlflow_support/*`
+- **Allowed files:** `src/market_regime_engine/mlflow_support/__init__.py`, `src/market_regime_engine/mlflow_support/settings.py`, `src/market_regime_engine/mlflow_support/ports.py`, `tests/unit/mlflow_support/*`, `.env.example`
 
 ### Acceptance criteria
 
-- [ ] MLflow tracking URI is configuration/environment only.
-- [ ] No NAS URL, credential, token, experiment ID, or model version is hard-coded.
-- [ ] Define narrow tracking/registry ports used by application code.
-- [ ] Settings distinguish unit/local-file MLflow from externally configured MLflow.
-- [ ] Missing required production MLflow configuration fails with an actionable error.
-- [ ] Unit tests use no network.
+- [ ] Production MLflow setting is supplied through `MLFLOW_TRACKING_URI`.
+- [ ] `.env.example` contains `MLFLOW_TRACKING_URI=http://10.10.1.3:5000` and no secrets.
+- [ ] Settings expose the shared endpoint as the documented production/NAS default while allowing explicit local-file configuration for tests/development.
+- [ ] Production validation rejects missing/blank tracking URI with actionable error.
+- [ ] Narrow tracking and registry ports are defined for application code.
+- [ ] No experiment ID, registered-model version, token, username, or password is hard-coded.
+- [ ] Unit/local-file mode never contacts `10.10.1.3`.
+- [ ] Unit tests cover production URI parsing, local-file URI, invalid URI, and no-network construction.
 
 ## PR-013 — Add FastAPI skeleton and health routes
 
@@ -389,18 +372,18 @@ After PR-001 is merged, PR-005 and PR-006 may run in parallel. After PR-006, PR-
 
 ### Acceptance criteria
 
-- [ ] App factory creates FastAPI app without contacting MLflow, filesystem, or network at import time.
-- [ ] `/health/live` returns process liveness.
-- [ ] `/health/ready` delegates to injected readiness dependencies.
-- [ ] Placeholder route modules for latest, batch, and evaluations are created now so later parallel PRs edit different files.
-- [ ] No business logic exists in route modules.
-- [ ] OpenAPI generation works in a unit test.
+- [ ] App factory has no MLflow/filesystem/network call at import time.
+- [ ] `/health/live` returns liveness.
+- [ ] `/health/ready` delegates to injected readiness checks.
+- [ ] Placeholder route modules exist for latest, batch, and evaluations.
+- [ ] No model/business logic in routes.
+- [ ] OpenAPI generation unit test passes.
 
 ---
 
 # Wave 2 — HMM core and causal inference
 
-PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and PR-019 can run in parallel. PR-017 follows PR-016. PR-020 can run in parallel with the HMM work once its own dependencies are satisfied. PR-021 can run after PR-007 and PR-008 without waiting for the model implementation.
+PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may run in parallel. PR-017 follows PR-016. PR-020/021 run when their own dependencies are met.
 
 ## PR-014 — Implement configurable Gaussian HMM adapter
 
@@ -412,14 +395,14 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Adapter implements the model protocol for Gaussian HMM.
-- [ ] State count is configurable; tests cover K=2, K=3, and K=4.
-- [ ] Covariance type is configurable; tests cover diagonal and full covariance where supported.
-- [ ] Random seed and iteration/tolerance settings are explicit.
-- [ ] Fit returns convergence status, iteration count, log likelihood, initial probabilities, transition matrix, means, and covariance parameters.
-- [ ] Invalid/non-converged fits are represented explicitly and are never silently promoted.
-- [ ] Fitted artifact reconstructs an equivalent model.
-- [ ] Deterministic synthetic-data tests confirm shape/normalization invariants and reproducible fits for a fixed seed.
+- [ ] Implements model protocol.
+- [ ] K configurable; tests K=2/3/4.
+- [ ] Covariance type configurable; tests diagonal/full where supported.
+- [ ] Seed, max iterations, and tolerance explicit.
+- [ ] Fit returns convergence, iterations, log likelihood, initial probabilities, transition matrix, means, covariances.
+- [ ] Invalid/non-converged fits are explicit and non-promotable.
+- [ ] Fitted artifact reconstructs equivalent model.
+- [ ] Deterministic synthetic tests verify normalization/shapes/reproducibility.
 
 ## PR-015 — Add deterministic multi-start HMM fitting
 
@@ -431,13 +414,13 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Multi-start receives an explicit ordered seed list/count.
-- [ ] Every start records convergence and final log likelihood.
-- [ ] Failed/non-finite fits are excluded from winner selection and retained in diagnostics.
-- [ ] Winner is the highest-likelihood valid converged fit with deterministic tie-breaking.
-- [ ] Minimum required valid converged starts is configurable.
-- [ ] Run fails closed if the minimum stable-fit requirement is not met.
-- [ ] Tests cover mixed success/failure starts, tie breaking, and insufficient-valid-fit failure.
+- [ ] Explicit ordered seed list/count.
+- [ ] Every start records convergence and final likelihood.
+- [ ] Failed/non-finite fits excluded but retained diagnostically.
+- [ ] Highest-likelihood valid converged fit wins with deterministic tie break.
+- [ ] Minimum valid converged starts configurable.
+- [ ] Insufficient stable starts fail closed.
+- [ ] Tests cover mixed failures, ties, and insufficient valid starts.
 
 ## PR-016 — Implement causal forward filtering
 
@@ -449,13 +432,13 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Implement forward-only filtered state probabilities from fitted Gaussian-HMM parameters.
-- [ ] At timestamp `t`, output depends only on observations `<= t`.
-- [ ] Probabilities are normalized and finite for every row.
-- [ ] Numerical stabilization is implemented and tested on long synthetic series.
-- [ ] Test appending future observations does not change previously produced filtered probabilities.
-- [ ] Tests explicitly distinguish the implementation from smoothed/full-sample posterior probabilities.
-- [ ] `RegimePredictionV1` can be created from a filtered probability row once persistent state mapping is supplied.
+- [ ] Forward-only filtered state probabilities from fitted parameters.
+- [ ] Output at `t` depends only on observations `<=t`.
+- [ ] Probabilities finite/normalized.
+- [ ] Numerical stabilization tested on long series.
+- [ ] Appending future observations leaves historical filtered probabilities unchanged.
+- [ ] Tests distinguish filtering from smoothing.
+- [ ] Output can construct `RegimePredictionV1` after state alignment.
 
 ## PR-017 — Add transition-horizon probability forecasts
 
@@ -467,11 +450,11 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Forecast state distribution for configurable integer horizons using the fitted transition matrix.
-- [ ] Horizon zero returns current filtered distribution.
-- [ ] Every horizon output is normalized and finite.
-- [ ] Invalid transition matrices/horizons fail validation.
-- [ ] Tests compare 1-step and multi-step forecasts against direct matrix-power calculations.
+- [ ] Forecasts state distribution for integer horizons from transition matrix.
+- [ ] Horizon zero equals current filtered distribution.
+- [ ] Outputs finite/normalized.
+- [ ] Invalid matrices/horizons fail.
+- [ ] Tests compare 1-step/multi-step against direct matrix powers.
 
 ## PR-018 — Add persistent state alignment
 
@@ -483,13 +466,13 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Define normalized state signatures from emission parameters in exact feature order.
-- [ ] Implement deterministic one-to-one alignment of new fitted states to a reference state set.
-- [ ] Alignment handles pure label permutations correctly.
-- [ ] Alignment produces persistent state IDs independent of raw library state labels.
-- [ ] Maximum allowed signature drift is configurable; excessive drift fails validation rather than silently relabeling.
+- [ ] Normalized state signatures from emissions in exact feature order.
+- [ ] Deterministic one-to-one mapping to reference states.
+- [ ] Pure label permutations map correctly.
+- [ ] Persistent IDs are independent of raw labels.
+- [ ] Maximum signature drift configurable and fail-closed.
 - [ ] Alignment artifact has deterministic hash/version.
-- [ ] Tests cover exact permutation, small drift, excessive drift, and ambiguous mapping.
+- [ ] Tests cover permutation, small/excessive drift, ambiguity.
 
 ## PR-019 — Add model-quality diagnostics
 
@@ -501,13 +484,12 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Compute train log likelihood, AIC, and BIC from explicit model dimensions.
-- [ ] Compute hard state occupancy from dominant filtered state.
-- [ ] Compute soft/effective occupancy from filtered probabilities.
-- [ ] Compute transition/self-transition statistics and empirical hard-state duration summary.
-- [ ] Detect empty/near-empty states using configurable thresholds.
-- [ ] Detect non-finite parameters and invalid covariance structures.
-- [ ] All metric definitions are documented in docstrings and unit-tested on deterministic examples.
+- [ ] Train log likelihood, AIC, BIC.
+- [ ] Hard occupancy and soft/effective occupancy.
+- [ ] Transition/self-transition and empirical hard-state duration statistics.
+- [ ] Empty/near-empty state detection with configurable thresholds.
+- [ ] Non-finite parameter/invalid covariance detection.
+- [ ] Metric definitions documented and unit tested.
 
 ## PR-020 — Add expanding walk-forward split planner
 
@@ -519,12 +501,12 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Planner supports expanding training windows with explicit minimum training observations and test-window size.
-- [ ] Every test observation occurs strictly after the corresponding training interval.
-- [ ] No overlap places a test row inside the same fold's training interval.
-- [ ] Calendar gaps do not create synthetic observations.
-- [ ] Split plan is deterministic and serializable.
-- [ ] Tests cover normal series, short series rejection, gaps, exact boundary dates, and final partial-window policy.
+- [ ] Expanding windows with explicit minimum train observations/test size.
+- [ ] Every test row is strictly after its training interval.
+- [ ] No test row leaks into same fold's train data.
+- [ ] Calendar gaps create no synthetic rows.
+- [ ] Split plan deterministic/serializable.
+- [ ] Tests cover normal, short, gaps, boundaries, partial final window.
 
 ## PR-021 — Add reusable Xetra cross-asset model profile
 
@@ -536,19 +518,19 @@ PR-014 starts after PR-009 and PR-010. After PR-014, PR-015, PR-016, PR-018, and
 
 ### Acceptance criteria
 
-- [ ] Profile is named/versioned `xetra_cross_asset_v1`.
-- [ ] Feature list uses only columns available from the agreed reusable market-regime-loader Gold contract; no ETF return or portfolio feature is embedded in the model profile.
-- [ ] Candidate grid includes Gaussian HMM K=2, K=3, K=4 with diagonal covariance and K=3 with full covariance.
-- [ ] Multi-start, convergence, minimum occupancy, state-drift, and walk-forward settings are explicit rather than implicit defaults.
+- [ ] Profile ID/version is `xetra_cross_asset_v1`.
+- [ ] Features come only from reusable `market-regime-loader` Gold contract; no ETF-return/portfolio feature is embedded.
+- [ ] Candidate grid includes Gaussian HMM K=2/3/4 diagonal and K=3 full.
+- [ ] Multi-start, convergence, minimum occupancy, drift, and walk-forward settings are explicit.
 - [ ] Inference mode is filtered.
-- [ ] Documentation explains that Xetra is the downstream application universe; the engine profile itself models reusable cross-asset market state.
-- [ ] Profile schema/hash test passes.
+- [ ] Documentation explains Xetra is downstream application universe while profile models reusable cross-asset market state.
+- [ ] Profile validation/hash test passes.
 
 ---
 
 # Wave 3 — Walk-forward evaluation, MLflow, champion selection
 
-PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in parallel. PR-024 follows PR-023. PR-025 follows PR-024. PR-026 follows PR-025.
+PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it. PR-024 -> PR-025 -> PR-026 then complete the promotion path.
 
 ## PR-022 — Implement leak-free walk-forward evaluation runner
 
@@ -560,16 +542,16 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] Each fold fits preprocessing only on that fold's training rows.
-- [ ] Each fold fits HMM only on that fold's training rows.
-- [ ] State alignment uses only current/prior training information and a declared reference mapping; no future test data influences alignment.
-- [ ] Test rows use causal forward filtering only.
-- [ ] Runner emits one OOS prediction row per eligible test timestamp with fold ID and complete lineage.
-- [ ] No timestamp appears twice in final OOS output unless the configured overlap policy explicitly rejects the run.
-- [ ] Fold diagnostics include fit/convergence, occupancy, model diagnostics, state-alignment diagnostics, and date boundaries.
-- [ ] Integration test mutates future rows and proves earlier OOS predictions are unchanged.
+- [ ] Each fold fits preprocessing only on training rows.
+- [ ] Each fold fits HMM only on training rows.
+- [ ] Alignment uses only current/prior training information.
+- [ ] Test rows use causal filtering only.
+- [ ] One OOS prediction row per eligible test timestamp with fold ID/lineage.
+- [ ] Duplicate OOS timestamps fail unless explicitly disallowed before execution.
+- [ ] Fold diagnostics include fit, occupancy, model, alignment, and date boundaries.
+- [ ] Mutating future rows cannot change earlier OOS predictions.
 
-## PR-023 — Add MLflow experiment-tracking adapter
+## PR-023 — Add MLflow experiment-tracking adapter for shared registry architecture
 
 - **Status:** BLOCKED by PR-012, PR-022
 - **Git status:** PLANNED — clean before/after.
@@ -579,12 +561,13 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] Tracking adapter creates/reuses an experiment from explicit profile/experiment configuration.
-- [ ] Parent run records profile hash, engine version, Git SHA, feature version, source build ID, and evaluation plan.
-- [ ] Candidate/fold runs record model family, K, covariance type, seeds, train/test bounds, convergence diagnostics, likelihood/AIC/BIC, occupancy, duration, and alignment diagnostics.
-- [ ] OOS prediction artifact reference is logged, not silently embedded as untracked local output.
-- [ ] Unit tests use a fake tracking port.
-- [ ] Integration test uses a local file-backed MLflow store and requires no external service.
+- [ ] Adapter uses the configured `MLFLOW_TRACKING_URI`; production configuration from PR-012 points to `http://10.10.1.3:5000`.
+- [ ] Experiment is created/reused from explicit profile/experiment configuration.
+- [ ] Parent run records profile hash, engine version, Git SHA, feature version, source build, and evaluation plan.
+- [ ] Candidate/fold runs log family, K, covariance, seeds, bounds, convergence, likelihood/AIC/BIC, occupancy, duration, and alignment diagnostics.
+- [ ] OOS prediction artifact reference is logged.
+- [ ] Unit tests use fake port; required integration uses local file-backed MLflow and no external service.
+- [ ] No test in required gates attempts the shared NAS endpoint.
 
 ## PR-024 — Add candidate-grid orchestration
 
@@ -596,13 +579,13 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] Orchestrator expands candidate model specs only from validated profile configuration.
-- [ ] Every candidate gets a deterministic candidate ID.
-- [ ] Every candidate runs the same declared walk-forward plan.
-- [ ] Failure of one candidate is recorded and does not corrupt results of completed candidates.
-- [ ] Candidate output includes aggregate diagnostics plus reference to OOS predictions.
-- [ ] Grid results are deterministic for fixed input/profile/seeds.
-- [ ] Integration test runs at least K=2 and K=3 Gaussian candidates end-to-end on synthetic data.
+- [ ] Expands only validated profile candidates.
+- [ ] Deterministic candidate IDs.
+- [ ] All candidates use same declared walk-forward plan.
+- [ ] One candidate failure does not corrupt completed candidates.
+- [ ] Output includes aggregate diagnostics and OOS reference.
+- [ ] Deterministic for fixed input/profile/seeds.
+- [ ] Integration covers K=2 and K=3 end-to-end.
 
 ## PR-025 — Add model validation gates and engine-champion selection
 
@@ -614,15 +597,15 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] Selection is driven by explicit profile policy; no hidden weighting or magic composite score.
-- [ ] Hard gates include convergence/stable-fit requirement, finite parameters, minimum effective occupancy, state alignment success, and declared state-drift limit.
-- [ ] Candidates failing a hard gate cannot become engine champion regardless of likelihood.
-- [ ] Among valid candidates, primary ranking uses declared OOS model-centric criterion; deterministic tie-break criteria are explicit.
-- [ ] In-sample BIC/AIC may be used only as declared secondary/tie-break diagnostics, not as the sole champion criterion.
-- [ ] Selection output records all rejected candidates and rejection reasons.
-- [ ] Unit tests cover no-valid-candidate failure, gate rejection, deterministic winner, and deterministic tie break.
+- [ ] Selection uses explicit profile policy; no hidden composite score.
+- [ ] Hard gates include stable convergence, finite parameters, minimum effective occupancy, successful alignment, and drift limit.
+- [ ] Failed candidates cannot win.
+- [ ] Valid candidates rank by declared OOS model-centric criterion with deterministic ties.
+- [ ] BIC/AIC are secondary/tie-break diagnostics, not sole champion criterion.
+- [ ] Output records rejected candidates and reasons.
+- [ ] Tests cover zero-valid, gate rejection, winner, and tie cases.
 
-## PR-026 — Package fitted model in MLflow and manage registry aliases
+## PR-026 — Package fitted model in shared MLflow Model Registry and manage aliases
 
 - **Status:** BLOCKED by PR-012, PR-016, PR-018, PR-025
 - **Git status:** PLANNED — clean before/after.
@@ -632,13 +615,14 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] MLflow model package contains preprocessing parameters, fitted HMM artifact, exact feature order, persistent state mapping/signature, profile hash, model lineage, and inference contract version.
-- [ ] Loaded package produces the same filtered prediction as the pre-registration model on a deterministic fixture.
-- [ ] Registry helper registers explicit versions; no consumer silently resolves an unversioned artifact.
-- [ ] Registry helper can set/move aliases such as `engine-champion`, `challenger`, and arbitrary consumer-specific aliases such as `portfell-production`.
-- [ ] Alias movement is logged with source/destination version and caller-supplied reason.
-- [ ] `engine-champion` is set only from a validated selection result.
-- [ ] Local integration test uses file/local MLflow and no external network.
+- [ ] MLflow package contains preprocessing, fitted HMM, feature order, persistent state mapping/signature, profile hash, lineage, and inference-contract version.
+- [ ] Artifact round-trip yields identical filtered prediction on deterministic fixture.
+- [ ] Registry uses explicit registered model versions.
+- [ ] Registry can set/move `engine-champion`, `challenger`, and arbitrary consumer aliases such as `portfell-production`.
+- [ ] Alias movement is logged with source/destination version and reason.
+- [ ] `engine-champion` can only come from validated selection result.
+- [ ] Production registry operations use configured shared MLflow endpoint `http://10.10.1.3:5000`.
+- [ ] Required integration tests remain local-file/no-network; shared-server behavior is verified by PR-034.
 
 ## PR-027 — Publish immutable walk-forward OOS prediction builds
 
@@ -650,17 +634,17 @@ PR-022 is the main convergence point. After PR-022, PR-023 and PR-027 can run in
 
 ### Acceptance criteria
 
-- [ ] Walk-forward output is published with mode exactly `walk_forward_oos`.
-- [ ] Build manifest includes profile, candidate/model identity, fold plan hash, source build ID, feature version, engine Git SHA, and row/date counts.
-- [ ] OOS output contains filtered probabilities, persistent state IDs, dominant state, entropy/confidence, fold ID, and lineage.
-- [ ] Publishing the same content is deterministic/idempotent; publishing different content under an existing immutable build ID fails.
-- [ ] Integration test reloads the build and validates all prediction rows against `RegimePredictionV1`.
+- [ ] Mode exactly `walk_forward_oos`.
+- [ ] Manifest includes profile, model/candidate, fold-plan hash, source build, feature version, Git SHA, and row/date counts.
+- [ ] Rows contain filtered probabilities, persistent IDs, dominant state, entropy/confidence, fold ID, lineage.
+- [ ] Same content is deterministic/idempotent; conflicting immutable build fails.
+- [ ] Reloaded rows validate against `RegimePredictionV1`.
 
 ---
 
 # Wave 4 — Batch/realtime services and API
 
-After PR-026, PR-028 and PR-029 can run in parallel. PR-030 depends only on PR-027 plus the API skeleton and can run in parallel with them. PR-031 integrates the already-complete application use cases into one CLI and runs after all three.
+After PR-026, PR-028/029 may run in parallel. PR-030 depends on PR-027 and API skeleton. PR-031 follows API use cases.
 
 ## PR-028 — Add fixed-model batch inference API
 
@@ -672,14 +656,14 @@ After PR-026, PR-028 and PR-029 can run in parallel. PR-030 depends only on PR-0
 
 ### Acceptance criteria
 
-- [ ] Batch service loads an explicit model version or explicit registry alias.
-- [ ] Batch input is an explicit feature-source/build reference; feature order/contract is validated against the registered model.
-- [ ] Batch output uses filtered inference and persistent state mapping.
-- [ ] Response metadata clearly labels mode as `fixed_model_replay`.
-- [ ] API never labels fixed-model historical replay as walk-forward OOS.
-- [ ] Date-range bounds are validated and deterministic.
-- [ ] Large result mode writes/returns an immutable prediction build reference rather than an unbounded JSON payload.
-- [ ] Integration test covers a registered local model plus Parquet batch input.
+- [ ] Loads explicit model version or registry alias from configured MLflow registry.
+- [ ] Input is explicit feature-source/build reference and contract is validated.
+- [ ] Output uses filtered inference and persistent state mapping.
+- [ ] Metadata mode is `fixed_model_replay`.
+- [ ] Never labels replay as walk-forward OOS.
+- [ ] Date bounds deterministic/validated.
+- [ ] Large results return immutable prediction-build reference rather than unbounded JSON.
+- [ ] Local integration covers registered model + Parquet input without network.
 
 ## PR-029 — Add realtime/latest inference API
 
@@ -691,13 +675,13 @@ After PR-026, PR-028 and PR-029 can run in parallel. PR-030 depends only on PR-0
 
 ### Acceptance criteria
 
-- [ ] Endpoint resolves explicit profile plus explicit model alias/version; default alias policy is documented and configurable.
-- [ ] Service loads only feature data up to the requested/latest as-of time.
-- [ ] Feature contract must exactly match registered model feature order/version policy.
-- [ ] Response validates against `RegimePredictionV1`.
-- [ ] Response includes resolved model version and complete lineage.
-- [ ] MLflow unavailable, missing feature build, incompatible features, or data-quality failure returns explicit non-200 error; stale or invented predictions are never returned.
-- [ ] Integration test proves deterministic latest prediction from a local registered model.
+- [ ] Resolves explicit profile + model alias/version from configured MLflow registry.
+- [ ] Production default configuration resolves registry through `http://10.10.1.3:5000`.
+- [ ] Loads only feature data available up to as-of.
+- [ ] Feature contract matches registered model exactly.
+- [ ] Response validates `RegimePredictionV1` and includes resolved model version/lineage.
+- [ ] MLflow unavailable, missing data, incompatible features, or quality failure returns explicit non-200; no stale/invented prediction.
+- [ ] Local integration proves deterministic latest prediction without external network.
 
 ## PR-030 — Add walk-forward OOS prediction retrieval API
 
@@ -709,12 +693,12 @@ After PR-026, PR-028 and PR-029 can run in parallel. PR-030 depends only on PR-0
 
 ### Acceptance criteria
 
-- [ ] Consumer can retrieve metadata for an explicit `walk_forward_oos` prediction build.
-- [ ] Consumer can retrieve bounded date slices from an explicit build ID.
-- [ ] Endpoint cannot substitute a fixed-model replay build when OOS mode is requested.
-- [ ] Response identifies profile, candidate/model, source build, evaluation plan, and engine version.
-- [ ] Portfell can obtain historical leak-free probabilities without importing engine Python modules.
-- [ ] Integration test covers date filtering and mode-mismatch rejection.
+- [ ] Retrieve metadata for explicit OOS build.
+- [ ] Retrieve bounded date slices by explicit build ID.
+- [ ] Cannot substitute fixed replay for OOS request.
+- [ ] Response identifies profile/model/source/evaluation/engine version.
+- [ ] Portfell can fetch leak-free probabilities without engine imports.
+- [ ] Integration covers date filtering and mode mismatch.
 
 ## PR-031 — Add application CLI for train, evaluate, register, and serve
 
@@ -726,22 +710,23 @@ After PR-026, PR-028 and PR-029 can run in parallel. PR-030 depends only on PR-0
 
 ### Acceptance criteria
 
-- [ ] Package exposes one console entry point: `market-regime-engine`.
-- [ ] CLI subcommands are thin adapters and contain no model math.
-- [ ] `train` fits an explicit profile/input and produces a fitted candidate artifact/run.
-- [ ] `evaluate` runs the declared walk-forward candidate grid and publishes OOS predictions.
-- [ ] `register` registers a selected validated model and can assign an explicit alias.
-- [ ] `serve` starts the FastAPI app through Uvicorn with environment-driven host/port.
-- [ ] Every command supports `--help`, deterministic exit codes, and actionable validation errors.
-- [ ] Tests mock application services; no external MLflow/network required.
+- [ ] Console entry point `market-regime-engine`.
+- [ ] CLI is thin adapter; no model math.
+- [ ] `train` fits explicit profile/input.
+- [ ] `evaluate` runs walk-forward candidate grid and publishes OOS predictions.
+- [ ] `register` registers validated model and optional explicit alias.
+- [ ] Production `register` uses `MLFLOW_TRACKING_URI`, documented value `http://10.10.1.3:5000`.
+- [ ] `serve` starts FastAPI with environment host/port.
+- [ ] Every command has help, deterministic exit codes, actionable errors.
+- [ ] Unit tests mock services and use no external MLflow.
 
 ---
 
-# Wave 5 — Deployment, compatibility, and end-to-end proof
+# Wave 5 — Deployment, shared MLflow verification, compatibility, end-to-end proof
 
-PR-032 through PR-035 can run in parallel after their prerequisites. PR-036 is the final documentation/release-readiness consolidation and starts only after the integration proof PRs are merged.
+PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolidates final operator/consumer documentation.
 
-## PR-032 — Add Docker image and NAS-friendly Compose example
+## PR-032 — Add Docker image and NAS-friendly Compose configuration
 
 - **Status:** BLOCKED by PR-029, PR-031
 - **Git status:** PLANNED — clean before/after.
@@ -751,13 +736,15 @@ PR-032 through PR-035 can run in parallel after their prerequisites. PR-036 is t
 
 ### Acceptance criteria
 
-- [ ] Docker image runs the API as a non-root user.
-- [ ] Runtime uses Python 3.14-compatible base image.
-- [ ] Image contains no `.venv`, Git metadata, test cache, local MLflow state, or secrets.
-- [ ] Compose example accepts MLflow URI, feature input root, prediction root, API bind/port, and model alias through environment variables.
+- [ ] Docker API runs non-root on Python-3.14-compatible base.
+- [ ] Image excludes `.venv`, Git metadata, test cache, local MLflow state, and secrets.
+- [ ] Compose exposes feature root, prediction root, API bind/port, model alias, and `MLFLOW_TRACKING_URI`.
+- [ ] Compose default is exactly `MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://10.10.1.3:5000}`.
+- [ ] Deployment doc identifies `http://10.10.1.3:5000` as the existing shared NAS MLflow Tracking Server / Model Registry.
+- [ ] Deployment doc states MLflow/PostgreSQL lifecycle is not managed by this compose stack.
 - [ ] Healthcheck uses `/health/ready`.
-- [ ] No fixed NAS IP/address is embedded.
-- [ ] Deployment doc shows local and NAS-style environment configuration without credentials.
+- [ ] No credentials/tokens are embedded.
+- [ ] Integration test asserts the compose default and environment override behavior.
 
 ## PR-033 — Add market-regime-loader Gold compatibility integration test
 
@@ -769,29 +756,33 @@ PR-032 through PR-035 can run in parallel after their prerequisites. PR-036 is t
 
 ### Acceptance criteria
 
-- [ ] Fixture mirrors the documented immutable `regime_features_daily` Parquet/manifest contract without importing loader code.
-- [ ] `xetra_cross_asset_v1` resolves all required features from the fixture.
-- [ ] Build ID and feature version are preserved.
-- [ ] Missing required feature, incompatible feature version, duplicate timestamp, and non-finite input each fail closed.
-- [ ] Documentation defines the cross-repository handoff contract and explicitly forbids package-level dependency on `market-regime-loader`.
+- [ ] Fixture mirrors documented immutable Gold Parquet/manifest contract without importing loader code.
+- [ ] Xetra profile resolves all required features.
+- [ ] Build ID and feature version preserved.
+- [ ] Missing/incompatible/duplicate/non-finite input fails closed.
+- [ ] Cross-repo handoff documented; package dependency on loader forbidden.
 
-## PR-034 — Add external MLflow smoke-test profile
+## PR-034 — Verify the real shared MLflow Tracking Server / Model Registry
 
 - **Status:** BLOCKED by PR-023, PR-026
 - **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/034-external-mlflow-smoke`
 - **Depends on:** PR-023, PR-026
-- **Allowed files:** `tests/external/test_mlflow_external.py`, `docs/integrations/mlflow.md`
+- **Allowed files:** `tests/external/test_mlflow_external.py`, `docs/integrations/mlflow.md`, `scripts/verify_shared_mlflow.py`
 
 ### Acceptance criteria
 
-- [ ] Test is marked `external_service` and therefore excluded from required push/merge gates.
-- [ ] Test runs only when explicit MLflow environment configuration is present.
-- [ ] Smoke test creates a disposable experiment/run, logs a minimal model artifact, reads it back, and verifies registry access where supported.
-- [ ] No external MLflow URI or credential is committed.
-- [ ] Documentation gives exact environment variables and manual command to run the smoke test.
+- [ ] External test is marked `external_service` and excluded from required push/merge gates.
+- [ ] Documented target is exactly `http://10.10.1.3:5000`.
+- [ ] Manual command sets `MLFLOW_TRACKING_URI=http://10.10.1.3:5000` and explicitly opts into external testing.
+- [ ] Verification fails if configured production URI differs from expected shared endpoint unless an explicit migration/override flag is supplied.
+- [ ] Smoke test verifies Tracking Server reachability and server metadata before writes.
+- [ ] Smoke test creates a uniquely named disposable experiment/run, logs parameters/metrics/artifact, reads them back, and verifies registry create/read/version/alias behavior.
+- [ ] Disposable registered model/experiment names are namespaced with a unique test identifier; cleanup/delete is attempted and cleanup result is reported.
+- [ ] No credential/token is committed.
+- [ ] Documentation explains that the server is shared with other projects and destructive cleanup must be limited strictly to resources created by the smoke test.
 
-## PR-035 — Add complete engine end-to-end integration proof
+## PR-035 — Add complete hermetic engine end-to-end integration proof
 
 - **Status:** BLOCKED by PR-021, PR-024, PR-026, PR-027, PR-028, PR-029, PR-030
 - **Git status:** PLANNED — clean before/after.
@@ -801,16 +792,17 @@ PR-032 through PR-035 can run in parallel after their prerequisites. PR-036 is t
 
 ### Acceptance criteria
 
-- [ ] Test uses deterministic synthetic/fixture Parquet feature data and local-file MLflow only.
-- [ ] Executes candidate grid with at least Gaussian K=2 and K=3.
-- [ ] Executes walk-forward OOS evaluation.
-- [ ] Applies hard validation gates and selects an engine champion.
-- [ ] Registers the winning model in local MLflow and assigns `engine-champion`.
-- [ ] Publishes immutable `walk_forward_oos` predictions.
-- [ ] Exercises fixed-model batch API and verifies its mode is `fixed_model_replay`.
+- [ ] Uses deterministic fixture Parquet and local-file MLflow only.
+- [ ] Candidate grid includes at least Gaussian K=2/K=3.
+- [ ] Runs walk-forward OOS evaluation.
+- [ ] Applies hard gates and selects engine champion.
+- [ ] Registers winner locally and assigns `engine-champion`.
+- [ ] Publishes immutable OOS predictions.
+- [ ] Exercises fixed-model batch API and confirms `fixed_model_replay`.
 - [ ] Exercises latest API and validates `RegimePredictionV1`.
-- [ ] Exercises OOS prediction retrieval API and confirms it returns the stored walk-forward build.
-- [ ] Re-running with the same seeds/input produces identical prediction values/lineage IDs where deterministic by contract.
+- [ ] Exercises OOS retrieval.
+- [ ] Same seeds/input reproduce deterministic values/lineage where required.
+- [ ] Test never requires `10.10.1.3`; real shared MLflow is exclusively PR-034 external verification.
 
 ## PR-036 — Final operator and consumer documentation
 
@@ -818,24 +810,26 @@ PR-032 through PR-035 can run in parallel after their prerequisites. PR-036 is t
 - **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/036-operator-consumer-docs`
 - **Depends on:** PR-032, PR-033, PR-034, PR-035
-- **Allowed files:** `README.md`, `API.md`, `OPERATIONS.md`, `docs/consumer_contract.md`, `docs/integrations/portfell.md`
+- **Allowed files:** `README.md`, `API.md`, `OPERATIONS.md`, `docs/consumer_contract.md`, `docs/integrations/portfell.md`, `docs/integrations/mlflow.md`
 
 ### Acceptance criteria
 
-- [ ] README shows full `loader -> engine -> consumer` architecture.
-- [ ] README gives clean-checkout `.venv` bootstrap instructions for Python 3.14.7.
-- [ ] API doc covers health, latest, fixed-model batch, and OOS prediction retrieval endpoints.
-- [ ] API doc clearly warns that `fixed_model_replay` is not leak-free historical OOS evidence.
-- [ ] Operations doc covers train -> evaluate -> select -> register -> alias -> serve lifecycle.
-- [ ] Consumer contract documents `RegimePrediction.v1` and immutable OOS prediction build fields.
-- [ ] Portfell integration doc states Portfell owns ETF universe, regime-conditioned returns/covariances, portfolio optimization, backtesting, transaction costs, and application-level model choice.
-- [ ] Documentation explains future consumers can reuse the engine by adding a new profile/feature producer and consuming the same API; no engine fork is required.
+- [ ] README shows loader -> engine -> MLflow/API -> consumer architecture.
+- [ ] README gives clean-checkout `.venv` bootstrap for Python 3.14.7.
+- [ ] Shared production MLflow endpoint is documented exactly as `http://10.10.1.3:5000`.
+- [ ] Operations doc gives exact `MLFLOW_TRACKING_URI=http://10.10.1.3:5000` setup and train -> evaluate -> select -> register -> alias -> serve lifecycle.
+- [ ] Operations doc distinguishes shared MLflow infrastructure ownership from engine ownership.
+- [ ] API doc covers health, latest, fixed replay batch, and OOS retrieval.
+- [ ] API doc warns `fixed_model_replay` is not leak-free OOS evidence.
+- [ ] Consumer contract documents `RegimePrediction.v1` and immutable OOS fields.
+- [ ] Portfell doc states Portfell owns ETF universe, regime-conditioned returns/covariances, portfolio optimization/backtesting/costs, and application-level model choice.
+- [ ] Future consumers can reuse registered models/API without HMM implementation imports or engine fork.
 
 ---
 
 # Wave 6 — Optional model challengers after MVP
 
-These PRs are intentionally isolated behind the model-adapter protocol. They are **not required to ship the first complete Gaussian-HMM platform** and may run in parallel after PR-010/PR-022. They must not modify the Gaussian-HMM implementation.
+These adapters are isolated behind the model protocol and are not required for the first Gaussian-HMM platform.
 
 ## PR-037 — Add Student-t HMM challenger adapter
 
@@ -847,12 +841,12 @@ These PRs are intentionally isolated behind the model-adapter protocol. They are
 
 ### Acceptance criteria
 
-- [ ] Adapter satisfies the same model protocol and artifact contract as Gaussian HMM.
-- [ ] Any additional dependency supports Python 3.14 before being added.
-- [ ] Degrees-of-freedom and covariance configuration are explicit and validated.
-- [ ] Filtered inference is causal and compatible with persistent state alignment.
-- [ ] Candidate can participate in the existing walk-forward/grid/selection pipeline without special-case orchestration.
-- [ ] Deterministic synthetic heavy-tail test demonstrates fit/inference end-to-end.
+- [ ] Satisfies common model/artifact protocol.
+- [ ] Additional dependency supports Python 3.14.
+- [ ] Degrees-of-freedom/covariance configuration explicit.
+- [ ] Filtered inference causal and alignment-compatible.
+- [ ] Participates in existing walk-forward/grid/selection with no consumer special case.
+- [ ] Deterministic heavy-tail synthetic test proves fit/inference.
 
 ## PR-038 — Add duration-aware HSMM challenger adapter
 
@@ -864,39 +858,39 @@ These PRs are intentionally isolated behind the model-adapter protocol. They are
 
 ### Acceptance criteria
 
-- [ ] Adapter satisfies the common model protocol or documents the smallest protocol extension required for explicit duration distributions.
-- [ ] Any new dependency supports Python 3.14 before being added.
-- [ ] Duration distribution parameters are explicit, validated, serialized, and versioned.
-- [ ] Inference path is causal for production/OOS use.
-- [ ] Candidate participates in the same walk-forward/grid/selection interface without consumer changes.
-- [ ] Synthetic persistent-regime test demonstrates that duration metadata and predictions survive artifact round-trip.
+- [ ] Satisfies common model protocol or documents minimal explicit extension for durations.
+- [ ] New dependency supports Python 3.14.
+- [ ] Duration parameters explicit, validated, serialized, versioned.
+- [ ] Inference causal for OOS/production.
+- [ ] Participates in same walk-forward/grid/selection interface with no consumer change.
+- [ ] Persistent-regime synthetic test proves duration metadata/prediction artifact round-trip.
 
 ---
 
 # Parallel execution plan
 
-The orchestrator should start only branches whose prerequisites are already merged into `main`. Within that restriction, maximize concurrency as follows:
+The orchestrator starts only branches whose prerequisites are merged to `main`.
 
 ```text
 Wave 0A:
   PR-001
 
-Wave 0B (parallel):
+Wave 0B parallel:
   PR-002  PR-003
 
 Wave 0C:
-  PR-004, then execute/verify governance script
+  PR-004, then execute and verify governance
 
-Wave 1A (parallel):
+Wave 1A parallel:
   PR-005  PR-006
 
-Wave 1B (parallel after PR-006):
+Wave 1B parallel:
   PR-007  PR-008  PR-009  PR-010  PR-011  PR-012  PR-013
 
-Wave 2A (parallel where dependencies allow):
+Wave 2A where dependencies allow:
   PR-014  PR-020  PR-021
 
-Wave 2B (parallel after PR-014):
+Wave 2B parallel after PR-014:
   PR-015  PR-016  PR-018  PR-019
 
 Wave 2C:
@@ -905,7 +899,7 @@ Wave 2C:
 Wave 3A:
   PR-022
 
-Wave 3B (parallel):
+Wave 3B parallel:
   PR-023  PR-027
 
 Wave 3C:
@@ -917,53 +911,55 @@ Wave 3D:
 Wave 3E:
   PR-026
 
-Wave 4A (parallel):
+Wave 4A parallel:
   PR-028  PR-029  PR-030
 
 Wave 4B:
   PR-031
 
-Wave 5A (parallel):
+Wave 5A parallel:
   PR-032  PR-033  PR-034  PR-035
 
 Wave 5B:
   PR-036
 
-Optional challengers after common model protocol/evaluation are stable:
-  PR-037  PR-038 in parallel
+Optional:
+  PR-037  PR-038 in parallel once common protocol/evaluation are stable
 ```
 
 ## Weak-agent execution rules
 
-To keep each task safe for weak parallel agents:
-
-1. An agent receives exactly one PR section from this backlog.
-2. The agent must not broaden scope or refactor unrelated code.
-3. The agent may edit only the files listed under `Allowed files`.
-4. If an allowed file is missing because a dependency has not merged, the agent stops instead of recreating another PR's work.
-5. Every acceptance checkbox is mandatory; there are no implied tasks outside the checklist.
-6. Tests belong in the same PR as the behavior they verify.
-7. No agent changes dependency versions unless its PR explicitly allows `pyproject.toml`.
-8. No agent edits `BACKLOG.md`.
-9. Every PR is opened against `main` and, after repository governance is active, auto-merge is enabled immediately.
-10. The orchestrator never manually merges a normal implementation PR; `merge-gate` must succeed and GitHub auto-merge completes the squash merge.
+1. An agent receives exactly one PR section.
+2. It must not broaden scope or refactor unrelated code.
+3. It may edit only listed allowed files.
+4. If a prerequisite file is absent, it stops rather than recreating another PR's work.
+5. Every acceptance checkbox is mandatory.
+6. Tests ship in the same PR as behavior.
+7. Dependency versions change only where `pyproject.toml` is explicitly allowed.
+8. Agents never edit `BACKLOG.md`.
+9. Every PR targets `main`; after governance is active, auto-merge is enabled immediately.
+10. Normal implementation PRs are not manually merged; GitHub auto-merge completes the squash merge only after `merge-gate` succeeds.
+11. Required tests never depend on the shared MLflow server; only PR-034's explicitly invoked `external_service` test may touch `http://10.10.1.3:5000`.
+12. An agent must never delete or mutate MLflow experiments/models that it did not create itself.
 
 ## Definition of complete MVP
 
-The MVP is complete after PR-036 when all of the following are true:
+The MVP is complete after PR-036 when:
 
-- a clean checkout creates a local Python 3.14.7 `.venv` reproducibly;
+- a clean checkout reproducibly creates a Python 3.14.7 `.venv`;
 - `main` is protected and direct/force pushes are blocked;
-- push and merge gates run lint/type/unit/integration jobs in parallel;
-- PRs auto-complete only after `merge-gate` succeeds;
-- a reusable versioned model profile can be loaded;
-- Parquet feature data can be consumed without importing upstream loader code;
+- push/merge gates run lint/type/unit/integration in parallel;
+- PRs auto-complete only after `merge-gate`;
+- versioned model profiles can be loaded;
+- Parquet features are consumed without upstream loader imports;
 - Gaussian HMM K=2/K=3/K=4 and diagonal/full candidates can be compared;
-- multi-start fitting, persistent state alignment, causal filtering, and walk-forward OOS evaluation are implemented;
-- MLflow tracks candidate runs and stores registered packaged models;
-- engine champion and consumer-specific aliases are supported;
+- multi-start fitting, persistent alignment, causal filtering, and walk-forward OOS evaluation are implemented;
+- MLflow tracks candidates and packages promoted models;
+- production configuration points to the shared MLflow Tracking Server / Model Registry at `http://10.10.1.3:5000`;
+- the real shared MLflow instance has an explicit successful opt-in smoke-test path;
+- `engine-champion`, `challenger`, and consumer-specific aliases are supported;
 - immutable `walk_forward_oos` prediction builds exist;
-- fixed-model batch inference is separately labeled from historical OOS predictions;
+- fixed-model batch inference is clearly separated from historical OOS predictions;
 - latest/realtime inference returns `RegimePrediction.v1`;
-- Portfell and future projects can consume the API without importing HMM implementation code;
-- the complete deterministic local end-to-end integration proof passes in the required merge gate.
+- Portfell and future consumers use the API/registered models without HMM implementation imports;
+- the complete hermetic local end-to-end proof passes the required merge gate.
