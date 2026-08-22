@@ -1,0 +1,53 @@
+# Python virtual environment
+.venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checker, linter, and coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Local MLflow state / artifacts
+mlruns/
+mlartifacts/
+.mlflow/
+
+# Local engine output and generated prediction data
+artifacts/
+predictions/
+output/
+outputs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# IDE/editor-local metadata
+.idea/
+.vscode/
+
+# OS-generated metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
