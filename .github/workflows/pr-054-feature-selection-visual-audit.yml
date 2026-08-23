@@ -3,9 +3,6 @@ name: PR-054 feature selection visual audit
 on:
   push:
     branches:
-      - pr/PR-054-feature-selection-visual-audit
-  pull_request:
-    branches:
       - main
 
 permissions:
@@ -18,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: pr/PR-054-feature-selection-visual-audit
+          ref: main
           fetch-depth: 0
 
       - name: Extend feature-selection observability backlog
@@ -99,4 +96,4 @@ The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` sele
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'docs(PR-054-feature-selection-visual-audit): expand feature selection observability'
-          git push origin HEAD:pr/PR-054-feature-selection-visual-audit
+          git push origin HEAD:main
