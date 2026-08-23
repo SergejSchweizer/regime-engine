@@ -1,6 +1,6 @@
 # Market Regime Engine — Implementation Backlog
 
-Status date: 2026-08-22
+Status date: 2026-08-23
 
 This backlog defines the complete implementation plan for `market-regime-engine` as a reusable market-regime model platform.
 
@@ -47,6 +47,7 @@ regime-loader
 13. **Evaluation sidecar rule:** any PR that changes candidate model families, K/state counts, covariance modes, preprocessing, walk-forward semantics, inference semantics, diagnostic definitions, quality gates, ranking/tie-break rules, MLflow metric names/artifacts, or model lifecycle aliases must update `EVALUATION.md` in the same PR. Such a PR is incomplete if the sidecar is stale.
 14. Engine champion selection must use explicit hard gates and deterministic ranking. No hidden or weighted “magic score” is permitted.
 15. For `xetra_cross_asset_v1`, the default primary ranking statistic is **mean OOS predictive log likelihood per observation**; fold stability is secondary and BIC/AIC are tertiary/tie-break diagnostics.
+16. **Full-covariance-only HMM rule:** every covariance-bearing HMM emission model uses one full covariance matrix per hidden state. `diag`, `spherical`, `tied`, or any other reduced covariance mode is unsupported and must fail validation; no implementation, profile, test, or documentation may silently fall back to a reduced covariance structure.
 
 ## Git discipline for every PR
 
@@ -141,7 +142,7 @@ Only PR-001 starts immediately. PR-002 and PR-003 start in parallel after PR-001
 - [ ] `.python-version` contains `3.14.7`.
 - [ ] `pyproject.toml` defines `market-regime-engine` and `requires-python = ">=3.14,<3.15"`.
 - [ ] Source layout is `src/market_regime_engine`.
-- [ ] Runtime dependencies include Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, and a Python-3.14-compatible Gaussian-HMM implementation.
+- [ ] Runtime dependencies include Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, and a Python-3.14-compatible Gaussian-HMM implementation with full-covariance support.
 - [ ] Dev dependencies include pytest, pytest-cov, pytest-xdist, Ruff, mypy, and build tooling.
 - [ ] Ruff targets Python 3.14; mypy is strict.
 - [ ] pytest markers include `unit`, `integration`, and `external_service`.
@@ -239,6 +240,7 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 - [ ] Requires filtered probabilities for causal inference; smoothing/Viterbi are diagnostic-only.
 - [ ] Requires persistent state alignment for consumer-facing predictions.
 - [ ] Defines `regime-loader -> engine -> consumers` dependency direction without package coupling.
+- [ ] Documents the full-covariance-only HMM rule and explicitly excludes reduced covariance modes.
 - [ ] Model lifecycle defines `candidate`, `validated`, `engine-champion`, `challenger`, and consumer-specific aliases such as `portfell-production`.
 - [ ] `EVALUATION.md` is linked as the normative evaluation sidecar and its maintenance rule is documented.
 - [ ] README includes system diagram and links.
@@ -255,11 +257,12 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 
 - [ ] Immutable feature reference includes source dataset/build, as-of range, feature version, and ordered feature names.
 - [ ] Immutable `ModelSpec` includes family, state count, covariance mode, profile/version, seeds/multi-start, and training-window policy.
+- [ ] For every covariance-bearing HMM `ModelSpec`, covariance mode must be exactly `full`; `diag`, `spherical`, `tied`, and unknown covariance modes fail validation.
 - [ ] Lineage includes engine version, Git SHA, training interval, source build, preprocessing version, and profile hash.
 - [ ] `RegimePredictionV1` includes as-of, profile, model/version, persistent state IDs, probabilities, dominant state, entropy, confidence, lineage, and data-quality status.
 - [ ] Validation rejects invalid/non-finite probabilities, duplicates, and non-normalized vectors.
 - [ ] Raw library state labels cannot become consumer semantics without alignment ID.
-- [ ] Serialization round-trip tests cover all public contracts.
+- [ ] Serialization round-trip tests cover all public contracts, including preservation of `covariance_mode="full"`.
 - [ ] Contract layer has no model-library, MLflow, filesystem, FastAPI, or provider dependency.
 
 ## PR-007 — Add model-profile configuration schema and loader
@@ -276,10 +279,11 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 - [ ] Selection policy can explicitly declare primary metric, secondary fold-stability ordering, tertiary/tie-break metrics, and final deterministic tie-break.
 - [ ] YAML loading is deterministic and validated before model work.
 - [ ] Unknown keys and duplicate features fail closed.
-- [ ] Unsupported family/covariance/state count/metric identifier fails clearly.
+- [ ] Unsupported family/state count/metric identifier fails clearly.
+- [ ] Covariance-bearing HMM candidates accept only `covariance: full`; `diag`, `spherical`, `tied`, omitted/ambiguous covariance settings, and unknown covariance modes fail closed.
 - [ ] Profile has deterministic content hash.
-- [ ] Unit tests cover valid, malformed, unknown, duplicate, unsupported, ranking-policy, and hash cases.
-- [ ] `EVALUATION.md` remains consistent with supported selection-policy fields.
+- [ ] Unit tests cover valid, malformed, unknown, duplicate, unsupported, full-covariance-only, ranking-policy, and hash cases.
+- [ ] `EVALUATION.md` remains consistent with supported selection-policy fields and full-covariance policy.
 
 ## PR-008 — Add generic Parquet feature-source port and adapter
 
@@ -329,8 +333,9 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 
 - [ ] Adapter protocol defines fit, score, predictive-score, parameter extraction, reconstruction, and filtered-inference capability boundaries.
 - [ ] Predictive-score interface can return fold OOS predictive log likelihood and observation count without fitting on test data.
-- [ ] Fitted artifact contains initial probabilities, transition matrix, emissions, feature order, K, family, preprocessing reference, and convergence metadata.
-- [ ] Artifact validation checks shapes, finite values, normalized rows, and feature/model consistency.
+- [ ] Fitted artifact contains initial probabilities, transition matrix, emissions, feature order, K, family, covariance mode, preprocessing reference, and convergence metadata.
+- [ ] Covariance-bearing HMM artifacts preserve complete per-state full covariance matrices including off-diagonal terms.
+- [ ] Artifact validation checks shapes, finite values, normalized rows, full-covariance validity, and feature/model consistency.
 - [ ] Protocol has no MLflow, HTTP, filesystem, or portfolio dependency.
 - [ ] Deterministic dummy adapter proves serialization/reconstruction and predictive-score contracts.
 - [ ] `EVALUATION.md` matches the public scoring semantics.
@@ -395,7 +400,7 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 
 PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may run in parallel. PR-017 follows PR-016. PR-020/021 run when their own dependencies are met.
 
-## PR-014 — Implement configurable Gaussian HMM adapter
+## PR-014 — Implement full-covariance Gaussian HMM adapter
 
 - **Status:** BLOCKED by PR-009, PR-010
 - **Git status:** PLANNED — clean before/after.
@@ -407,14 +412,17 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 
 - [ ] Implements model protocol including predictive scoring on unseen observations.
 - [ ] K configurable; tests K=2/3/4.
-- [ ] Covariance type configurable; tests diagonal/full where supported.
+- [ ] Gaussian emissions use covariance type exactly `full`; reduced covariance modes are not configurable alternatives.
+- [ ] Explicit construction/configuration with `diag`, `spherical`, `tied`, or any non-`full` covariance mode fails closed with an actionable validation error.
+- [ ] Every hidden state owns a `d x d` full covariance matrix; matrices are finite, symmetric, and pass the declared positive-definiteness/Cholesky validity check.
+- [ ] Off-diagonal covariance terms are fitted, serialized, reconstructed, and verified by deterministic tests.
 - [ ] Seed, max iterations, and tolerance explicit.
-- [ ] Fit returns convergence, iterations, training log likelihood, initial probabilities, transition matrix, means, covariances.
+- [ ] Fit returns convergence, iterations, training log likelihood, initial probabilities, transition matrix, means, and full covariance matrices.
 - [ ] Predictive score returns finite test log likelihood and observation count without refitting on test data.
 - [ ] Invalid/non-converged fits are explicit and non-promotable.
-- [ ] Fitted artifact reconstructs equivalent model.
-- [ ] Deterministic synthetic tests verify normalization/shapes/reproducibility/predictive scoring.
-- [ ] `EVALUATION.md` remains accurate for Gaussian candidates.
+- [ ] Fitted artifact reconstructs an equivalent full-covariance model.
+- [ ] Deterministic synthetic tests verify normalization, shapes, reproducibility, off-diagonal covariance preservation, and predictive scoring for K=2/3/4.
+- [ ] `EVALUATION.md` remains accurate for the three full-covariance Gaussian candidates.
 
 ## PR-015 — Add deterministic multi-start HMM fitting and stability metrics
 
@@ -483,6 +491,7 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 ### Acceptance criteria
 
 - [ ] Normalized state signatures from emissions in exact feature order.
+- [ ] Full-covariance Gaussian state signatures preserve cross-feature covariance information; off-diagonal covariance terms must not be dropped or reduced to per-feature variances.
 - [ ] Deterministic one-to-one mapping to reference states.
 - [ ] Pure label permutations map correctly.
 - [ ] Persistent IDs are independent of raw labels.
@@ -490,7 +499,7 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 - [ ] Maximum signature drift configurable and fail-closed.
 - [ ] Ambiguous mapping is explicit and non-promotable.
 - [ ] Alignment artifact has deterministic hash/version.
-- [ ] Tests cover permutation, small/excessive drift, ambiguity, and max-drift aggregation.
+- [ ] Tests cover permutation, small/excessive drift, ambiguity, full-covariance signature preservation, and max-drift aggregation.
 - [ ] `EVALUATION.md` documents alignment/drift metrics and hard-gate semantics.
 
 ## PR-019 — Add complete model-quality diagnostics and metric definitions
@@ -506,6 +515,7 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 - [ ] Compute training log likelihood.
 - [ ] Compute AIC using explicit free-parameter count.
 - [ ] Compute BIC using explicit free-parameter count and observation count.
+- [ ] For Gaussian HMMs with K states and d features, AIC/BIC parameter counting uses the full-covariance term `K*d*(d+1)/2` in addition to initial probabilities, transitions, and means.
 - [ ] Compute hard occupancy per state and `min_hard_occupancy`.
 - [ ] Compute soft/effective occupancy per state and `min_soft_occupancy`.
 - [ ] Compute transition/self-transition probabilities and candidate summary min/max/mean self-transition.
@@ -515,9 +525,9 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 - [ ] Compute OOS entropy mean/median/p90 and confidence mean when supplied filtered OOS predictions.
 - [ ] Compute `oos_low_confidence_fraction` using a profile-declared threshold.
 - [ ] Detect empty/near-empty states with configurable thresholds.
-- [ ] Detect non-finite parameters and invalid covariance structures.
+- [ ] Detect non-finite parameters, non-symmetric/non-positive-definite full covariance matrices, and any non-`full` covariance mode.
 - [ ] Metric result schema uses stable explicit names matching `EVALUATION.md`.
-- [ ] Every formula/metric definition is documented in `EVALUATION.md` and unit-tested on deterministic fixtures.
+- [ ] Every formula/metric definition is documented in `EVALUATION.md` and unit-tested on deterministic full-covariance fixtures.
 
 ## PR-020 — Add expanding walk-forward split planner
 
@@ -549,15 +559,17 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 
 - [ ] Profile ID/version is `xetra_cross_asset_v1`.
 - [ ] Features come only from reusable `regime-loader` Gold contract; no ETF-return/portfolio feature is embedded.
-- [ ] Candidate grid includes exactly the MVP Gaussian candidates: K=2 diagonal, K=3 diagonal, K=4 diagonal, K=3 full.
+- [ ] Candidate grid includes exactly three MVP Gaussian candidates: K=2 full, K=3 full, and K=4 full.
+- [ ] Stable candidate IDs are exactly `gaussian_hmm_k2_full`, `gaussian_hmm_k3_full`, and `gaussian_hmm_k4_full`.
+- [ ] No diagonal, spherical, tied, or other reduced-covariance Gaussian candidate is present or accepted by profile validation.
 - [ ] Multi-start, convergence, minimum valid-start rate, minimum occupancy, maximum drift, minimum valid-fold rate, and walk-forward settings are explicit.
 - [ ] Inference mode is filtered.
 - [ ] Primary ranking metric is explicitly `oos_predictive_loglik_mean` where fold scores are normalized per test observation.
 - [ ] Secondary ranking is explicit fold stability: lower `oos_predictive_loglik_std`, then better `oos_predictive_loglik_worst_fold`.
-- [ ] Tertiary tie breaks are lower `bic_mean`, then lower `aic_mean`, then simpler model, then stable candidate ID.
+- [ ] Tertiary tie breaks are lower `bic_mean`, then lower `aic_mean`, then fewer states K, then stable candidate ID.
 - [ ] No weighted composite score is configured.
 - [ ] Documentation explains Xetra is downstream application universe while profile models reusable cross-asset market state.
-- [ ] Profile validation/hash test passes.
+- [ ] Profile validation/hash test passes and explicitly rejects a diagonal-covariance candidate fixture.
 - [ ] `EVALUATION.md` candidate table and selection order exactly match this profile.
 
 ---
@@ -587,7 +599,7 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Fold diagnostics include fit, multistart, occupancy, transition, duration, entropy/confidence, alignment, date bounds, and quality status.
 - [ ] Fold validity is explicit; invalid folds carry reasons and cannot silently contribute to candidate means.
 - [ ] Mutating future rows cannot change earlier OOS predictions or earlier fold metrics.
-- [ ] Integration test verifies normalized predictive log likelihood using deterministic synthetic data.
+- [ ] Integration test verifies normalized predictive log likelihood using deterministic synthetic full-covariance data.
 - [ ] `EVALUATION.md` matches runner outputs and exact metric names.
 
 ## PR-023 — Add MLflow experiment tracking, fold metrics, and candidate scorecards
@@ -603,10 +615,10 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Adapter uses configured `MLFLOW_TRACKING_URI`; production points to `http://10.10.1.3:5000`.
 - [ ] Experiment is created/reused from explicit profile/experiment configuration.
 - [ ] Parent run records profile ID/version/hash, engine version, Git SHA, feature version, source build, evaluation-plan hash, split policy, inference mode, candidate count, and selection-policy version.
-- [ ] Candidate runs log family, K, covariance, candidate ID, seed policy, convergence settings, feature/order hash, and all aggregate scorecard metrics.
+- [ ] Candidate runs log family, K, covariance=`full`, candidate ID, seed policy, convergence settings, feature/order hash, and all aggregate scorecard metrics.
 - [ ] Candidate aggregate metrics include `oos_predictive_loglik_mean`, `oos_predictive_loglik_std`, `oos_predictive_loglik_median`, `oos_predictive_loglik_worst_fold`, `oos_predictive_loglik_best_fold`, `valid_fold_rate`, `train_loglik_mean`, `aic_mean`, `bic_mean`, `multistart_success_rate_mean`, `min_hard_occupancy`, `min_soft_occupancy`, `max_state_signature_drift`, `alignment_failure_count`, `mean_state_duration`, `switches_per_year`, `oos_entropy_mean`, and `oos_confidence_mean`.
 - [ ] Fold runs log train/test bounds/counts, train likelihood, unnormalized and normalized OOS predictive likelihood, AIC/BIC, multistart metrics, occupancy by state, self-transition by state, duration by state, state drift, entropy/confidence, convergence/alignment/gate status.
-- [ ] Required artifacts include `evaluation_plan.json`, `fold_metrics.parquet`, `candidate_scorecard.json`, `multistart_metrics.parquet`, transition matrix, state signatures, state alignment, occupancy-by-fold, duration-by-fold, OOS prediction reference, feature/preprocessing metadata.
+- [ ] Required artifacts include `evaluation_plan.json`, `fold_metrics.parquet`, `candidate_scorecard.json`, `multistart_metrics.parquet`, transition matrix, full covariance matrices/model spec, state signatures, state alignment, occupancy-by-fold, duration-by-fold, OOS prediction reference, feature/preprocessing metadata.
 - [ ] Parent run receives `candidate_comparison.parquet` and later champion-selection artifact.
 - [ ] Metric/tag names are stable and documented in `EVALUATION.md`.
 - [ ] OOS prediction artifact reference is logged; large data is not silently embedded as ad-hoc untracked output.
@@ -626,13 +638,14 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Expands only validated profile candidates.
 - [ ] Deterministic candidate IDs.
 - [ ] All candidates use the same declared walk-forward plan and source build.
+- [ ] Candidate expansion rejects any covariance-bearing HMM whose covariance mode is not `full`.
 - [ ] One candidate failure does not corrupt completed candidates.
 - [ ] Candidate aggregation excludes invalid folds from means but records invalid count/rate and reasons.
 - [ ] Aggregates include OOS predictive mean/std/median/min/max, valid-fold count/rate, train likelihood mean/std, AIC/BIC mean/std, multistart success aggregates, occupancy minima, alignment drift mean/max, duration summaries, switch frequency, entropy/confidence summaries.
 - [ ] Output includes complete aggregate diagnostics plus OOS reference and candidate scorecard.
 - [ ] Candidate comparison table has one row per candidate and all fields required by selection policy.
 - [ ] Deterministic for fixed input/profile/seeds.
-- [ ] Integration covers at least Gaussian K=2 and K=3 end-to-end.
+- [ ] Integration covers at least Gaussian K=2 full and K=3 full end-to-end.
 - [ ] `EVALUATION.md` matches aggregation definitions.
 
 ## PR-025 — Add hard validation gates and deterministic engine-champion selection
@@ -646,14 +659,14 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 ### Acceptance criteria
 
 - [ ] Selection uses explicit profile policy; no hidden/weighted composite score.
-- [ ] Hard gates include minimum stable multistart success, finite/valid parameters, minimum hard/soft occupancy, successful alignment, maximum state-signature drift, and minimum valid-fold rate.
+- [ ] Hard gates include minimum stable multistart success, finite/valid parameters, valid full covariance matrices, minimum hard/soft occupancy, successful alignment, maximum state-signature drift, and minimum valid-fold rate.
 - [ ] Candidate failing any hard gate cannot win regardless of likelihood.
 - [ ] Primary ranking for Xetra profile is highest `oos_predictive_loglik_mean` based on per-observation fold scores.
 - [ ] Secondary ranking is lower `oos_predictive_loglik_std`, then higher `oos_predictive_loglik_worst_fold`.
-- [ ] Tertiary/tie-break ranking is lower `bic_mean`, then lower `aic_mean`, then simpler model complexity, then stable candidate ID.
+- [ ] Tertiary/tie-break ranking is lower `bic_mean`, then lower `aic_mean`, then fewer states K, then stable candidate ID; covariance mode never acts as a tie-break because it is fixed to `full`.
 - [ ] Training likelihood alone can never promote a candidate.
 - [ ] Selection output records rank, all hard-gate pass/fail results, rejected candidates, rejection reasons, and complete deterministic comparison chain.
-- [ ] Tests cover zero-valid candidates, each hard-gate failure, primary-metric winner, stability tie-break, BIC/AIC tie-break, complexity tie-break, and deterministic final tie.
+- [ ] Tests cover zero-valid candidates, each hard-gate failure, invalid/reduced covariance rejection, primary-metric winner, stability tie-break, BIC/AIC tie-break, K-complexity tie-break, and deterministic final tie.
 - [ ] `EVALUATION.md` exactly matches implemented selection order and gate semantics.
 
 ## PR-026 — Package fitted model in shared MLflow Model Registry and manage aliases
@@ -666,9 +679,10 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 
 ### Acceptance criteria
 
-- [ ] MLflow package contains preprocessing, fitted HMM, feature order, persistent state mapping/signature, profile hash, lineage, and inference-contract version.
+- [ ] MLflow package contains preprocessing, fitted HMM, complete per-state full covariance matrices, feature order, persistent state mapping/signature, profile hash, lineage, and inference-contract version.
+- [ ] Model package records covariance mode exactly `full`; a package containing a reduced covariance mode fails validation and cannot be registered/promoted.
 - [ ] Model version links back to evaluation parent/candidate run and champion-selection evidence.
-- [ ] Artifact round-trip yields identical filtered prediction on deterministic fixture.
+- [ ] Artifact round-trip yields identical filtered prediction and identical full covariance matrices on deterministic fixture.
 - [ ] Registry uses explicit registered model versions.
 - [ ] Registry can set/move `engine-champion`, `challenger`, and arbitrary consumer aliases such as `portfell-production`.
 - [ ] Alias movement is logged with source/destination version and reason.
@@ -710,13 +724,14 @@ After PR-026, PR-028/029 may run in parallel. PR-030 depends on PR-027 and API s
 ### Acceptance criteria
 
 - [ ] Loads explicit model version or registry alias from configured MLflow registry.
+- [ ] Loaded covariance-bearing HMM model validates covariance mode exactly `full` before inference.
 - [ ] Input is explicit feature-source/build reference and contract is validated.
 - [ ] Output uses filtered inference and persistent state mapping.
 - [ ] Metadata mode is `fixed_model_replay`.
 - [ ] Never labels replay as walk-forward OOS.
 - [ ] Date bounds deterministic/validated.
 - [ ] Large results return immutable prediction-build reference rather than unbounded JSON.
-- [ ] Local integration covers registered model + Parquet input without network.
+- [ ] Local integration covers registered full-covariance model + Parquet input without network.
 
 ## PR-029 — Add realtime/latest inference API
 
@@ -730,10 +745,11 @@ After PR-026, PR-028/029 may run in parallel. PR-030 depends on PR-027 and API s
 
 - [ ] Resolves explicit profile + model alias/version from configured MLflow registry.
 - [ ] Production default resolves registry through `http://10.10.1.3:5000`.
+- [ ] Loaded covariance-bearing HMM model validates covariance mode exactly `full` before inference.
 - [ ] Loads only feature data available up to as-of.
 - [ ] Feature contract matches registered model exactly.
 - [ ] Response validates `RegimePredictionV1` and includes resolved model version/lineage.
-- [ ] MLflow unavailable, missing data, incompatible features, or quality failure returns explicit non-200; no stale/invented prediction.
+- [ ] MLflow unavailable, missing data, incompatible features, invalid covariance contract, or quality failure returns explicit non-200; no stale/invented prediction.
 - [ ] Local integration proves deterministic latest prediction without external network.
 
 ## PR-030 — Add walk-forward OOS prediction retrieval API
@@ -831,7 +847,7 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] Verification fails if configured production URI differs unless explicit migration/override flag is supplied.
 - [ ] Smoke test verifies Tracking Server reachability and server metadata before writes.
 - [ ] Smoke test creates uniquely named disposable experiment/run, logs parameters/metrics/artifact, reads them back, and verifies registry create/read/version/alias behavior.
-- [ ] Smoke test verifies representative evaluation metric names and candidate scorecard artifact can round-trip through the real server.
+- [ ] Smoke test verifies representative evaluation metric names, covariance=`full`, and candidate scorecard artifact can round-trip through the real server.
 - [ ] Disposable resources are uniquely namespaced; cleanup is limited strictly to resources created by the smoke test.
 - [ ] No credential/token is committed.
 
@@ -846,13 +862,15 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 ### Acceptance criteria
 
 - [ ] Uses deterministic fixture Parquet and local-file MLflow only.
-- [ ] Candidate grid includes Gaussian K=2/K=3/K=4 diagonal and K=3 full.
+- [ ] Candidate grid includes exactly Gaussian K=2 full, K=3 full, and K=4 full.
+- [ ] E2E setup asserts that a diagonal/reduced-covariance candidate is rejected before fitting.
 - [ ] Runs leak-free walk-forward OOS evaluation.
 - [ ] Produces fold-level normalized OOS predictive log likelihood for every valid fold.
 - [ ] Produces candidate scorecards and candidate comparison table.
 - [ ] Applies all hard gates and deterministic ranking exactly as documented in `EVALUATION.md`.
 - [ ] Selects engine champion and records complete reason/ranking chain.
 - [ ] Registers winner locally and assigns `engine-champion`.
+- [ ] Registered winner round-trips complete per-state full covariance matrices including off-diagonal terms.
 - [ ] Publishes immutable OOS predictions.
 - [ ] Exercises fixed-model batch API and confirms `fixed_model_replay`.
 - [ ] Exercises latest API and validates `RegimePredictionV1`.
@@ -879,16 +897,17 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] API doc warns `fixed_model_replay` is not leak-free OOS evidence.
 - [ ] Consumer contract documents `RegimePrediction.v1` and immutable OOS fields.
 - [ ] Portfell doc states Portfell owns ETF universe, regime-conditioned returns/covariances, portfolio optimization/backtesting/costs, and application-level model choice.
-- [ ] `EVALUATION.md` lists current candidate models, walk-forward process, all implemented metrics, MLflow hierarchy/metric names/artifacts, hard gates, ranking/tie-break order, and consumer-vs-engine boundary.
+- [ ] `EVALUATION.md` lists exactly the full-covariance candidate models, walk-forward process, all implemented metrics, MLflow hierarchy/metric names/artifacts, hard gates, ranking/tie-break order, and consumer-vs-engine boundary.
+- [ ] Documentation explicitly states that reduced covariance modes are unsupported throughout the engine.
 - [ ] Documentation cross-links `EVALUATION.md` from README/OPERATIONS/model-lifecycle docs where relevant.
-- [ ] No documented metric, model candidate, or selection rule disagrees with implementation/profile configuration.
+- [ ] No documented metric, model candidate, covariance mode, or selection rule disagrees with implementation/profile configuration.
 - [ ] Future consumers can reuse registered models/API without HMM implementation imports or engine fork.
 
 ---
 
 # Wave 6 — Optional model challengers after MVP
 
-These adapters are isolated behind the model protocol and are not required for the first Gaussian-HMM platform. Because they change the candidate universe, each challenger PR must update `EVALUATION.md` in the same PR.
+These adapters are isolated behind the model protocol and are not required for the first Gaussian-HMM platform. Because they change the candidate universe, each challenger PR must update `EVALUATION.md` in the same PR. The full-covariance-only architecture rule remains mandatory for all covariance-bearing challengers.
 
 ## PR-037 — Add Student-t HMM challenger adapter
 
@@ -902,11 +921,12 @@ These adapters are isolated behind the model protocol and are not required for t
 
 - [ ] Satisfies common model/artifact/predictive-score protocol.
 - [ ] Additional dependency supports Python 3.14.
-- [ ] Degrees-of-freedom/covariance configuration explicit.
+- [ ] Degrees-of-freedom configuration explicit; covariance mode is fixed to `full` with a separate full covariance matrix per state.
+- [ ] `diag`, `spherical`, `tied`, and any non-`full` covariance configuration fail closed.
 - [ ] Filtered inference causal and alignment-compatible.
 - [ ] Participates in existing walk-forward/grid/selection with no consumer special case.
 - [ ] Emits the same required evaluation metrics/scorecard fields where semantically applicable.
-- [ ] Deterministic heavy-tail synthetic test proves fit/inference/evaluation.
+- [ ] Deterministic heavy-tail multivariate synthetic test proves full-covariance fit/inference/evaluation and off-diagonal preservation.
 - [ ] `EVALUATION.md` candidate table and any model-specific metric caveats are updated.
 
 ## PR-038 — Add duration-aware HSMM challenger adapter
@@ -922,10 +942,11 @@ These adapters are isolated behind the model protocol and are not required for t
 - [ ] Satisfies common model protocol or documents minimal explicit extension for durations.
 - [ ] New dependency supports Python 3.14.
 - [ ] Duration parameters explicit, validated, serialized, versioned.
+- [ ] Any multivariate covariance-bearing emission model is fixed to a separate full covariance matrix per hidden state; reduced covariance modes fail closed.
 - [ ] Inference causal for OOS/production.
 - [ ] Participates in same walk-forward/grid/selection interface with no consumer change.
 - [ ] Emits common scorecard metrics plus explicit duration-model diagnostics.
-- [ ] Persistent-regime synthetic test proves duration metadata/prediction artifact round-trip.
+- [ ] Persistent-regime synthetic test proves duration metadata, full covariance matrices, and prediction artifact round-trip.
 - [ ] `EVALUATION.md` candidate table and HSMM-specific evaluation semantics are updated.
 
 ---
@@ -1006,6 +1027,7 @@ Optional:
 12. An agent must never delete or mutate MLflow experiments/models that it did not create itself.
 13. Any PR changing evaluation behavior listed in architecture rule 13 must include `EVALUATION.md` in its allowed files and update it in the same PR.
 14. Agents must treat metric names as public observability contracts once introduced; renames require updating implementation, tests, MLflow logging, and `EVALUATION.md` atomically.
+15. Agents must never introduce a diagonal, spherical, tied, or other reduced covariance mode for a covariance-bearing HMM; only per-state full covariance is allowed.
 
 ## Definition of complete MVP
 
@@ -1017,14 +1039,16 @@ The MVP is complete after PR-036 when:
 - PRs auto-complete only after `merge-gate`;
 - versioned model profiles can be loaded;
 - Parquet features are consumed without upstream loader imports;
-- Gaussian HMM K=2/K=3/K=4 diagonal and K=3 full candidates can be compared;
+- Gaussian HMM K=2 full, K=3 full, and K=4 full candidates can be compared, with all reduced covariance modes rejected;
+- every fitted Gaussian state retains a complete full covariance matrix including off-diagonal cross-feature covariance terms;
 - multi-start fitting, persistent alignment, causal filtering, and walk-forward OOS evaluation are implemented;
 - each valid fold produces normalized OOS predictive log likelihood per observation;
 - candidate scorecards expose generalisation, fit, stability, state-quality, persistence, and uncertainty metrics;
-- hard gates prevent degenerate/unstable models from promotion;
-- `xetra_cross_asset_v1` ranks valid candidates primarily by mean OOS predictive log likelihood per observation, then fold stability, then BIC/AIC/simplicity deterministic tie breaks;
+- AIC/BIC complexity accounting uses the correct full-covariance free-parameter count;
+- hard gates prevent degenerate/unstable models or invalid covariance matrices from promotion;
+- `xetra_cross_asset_v1` ranks valid candidates primarily by mean OOS predictive log likelihood per observation, then fold stability, then BIC/AIC/fewer-states deterministic tie breaks;
 - MLflow tracks parent, candidate, and fold evidence and stores scorecard/comparison artifacts;
-- MLflow packages promoted models;
+- MLflow packages promoted models including complete full covariance matrices;
 - production configuration points to the shared MLflow Tracking Server / Model Registry at `http://10.10.1.3:5000`;
 - the real shared MLflow instance has an explicit successful opt-in smoke-test path;
 - `engine-champion`, `challenger`, and consumer-specific aliases are supported;
