@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
 
+# This one-shot workflow updates BACKLOG.md after PR-054 is merged, then deletes itself.
 jobs:
   update-backlog:
     if: github.actor != 'github-actions[bot]'
