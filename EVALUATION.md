@@ -112,6 +112,15 @@ evaluation_plan_hash
 
 Changing rows strictly after first-fold `train_end` may change execution/source lineage but must not change the definition hash or selection evidence.
 
+### Non-decision diagnostics
+
+The frozen production/evaluation feature set is never changed after first-fold selection. Two diagnostics are permitted and must be labelled non-decision evidence:
+
+1. first-fold Stage-2 threshold sensitivity at `0.80`, `0.85`, and `0.90`; canonical policy remains exactly `0.85`;
+2. shadow reruns of the same Stage-1/Stage-2 selector on later fold TRAIN samples to measure selected-feature overlap/stability versus the frozen set.
+
+These diagnostics may not change any fold input, definition hash, champion ranking, or registered model. They exist only to expose feature-selection fragility.
+
 ## 5. Walk-forward plan
 
 ```text
@@ -121,9 +130,12 @@ step_source_observations=63
 allow_partial_final_test=false
 minimum_model_train_observations=504
 minimum_model_test_observations=42
+ranking_abs_tolerance=1e-12
 ```
 
 Windows expand. TEST starts strictly after TRAIN. No synthetic dates. Every fold has stable one-based `fold_index`, deterministic `fold_id`, and UTC train/test bounds.
+
+The evaluation cutoff is exactly the `test_end` of the final planned complete fold. No source observation after that timestamp may participate in walk-forward scoring or the subsequent final production refit for that evaluation run.
 
 Source-row windowing occurs first; resolved-feature complete-case filtering then determines usable HMM observation counts.
 
@@ -161,7 +173,7 @@ init_params=stmc
 
 Reduced covariance modes `diag`, `spherical`, `tied`, or any other non-`full` mode are unsupported and fail closed.
 
-Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. The valid converged start with greatest TRAIN log likelihood wins that fold; ties use lower seed value. Fewer than 6 valid starts or success rate <0.75 invalidates the fold.
+Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. The valid converged start with greatest TRAIN log likelihood wins that fold; numeric values within absolute tolerance `1e-12` are tied and lower seed wins. Fewer than 6 valid starts or success rate <0.75 invalidates the fold.
 
 ## 7. Causal forward filter
 
@@ -240,9 +252,9 @@ RMS(s1,s2)=sqrt(mean((s1-s2)^2))
 
 First valid fold:
 
-- lexicographically sort complete signature vectors ascending;
-- assign resulting order to `state_0...`;
-- if two signatures cannot be uniquely ordered within absolute tolerance `1e-10`, fold invalid.
+- construct `signature_sort_key = tuple(round(component, 10) for component in signature)`;
+- sort keys lexicographically ascending and assign `state_0...`;
+- if any two rounded sort keys are identical, initial alignment is ambiguous and the fold is invalid.
 
 Later folds:
 
@@ -268,7 +280,7 @@ For every full covariance state matrix:
 - minimum diagonal variance >=`1e-12`;
 - Cholesky succeeds without unrecorded jitter.
 
-Initial probabilities and every transition row must be finite, nonnegative and normalized within validation tolerance defined in code tests; no silent renormalization of materially invalid parameters.
+Initial probabilities and every transition row must be finite, nonnegative and normalized within absolute tolerance `1e-10`; values outside that tolerance fail rather than being silently renormalized.
 
 For a Gaussian HMM with K states and d features:
 
@@ -299,7 +311,7 @@ OOS occupancy is diagnostic only.
 
 Dominant-state durations are counts of consecutive retained model observations, not calendar days.
 
-`switches_per_year` uses actual returned observation timestamp span:
+`switches_per_year` uses actual UTC timestamp span:
 
 ```text
 switch_count / elapsed_calendar_days * 365.2425
@@ -351,6 +363,8 @@ After hard gates, deterministic order is:
 6. fewer states K;
 7. lexicographically earlier canonical candidate ID.
 
+For every numeric ranking stage, candidates whose values differ by <=`1e-12` are tied and comparison proceeds to the next stage. K and candidate ID are exact tie-breaks.
+
 There is no weighted score. TRAIN likelihood alone cannot select the champion. Consumer economics never enter this ranking.
 
 ## 14. Mandatory final production refit
@@ -360,7 +374,7 @@ No walk-forward fold model is registered as production.
 After statistical champion K is selected:
 
 1. keep frozen selected features unchanged;
-2. take all source rows from the same evaluation source snapshot through the evaluation cutoff;
+2. take all source rows from the same evaluation source snapshot through the exact evaluation cutoff defined in section 5;
 3. apply identical resolved-feature complete-case observation mask;
 4. require >=504 usable observations;
 5. fit a fresh scaler over the full refit sample;
@@ -378,6 +392,8 @@ trained_through_timestamp
 terminal_filtered_probabilities
 ```
 
+`trained_through_timestamp` is the final retained complete model observation at or before the evaluation cutoff; it need not equal cutoff if the cutoff source row is incomplete across final features.
+
 Final refit never retroactively changes the OOS evaluation/ranking.
 
 Only this final-refit artifact may be registered as a version of `regime-xetra`.
@@ -393,7 +409,7 @@ For inference entirely after `trained_through_timestamp`:
 If replay includes a timestamp at or before `trained_through_timestamp`:
 
 - filter from stored `inference_origin_timestamp` using model initial probabilities through requested end;
-- return only predictions inside `[start,end]`.
+- return only predictions inside the inclusive interval `[start,end]`.
 
 The client's arbitrary replay start never becomes a new HMM initial condition.
 
@@ -434,6 +450,8 @@ Trend x-axis is actual TEST-end UTC. Invalid/missing folds appear as gaps/explic
 Per valid fold, retain machine-readable transition matrix and full covariance matrices plus transition/covariance heatmaps preserving persistent states, exact feature order and off-diagonals.
 
 Required parent cross-candidate plots and all feature-selection visual-audit plots follow `PLOT_STYLE.md`.
+
+Feature-selection non-decision diagnostics from section 4 are stored under `feature_selection/diagnostics/` and clearly labelled as diagnostics; they must never be used by the selector or champion code path.
 
 `plots/manifest.json` deterministically maps plots to exact source artifacts/metrics/hashes.
 
