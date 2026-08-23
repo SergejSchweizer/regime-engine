@@ -85,6 +85,8 @@ No future test row may influence preprocessing, fitting, state alignment, or an 
 
 The default evaluation uses expanding training windows. Each fold has a training interval strictly before its test interval. The exact minimum training observations, test-window size, partial-final-window policy, and overlap policy are declared in the model profile.
 
+Every fold has a deterministic one-based `fold_index`, a stable `fold_id`, and explicit UTC `train_start`, `train_end`, `test_start`, and `test_end` bounds. The same fold identifiers and temporal bounds must be used by evaluation results, MLflow metric history, artifacts, and plots. Fold-to-fold visualizations use the real `test_end` date as the human-facing x-axis; `fold_index` is the machine ordering key.
+
 Backtest-safe test inference uses **filtered probabilities** only.
 
 Greek symbols used below:
@@ -444,6 +446,91 @@ At minimum:
 - `oos_confidence_mean`;
 - all hard-gate pass/fail indicators that are representable as scalar metrics/tags.
 
+## Fold-to-fold MLflow observability
+
+Fold runs remain the auditable source of individual fold results, but they are not sufficient for convenient trend analysis. Therefore every scalar fold diagnostic required by this contract must also be logged on its **candidate run as MLflow metric history**.
+
+The required logging semantics are:
+
+- `step` is the deterministic one-based `fold_index`;
+- the metric timestamp is the UTC `test_end` instant where the MLflow client supports an explicit timestamp;
+- `fold_timeline.parquet` is the authoritative mapping from `fold_index` and `fold_id` to train/test bounds;
+- invalid folds remain present in `fold_timeline.parquet` and `fold_metrics.parquet`, but unavailable scalar values are not invented, imputed, forward-filled, or interpolated;
+- line plots must show invalid/missing folds as gaps or explicit invalid markers, never as a continuous fabricated value;
+- aggregate candidate metrics such as `oos_predictive_loglik_mean` keep their existing names and are distinct from fold-history names.
+
+Canonical candidate-run fold-history keys include at minimum:
+
+- `fold_train_loglik`;
+- `fold_oos_predictive_loglik`;
+- `fold_oos_predictive_loglik_per_obs`;
+- `fold_aic`;
+- `fold_bic`;
+- `fold_multistart_success_rate`;
+- `fold_min_hard_occupancy`;
+- `fold_min_soft_occupancy`;
+- `fold_max_state_signature_drift`;
+- `fold_mean_state_duration`;
+- `fold_switches_per_year`;
+- `fold_oos_entropy_mean`;
+- `fold_oos_confidence_mean`.
+
+Per-state scalar histories use stable persistent-state identifiers, including:
+
+- `fold_hard_occupancy_state_<id>`;
+- `fold_soft_occupancy_state_<id>`;
+- `fold_self_transition_state_<id>`;
+- `fold_mean_duration_state_<id>`;
+- `fold_state_signature_drift_state_<id>`.
+
+Any additional scalar metric introduced into the fold scorecard must either receive an equivalent stable `fold_*` history key or be explicitly documented as non-trendable with a reason.
+
+### Required candidate-run trend plots
+
+MLflow metric history provides native line-chart data. In addition, each candidate run must store deterministic PNG trend artifacts with the real fold `test_end` date on the x-axis so the operator can immediately relate instability to market periods. Required plots are:
+
+- `plots/oos_predictive_loglik_per_obs_by_fold.png`;
+- `plots/train_loglik_by_fold.png`;
+- `plots/aic_by_fold.png`;
+- `plots/bic_by_fold.png`;
+- `plots/multistart_success_rate_by_fold.png`;
+- `plots/hard_occupancy_by_fold.png`;
+- `plots/soft_occupancy_by_fold.png`;
+- `plots/self_transition_by_fold.png`;
+- `plots/state_signature_drift_by_fold.png`;
+- `plots/state_duration_by_fold.png`;
+- `plots/switches_per_year_by_fold.png`;
+- `plots/oos_entropy_by_fold.png`;
+- `plots/oos_confidence_by_fold.png`.
+
+Occupancy, self-transition, duration, and signature-drift plots may contain one line per persistent state plus the candidate summary line where useful. Plots with metrics on incompatible numerical scales must remain separate; no hidden secondary axes are permitted.
+
+### Matrix diagnostics by fold
+
+Transition and covariance matrices are not scalar metric histories. For every valid fold they must be retained as machine-readable artifacts and visual heatmaps:
+
+- `folds/<fold_id>/transition_matrix.json` or Parquet equivalent;
+- `plots/folds/<fold_id>/transition_matrix.png`;
+- full covariance matrix artifact for every persistent state;
+- `plots/folds/<fold_id>/covariance_state_<id>.png` for every persistent state.
+
+The covariance heatmaps must retain off-diagonal terms and exact feature order. Heatmaps are diagnostic evidence only and must not alter champion-selection rules.
+
+### Parent-run cross-candidate plots
+
+Because all MVP candidates use the same walk-forward split plan, the parent evaluation run must provide aligned comparison plots for the most important fold trends. At minimum:
+
+- `plots/candidates/oos_predictive_loglik_per_obs_by_fold.png`;
+- `plots/candidates/multistart_success_rate_by_fold.png`;
+- `plots/candidates/min_hard_occupancy_by_fold.png`;
+- `plots/candidates/max_state_signature_drift_by_fold.png`;
+- `plots/candidates/oos_entropy_by_fold.png`;
+- `plots/candidates/oos_confidence_by_fold.png`.
+
+Each line is identified by stable candidate ID. The x-axis is the shared fold `test_end` date, not wall-clock logging time. A candidate with an invalid fold must show a gap/invalid marker for that fold instead of interpolation.
+
+A deterministic `plots/manifest.json` records every generated plot path, source metric keys, candidate/fold IDs, x-axis field, and source artifact hash so plots remain auditable rather than presentation-only output.
+
 ### Fold-run metrics
 
 At minimum:
@@ -466,16 +553,20 @@ At minimum:
 
 - `model_spec.json`;
 - `evaluation_plan.json`;
+- `fold_timeline.parquet`;
 - `fold_metrics.parquet`;
 - `candidate_scorecard.json`;
 - `candidate_comparison.parquet` on the parent run;
 - `multistart_metrics.parquet`;
 - `transition_matrix.json` or Parquet equivalent;
+- full covariance matrices/model-spec evidence;
 - `state_signatures.json`;
 - `state_alignment.json`;
 - `occupancy_by_fold.parquet`;
 - `duration_by_fold.parquet`;
 - `oos_predictions.parquet` reference/build metadata;
+- `plots/manifest.json`;
+- all required candidate trend plots, parent cross-candidate plots, and per-fold transition/full-covariance heatmaps;
 - feature order and preprocessing metadata;
 - champion-selection result including rejected candidates and reasons.
 
