@@ -1,0 +1,65 @@
+name: PR-040 one-shot loader rename
+
+on:
+  push:
+    branches:
+      - pr/PR-040-rename-regime-loader
+
+permissions:
+  contents: write
+
+jobs:
+  rename-loader:
+    if: ${{ !contains(github.event.head_commit.message, '[rename-loader-complete]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rename all upstream loader references
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t files < <(git grep -Il \
+            -e 'market-regime-loader' \
+            -e 'market_regime_loader' \
+            -e 'Market Regime Loader' \
+            -- ':!*.lock' || true)
+
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo 'No loader references found.' >&2
+            exit 1
+          fi
+
+          for file in "${files[@]}"; do
+            sed -i \
+              -e 's/market-regime-loader/regime-loader/g' \
+              -e 's/market_regime_loader/regime_loader/g' \
+              -e 's/Market Regime Loader/Regime Loader/g' \
+              "${file}"
+          done
+
+          rm -f .github/workflows/pr-040-rename-loader.yml
+
+          if git grep -n -I \
+            -e 'market-regime-loader' \
+            -e 'market_regime_loader' \
+            -e 'Market Regime Loader' -- .; then
+            echo 'Old loader naming remains after replacement.' >&2
+            exit 1
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.' >&2
+            exit 1
+          fi
+
+          git commit -m 'docs(PR-040-rename-regime-loader): rename upstream loader references [rename-loader-complete]'
+          git push origin HEAD
