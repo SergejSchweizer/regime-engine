@@ -48,6 +48,7 @@ regime-loader
 14. Engine champion selection must use explicit hard gates and deterministic ranking. No hidden or weighted “magic score” is permitted.
 15. For `xetra_cross_asset_v1`, the default primary ranking statistic is **mean OOS predictive log likelihood per observation**; fold stability is secondary and BIC/AIC are tertiary/tie-break diagnostics.
 16. **Full-covariance-only HMM rule:** every covariance-bearing HMM emission model uses one full covariance matrix per hidden state. `diag`, `spherical`, `tied`, or any other reduced covariance mode is unsupported and must fail validation; no implementation, profile, test, or documentation may silently fall back to a reduced covariance structure.
+17. **Fold-observability rule:** every scalar fold diagnostic required by `EVALUATION.md` is logged both on its fold run and as ordered candidate-run MLflow metric history using deterministic `fold_index`; human-facing plots use the real fold `test_end` date. Missing/invalid folds are never interpolated. Non-scalar transition/full-covariance matrices remain machine-readable fold artifacts and are also rendered as diagnostic heatmaps.
 
 ## Git discipline for every PR
 
@@ -142,7 +143,7 @@ Only PR-001 starts immediately. PR-002 and PR-003 start in parallel after PR-001
 - [ ] `.python-version` contains `3.14.7`.
 - [ ] `pyproject.toml` defines `market-regime-engine` and `requires-python = ">=3.14,<3.15"`.
 - [ ] Source layout is `src/market_regime_engine`.
-- [ ] Runtime dependencies include Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, and a Python-3.14-compatible Gaussian-HMM implementation with full-covariance support.
+- [ ] Runtime dependencies include Pydantic, NumPy, SciPy, scikit-learn, Polars, PyArrow, FastAPI, Uvicorn, HTTPX, MLflow, Matplotlib, and a Python-3.14-compatible Gaussian-HMM implementation with full-covariance support.
 - [ ] Dev dependencies include pytest, pytest-cov, pytest-xdist, Ruff, mypy, and build tooling.
 - [ ] Ruff targets Python 3.14; mypy is strict.
 - [ ] pytest markers include `unit`, `integration`, and `external_service`.
@@ -241,6 +242,8 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 - [ ] Requires persistent state alignment for consumer-facing predictions.
 - [ ] Defines `regime-loader -> engine -> consumers` dependency direction without package coupling.
 - [ ] Documents the full-covariance-only HMM rule and explicitly excludes reduced covariance modes.
+- [ ] Documents the MLflow observability hierarchy: parent evaluation run -> candidate run with fold metric histories -> auditable fold runs/artifacts.
+- [ ] Documents that fold trend plots use actual TEST-end dates and that invalid folds are shown as gaps/invalid markers rather than interpolated.
 - [ ] Model lifecycle defines `candidate`, `validated`, `engine-champion`, `challenger`, and consumer-specific aliases such as `portfell-production`.
 - [ ] `EVALUATION.md` is linked as the normative evaluation sidecar and its maintenance rule is documented.
 - [ ] README includes system diagram and links.
@@ -373,9 +376,11 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 - [ ] Settings expose the shared endpoint as documented production/NAS default while allowing local-file mode.
 - [ ] Production validation rejects missing/blank tracking URI with actionable error.
 - [ ] Narrow tracking and registry ports are defined for application code.
+- [ ] Tracking port supports repeated metric logging with explicit metric key, numeric value, deterministic `step`, and optional timestamp so candidate-run fold histories can be represented without direct MLflow coupling in evaluation code.
+- [ ] Artifact logging boundary supports deterministic PNG/JSON/Parquet diagnostic artifacts and nested artifact paths.
 - [ ] No experiment ID, registered-model version, token, username, or password is hard-coded.
 - [ ] Unit/local-file mode never contacts `10.10.1.3`.
-- [ ] Unit tests cover production URI parsing, local-file URI, invalid URI, and no-network construction.
+- [ ] Unit tests cover production URI parsing, local-file URI, invalid URI, no-network construction, repeated metric-history logging contract, and nested artifact logging contract.
 
 ## PR-013 — Add FastAPI skeleton and health routes
 
@@ -543,9 +548,11 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 - [ ] Every test row is strictly after its training interval.
 - [ ] No test row leaks into same fold's train data.
 - [ ] Calendar gaps create no synthetic rows.
+- [ ] Every split has deterministic one-based `fold_index`, stable `fold_id`, and explicit UTC `train_start`, `train_end`, `test_start`, and `test_end`.
+- [ ] Split plan exposes a deterministic fold-timeline representation suitable for MLflow metric-history ordering and real-date plot axes.
 - [ ] Split plan deterministic/serializable and has deterministic hash.
-- [ ] Tests cover normal, short, gaps, boundaries, overlap rejection, and partial final window.
-- [ ] `EVALUATION.md` documents walk-forward semantics and leakage constraints.
+- [ ] Tests cover normal, short, gaps, boundaries, overlap rejection, partial final window, stable fold IDs, and monotonic fold indices/test-end dates.
+- [ ] `EVALUATION.md` documents walk-forward semantics, fold timeline semantics, and leakage constraints.
 
 ## PR-021 — Add reusable Xetra cross-asset model profile and explicit selection policy
 
@@ -593,22 +600,26 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Alignment uses only current/prior training information.
 - [ ] Test rows use causal filtering only.
 - [ ] Candidate predictive scoring uses the fitted training model without test refit.
+- [ ] Each fold result preserves deterministic `fold_index`, `fold_id`, train/test UTC bounds, observation counts, and validity status from the split plan.
 - [ ] Each fold records unnormalized OOS predictive log likelihood, test observation count, and normalized `oos_predictive_loglik_per_obs`.
+- [ ] Fold result exposes every scalar diagnostic required for MLflow fold-history logging, including train/OOS likelihood, AIC/BIC, multistart success, occupancy, self-transition, duration, signature drift, entropy/confidence, and applicable candidate-summary fold values.
+- [ ] `fold_metrics` output has exactly one row per planned fold, including invalid folds with explicit failure reason; unavailable values remain missing and are never imputed/interpolated.
 - [ ] One OOS prediction row per eligible test timestamp with fold ID/lineage.
 - [ ] Duplicate OOS timestamps fail unless an explicit non-overlap policy prevents them before execution.
 - [ ] Fold diagnostics include fit, multistart, occupancy, transition, duration, entropy/confidence, alignment, date bounds, and quality status.
 - [ ] Fold validity is explicit; invalid folds carry reasons and cannot silently contribute to candidate means.
 - [ ] Mutating future rows cannot change earlier OOS predictions or earlier fold metrics.
 - [ ] Integration test verifies normalized predictive log likelihood using deterministic synthetic full-covariance data.
-- [ ] `EVALUATION.md` matches runner outputs and exact metric names.
+- [ ] Integration test verifies fold indices and TEST-end dates are strictly ordered and identical to the declared split plan.
+- [ ] `EVALUATION.md` matches runner outputs, fold timeline semantics, and exact metric names.
 
-## PR-023 — Add MLflow experiment tracking, fold metrics, and candidate scorecards
+## PR-023 — Add MLflow experiment tracking, fold metric histories, diagnostic plots, and candidate scorecards
 
 - **Status:** BLOCKED by PR-012, PR-022
 - **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/023-mlflow-experiment-tracking`
 - **Depends on:** PR-012, PR-022
-- **Allowed files:** `src/market_regime_engine/mlflow_support/tracking.py`, `tests/unit/mlflow_support/test_tracking.py`, `tests/integration/test_mlflow_file_tracking.py`, `EVALUATION.md`
+- **Allowed files:** `src/market_regime_engine/mlflow_support/tracking.py`, `src/market_regime_engine/mlflow_support/plots.py`, `tests/unit/mlflow_support/test_tracking.py`, `tests/unit/mlflow_support/test_plots.py`, `tests/integration/test_mlflow_file_tracking.py`, `EVALUATION.md`
 
 ### Acceptance criteria
 
@@ -618,14 +629,27 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Candidate runs log family, K, covariance=`full`, candidate ID, seed policy, convergence settings, feature/order hash, and all aggregate scorecard metrics.
 - [ ] Candidate aggregate metrics include `oos_predictive_loglik_mean`, `oos_predictive_loglik_std`, `oos_predictive_loglik_median`, `oos_predictive_loglik_worst_fold`, `oos_predictive_loglik_best_fold`, `valid_fold_rate`, `train_loglik_mean`, `aic_mean`, `bic_mean`, `multistart_success_rate_mean`, `min_hard_occupancy`, `min_soft_occupancy`, `max_state_signature_drift`, `alignment_failure_count`, `mean_state_duration`, `switches_per_year`, `oos_entropy_mean`, and `oos_confidence_mean`.
 - [ ] Fold runs log train/test bounds/counts, train likelihood, unnormalized and normalized OOS predictive likelihood, AIC/BIC, multistart metrics, occupancy by state, self-transition by state, duration by state, state drift, entropy/confidence, convergence/alignment/gate status.
-- [ ] Required artifacts include `evaluation_plan.json`, `fold_metrics.parquet`, `candidate_scorecard.json`, `multistart_metrics.parquet`, transition matrix, full covariance matrices/model spec, state signatures, state alignment, occupancy-by-fold, duration-by-fold, OOS prediction reference, feature/preprocessing metadata.
+- [ ] Every scalar fold metric required by `EVALUATION.md` is also logged on the corresponding candidate run as MLflow metric history with deterministic `step=fold_index`.
+- [ ] Canonical history keys include at minimum `fold_train_loglik`, `fold_oos_predictive_loglik`, `fold_oos_predictive_loglik_per_obs`, `fold_aic`, `fold_bic`, `fold_multistart_success_rate`, `fold_min_hard_occupancy`, `fold_min_soft_occupancy`, `fold_max_state_signature_drift`, `fold_mean_state_duration`, `fold_switches_per_year`, `fold_oos_entropy_mean`, and `fold_oos_confidence_mean`.
+- [ ] Per-state histories use persistent IDs and stable keys including `fold_hard_occupancy_state_<id>`, `fold_soft_occupancy_state_<id>`, `fold_self_transition_state_<id>`, `fold_mean_duration_state_<id>`, and `fold_state_signature_drift_state_<id>`.
+- [ ] Where supported by MLflow, history points use fold `test_end` UTC as their explicit metric timestamp; `fold_timeline.parquet` remains the authoritative `fold_index`/`fold_id` -> train/test-bound mapping.
+- [ ] Invalid folds remain visible in timeline/metrics artifacts; missing metric values are not invented or logged as interpolated points.
+- [ ] Candidate-run deterministic PNG trend artifacts use actual fold TEST-end dates on the x-axis and include exactly: `plots/oos_predictive_loglik_per_obs_by_fold.png`, `plots/train_loglik_by_fold.png`, `plots/aic_by_fold.png`, `plots/bic_by_fold.png`, `plots/multistart_success_rate_by_fold.png`, `plots/hard_occupancy_by_fold.png`, `plots/soft_occupancy_by_fold.png`, `plots/self_transition_by_fold.png`, `plots/state_signature_drift_by_fold.png`, `plots/state_duration_by_fold.png`, `plots/switches_per_year_by_fold.png`, `plots/oos_entropy_by_fold.png`, and `plots/oos_confidence_by_fold.png`.
+- [ ] Invalid/missing folds appear as gaps or explicit invalid markers in trend plots; no line is silently interpolated across unavailable data.
+- [ ] Metrics with incompatible numerical scales are plotted separately; hidden secondary axes are forbidden.
+- [ ] Every valid fold stores machine-readable transition/full-covariance artifacts plus `plots/folds/<fold_id>/transition_matrix.png` and `plots/folds/<fold_id>/covariance_state_<id>.png` heatmaps for every persistent state.
+- [ ] Covariance heatmaps retain exact feature order and all off-diagonal terms.
+- [ ] `plots/manifest.json` deterministically records every generated plot path, source metric keys, candidate/fold IDs, x-axis field, and source artifact hash.
+- [ ] Required artifacts include `evaluation_plan.json`, `fold_timeline.parquet`, `fold_metrics.parquet`, `candidate_scorecard.json`, `multistart_metrics.parquet`, transition matrix, full covariance matrices/model spec, state signatures, state alignment, occupancy-by-fold, duration-by-fold, OOS prediction reference, feature/preprocessing metadata, and plot manifest/plots.
 - [ ] Parent run receives `candidate_comparison.parquet` and later champion-selection artifact.
-- [ ] Metric/tag names are stable and documented in `EVALUATION.md`.
+- [ ] Metric/tag/history names and artifact paths are stable and documented in `EVALUATION.md`.
 - [ ] OOS prediction artifact reference is logged; large data is not silently embedded as ad-hoc untracked output.
+- [ ] Unit tests verify deterministic history-key generation, step ordering, persistent-state naming, plot paths, no interpolation, and plot-manifest content.
+- [ ] Required integration with local file-backed MLflow verifies history point count/steps equal valid fold metrics, explicit fold timeline round-trip, and all required candidate plot/heatmap artifacts exist.
 - [ ] Unit tests use fake port; required integration uses local file-backed MLflow and no external service.
 - [ ] No required test attempts the shared NAS endpoint.
 
-## PR-024 — Add candidate-grid orchestration and aggregate fold statistics
+## PR-024 — Add candidate-grid orchestration, aggregate fold statistics, and parent comparison plots
 
 - **Status:** BLOCKED by PR-007, PR-015, PR-022, PR-023
 - **Git status:** PLANNED — clean before/after.
@@ -644,9 +668,13 @@ PR-022 is the convergence point. PR-023 and PR-027 may run in parallel after it.
 - [ ] Aggregates include OOS predictive mean/std/median/min/max, valid-fold count/rate, train likelihood mean/std, AIC/BIC mean/std, multistart success aggregates, occupancy minima, alignment drift mean/max, duration summaries, switch frequency, entropy/confidence summaries.
 - [ ] Output includes complete aggregate diagnostics plus OOS reference and candidate scorecard.
 - [ ] Candidate comparison table has one row per candidate and all fields required by selection policy.
+- [ ] Candidate fold histories are aligned by the shared `fold_index`/TEST-end timeline before cross-candidate visualization; no candidate may silently shift fold dates.
+- [ ] Parent run stores at minimum `plots/candidates/oos_predictive_loglik_per_obs_by_fold.png`, `plots/candidates/multistart_success_rate_by_fold.png`, `plots/candidates/min_hard_occupancy_by_fold.png`, `plots/candidates/max_state_signature_drift_by_fold.png`, `plots/candidates/oos_entropy_by_fold.png`, and `plots/candidates/oos_confidence_by_fold.png`.
+- [ ] Parent comparison plots use one line per stable candidate ID and actual TEST-end dates; invalid candidate folds appear as gaps/invalid markers rather than interpolation.
+- [ ] Parent plot entries are included in the deterministic `plots/manifest.json` and link back to the same fold metrics used for selection.
 - [ ] Deterministic for fixed input/profile/seeds.
-- [ ] Integration covers at least Gaussian K=2 full and K=3 full end-to-end.
-- [ ] `EVALUATION.md` matches aggregation definitions.
+- [ ] Integration covers at least Gaussian K=2 full and K=3 full end-to-end, verifies aligned cross-candidate plot data, and verifies required parent plot artifacts.
+- [ ] `EVALUATION.md` matches aggregation and cross-candidate visualization definitions.
 
 ## PR-025 — Add hard validation gates and deterministic engine-champion selection
 
@@ -782,7 +810,8 @@ After PR-026, PR-028/029 may run in parallel. PR-030 depends on PR-027 and API s
 - [ ] Console entry point `market-regime-engine`.
 - [ ] CLI is thin adapter; no model math.
 - [ ] `train` fits explicit profile/input.
-- [ ] `evaluate` runs walk-forward candidate grid, logs MLflow scorecards, and publishes OOS predictions.
+- [ ] `evaluate` runs walk-forward candidate grid, logs MLflow aggregate scorecards, candidate fold metric histories, required fold/candidate diagnostic plots, and publishes OOS predictions.
+- [ ] `evaluate` reports the parent evaluation run ID so the operator can open the candidate histories and plot artifacts directly in MLflow.
 - [ ] `register` registers validated model and optional explicit alias.
 - [ ] Production `register` uses `MLFLOW_TRACKING_URI`, documented value `http://10.10.1.3:5000`.
 - [ ] `serve` starts FastAPI with environment host/port.
@@ -847,7 +876,9 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] Verification fails if configured production URI differs unless explicit migration/override flag is supplied.
 - [ ] Smoke test verifies Tracking Server reachability and server metadata before writes.
 - [ ] Smoke test creates uniquely named disposable experiment/run, logs parameters/metrics/artifact, reads them back, and verifies registry create/read/version/alias behavior.
-- [ ] Smoke test verifies representative evaluation metric names, covariance=`full`, and candidate scorecard artifact can round-trip through the real server.
+- [ ] Smoke test writes at least three ordered points for one representative `fold_*` metric using explicit steps, reads metric history back, and verifies step/value ordering.
+- [ ] Smoke test uploads and reads back a representative deterministic PNG trend artifact plus `plots/manifest.json` under nested artifact paths.
+- [ ] Smoke test verifies representative evaluation metric names, covariance=`full`, candidate scorecard artifact, fold timeline artifact, and plot artifact paths can round-trip through the real server.
 - [ ] Disposable resources are uniquely namespaced; cleanup is limited strictly to resources created by the smoke test.
 - [ ] No credential/token is committed.
 
@@ -866,6 +897,12 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] E2E setup asserts that a diagonal/reduced-covariance candidate is rejected before fitting.
 - [ ] Runs leak-free walk-forward OOS evaluation.
 - [ ] Produces fold-level normalized OOS predictive log likelihood for every valid fold.
+- [ ] For every required scalar fold-history metric, each candidate MLflow run contains exactly the expected valid-fold history points with deterministic steps matching `fold_index` and values matching `fold_metrics.parquet`.
+- [ ] `fold_timeline.parquet` contains every planned fold, including invalid folds, with stable IDs and exact train/test bounds.
+- [ ] Missing/invalid fold metrics are not interpolated; plot source data and manifest preserve the gap/invalid status.
+- [ ] Every candidate run contains all required trend PNGs and `plots/manifest.json`; manifest metric keys and x-axis field match `EVALUATION.md`.
+- [ ] Every valid fold contains transition-matrix heatmap and full-covariance heatmap for each persistent state, with exact feature order preserved.
+- [ ] Parent evaluation run contains all required cross-candidate fold-trend plots and each plot covers the aligned K=2/K=3/K=4 candidate timeline.
 - [ ] Produces candidate scorecards and candidate comparison table.
 - [ ] Applies all hard gates and deterministic ranking exactly as documented in `EVALUATION.md`.
 - [ ] Selects engine champion and records complete reason/ranking chain.
@@ -875,9 +912,9 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] Exercises fixed-model batch API and confirms `fixed_model_replay`.
 - [ ] Exercises latest API and validates `RegimePredictionV1`.
 - [ ] Exercises OOS retrieval.
-- [ ] Same seeds/input reproduce deterministic values/lineage where required.
+- [ ] Same seeds/input reproduce deterministic values/lineage/history steps/plot manifest where required.
 - [ ] Test never requires `10.10.1.3`; real shared MLflow is exclusively PR-034 external verification.
-- [ ] Test asserts `EVALUATION.md`-documented required scorecard fields are present.
+- [ ] Test asserts `EVALUATION.md`-documented required scorecard fields, fold history keys, and plot paths are present.
 
 ## PR-036 — Final operator, consumer, and evaluation documentation consistency
 
@@ -893,14 +930,18 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] README gives clean-checkout `.venv` bootstrap for Python 3.14.7.
 - [ ] Shared production MLflow endpoint is documented exactly as `http://10.10.1.3:5000`.
 - [ ] Operations doc gives exact `MLFLOW_TRACKING_URI=http://10.10.1.3:5000` setup and train -> evaluate -> select -> register -> alias -> serve lifecycle.
+- [ ] Operations/MLflow docs explain exactly where to find the parent run, candidate runs, native `fold_*` metric histories, auditable fold runs, `fold_timeline.parquet`, and plot artifacts in the MLflow UI.
+- [ ] Documentation lists the required candidate trend plot paths, parent cross-candidate plot paths, transition heatmaps, and per-state full-covariance heatmaps.
+- [ ] Documentation explains that MLflow history `step` is the deterministic fold index while the human-facing plot x-axis is the actual TEST-end date.
+- [ ] Documentation explains invalid-fold gaps and explicitly forbids interpreting an interpolated line as measured evaluation evidence.
 - [ ] API doc covers health, latest, fixed replay batch, and OOS retrieval.
 - [ ] API doc warns `fixed_model_replay` is not leak-free OOS evidence.
 - [ ] Consumer contract documents `RegimePrediction.v1` and immutable OOS fields.
 - [ ] Portfell doc states Portfell owns ETF universe, regime-conditioned returns/covariances, portfolio optimization/backtesting/costs, and application-level model choice.
-- [ ] `EVALUATION.md` lists exactly the full-covariance candidate models, walk-forward process, all implemented metrics, MLflow hierarchy/metric names/artifacts, hard gates, ranking/tie-break order, and consumer-vs-engine boundary.
+- [ ] `EVALUATION.md` lists exactly the full-covariance candidate models, walk-forward process, all implemented metrics, fold history keys, required diagnostic plots, MLflow hierarchy/artifacts, hard gates, ranking/tie-break order, and consumer-vs-engine boundary.
 - [ ] Documentation explicitly states that reduced covariance modes are unsupported throughout the engine.
 - [ ] Documentation cross-links `EVALUATION.md` from README/OPERATIONS/model-lifecycle docs where relevant.
-- [ ] No documented metric, model candidate, covariance mode, or selection rule disagrees with implementation/profile configuration.
+- [ ] No documented metric, model candidate, covariance mode, history key, plot path, or selection rule disagrees with implementation/profile configuration.
 - [ ] Future consumers can reuse registered models/API without HMM implementation imports or engine fork.
 
 ---
@@ -1028,6 +1069,7 @@ Optional:
 13. Any PR changing evaluation behavior listed in architecture rule 13 must include `EVALUATION.md` in its allowed files and update it in the same PR.
 14. Agents must treat metric names as public observability contracts once introduced; renames require updating implementation, tests, MLflow logging, and `EVALUATION.md` atomically.
 15. Agents must never introduce a diagonal, spherical, tied, or other reduced covariance mode for a covariance-bearing HMM; only per-state full covariance is allowed.
+16. Agents must treat `fold_*` MLflow history keys, deterministic fold IDs/indices, required diagnostic plot paths, and `plots/manifest.json` entries as public observability contracts; they may not rename, omit, reorder, interpolate, or silently substitute them.
 
 ## Definition of complete MVP
 
@@ -1042,12 +1084,19 @@ The MVP is complete after PR-036 when:
 - Gaussian HMM K=2 full, K=3 full, and K=4 full candidates can be compared, with all reduced covariance modes rejected;
 - every fitted Gaussian state retains a complete full covariance matrix including off-diagonal cross-feature covariance terms;
 - multi-start fitting, persistent alignment, causal filtering, and walk-forward OOS evaluation are implemented;
+- each planned fold has stable ID/index and exact train/test UTC bounds;
 - each valid fold produces normalized OOS predictive log likelihood per observation;
 - candidate scorecards expose generalisation, fit, stability, state-quality, persistence, and uncertainty metrics;
+- every required scalar fold metric is visible in MLflow as ordered candidate-run `fold_*` metric history with values traceable back to `fold_metrics.parquet`;
+- each candidate run contains deterministic TEST-end-date trend plots for OOS likelihood, fit/complexity, multistart stability, occupancy, persistence, state drift, and uncertainty;
+- each valid fold contains transition and per-state full-covariance heatmaps backed by machine-readable matrix artifacts;
+- parent evaluation run contains aligned cross-candidate fold-trend plots for the required comparison metrics;
+- invalid/missing fold metrics are shown as gaps/invalid evidence and are never silently interpolated;
+- `fold_timeline.parquet` and `plots/manifest.json` make all fold ordering and plot sources auditable;
 - AIC/BIC complexity accounting uses the correct full-covariance free-parameter count;
 - hard gates prevent degenerate/unstable models or invalid covariance matrices from promotion;
 - `xetra_cross_asset_v1` ranks valid candidates primarily by mean OOS predictive log likelihood per observation, then fold stability, then BIC/AIC/fewer-states deterministic tie breaks;
-- MLflow tracks parent, candidate, and fold evidence and stores scorecard/comparison artifacts;
+- MLflow tracks parent, candidate, fold evidence, metric histories, scorecard/comparison artifacts, and diagnostic plots;
 - MLflow packages promoted models including complete full covariance matrices;
 - production configuration points to the shared MLflow Tracking Server / Model Registry at `http://10.10.1.3:5000`;
 - the real shared MLflow instance has an explicit successful opt-in smoke-test path;
