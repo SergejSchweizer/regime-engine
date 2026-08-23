@@ -1,0 +1,99 @@
+name: PR-054 feature selection visual audit
+
+on:
+  push:
+    branches:
+      - pr/PR-054-feature-selection-visual-audit
+
+permissions:
+  contents: write
+
+jobs:
+  update-backlog:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: pr/PR-054-feature-selection-visual-audit
+          fetch-depth: 0
+
+      - name: Extend feature-selection observability backlog
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('BACKLOG.md')
+          workflow = Path('.github/workflows/pr-054-feature-selection-visual-audit.yml')
+          text = path.read_text(encoding='utf-8')
+
+          pr050_marker = "- [ ] `EVALUATION.md` documents the exact MLflow tags/artifact paths.\n\n---\n\n# Addenda to existing backlog PRs"
+          pr050_extension = """- [ ] `EVALUATION.md` documents the exact MLflow tags/artifact paths.
+
+### Visual audit extension
+
+The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` selection path understandable without opening raw Parquet files. These plots are observability only; they must never change feature-selection mathematics.
+
+- [ ] Parent run additionally records `pruned_feature_count = 8 - d` and `maximum_cross_block_abs_spearman = 0.85` as explicit feature-selection metadata.
+- [ ] Parent stores `feature_selection/selection_summary.md` containing policy ID/version, first-fold TRAIN bounds, the eight Stage-1 block winners with medoid score and coverage, every Stage-2 pruning decision with `abs_rho` and exact removal reason, and the final ordered feature list.
+- [ ] Parent stores `feature_selection/plots/stage1_medoid_scores.png`, showing every eligible Stage-1 candidate grouped by canonical semantic block, exact feature name, medoid score, and a clearly distinguishable marker for each selected block medoid.
+- [ ] `stage1_medoid_scores.png` is sourced only from `feature_selection/scores.parquet`; candidate ordering is deterministic and follows canonical block order then configured candidate order.
+- [ ] Parent stores exactly eight within-block Stage-1 Spearman heatmaps at `feature_selection/plots/stage1_<block_id>_correlations.png`, one for every canonical block ID.
+- [ ] Every Stage-1 heatmap uses the exact configured candidate order on both axes, shows Spearman correlation `rho`, makes the selected medoid visually identifiable, and is backed by `feature_selection/within_block_correlations.parquet` without recomputation from another sample.
+- [ ] Parent stores `feature_selection/plots/stage2_cross_block_correlations.png`, an 8x8 heatmap of the fixed Stage-2 preliminary-medoid Spearman matrix before pruning.
+- [ ] The Stage-2 heatmap uses preliminary medoids in canonical block order on both axes, uses one deterministic correlation scale, and visually marks every cell where `abs(rho) > 0.85`; exactly `0.85` is not marked as a conflict.
+- [ ] Removed Stage-2 features remain visible in the 8x8 heatmap because the plot represents the fixed pre-pruning matrix; no replacement feature is introduced and no matrix is recomputed after pruning.
+- [ ] `stage2_cross_block_correlations.png` is sourced only from `feature_selection/cross_block_correlations.parquet` and the pruning overlay only from `feature_selection/pruning.parquet`.
+- [ ] All feature-selection plots satisfy `PLOT_STYLE.md`, use self-explanatory titles/labels/legends, and are exported as deterministic PNG at the repository-required quality; SVG is also emitted where vector-compatible.
+- [ ] Every feature-selection plot is registered in the parent `plots/manifest.json` with plot path, plot type, source artifact/table, source columns, selection hash, policy ID, first-fold ID, axis labels, dimensions/DPI, and source artifact hash.
+- [ ] Unit tests inspect plotting objects/specification and deterministic source ordering rather than pixel-perfect screenshots.
+- [ ] Hermetic MLflow integration verifies all required PNGs, optional SVG counterparts where applicable, `selection_summary.md`, and manifest entries exist and are traceable to the exact Stage-1/Stage-2 evidence artifacts.
+
+---
+
+# Addenda to existing backlog PRs"""
+          if pr050_marker not in text:
+              raise SystemExit('PR-050 insertion marker missing')
+          text = text.replace(pr050_marker, pr050_extension, 1)
+
+          pr035_marker = "- [ ] MLflow contains Stage-1 and Stage-2 evidence and all candidates reference the same hash.\n- [ ] No ETF/portfolio data is required."
+          pr035_extension = """- [ ] MLflow contains Stage-1 and Stage-2 evidence and all candidates reference the same hash.
+- [ ] Parent MLflow run contains `feature_selection/selection_summary.md`, `feature_selection/plots/stage1_medoid_scores.png`, all eight `feature_selection/plots/stage1_<block_id>_correlations.png` heatmaps, and `feature_selection/plots/stage2_cross_block_correlations.png`.
+- [ ] E2E verifies the Stage-1 selected markers match `scores.parquet`, the Stage-2 conflict overlay matches `cross_block_correlations.parquet` plus `pruning.parquet`, and all feature-selection plot entries are present in `plots/manifest.json`.
+- [ ] No ETF/portfolio data is required."""
+          if pr035_marker not in text:
+              raise SystemExit('PR-035 addendum marker missing')
+          text = text.replace(pr035_marker, pr035_extension, 1)
+
+          pr036_marker = "- [ ] Documentation links MLflow evidence and explains why each removed feature was pruned."
+          pr036_extension = """- [ ] Documentation links MLflow evidence and explains why each removed feature was pruned.
+- [ ] Documentation explains how to audit Stage 1 in MLflow via `feature_selection/selection_summary.md`, `feature_selection/scores.parquet`, `feature_selection/plots/stage1_medoid_scores.png`, and the eight within-block correlation heatmaps.
+- [ ] Documentation explains how to audit Stage 2 via `feature_selection/cross_block_correlations.parquet`, `feature_selection/pruning.parquet`, and `feature_selection/plots/stage2_cross_block_correlations.png`, including the `abs(rho) > 0.85` conflict rule.
+- [ ] Documentation states that the Stage-2 heatmap is the fixed pre-pruning 8x8 matrix and therefore intentionally still displays features that are later removed."""
+          if pr036_marker not in text:
+              raise SystemExit('PR-036 addendum marker missing')
+          text = text.replace(pr036_marker, pr036_extension, 1)
+
+          path.write_text(text, encoding='utf-8')
+          workflow.unlink()
+          PY
+
+      - name: Validate backlog extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e .github/workflows/pr-054-feature-selection-visual-audit.yml
+          grep -q 'feature_selection/plots/stage1_medoid_scores.png' BACKLOG.md
+          grep -q 'feature_selection/plots/stage2_cross_block_correlations.png' BACKLOG.md
+          grep -q 'feature_selection/selection_summary.md' BACKLOG.md
+          test "$(grep -c 'Visual audit extension' BACKLOG.md)" -eq 1
+
+      - name: Commit backlog extension
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'docs(PR-054-feature-selection-visual-audit): expand feature selection observability'
+          git push origin HEAD:pr/PR-054-feature-selection-visual-audit
