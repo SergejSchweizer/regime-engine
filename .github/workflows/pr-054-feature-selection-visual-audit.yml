@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - pr/PR-054-feature-selection-visual-audit
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
