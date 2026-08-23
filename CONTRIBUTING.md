@@ -112,6 +112,8 @@ Before the final push, `git status --short` must again be empty after all intend
 
 Agents must follow the PR's `Allowed files`, dependencies, and acceptance criteria from `BACKLOG.md`. They must not broaden scope, refactor unrelated code, or edit another PR's files. `EVALUATION.md` must be updated in the same PR whenever the evaluation-sidecar rule in `BACKLOG.md` applies.
 
+The production feature-source boundary is governed by `DATA_SOURCE.md`. Any legacy backlog wording that describes direct upstream `regime-loader` Parquet as the production engine input must be interpreted according to `DATA_SOURCE.md`: production features are served by the `regime-loader` PostgreSQL replica at `10.10.1.3:54321`, while required CI remains hermetic.
+
 ## Precedence
 
-For Git naming and commit-message conventions, this file is authoritative. For implementation scope, dependency order, allowed files, and acceptance criteria, `BACKLOG.md` is authoritative.
+For Git naming and commit-message conventions, this file is authoritative. For implementation scope, dependency order, allowed files, and acceptance criteria, `BACKLOG.md` is authoritative, except that `DATA_SOURCE.md` is authoritative for the upstream naming, production feature-source transport, PostgreSQL serving contract, lineage-snapshot semantics, and credential boundary. `EVALUATION.md` remains authoritative for evaluation methodology and champion-selection semantics.
