@@ -2,69 +2,88 @@
 
 Status date: 2026-08-23
 
-This document defines the production feature-source boundary for `regime-engine`.
+This document is authoritative for production feature-source transport, lineage, time semantics, missing-value semantics and credential boundaries.
 
-## Canonical naming
+## Canonical upstream
 
-The upstream data product is named **`regime-loader`** and is maintained in:
+Upstream data product: `regime-loader`
 
 ```text
 https://github.com/SergejSchweizer/regime-loader.git
 ```
 
-All repository documentation, source identifiers, integration paths, configuration names, tests, and operator instructions must use the canonical name `regime-loader`.
-
-## Ownership boundary
-
-`regime-loader` owns acquisition, Bronze/Silver/Gold processing, causal feature construction, Gold publication, and synchronization of the canonical Gold serving replica to PostgreSQL.
-
-`regime-engine` owns model profiles, preprocessing, HMM fitting, leak-free evaluation, causal inference, MLflow registration, prediction artifacts, and inference APIs. It must not duplicate provider acquisition or the upstream feature-building pipeline.
-
-The production dependency direction is:
+Production dependency:
 
 ```text
 regime-loader
-    -> canonical immutable Gold
-    -> PostgreSQL serving replica at 10.10.1.3:54321
-    -> regime-engine
-    -> MLflow / RegimePrediction.v1 / OOS prediction artifacts / API
-    -> downstream consumers
+  -> immutable Gold
+  -> PostgreSQL serving replica 10.10.1.3:54321
+  -> regime-engine
+  -> MLflow / predictions / API
+  -> consumers
 ```
 
-## PostgreSQL production source
+`regime-engine` never performs provider acquisition or rebuilds upstream Gold.
 
-The production feature source is the PostgreSQL serving replica written by `regime-loader`.
+## Production PostgreSQL source
 
 ```text
 host:              10.10.1.3
 port:              54321
+database:          mandatory runtime value; no default
 dataset_id:        regime_features_daily
 feature table:     regime_loader.regime_features_daily
 sync-state table:  regime_loader_sync.gold_sync_state
-row-digest table:  regime_loader_sync.gold_row_hashes
+temporal key:      timestamp_m1 TIMESTAMPTZ(6)
 ```
 
-The feature table contains the upstream Gold temporal key and feature columns. The temporal key is:
+The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstream but is not required by the MVP engine read contract.
+
+Feature columns are nullable `DOUBLE PRECISION`. SQL NULL is permitted by the upstream source; NaN/infinity is invalid.
+
+## Dedicated least-privilege identity
+
+Production runtime username is exactly:
 
 ```text
-timestamp_m1 TIMESTAMPTZ(6)
+regime-engine
 ```
 
-Database sessions are interpreted in UTC. Feature columns are nullable `DOUBLE PRECISION` in the upstream serving plane.
+SQL role identifier is quoted as:
 
-The engine must treat PostgreSQL as a serving replica. The authoritative source remains the immutable Gold data product owned by `regime-loader`; the engine must not mutate the feature table or the loader synchronization metadata.
+```sql
+"regime-engine"
+```
+
+Required grants only:
+
+- database `CONNECT` on the explicitly supplied serving database;
+- schema `USAGE` on `regime_loader` and `regime_loader_sync`;
+- `SELECT` on `regime_loader.regime_features_daily`;
+- `SELECT` on `regime_loader_sync.gold_sync_state`.
+
+No writer/admin/ownership/CREATE privileges are required. The engine must never reuse the `regime-loader` writer credential.
+
+## Runtime environment contract
+
+Feature PostgreSQL settings are deliberately namespaced because the same MLflow container has a separate backend PostgreSQL:
+
+```text
+REGIME_FEATURE_PGHOST=10.10.1.3
+REGIME_FEATURE_PGPORT=54321
+REGIME_FEATURE_PGDATABASE=<required runtime value>
+REGIME_FEATURE_PGUSER=regime-engine
+REGIME_FEATURE_PGPASSWORD_FILE=<preferred production secret file>
+REGIME_FEATURE_PGPASSWORD=<optional local/test direct secret>
+```
+
+Generic `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` are not the production regime-feature configuration contract.
+
+No password or credential-bearing DSN may be committed, logged, embedded in MLflow artifacts/models, or returned by an API.
 
 ## Source lineage
 
-The engine must preserve upstream build lineage for every training, evaluation, registration, replay, and realtime prediction operation.
-
-For `dataset_id = 'regime_features_daily'`, lineage is read from:
-
-```text
-regime_loader_sync.gold_sync_state
-```
-
-At minimum the engine must retain:
+For `dataset_id=regime_features_daily`, read from `regime_loader_sync.gold_sync_state` and preserve at least:
 
 ```text
 source_build_id
@@ -77,99 +96,86 @@ max_timestamp
 synced_at_utc
 ```
 
-The consumer feature rows are read from:
+The engine never derives/invents `source_build_id` from timestamps, row counts, mtime, directory order, or query time.
 
-```text
-regime_loader.regime_features_daily
-```
+## Consistent source snapshot
 
-The engine must never invent a build identifier from timestamps, row counts, filesystem ordering, or query time.
+Lineage and rows for one engine source acquisition must represent one committed loader synchronization state.
 
-## Consistent snapshot requirement
-
-Feature rows and their `gold_sync_state` lineage must represent the same committed upstream synchronization state.
-
-A production feature-source adapter must therefore obtain both within one transactionally consistent, read-only PostgreSQL snapshot. The expected semantic is equivalent to:
+Required semantics:
 
 ```text
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
   read regime_loader_sync.gold_sync_state
-  read bounded rows from regime_loader.regime_features_daily
-  validate rows against sync-state bounds and requested profile
+  read bounded feature rows from regime_loader.regime_features_daily
+  validate lineage/source bounds
 COMMIT;
 ```
 
-This prevents a loader synchronization commit from being observed between lineage and feature queries.
+The PostgreSQL transaction ends after source materialization. HMM fitting/evaluation must not hold a long-lived database transaction open.
 
-The adapter must fail closed if the sync-state row is missing, the dataset ID is wrong, semantic versions are incompatible, timestamps are duplicated/non-monotonic, required features are absent, or selected numerical values are non-finite.
+Fail closed for missing/wrong sync-state, incompatible schema/feature version, duplicate/non-monotonic timestamps, missing requested columns, nonfinite non-null values, or rows outside validated source bounds.
+
+## Time semantics
+
+`timestamp_m1` is upstream observation-day identity. It is not provider release time and does not identify a historical data vintage.
+
+Canonical engine metadata:
+
+```text
+data_time_semantics=current_vintage_observation_day
+```
+
+Therefore:
+
+- walk-forward is split-leak-free with respect to the current-vintage observation sequence;
+- the MVP is not claimed to be provider-release-time/vintage-safe or fully point-in-time tradable;
+- a historical `as_of` or fixed-model replay cuts the current serving replica by observation timestamp;
+- later upstream historical corrections may change later replays even when `model_version` is pinned;
+- immutable `walk_forward_oos` builds preserve the source-build lineage used when they were produced;
+- a stronger point-in-time claim requires a future versioned upstream contract carrying availability/vintage information.
+
+## Missing-value and model-observation semantics
+
+There are two source modes.
+
+### Feature-selection mode
+
+- NULL values are allowed.
+- Every non-null numeric value must be finite.
+- Coverage/complete-case rules in `EVALUATION.md` determine eligibility.
+- No forward fill, backward fill, interpolation, implicit carry, or synthetic row.
+
+### Resolved-model mode
+
+For the frozen final model features, a model observation exists only where all final features are non-null and finite.
+
+- incomplete timestamps are excluded from the HMM observation sequence;
+- excluded timestamps remain explicit gap/count evidence;
+- transitions occur once between consecutive retained observations, not once per calendar day;
+- no extra `A^gap_days` transition is applied;
+- the same rule is used for evaluation, final refit, latest and replay;
+- latest chooses the latest complete model observation at or before `as_of`;
+- replay returns only complete model observations inside its requested interval and reports skipped incomplete rows.
 
 ## Query semantics
 
-The engine reads only the requested interval and exact ordered feature set required by the validated model profile.
+- UTC everywhere;
+- SQL rows ordered by `timestamp_m1` ascending;
+- only requested bounded interval and exact ordered columns;
+- identifiers validated against the registered/profile contract before SQL construction;
+- values/bounds are parameterized;
+- no observation later than explicit `as_of` may influence that prediction;
+- no source mutation is permitted.
 
-Required behavior:
+## CI/external-service boundary
 
-- order rows by `timestamp_m1` ascending;
-- preserve exact profile feature order;
-- never forward-fill, backward-fill, interpolate, or silently impute missing upstream values;
-- never use observations after the requested `as_of` timestamp;
-- preserve `source_build_id`, `data_sha256`, `schema_version`, and `feature_version` in engine lineage;
-- reject duplicate timestamps and incompatible feature contracts;
-- keep walk-forward train/test slicing inside the engine after the upstream snapshot has been bound to explicit lineage.
+Required tests remain hermetic and never depend on `10.10.1.3:54321`.
 
-## Credentials and least privilege
+Required tests use injected/fake/local PostgreSQL-shaped sources representing the feature table and sync-state table.
 
-PostgreSQL credentials are runtime-only. No password or connection string containing a password may be committed, logged, embedded in MLflow artifacts, or returned by an API.
-
-Production configuration uses standard PostgreSQL environment variables:
-
-```text
-PGHOST=10.10.1.3
-PGPORT=54321
-PGDATABASE=<serving database>
-PGUSER=<engine read-only role>
-PGPASSWORD=<runtime-only secret>
-```
-
-The engine should use its own least-privilege read-only database identity. It must not require or reuse the `regime-loader` writer secret. The read-only identity needs only the privileges required to select the consumer feature table and the synchronization state needed for lineage validation.
-
-## CI and test boundary
-
-Required push/merge tests remain hermetic and must not depend on `10.10.1.3:54321`.
-
-Unit and required integration tests use injected PostgreSQL ports/fakes or a local deterministic test database/fixture representing:
-
-- `regime_loader.regime_features_daily`;
-- `regime_loader_sync.gold_sync_state`.
-
-A real-NAS PostgreSQL smoke test, if present, must be explicitly marked `external_service`, be opt-in, perform read-only verification, and be excluded from required CI gates.
-
-## Backlog implementation impact
-
-The implementation backlog must interpret the production feature-source work as follows:
-
-- **PR-001:** include a Python-3.14-compatible PostgreSQL client (`psycopg`) in runtime dependencies.
-- **PR-005:** document `regime-loader -> PostgreSQL -> engine -> consumers` and the exact production serving-plane boundary.
-- **PR-006:** source/build lineage contracts must carry the upstream PostgreSQL sync-state identity and semantic versions.
-- **PR-008:** implement the generic `FeatureSource` port plus a PostgreSQL adapter for `regime_loader.regime_features_daily`; production input is PostgreSQL rather than direct loader Parquet.
-- **PR-020/021/022/024:** bind every walk-forward evaluation/candidate comparison to one explicit upstream synchronized source state.
-- **PR-023/026/027:** persist upstream `source_build_id`, semantic versions, and source hash in MLflow/model/prediction lineage.
-- **PR-028/029/031:** batch, latest, train, and evaluate paths resolve features through the PostgreSQL feature-source boundary.
-- **PR-032:** deployment exposes PostgreSQL runtime settings/secrets in addition to `MLFLOW_TRACKING_URI`; it does not manage the PostgreSQL lifecycle.
-- **PR-033:** verify compatibility with the `regime-loader` PostgreSQL serving contract, with optional read-only external smoke verification.
-- **PR-035:** hermetic E2E uses an injected PostgreSQL-shaped feature source, not the real NAS endpoint.
-- **PR-036:** final operator documentation states the exact endpoint, tables, lineage contract, and read-only credential model.
-
-Parquet remains appropriate for engine-owned immutable prediction artifacts and local deterministic fixtures. Direct access to the upstream loader's filesystem is not the production feature-source contract.
+A real NAS smoke test is allowed only when explicitly marked `external_service`, opted in by the operator, authenticated as `regime-engine`, and read-only. It verifies privilege metadata rather than attempting destructive writes.
 
 ## Non-goals
 
-This repository does not:
-
-- provision or administer the shared PostgreSQL server;
-- write to `regime_loader.regime_features_daily`;
-- write to `regime_loader_sync.*`;
-- invoke `regime-loader` as a Python package;
-- rebuild upstream Gold features;
-- perform provider HTTP acquisition;
-- store PostgreSQL credentials in Git or MLflow.
+This repository does not provision/restart the external PostgreSQL server/database, mutate loader tables/sync metadata, manage the loader writer identity, build upstream features, or claim unavailable historical release-time/vintage semantics.
