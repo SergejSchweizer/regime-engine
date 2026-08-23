@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - pr/PR-053-unify-backlog
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
