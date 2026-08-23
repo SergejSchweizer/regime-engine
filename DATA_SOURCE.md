@@ -75,7 +75,10 @@ REGIME_FEATURE_PGDATABASE=<required runtime value>
 REGIME_FEATURE_PGUSER=regime-engine
 REGIME_FEATURE_PGPASSWORD_FILE=<preferred production secret file>
 REGIME_FEATURE_PGPASSWORD=<optional local/test direct secret>
+REGIME_FEATURE_PGSSLMODE=require
 ```
+
+Production requires PostgreSQL TLS transport through `sslmode=require`. PR-033 external verification must prove the existing feature PostgreSQL accepts this mode. If the server does not support it, deployment is blocked until a deliberate versioned infrastructure/security contract change is approved; an implementation agent must not silently downgrade to `prefer` or `disable`.
 
 Generic `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` are not the production regime-feature configuration contract.
 
@@ -174,7 +177,7 @@ Required tests remain hermetic and never depend on `10.10.1.3:54321`.
 
 Required tests use injected/fake/local PostgreSQL-shaped sources representing the feature table and sync-state table.
 
-A real NAS smoke test is allowed only when explicitly marked `external_service`, opted in by the operator, authenticated as `regime-engine`, and read-only. It verifies privilege metadata rather than attempting destructive writes.
+A real NAS smoke test is allowed only when explicitly marked `external_service`, opted in by the operator, authenticated as `regime-engine`, uses `sslmode=require`, and is read-only. It verifies privilege metadata rather than attempting destructive writes.
 
 ## Non-goals
 
