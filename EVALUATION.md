@@ -1,6 +1,6 @@
 # Market Regime Engine — Evaluation Contract
 
-Status date: 2026-08-22
+Status date: 2026-08-23
 
 `EVALUATION.md` is the durable sidecar for model evaluation in `market-regime-engine`. It explains exactly which model variants are compared, how leak-free walk-forward evaluation is performed, which statistics are computed, which metrics are logged to MLflow, and how `engine-champion` is selected.
 
@@ -25,17 +25,18 @@ For `xetra_cross_asset_v1`, the MVP candidate grid is:
 
 | Candidate | Family | States K | Covariance | Required in MVP |
 |---|---|---:|---|---|
-| `gaussian_hmm_k2_diag` | Gaussian HMM | 2 | diagonal | yes |
-| `gaussian_hmm_k3_diag` | Gaussian HMM | 3 | diagonal | yes |
-| `gaussian_hmm_k4_diag` | Gaussian HMM | 4 | diagonal | yes |
+| `gaussian_hmm_k2_full` | Gaussian HMM | 2 | full | yes |
 | `gaussian_hmm_k3_full` | Gaussian HMM | 3 | full | yes |
+| `gaussian_hmm_k4_full` | Gaussian HMM | 4 | full | yes |
+
+**Covariance policy:** every covariance-bearing HMM emission model uses a separate **full covariance matrix per hidden state**. `diag`, `spherical`, `tied`, or any other reduced covariance mode is unsupported and must fail profile/model validation rather than being silently converted. The MVP therefore compares state count `K`, not covariance structure.
 
 Optional challengers, after the common model/evaluation protocol is stable:
 
 | Candidate | Family | Typical initial configuration | Required in MVP |
 |---|---|---|---|
-| `student_t_hmm_k3` | Student-t HMM | K=3 | no |
-| `hsmm_k3` | Hidden semi-Markov model | K=3 with explicit duration model | no |
+| `student_t_hmm_k3_full` | Student-t HMM | K=3, full covariance | no |
+| `hsmm_k3_full` | Hidden semi-Markov model | K=3, full-covariance emissions with explicit duration model | no |
 
 All candidates must use the same feature profile and the same walk-forward split plan when they are compared in one experiment.
 
@@ -146,6 +147,14 @@ AIC = 2p - 2\log(\hat L)
 \]
 
 where `p` is the number of free parameters and `L-hat` is the maximized likelihood. Lower is better. AIC is diagnostic/secondary, never the sole champion criterion.
+
+For a Gaussian HMM with `K` states, `d` observed features, and one full symmetric covariance matrix per state, the free-parameter count is
+
+\[
+p=(K-1)+K(K-1)+Kd+K\frac{d(d+1)}{2}.
+\]
+
+The four terms are respectively initial-state probabilities, transition probabilities, state means, and full state covariance matrices. This full-covariance parameter count must be used consistently by AIC and BIC diagnostics.
 
 MLflow: `aic` per fold; `aic_mean`, `aic_std` per candidate.
 
@@ -313,8 +322,10 @@ Hard validation checks include:
 - all initial-state probabilities finite and normalized;
 - every transition row finite and normalized;
 - emission means finite;
-- covariance parameters finite and valid for configured covariance type;
-- no invalid/degenerate covariance matrix;
+- covariance mode is exactly `full` for every covariance-bearing HMM candidate;
+- every state covariance is a finite `d x d` symmetric matrix with valid full-covariance structure and successful positive-definiteness/Cholesky validation under the declared numerical policy;
+- off-diagonal covariance terms are preserved in fitted artifacts, reconstruction, state signatures, and MLflow evidence;
+- `diag`, `spherical`, `tied`, and other reduced covariance modes fail closed;
 - model reconstruction round-trip valid;
 - preprocessing parameters finite;
 - feature order exactly matches profile/model artifact.
@@ -334,6 +345,7 @@ all candidates
 hard quality gates
     |-- convergence / minimum valid starts
     |-- finite valid parameters
+    |-- full-covariance validity
     |-- minimum state occupancy
     |-- successful state alignment
     |-- maximum signature-drift limit
@@ -352,13 +364,13 @@ SECONDARY: better fold stability
 TERTIARY / TIE BREAK: lower BIC, then lower AIC
     |
     v
-FINAL DETERMINISTIC TIE BREAK: simpler model, then stable candidate ID
+FINAL DETERMINISTIC TIE BREAK: fewer states K, then stable candidate ID
     |
     v
 engine-champion
 ```
 
-A more complex model does not win merely because training likelihood improves. A candidate that fails a hard gate cannot win regardless of its OOS mean.
+Because covariance structure is fixed to `full`, model-complexity tie breaking in the MVP is driven by state count `K`. A more complex model does not win merely because training likelihood improves. A candidate that fails a hard gate cannot win regardless of its OOS mean.
 
 ## MLflow experiment structure
 
@@ -377,15 +389,13 @@ Experiment: market-regime-engine/<profile-id>
 
 Parent evaluation run
   |
-  +-- candidate run: gaussian_hmm_k2_diag
+  +-- candidate run: gaussian_hmm_k2_full
   |      +-- fold runs / fold metrics
-  |
-  +-- candidate run: gaussian_hmm_k3_diag
-  |      +-- fold runs / fold metrics
-  |
-  +-- candidate run: gaussian_hmm_k4_diag
   |
   +-- candidate run: gaussian_hmm_k3_full
+  |      +-- fold runs / fold metrics
+  |
+  +-- candidate run: gaussian_hmm_k4_full
 ```
 
 ### Parent-run parameters/tags
@@ -405,7 +415,7 @@ Parent evaluation run
 
 - model family;
 - K/state count;
-- covariance mode;
+- covariance mode, which must be exactly `full` for covariance-bearing HMMs;
 - feature count/order hash;
 - multi-start seed policy/count;
 - convergence tolerance/max iterations;
