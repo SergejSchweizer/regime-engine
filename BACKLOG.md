@@ -1736,3 +1736,733 @@ This addendum is authoritative and additive for PR-050, PR-035, and PR-036. An o
 - [ ] Documentation explains how to audit Stage 2 via `feature_selection/cross_block_correlations.parquet`, `feature_selection/pruning.parquet`, and `feature_selection/plots/stage2_cross_block_correlations.png`, including the exact `abs(rho) > 0.85` conflict rule.
 - [ ] Documentation states that the Stage-2 heatmap is intentionally the fixed pre-pruning `8 x 8` matrix, so features later removed by pruning remain visible for auditability.
 - [ ] Documentation explains that K=2/K=3/K=4 candidate runs reference the same frozen `feature_selection_hash`; the feature-selection evidence itself lives on the parent evaluation run rather than being recomputed per candidate.
+
+---
+
+# Wave 8 — Unified MLflow service and profile-routed PostgreSQL-backed inference
+
+This section is authoritative for the production serving topology, public profile identity, serving aliases, production feature source, Docker deployment, replay guardrails, and PR-056 through PR-062. It is additive to Wave 7. Where it conflicts with older wording in PR-001, PR-005, PR-007, PR-008, PR-012, PR-013, PR-021, PR-026, PR-028 through PR-036, the requirements below win. Wave 7 remains authoritative for feature-selection mathematics and evidence.
+
+## Unified production serving contract
+
+The production deployment has one externally published MLflow service and no second model-serving port:
+
+```text
+10.10.1.3:5000
+    MLflow UI
+    MLflow Tracking API
+    MLflow Model Registry
+    MLflow artifact serving
+    regime-engine MLflow app
+        POST /regime-engine/v1/profiles/{profile_id}/invocations
+        GET  /regime-engine/v1/health
+```
+
+The same MLflow server process is extended through an installed `mlflow.app` entry point named exactly `regime-engine` and is started with `mlflow server --app-name regime-engine`. The custom app extends the standard MLflow application; it must not replace or shadow normal MLflow Tracking, Registry, UI, artifact, or health routes.
+
+The deployment explicitly does **not** use a second `mlflow models serve` process, a repository-owned standalone FastAPI/Uvicorn service, nginx, Traefik, another reverse proxy, or a public `:5001` port.
+
+The repository-owned Compose topology is exactly:
+
+```text
+docker-compose
+├── mlflow
+└── mlflow-postgres
+```
+
+`mlflow-postgres` is only the private MLflow relational backend store. It is not the feature database and exposes no PostgreSQL port to the NAS host. Its database/user/password values are runtime configuration and are not invented or committed in this backlog.
+
+The production feature PostgreSQL already exists outside Compose at `10.10.1.3:54321`. It remains the `regime-loader` serving replica described by `DATA_SOURCE.md`. The MLflow/regime-engine service accesses that database read-only. The feature database name remains required runtime configuration and must never be guessed.
+
+The exact dedicated production feature-reader role is:
+
+```text
+PostgreSQL role: "regime-engine"
+PG user string:  regime-engine
+```
+
+Because the role contains a hyphen, SQL identifiers must quote it as `"regime-engine"`. The role is separate from the `regime-loader` writer and receives only the privileges required to read `regime_loader.regime_features_daily` and `regime_loader_sync.gold_sync_state` plus the minimum database/schema privileges required for those SELECTs. No password is stored in Git, MLflow, images, logs, or model artifacts.
+
+### Public profile and model identity
+
+The initial public profile ID is exactly:
+
+```text
+xetra
+```
+
+The Xetra registered model is exactly:
+
+```text
+regime-xetra
+```
+
+The default production serving alias is exactly:
+
+```text
+champion
+```
+
+Therefore the default model resolution for the initial profile is logically:
+
+```text
+profile_id=xetra -> models:/regime-xetra@champion
+```
+
+A future `crypto` profile must be addable as `profile_id=crypto -> regime-crypto@champion` without changing the route shape or starting another server. Crypto implementation is not part of this MVP.
+
+The previous public/runtime use of `xetra_cross_asset_v1` as the profile ID is superseded: the public/runtime `profile_id` is `xetra`; versioned Xetra configuration/policy metadata remains separate from the profile ID.
+
+The previous serving alias `engine-champion` is superseded by `champion`. `challenger` may remain a lifecycle alias. Consumer-specific serving aliases are not part of the default API contract.
+
+### Single profile-routed invocation endpoint
+
+All fixed-model online and historical replay inference uses exactly:
+
+```text
+POST /regime-engine/v1/profiles/{profile_id}/invocations
+```
+
+`profile_id` comes from the URL path. A request body that also supplies a contradictory or redundant `profile_id` is rejected.
+
+`latest` request fields are exactly:
+
+```json
+{
+  "operation": "latest",
+  "as_of": "optional UTC timestamp"
+}
+```
+
+For `latest`, `start` and `end` are forbidden. If `as_of` is omitted, the service resolves the latest source timestamp available under the validated source contract. No observation later than explicit `as_of` may be read or influence the result.
+
+`replay` request fields are exactly:
+
+```json
+{
+  "operation": "replay",
+  "start": "required UTC timestamp",
+  "end": "required UTC timestamp",
+  "model_version": "optional exact immutable MLflow model version"
+}
+```
+
+For `replay`, `as_of` is forbidden. If `model_version` is absent, the current `champion` alias is resolved to one exact immutable version before feature acquisition and remains pinned for the full request. If `model_version` is supplied, alias resolution is bypassed.
+
+Consumers never submit feature names, feature values, source-build references, PostgreSQL tables/credentials, scaler state, HMM parameters, covariance matrices, or state-mapping internals. The serving service obtains the exact feature order and preprocessing/inference contract from the validated registered model package and reads the necessary rows itself from PostgreSQL.
+
+Every inference response identifies at least `profile_id`, operation, resolved registered-model name/version, alias when an alias was used, prediction mode, source lineage, feature-selection hash, persistent state probabilities, dominant state, confidence, and entropy where defined by `RegimePredictionV1`.
+
+`replay` is always `fixed_model_replay`; it must never be labelled, stored, or described as leak-free `walk_forward_oos`. PR-030 remains the explicit API for retrieval of immutable walk-forward OOS builds and is profile-scoped.
+
+### Production feature-read transaction
+
+For every latest/replay source acquisition, source lineage and feature rows are bound inside the same transactionally consistent source snapshot equivalent to:
+
+```text
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+  read regime_loader_sync.gold_sync_state
+  read exact required feature rows from regime_loader.regime_features_daily
+  validate lineage, bounds, feature order, and selected values
+COMMIT;
+```
+
+No fill, interpolation, implicit carry, source mutation, post-`as_of` read, or writer credential reuse is allowed.
+
+### High-load and failure-isolation contract
+
+The unified server supports multiple MLflow worker processes. Worker count is runtime configuration and the deployment may provide a documented default. Each worker/process owns its own validated model cache and PostgreSQL connection pool; caches and pools are not assumed to be shared memory across workers.
+
+Model alias resolution is cached for a bounded TTL. A newly resolved champion is loaded and fully validated before an atomic cache swap. If the new model cannot be loaded or validated, the previous object may remain physically cached for recovery, but a request requiring the newly resolved champion must fail explicitly; the service must never silently return a stale version while claiming it is the current champion.
+
+PostgreSQL access is synchronous/blocking by design and uses `psycopg_pool`. CPU-bound NumPy/HMM work must not be disguised as async I/O. Parallelism comes from server workers plus explicitly bounded blocking execution for expensive replay work.
+
+Replay is protected by runtime-configured finite limits:
+
+```text
+REGIME_REPLAY_MAX_ROWS
+REGIME_REPLAY_MAX_RANGE_DAYS
+REGIME_REPLAY_TIMEOUT_SECONDS
+REGIME_REPLAY_MAX_RESPONSE_BYTES
+REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER
+```
+
+PostgreSQL/runtime controls include:
+
+```text
+REGIME_PG_POOL_MIN_SIZE
+REGIME_PG_POOL_MAX_SIZE
+REGIME_PG_ACQUIRE_TIMEOUT_SECONDS
+REGIME_PG_STATEMENT_TIMEOUT_SECONDS
+REGIME_MODEL_ALIAS_CACHE_TTL_SECONDS
+```
+
+BLAS/OpenMP oversubscription is controlled through deployment configuration including `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and `MKL_NUM_THREADS`.
+
+Replay must never be silently truncated. Requests exceeding configured range/row/response limits fail as `413`; malformed request syntax fails as `400`; unknown profile/model version fails as `404`; validated semantic/model/source-contract failures fail as `422`; dependency/capacity unavailability fails as `503`; replay deadline exhaustion fails as `504`. No partial successful replay response is returned after a timeout.
+
+The replay concurrency setting is explicitly per worker; the documented worst-case simultaneous replay upper bound is `MLFLOW_WORKERS * REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER`. The documented maximum PostgreSQL connection upper bound is `MLFLOW_WORKERS * REGIME_PG_POOL_MAX_SIZE`.
+
+### No Prometheus contract
+
+MLflow Prometheus exposure is deliberately disabled for this deployment. The Compose command must not use `--expose-prometheus`, no Prometheus exporter is added by this backlog, and no test may require Prometheus. Structured application/container logs are sufficient for the MVP and must never log secrets, DSNs containing passwords, raw feature values, or model binary contents.
+
+---
+
+# Wave 8 addenda to existing PRs
+
+## PR-001 serving-runtime addendum
+
+### Replacement acceptance criteria
+
+- [ ] FastAPI and Uvicorn are not intentional repository application-server dependencies; the production HTTP server is the MLflow server extended by the MLflow app plugin.
+- [ ] Runtime dependencies include MLflow, the Flask runtime required for the MLflow app extension, `psycopg`, and `psycopg_pool`, all compatible with Python 3.14.7.
+- [ ] HTTPX may be retained for HTTP tests/clients but no standalone FastAPI service is introduced.
+- [ ] No second model-serving framework or reverse proxy dependency is added.
+
+## PR-005 unified-architecture addendum
+
+### Replacement acceptance criteria
+
+- [ ] Architecture shows one externally published service at `http://10.10.1.3:5000` providing MLflow UI/Tracking/Registry/artifacts plus the `regime-engine` MLflow app.
+- [ ] The repository owns the two-service `mlflow` + `mlflow-postgres` deployment contract; only the external feature PostgreSQL lifecycle remains outside this repository.
+- [ ] The external feature PostgreSQL is documented exactly as `10.10.1.3:54321` and is read-only from the serving plane.
+- [ ] No separate FastAPI server, `mlflow models serve` process, public `:5001`, nginx, Traefik, or reverse proxy exists in the target architecture.
+- [ ] Public profile identity is `xetra`; registered model identity is `regime-xetra`; production serving alias is `champion`.
+- [ ] Model lifecycle documentation uses `champion` and `challenger`; `engine-champion` is not a production serving alias.
+
+## PR-007 profile-schema addendum
+
+### Additional acceptance criteria
+
+- [ ] Schema represents `profile_id` separately from profile/configuration version.
+- [ ] The initial public `profile_id` can be exactly `xetra` with independent versioned configuration metadata.
+- [ ] Adding a future profile such as `crypto` does not require a new HTTP route type or server process.
+
+## PR-008 production-source replacement addendum
+
+### Allowed-file override
+
+Add `src/market_regime_engine/features/postgres_source.py`, `tests/integration/test_postgres_feature_source.py`, and `DATA_SOURCE.md` to allowed files.
+
+### Replacement acceptance criteria
+
+- [ ] `FeatureSource` remains a narrow loader-independent port.
+- [ ] Production adapter is PostgreSQL for `regime_loader.regime_features_daily`; direct loader Parquet is not the production source.
+- [ ] Feature rows and `regime_loader_sync.gold_sync_state` are read in the same `REPEATABLE READ READ ONLY` transaction.
+- [ ] Query orders `timestamp_m1` ascending, enforces exact requested feature order and requested time bound, and rejects duplicate/non-monotonic timestamps.
+- [ ] Missing selected values, non-finite selected values, missing/wrong sync-state lineage, incompatible schema/feature versions, or requested rows outside validated source bounds fail closed.
+- [ ] No fill, interpolation, implicit carry, source mutation, or writer credential is used.
+- [ ] Parquet remains permitted only for deterministic fixtures and engine-owned immutable output artifacts.
+- [ ] Required tests remain hermetic and use an injected/fake/local PostgreSQL-shaped source, never `10.10.1.3`.
+
+## PR-012 unified-MLflow addendum
+
+### Additional acceptance criteria
+
+- [ ] `MLFLOW_TRACKING_URI=http://10.10.1.3:5000` is the only production MLflow service URI; no separate serving URI is introduced.
+- [ ] Tracking/registry ports remain injectable so serving code can resolve registered model names, versions, and aliases without coupling business logic to MLflow HTTP calls.
+- [ ] Registry resolution returns the exact immutable version behind an alias so one request can pin it before inference.
+
+## PR-013 replacement — Add MLflow custom-app skeleton and health route
+
+### Allowed-file override
+
+Replace the old FastAPI allowed-file list with `pyproject.toml`, `src/market_regime_engine/mlflow_app/__init__.py`, `src/market_regime_engine/mlflow_app/app.py`, `src/market_regime_engine/mlflow_app/contracts.py`, `src/market_regime_engine/mlflow_app/errors.py`, `tests/unit/mlflow_app/test_app.py`, and `tests/unit/mlflow_app/test_contracts.py`.
+
+### Replacement acceptance criteria
+
+- [ ] Packaging registers an `mlflow.app` entry point named exactly `regime-engine` whose factory extends the existing MLflow server application.
+- [ ] App construction performs no PostgreSQL query, model load, alias resolution, or external network call at import time.
+- [ ] Standard MLflow UI/Tracking/Registry/artifact/health routes remain registered and are not shadowed.
+- [ ] Placeholder route exists exactly at `POST /regime-engine/v1/profiles/<profile_id>/invocations`.
+- [ ] `GET /regime-engine/v1/health` exists and delegates component readiness to injected checks without running inference.
+- [ ] Request/response/error contracts are framework-thin; HMM math and PostgreSQL query logic are forbidden in route code.
+- [ ] Unit tests use the MLflow/Flask test client and prove both a standard MLflow route and the custom route survive composition.
+- [ ] No standalone FastAPI/Uvicorn app or OpenAPI dependency is created.
+
+## PR-021 Xetra profile-identity addendum
+
+### Replacement acceptance criteria
+
+- [ ] Public/runtime profile ID is exactly `xetra`.
+- [ ] Xetra profile/configuration version is stored separately from `profile_id`; versioned filename/policy metadata does not become the public profile ID.
+- [ ] All Wave-7 requirements for the exact 48-feature source universe, `xetra_semantic_medoid_v1`, and the K=2/K=3/K=4 full-covariance candidate grid remain unchanged.
+
+## PR-026 registered-model and alias addendum
+
+### Replacement acceptance criteria
+
+- [ ] The Xetra registered-model name is exactly `regime-xetra`.
+- [ ] Production serving alias is exactly `champion`; `challenger` is supported as the non-production lifecycle alias.
+- [ ] `engine-champion` and consumer-specific aliases are not used by the default serving contract.
+- [ ] Only the deterministic hard-gated winner may be assigned/moved to `champion`.
+- [ ] Model package includes the complete deployable inference contract: `profile_id=xetra`, exact frozen feature order/hash, trained preprocessing, fitted full-covariance HMM parameters, persistent state mapping, feature-selection hash, source/training lineage, and inference-contract version.
+- [ ] Model package contains no PostgreSQL password, DSN secret, feature table copy, or runtime credential.
+
+## PR-028 replacement — Add profile-routed fixed-model replay handler
+
+### Dependency override
+
+PR-028 additionally depends on PR-056, PR-058, and PR-059.
+
+### Allowed-file override
+
+Use `src/market_regime_engine/inference/replay.py`, `src/market_regime_engine/serving/replay_handler.py`, `tests/unit/inference/test_replay.py`, `tests/unit/serving/test_replay_handler.py`, and `tests/integration/test_replay_handler.py`. Do not create a separate public route in this PR; PR-060 owns final route composition.
+
+### Replacement acceptance criteria
+
+- [ ] Handler accepts path-resolved `profile_id`, required UTC `start`/`end`, and optional exact `model_version`; it accepts no feature/source/database input from the consumer.
+- [ ] Absent `model_version` resolves `regime-xetra@champion` for `profile_id=xetra`; explicit version bypasses alias resolution.
+- [ ] Resolved model/version is pinned for the complete request.
+- [ ] Loaded model package validates profile compatibility, frozen feature order/hash, preprocessing, persistent state mapping, inference-contract version, and covariance exactly `full` before source access/inference.
+- [ ] Feature acquisition is internal through the PostgreSQL `FeatureSource` and exact registered-model feature contract.
+- [ ] Replay uses causal filtered inference and persistent state mapping only.
+- [ ] Mode is exactly `fixed_model_replay` and can never be returned as `walk_forward_oos`.
+- [ ] Replay guardrails from PR-059 are applied before and during expensive work.
+- [ ] Over-limit replay fails explicitly; it is never silently truncated and `/invocations` never substitutes an opaque prediction-build reference for an oversized response.
+- [ ] Result includes exact model/source/feature-selection lineage and deterministic timestamp ordering.
+- [ ] Hermetic integration uses fake/local registry and PostgreSQL-shaped source only.
+
+## PR-029 replacement — Add profile-routed latest handler
+
+### Dependency override
+
+PR-029 additionally depends on PR-056 and PR-058.
+
+### Allowed-file override
+
+Use `src/market_regime_engine/inference/latest.py`, `src/market_regime_engine/serving/latest_handler.py`, `tests/unit/inference/test_latest.py`, `tests/unit/serving/test_latest_handler.py`, and `tests/integration/test_latest_handler.py`. Do not create a separate public route in this PR; PR-060 owns final route composition.
+
+### Replacement acceptance criteria
+
+- [ ] Handler accepts path-resolved `profile_id` and optional UTC `as_of`; it accepts no feature/source/database input from the consumer.
+- [ ] Default Xetra resolution is `regime-xetra@champion`.
+- [ ] Champion resolves to one exact immutable version before source acquisition.
+- [ ] Registered package validates profile, exact feature order/hash, preprocessing, persistent mapping, inference contract, and covariance exactly `full`.
+- [ ] PostgreSQL source reads only information available at or before `as_of`; omitted `as_of` uses the latest valid source timestamp.
+- [ ] Response validates `RegimePredictionV1` and includes exact resolved model/source/selection lineage.
+- [ ] Unknown profile, unavailable champion, missing/incompatible source data, invalid model contract, or dependency failure returns an explicit failure; no stale/invented prediction is returned.
+- [ ] Hermetic integration proves deterministic latest inference without external network.
+
+## PR-030 profile-scoped OOS addendum
+
+### Replacement acceptance criteria
+
+- [ ] OOS retrieval routes are under `/regime-engine/v1/profiles/{profile_id}/...`.
+- [ ] Explicit immutable OOS build ID remains mandatory for research retrieval; no silent latest OOS build is introduced.
+- [ ] Fixed-model replay is not used as an OOS substitute and remains exclusively an `/invocations` operation.
+
+## PR-031 CLI addendum
+
+### Dependency override
+
+PR-031 depends on PR-024, PR-026, and PR-050; it no longer depends on PR-028/029/030 merely to start a server.
+
+### Replacement acceptance criteria
+
+- [ ] CLI provides training/evaluation/registration/operator commands only; there is no `serve` command that starts FastAPI/Uvicorn or a second HTTP service.
+- [ ] Production HTTP serving is started only through the MLflow deployment using `mlflow server --app-name regime-engine`.
+- [ ] `register` can assign the validated Xetra winner to alias `champion` and never uses `engine-champion` as the production alias.
+
+## PR-032 replacement — Build the unified MLflow/regime-engine image and startup contract
+
+### Dependency override
+
+PR-032 depends on PR-013, PR-031, and PR-060.
+
+### Allowed-file override
+
+Use `Dockerfile`, `.dockerignore`, `scripts/mlflow_entrypoint.sh`, `docs/deployment.md`, and `tests/integration/test_container_image_contract.py`. PR-061 owns Compose topology.
+
+### Replacement acceptance criteria
+
+- [ ] Image runs non-root on a Python-3.14-compatible base and installs MLflow plus the exact built `regime-engine` package/plugin and PostgreSQL client/runtime dependencies.
+- [ ] Image contains no second standalone API server and does not execute `mlflow models serve`.
+- [ ] Entrypoint validates required MLflow backend/artifact configuration, runs the supported MLflow backend schema upgrade/migration before readiness, then `exec`s one MLflow server process.
+- [ ] Server command includes `--app-name regime-engine`, binds `0.0.0.0:5000`, and obtains worker count from `MLFLOW_WORKERS`.
+- [ ] MLflow artifact storage is a persistent mounted path served through the same MLflow service.
+- [ ] No `--expose-prometheus` flag or Prometheus exporter/configuration is present.
+- [ ] `.venv`, Git metadata, test caches, local secrets, and local model/prediction state are excluded from the image context.
+- [ ] Entrypoint never logs backend passwords, feature PostgreSQL password, full credential-bearing DSNs, or secret environment values.
+- [ ] Container health uses the standard MLflow health endpoint; regime component readiness is separately available at `/regime-engine/v1/health`.
+- [ ] Integration test statically proves one MLflow server startup, app-name, port, worker configurability, migration-before-server ordering, and absence of second serving/Prometheus commands.
+
+## PR-033 PostgreSQL contract addendum
+
+### Dependency override
+
+PR-033 additionally depends on PR-057 and PR-058.
+
+### Allowed-file override
+
+Add `tests/external/test_feature_postgres_external.py`, `scripts/verify_feature_postgres.py`, and `DATA_SOURCE.md` to the existing allowed files.
+
+### Additional/replacement acceptance criteria
+
+- [ ] Required integration remains hermetic and uses a PostgreSQL-shaped fixture rather than real `10.10.1.3`.
+- [ ] Separate opt-in `external_service` smoke target is exactly `10.10.1.3:54321` and requires an explicit feature database name at runtime.
+- [ ] External verification authenticates as exact role `regime-engine`, proves SELECT access to `regime_loader.regime_features_daily` and `regime_loader_sync.gold_sync_state`, and proves the required source snapshot/lineage query path succeeds read-only.
+- [ ] External verification checks catalog/privilege metadata for absence of table DML/admin privileges; it must not test denial by attempting destructive writes against production data.
+- [ ] External verification never uses the `regime-loader` writer credential and never mutates source tables or sync metadata.
+
+## PR-034 unified-service external smoke addendum
+
+### Dependency override
+
+PR-034 additionally depends on PR-061.
+
+### Allowed-file override
+
+Add `tests/external/test_regime_service_external.py` to the existing allowed files.
+
+### Additional/replacement acceptance criteria
+
+- [ ] Exactly the same `http://10.10.1.3:5000` endpoint serves standard MLflow Tracking/Registry/UI/artifact behavior and `/regime-engine/v1/health`.
+- [ ] Smoke test has no dependency on `:5001` or any reverse proxy.
+- [ ] If a validated `regime-xetra@champion` is present, an explicitly opted-in read-only `xetra` latest invocation is verified without modifying the alias/model.
+- [ ] Disposable MLflow resources remain uniquely namespaced and cleanup touches only resources created by the smoke test.
+- [ ] No Prometheus endpoint/export is required or tested.
+
+## PR-035 unified-serving E2E addendum
+
+### Dependency override
+
+PR-035 additionally depends on PR-060 and PR-062 as well as the existing Wave-7 PR-050 dependency.
+
+### Additional/replacement acceptance criteria
+
+- [ ] E2E uses an injected PostgreSQL-shaped source for all production-source semantics; deterministic Parquet may remain only as an engine-owned fixture/artifact where appropriate.
+- [ ] Public profile ID is `xetra`, registered model is `regime-xetra`, and promoted serving alias is `champion`.
+- [ ] E2E composes the MLflow app with a local/test MLflow backend and exercises the exact profile-routed `/invocations` route for both `latest` and `replay`.
+- [ ] Invocation request bodies contain no feature names/values/source-build/database fields.
+- [ ] Replay is exactly `fixed_model_replay`, and immutable `walk_forward_oos` retrieval remains distinguishable.
+- [ ] Replay limit/timeout/capacity error contracts and model/source lineage are exercised hermetically.
+- [ ] No E2E test requires `10.10.1.3`; only explicit external smoke tests in PR-033/PR-034 may access NAS services.
+- [ ] All existing Wave-7 feature-selection and visual-audit E2E requirements remain mandatory.
+
+## PR-036 final-documentation addendum
+
+### Dependency override
+
+PR-036 additionally depends on PR-061 and PR-062.
+
+### Additional/replacement acceptance criteria
+
+- [ ] Docs show exactly two Compose services: `mlflow` and `mlflow-postgres`.
+- [ ] Docs state `mlflow-postgres` is only MLflow metadata backend and exposes no host PostgreSQL port.
+- [ ] Docs state external feature PostgreSQL is exactly `10.10.1.3:54321`, database name is runtime-required, and exact read-only role is `regime-engine`.
+- [ ] Docs show one public service `http://10.10.1.3:5000`; no public `:5001`, standalone FastAPI server, reverse proxy, or second MLflow model server exists.
+- [ ] Docs define exact API `POST /regime-engine/v1/profiles/{profile_id}/invocations` and initial `profile_id=xetra`.
+- [ ] Docs define `xetra -> regime-xetra@champion` and explain future profiles can be added without changing the route/server topology.
+- [ ] Docs show exact `latest` and `replay` request field rules and state consumers never provide regime features.
+- [ ] Docs explain replay is `fixed_model_replay`, not walk-forward OOS, and identify the separate profile-scoped OOS retrieval contract.
+- [ ] Docs cover workers, per-worker model cache, alias TTL, atomic model replacement, PG pool sizing, replay row/range/response/deadline/concurrency limits, PG timeouts, and BLAS thread controls.
+- [ ] Docs explicitly state MLflow Prometheus metrics are not enabled and `--expose-prometheus` is absent.
+- [ ] Docs include one-time creation/verification and runtime-secret handling for the quoted PostgreSQL role `"regime-engine"` without printing a password.
+- [ ] All existing Wave-7 final documentation and visual-audit requirements remain mandatory.
+
+---
+
+# Wave 8 atomic implementation PRs
+
+## PR-056 — Add profile-to-MLflow champion resolver and per-worker model cache
+
+- **Status:** BLOCKED by PR-007, PR-012, PR-026
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-056-profile-model-resolver-cache`
+- **Depends on:** PR-007, PR-012, PR-026
+- **Allowed files:** `src/market_regime_engine/serving/__init__.py`, `src/market_regime_engine/serving/profile_registry.py`, `src/market_regime_engine/serving/model_resolver.py`, `src/market_regime_engine/serving/model_cache.py`, `tests/unit/serving/test_profile_registry.py`, `tests/unit/serving/test_model_resolver.py`, `tests/unit/serving/test_model_cache.py`
+
+### Task
+
+Implement only profile/model resolution and process-local caching. Do not query feature PostgreSQL, expose HTTP routes, run inference, fit models, or change model-selection policy.
+
+### Acceptance criteria
+
+- [ ] Initial profile registry contains exactly public `profile_id=xetra -> registered_model=regime-xetra -> default_alias=champion`.
+- [ ] Registry structure supports adding future profiles as data/config entries without adding profile-specific `if/elif` routing logic.
+- [ ] Unknown profile fails with a stable typed error.
+- [ ] Explicit immutable `model_version` bypasses alias lookup; absent version resolves the configured `champion` alias.
+- [ ] Alias lookup returns and records the exact immutable resolved version before model load.
+- [ ] `REGIME_MODEL_ALIAS_CACHE_TTL_SECONDS` is validated as a positive finite duration; core logic has no hidden infinite cache.
+- [ ] Loaded model cache is process/worker-local and keyed by profile plus exact immutable model version.
+- [ ] Before first use, package validation checks profile ID, inference-contract version, exact feature order/hash, feature-selection hash, preprocessing artifact, persistent state mapping, and covariance mode exactly `full`.
+- [ ] New alias target is completely loaded/validated before atomic cache replacement.
+- [ ] Failed new load/validation leaves the previous cached object intact for recovery but returns an explicit failure to the request that requires the new target; it never labels the stale cached version as current champion.
+- [ ] Cache operations are safe for concurrent threads inside one worker and do not assume cross-process shared memory.
+- [ ] Unit tests use fake registry/model loaders and no filesystem/network/MLflow server.
+- [ ] No PostgreSQL, HTTP route, HMM fitting, replay, or portfolio code is introduced.
+
+## PR-057 — Create dedicated `regime-engine` read-only feature PostgreSQL role
+
+- **Status:** BLOCKED by PR-005
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-057-regime-engine-postgres-reader`
+- **Depends on:** PR-005
+- **Allowed files:** `ops/postgres/regime_engine_reader.sql`, `scripts/bootstrap_regime_engine_reader.sh`, `scripts/verify_regime_engine_reader.sh`, `tests/unit/ops/test_regime_engine_reader_sql.py`, `docs/integrations/regime_loader.md`, `DATA_SOURCE.md`
+
+### Task
+
+Provide an idempotent, operator-executed bootstrap and verification path for the exact least-privilege feature reader on the already-existing PostgreSQL service. Do not provision/restart PostgreSQL, create the feature database, mutate loader data, or store any password.
+
+### Acceptance criteria
+
+- [ ] Exact login role is `"regime-engine"`; runtime username string is exactly `regime-engine`.
+- [ ] Bootstrap is idempotent: it creates the role when absent and safely converges role attributes/required grants when present without dropping/recreating it.
+- [ ] Role attributes are `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`.
+- [ ] Role default transaction mode is read-only where supported/configured by the bootstrap.
+- [ ] Feature database name is mandatory runtime/operator input; script has no guessed/default database name.
+- [ ] Target role password is mandatory runtime secret input, is never embedded in SQL/Git, has no sample real value, and is not echoed/logged.
+- [ ] Admin bootstrap credential is runtime-only and never persisted by the repository.
+- [ ] Grants are limited to database `CONNECT` on the explicitly supplied feature database, `USAGE` on schemas `regime_loader` and `regime_loader_sync`, and `SELECT` on `regime_loader.regime_features_daily` plus `regime_loader_sync.gold_sync_state`.
+- [ ] No SELECT grant is added for `gold_row_hashes` unless a future versioned source contract explicitly requires it.
+- [ ] No INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER/CREATE/schema-owner/database-owner/admin privilege is granted.
+- [ ] Script never modifies the `regime-loader` writer role, source rows, sync-state rows, database lifecycle, or server configuration.
+- [ ] Verification script uses PostgreSQL catalog/privilege functions to prove required grants and absence of forbidden privileges without performing destructive writes.
+- [ ] `DATA_SOURCE.md` is updated from an unspecified reader identity to exact `PGUSER=regime-engine` while keeping `PGDATABASE` runtime-required and password runtime-only.
+- [ ] `DATA_SOURCE.md` states the repo owns only this role bootstrap/verification artifact, not lifecycle administration of the external PostgreSQL server/database.
+- [ ] Unit test statically verifies exact quoted role name, intended grants, forbidden grant absence, required runtime placeholders, and no embedded secret.
+- [ ] Required CI never connects to `10.10.1.3`; actual role creation is a documented one-time post-merge operator action using admin credentials.
+
+## PR-058 — Add pooled production PostgreSQL serving runtime
+
+- **Status:** BLOCKED by PR-008
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-058-postgres-serving-runtime`
+- **Depends on:** PR-008
+- **Allowed files:** `src/market_regime_engine/features/postgres_settings.py`, `src/market_regime_engine/features/postgres_pool.py`, `src/market_regime_engine/features/postgres_source.py`, `tests/unit/features/test_postgres_settings.py`, `tests/unit/features/test_postgres_pool.py`, `tests/integration/test_postgres_source_runtime.py`, `.env.example`
+
+### Task
+
+Add production runtime configuration and process-local pooling around the PR-008 PostgreSQL source. Do not resolve MLflow models, expose HTTP routes, perform HMM inference, or administer PostgreSQL roles.
+
+### Acceptance criteria
+
+- [ ] Production defaults `REGIME_FEATURE_PGHOST=10.10.1.3`, `REGIME_FEATURE_PGPORT=54321`, and `REGIME_FEATURE_PGUSER=regime-engine`.
+- [ ] `REGIME_FEATURE_PGDATABASE` has no guessed default and is mandatory in production.
+- [ ] `REGIME_FEATURE_PGPASSWORD` is mandatory runtime secret and is never logged or serialized.
+- [ ] Settings validate `REGIME_PG_POOL_MIN_SIZE`, `REGIME_PG_POOL_MAX_SIZE`, `REGIME_PG_ACQUIRE_TIMEOUT_SECONDS`, and `REGIME_PG_STATEMENT_TIMEOUT_SECONDS`; pool min/max must be positive and `min <= max`.
+- [ ] One lazy `psycopg_pool.ConnectionPool` is constructed per OS process/worker; module import performs no connection/network access.
+- [ ] Every source read borrows/returns a pool connection correctly on success and every exception path.
+- [ ] Each production source read executes within `REPEATABLE READ READ ONLY` and binds sync-state plus feature rows in one transaction.
+- [ ] PostgreSQL statement timeout is applied to serving queries without weakening the transaction/source contract.
+- [ ] Exact ordered selected features and UTC time bounds are parameterized safely; feature names are validated against the registered contract before SQL identifier construction.
+- [ ] No feature imputation/fill/interpolation occurs.
+- [ ] No credential-bearing DSN/password is emitted in exception text or structured logs.
+- [ ] Implementation is intentionally synchronous/blocking; it does not wrap CPU/HMM work in fake async APIs.
+- [ ] Documentation/test comments state maximum configured feature-DB connections across workers is `MLFLOW_WORKERS * REGIME_PG_POOL_MAX_SIZE`.
+- [ ] `.env.example` contains placeholders/default-safe non-secret values only.
+- [ ] Integration uses injected/fake/local PostgreSQL and never the NAS endpoint.
+
+## PR-059 — Add replay admission control, bounded blocking execution, and response limits
+
+- **Status:** BLOCKED by PR-013
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-059-replay-guardrails`
+- **Depends on:** PR-013
+- **Allowed files:** `src/market_regime_engine/serving/replay_limits.py`, `src/market_regime_engine/serving/replay_executor.py`, `src/market_regime_engine/mlflow_app/errors.py`, `tests/unit/serving/test_replay_limits.py`, `tests/unit/serving/test_replay_executor.py`
+
+### Task
+
+Implement reusable replay capacity/deadline/size guardrails only. Do not query PostgreSQL, load MLflow models, execute HMM inference, or compose the public route.
+
+### Acceptance criteria
+
+- [ ] Settings require positive finite production values for `REGIME_REPLAY_MAX_ROWS`, `REGIME_REPLAY_MAX_RANGE_DAYS`, `REGIME_REPLAY_TIMEOUT_SECONDS`, `REGIME_REPLAY_MAX_RESPONSE_BYTES`, and `REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER`.
+- [ ] Invalid/missing production limits fail startup/config validation; no unlimited production mode exists.
+- [ ] UTC `start <= end` and maximum range are validated before any expensive dependency call.
+- [ ] Per-worker bounded capacity uses a semaphore/bounded executor or equivalent primitive; saturation is rejected with typed `503 capacity_unavailable` rather than unbounded queueing.
+- [ ] Deadline uses monotonic time and can be checked between feature acquisition, preprocessing/inference chunks, and serialization boundaries by callers.
+- [ ] Deadline exhaustion maps to typed `504 replay_timeout` and never returns a partial success.
+- [ ] Row/range/response-size violations map to typed `413 replay_limit_exceeded`.
+- [ ] Serialized response size can be checked before HTTP response commit.
+- [ ] No silent truncation, silent pagination, or automatic conversion to a prediction-build reference occurs.
+- [ ] Capacity tokens are released after success, validation failure, dependency failure, timeout, serialization failure, and cancellation/exception.
+- [ ] Blocking replay work is delegated through a bounded blocking execution primitive compatible with the multi-worker MLflow server; it must not create an unbounded thread/task pool.
+- [ ] Unit tests prove concurrency saturation/recovery, deadline behavior, deterministic status/error codes, byte/row/range limits, and capacity release on every failure path.
+- [ ] Contract states aggregate replay upper bound is `MLFLOW_WORKERS * REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER`.
+
+## PR-060 — Compose the production profile invocation service graph
+
+- **Status:** BLOCKED by PR-028, PR-029, PR-030, PR-056, PR-058, PR-059
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-060-compose-profile-invocations`
+- **Depends on:** PR-028, PR-029, PR-030, PR-056, PR-058, PR-059
+- **Allowed files:** `src/market_regime_engine/mlflow_app/app.py`, `src/market_regime_engine/mlflow_app/dependencies.py`, `src/market_regime_engine/mlflow_app/dispatch.py`, `tests/unit/mlflow_app/test_dispatch.py`, `tests/integration/test_mlflow_app_invocations.py`
+
+### Task
+
+Wire existing handlers/dependencies into the final MLflow custom app. Do not add model math, feature-selection logic, PostgreSQL administration, Docker/Compose, or profile-specific business branches.
+
+### Acceptance criteria
+
+- [ ] Exactly one fixed-model inference route is exposed: `POST /regime-engine/v1/profiles/<profile_id>/invocations`.
+- [ ] `profile_id` is taken only from the path; body `profile_id` is rejected to prevent conflicting routing identities.
+- [ ] Dispatcher accepts operations exactly `latest` and `replay` for MVP.
+- [ ] `latest` accepts optional `as_of` and rejects `start`, `end`, and `model_version` unless a later versioned contract explicitly adds latest-version pinning.
+- [ ] `replay` requires `start` and `end`, accepts optional exact `model_version`, and rejects `as_of`.
+- [ ] Consumer request schema contains no feature names/values/source-build/database/scaler/HMM fields.
+- [ ] Dependencies inject profile/model resolver/cache, PostgreSQL source/pool, latest/replay handlers, and replay guardrails; route/dispatcher contains no HMM math.
+- [ ] Response envelope includes profile, operation, exact resolved registered model/version, alias when used, prediction mode, source lineage, feature-selection hash, and versioned prediction payload.
+- [ ] Stable error mapping is `400` malformed request, `404` unknown profile/model version, `413` replay limit, `422` model/source/semantic contract failure, `503` dependency/capacity unavailable, `504` replay deadline.
+- [ ] No stale cached model is silently substituted after an alias has resolved to a newer invalid/unloadable version.
+- [ ] `/regime-engine/v1/health` reports process liveness plus non-secret component readiness without running a full inference or exposing credentials.
+- [ ] Existing standard MLflow routes remain functional after final composition.
+- [ ] A future `crypto` profile can be registered in profile mapping and use the same route/dispatcher with no route code change.
+- [ ] Integration uses local/test MLflow application plus fake registry/PostgreSQL dependencies and no external network.
+- [ ] No Prometheus route/exporter is added.
+
+## PR-061 — Add two-service MLflow + MLflow-PostgreSQL NAS Compose topology
+
+- **Status:** BLOCKED by PR-032, PR-057, PR-058, PR-059, PR-060
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-061-two-service-mlflow-compose`
+- **Depends on:** PR-032, PR-057, PR-058, PR-059, PR-060
+- **Allowed files:** `compose.example.yaml`, `.env.example`, `docs/deployment.md`, `tests/integration/test_compose_config.py`
+
+### Task
+
+Implement only the final NAS Compose topology/configuration. Do not change inference/model math, PostgreSQL feature-reader grants, MLflow app handlers, or evaluation semantics.
+
+### Acceptance criteria
+
+- [ ] Compose has exactly two services named `mlflow` and `mlflow-postgres`.
+- [ ] No nginx, Traefik, reverse proxy, second model server, standalone FastAPI service, or third application service exists.
+- [ ] Only `mlflow` publishes application port `5000:5000` to the host.
+- [ ] `mlflow-postgres` exposes its PostgreSQL port only on the Compose network and has no host `ports` mapping.
+- [ ] `mlflow-postgres` has a persistent data volume and database healthcheck; its DB/user/password are supplied through runtime environment/secrets rather than hard-coded real credentials.
+- [ ] `mlflow` waits for a healthy MLflow backend database before startup/migration.
+- [ ] `mlflow` uses the PR-032 image/entrypoint and one MLflow server process extended by `--app-name regime-engine`.
+- [ ] Persistent MLflow artifact storage is mounted and served through the same `:5000` MLflow service.
+- [ ] `MLFLOW_WORKERS` is configurable with documented Compose default `4`.
+- [ ] External feature PostgreSQL is not a Compose service; defaults are host `10.10.1.3`, port `54321`, user `regime-engine`, while feature database name and password are mandatory runtime values.
+- [ ] Compose exposes all replay limit, PG pool/timeout, model-alias TTL, and worker settings required by PR-056/058/059.
+- [ ] `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and `MKL_NUM_THREADS` are configurable and default to `1` to avoid worker-times-BLAS oversubscription unless the operator overrides them deliberately.
+- [ ] `--expose-prometheus` is absent from every command; no `MLFLOW_EXPOSE_PROMETHEUS`, Prometheus exporter, or metrics sidecar is present.
+- [ ] No feature or MLflow database password is present in `compose.example.yaml` or `.env.example`; examples contain placeholders only.
+- [ ] External feature PostgreSQL lifecycle is explicitly not managed by Compose.
+- [ ] `docker compose config`/static integration test verifies exact service count/names, only host port 5000, no backend-DB host port, required volumes/health/dependencies/env keys, no second serving process/proxy, and no Prometheus exposure.
+
+## PR-062 — Prove serving capacity, replay guardrails, and failure isolation hermetically
+
+- **Status:** BLOCKED by PR-060, PR-061
+- **Git status:** PLANNED — clean before/after.
+- **Branch:** `pr/PR-062-serving-capacity-proof`
+- **Depends on:** PR-060, PR-061
+- **Allowed files:** `tests/integration/test_serving_capacity.py`, `tests/integration/test_serving_failure_isolation.py`, `tests/fixtures/serving/*`, `docs/deployment.md`
+
+### Task
+
+Add deterministic hermetic integration proofs for the unified service's caching/capacity/failure contracts. Do not change production serving implementation except documentation corrections required to match tested behavior.
+
+### Acceptance criteria
+
+- [ ] Tests never contact `10.10.1.3`; all MLflow registry/model/source dependencies are injected/local.
+- [ ] Warm-cache repeated `latest` calls for unchanged resolved version do not reload the model for every request.
+- [ ] Alias transition to a new valid version loads/validates it once per worker test instance and swaps atomically.
+- [ ] Alias transition to an unloadable/invalid version fails the requesting call and does not falsely serve/label the previous cached version as current champion.
+- [ ] PostgreSQL pool-acquire exhaustion fails within configured acquire timeout and does not hang indefinitely.
+- [ ] Replay exceeding date range, row count, or response byte limit returns deterministic `413` with no partial/truncated output.
+- [ ] Replay per-worker concurrency saturation returns deterministic `503`; once a slot is released a subsequent valid replay can proceed.
+- [ ] Replay deadline exhaustion returns deterministic `504` and no partial success payload.
+- [ ] Capacity slots and borrowed test connections/resources are released after every injected dependency/inference/serialization failure.
+- [ ] Within configured replay concurrency, an independent `latest` request can still be handled by available service capacity; tests do not claim impossible strict QoS if every OS worker is externally saturated.
+- [ ] Tests verify the documented connection upper bound `MLFLOW_WORKERS * REGIME_PG_POOL_MAX_SIZE` and replay upper bound `MLFLOW_WORKERS * REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER` from configuration.
+- [ ] Structured failure logs/errors contain no password, credential-bearing DSN, raw feature vector, or secret value.
+- [ ] Test/deployment contract proves no Prometheus configuration/export endpoint was introduced by Wave 8.
+
+---
+
+# Wave 8 revised parallel execution plan
+
+The following plan supersedes the older Wave-4/Wave-5 serving/deployment ordering while preserving Wave-7 feature-selection ordering. Weak agents may run only PRs whose declared dependencies are already merged to `main`.
+
+```text
+Early boundary work after existing prerequisites:
+  after PR-005:                 PR-057
+  after PR-006, parallel:       PR-007  PR-008  PR-009  PR-010  PR-011  PR-012  PR-013
+  after PR-008:                 PR-058
+  after PR-013:                 PR-059
+
+Wave-7 statistical selection continues as already defined:
+  PR-007 -> PR-045
+  PR-045 -> PR-046 + PR-047 in parallel
+  PR-020 + PR-046 + PR-047 -> PR-048
+  PR-021 + PR-048 -> PR-049
+  PR-023 + PR-048 + PR-049 -> PR-050
+
+Model lifecycle:
+  existing evaluation path -> PR-026
+  PR-007 + PR-012 + PR-026 -> PR-056
+
+Serving handlers after common resolver/source pieces:
+  PR-013 + PR-016 + PR-018 + PR-026 + PR-056 + PR-058 -> PR-029
+  PR-013 + PR-016 + PR-018 + PR-026 + PR-056 + PR-058 + PR-059 -> PR-028
+  PR-013 + PR-027 -> PR-030
+  PR-028 + PR-029 + PR-030 + PR-056 + PR-058 + PR-059 -> PR-060
+
+CLI may proceed independently of HTTP composition:
+  PR-024 + PR-026 + PR-050 -> PR-031
+
+Deployment and external compatibility:
+  PR-013 + PR-031 + PR-060 -> PR-032
+  PR-008 + PR-021 + PR-057 + PR-058 -> PR-033
+  PR-032 + PR-057 + PR-058 + PR-059 + PR-060 -> PR-061
+
+After PR-061, parallel where dependencies allow:
+  PR-023 + PR-026 + PR-061 -> PR-034
+  PR-060 + PR-061 -> PR-062
+
+Final proof/docs:
+  existing PR-035 deps + PR-050 + PR-060 + PR-062 -> PR-035
+  PR-032 + PR-033 + PR-034 + PR-035 + PR-061 + PR-062 -> PR-036
+```
+
+High-value parallel lanes for multiple weak agents are therefore deliberately separated by file ownership: PostgreSQL role/bootstrap (PR-057), PostgreSQL runtime pool (PR-058), replay guardrails (PR-059), feature-selection Wave-7 work, model resolver/cache (PR-056), and OOS retrieval (PR-030) can progress independently once their own prerequisites are merged.
+
+## Wave 8 weak-agent packet rule
+
+For PR-056 through PR-062, the orchestrator gives a weak agent only:
+
+1. its assigned PR section from this Wave;
+2. the unified production serving contract above;
+3. `CONTRIBUTING.md`;
+4. `DATA_SOURCE.md` only when the PR touches feature PostgreSQL/source semantics;
+5. `EVALUATION.md` only when the PR touches registered-model/evaluation semantics;
+6. only the exact already-merged dependency interfaces needed by that PR.
+
+The agent must stop rather than broaden scope if implementation would require an unmerged dependency, a file outside `Allowed files`, a second serving port/process, a reverse proxy, standalone FastAPI/Uvicorn, consumer-supplied feature data, a different profile ID, a different production alias, a guessed feature database name, reuse of the `regime-loader` writer, extra PostgreSQL privileges, Prometheus activation, change to Wave-7 feature-selection math, or downstream ETF/portfolio logic.
+
+The agent must report `git status --short` and `git branch --show-current` before work and immediately before final push. Every checkbox is mandatory; tests belong to the same PR as behavior. External NAS actions are never required by push/merge gates.
+
+## External-service test exception override
+
+The earlier weak-agent rule that only PR-034 may touch NAS services is superseded as follows:
+
+- PR-033 may contain explicitly opt-in `external_service` verification of feature PostgreSQL `10.10.1.3:54321` using the exact `regime-engine` reader and runtime-supplied database/password.
+- PR-034 may contain explicitly opt-in `external_service` verification of unified MLflow `http://10.10.1.3:5000`.
+- Both remain excluded from required push/merge gates.
+- No other required test may depend on either NAS endpoint.
+
+## Definition of complete unified-serving MVP
+
+In addition to all still-applicable Wave-7 statistical/evaluation requirements, the MVP is complete only when:
+
+- public/runtime profile ID is exactly `xetra`;
+- the Xetra registered model is `regime-xetra` and default serving alias is `champion`;
+- one externally published MLflow service at `10.10.1.3:5000` provides UI, Tracking, Registry, artifacts, and profile-routed regime inference;
+- the server is extended through `mlflow server --app-name regime-engine` and no separate FastAPI/model-server/reverse-proxy/public-5001 service exists;
+- Compose contains exactly `mlflow` plus private `mlflow-postgres`;
+- the existing external feature PostgreSQL remains `10.10.1.3:54321` and is never added as a Compose service;
+- exact read-only feature role `regime-engine` has an idempotent one-time bootstrap/verification path and no writer/admin privileges;
+- consumers call `POST /regime-engine/v1/profiles/xetra/invocations` without knowing or sending regime features;
+- `latest` and `replay` share that invocation route and use internal PostgreSQL feature acquisition;
+- replay is always `fixed_model_replay`, while immutable walk-forward OOS evidence remains separately retrievable and unmistakable;
+- model resolution/cache, PG pools, timeouts, replay range/row/response/deadline/concurrency limits, and BLAS thread controls are configurable and fail closed;
+- multiple MLflow workers are supported without assuming shared in-process cache/pool state;
+- failed champion reload never produces a falsely labelled stale champion prediction;
+- oversized/timed-out/saturated replay requests fail explicitly with the documented status contract and no silent truncation/partial response;
+- Prometheus exposure is not enabled anywhere in the Compose/startup/test contract;
+- required CI/E2E remains hermetic; NAS PostgreSQL and MLflow checks are explicitly opt-in external smoke tests only;
+- final docs accurately describe the two-service Compose topology, one-port API, exact PostgreSQL role, profile/model/alias mapping, high-load controls, and consumer abstraction boundary.
