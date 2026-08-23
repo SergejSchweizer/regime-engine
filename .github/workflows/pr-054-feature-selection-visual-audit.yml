@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
 
-# This one-shot workflow updates BACKLOG.md after PR-054 is merged, then deletes itself.
 jobs:
   update-backlog:
     if: github.actor != 'github-actions[bot]'
@@ -26,7 +25,6 @@ jobs:
           from pathlib import Path
 
           path = Path('BACKLOG.md')
-          workflow = Path('.github/workflows/pr-054-feature-selection-visual-audit.yml')
           text = path.read_text(encoding='utf-8')
 
           pr050_marker = "- [ ] `EVALUATION.md` documents the exact MLflow tags/artifact paths.\n\n---\n\n# Addenda to existing backlog PRs"
@@ -77,14 +75,12 @@ The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` sele
           text = text.replace(pr036_marker, pr036_extension, 1)
 
           path.write_text(text, encoding='utf-8')
-          workflow.unlink()
           PY
 
       - name: Validate backlog extension
         shell: bash
         run: |
           set -euo pipefail
-          test ! -e .github/workflows/pr-054-feature-selection-visual-audit.yml
           grep -q 'feature_selection/plots/stage1_medoid_scores.png' BACKLOG.md
           grep -q 'feature_selection/plots/stage2_cross_block_correlations.png' BACKLOG.md
           grep -q 'feature_selection/selection_summary.md' BACKLOG.md
@@ -95,6 +91,6 @@ The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` sele
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add BACKLOG.md
           git commit -m 'docs(PR-054-feature-selection-visual-audit): expand feature selection observability'
           git push origin HEAD:main
