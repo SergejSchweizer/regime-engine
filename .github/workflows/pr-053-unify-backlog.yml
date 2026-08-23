@@ -1,0 +1,84 @@
+name: PR-053 unify backlog
+
+on:
+  push:
+    branches:
+      - pr/PR-053-unify-backlog
+
+permissions:
+  contents: write
+
+jobs:
+  consolidate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: pr/PR-053-unify-backlog
+          fetch-depth: 0
+
+      - name: Consolidate backlog files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          backlog_path = Path('BACKLOG.md')
+          feature_path = Path('BACKLOG_FEATURE_SELECTION.md')
+          contributing_path = Path('CONTRIBUTING.md')
+          workflow_path = Path('.github/workflows/pr-053-unify-backlog.yml')
+
+          backlog = backlog_path.read_text(encoding='utf-8').rstrip()
+          feature = feature_path.read_text(encoding='utf-8')
+
+          marker = '# Statistical feature-selection contract'
+          if marker not in feature:
+              raise SystemExit('feature-selection contract marker missing')
+          feature_body = feature[feature.index(marker):].strip()
+
+          merged_header = '''# Wave 7 — Statistical feature selection and frozen HMM input
+
+This section is authoritative for PR-045 through PR-050 and for its explicit feature-selection addenda to PR-021, PR-022, PR-024, PR-035, and PR-036. Where these feature-selection requirements conflict with older wording in earlier PR sections, this section wins. All feature-selection work remains subject to `DATA_SOURCE.md`, `EVALUATION.md`, `PLOT_STYLE.md`, and `CONTRIBUTING.md` in their existing areas of authority.
+'''
+
+          backlog = backlog.replace(
+              '- Agents never edit `BACKLOG.md`; backlog state is maintained by the orchestrator.',
+              '- Agents never edit `BACKLOG.md`; backlog state is maintained by the orchestrator.\n- `BACKLOG.md` is the single authoritative backlog file; secondary `BACKLOG*.md` planning files are forbidden.'
+          )
+
+          backlog_path.write_text(
+              backlog + '\n\n---\n\n' + merged_header + '\n' + feature_body + '\n',
+              encoding='utf-8',
+          )
+
+          contributing = contributing_path.read_text(encoding='utf-8')
+          contributing = contributing.replace(
+              '`BACKLOG_FEATURE_SELECTION.md`',
+              'the feature-selection section of `BACKLOG.md`',
+          )
+          contributing_path.write_text(contributing, encoding='utf-8')
+
+          feature_path.unlink()
+          workflow_path.unlink()
+          PY
+
+      - name: Validate consolidation
+        shell: bash
+        run: |
+          test -f BACKLOG.md
+          test ! -e BACKLOG_FEATURE_SELECTION.md
+          test ! -e .github/workflows/pr-053-unify-backlog.yml
+          test "$(find . -type f -name 'BACKLOG*.md' -print | wc -l)" -eq 1
+          grep -q 'Stage 2 — simple cross-block correlation pruning' BACKLOG.md
+          grep -q 'PR-050 — Log auditable feature-selection evidence to MLflow' BACKLOG.md
+          ! grep -R --line-number --fixed-strings 'BACKLOG_FEATURE_SELECTION.md' BACKLOG.md CONTRIBUTING.md
+
+      - name: Commit consolidation
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'docs(PR-053-unify-backlog): consolidate backlog files'
+          git push origin HEAD:pr/PR-053-unify-backlog
