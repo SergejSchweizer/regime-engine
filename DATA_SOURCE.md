@@ -12,7 +12,7 @@ The upstream data product is named **`regime-loader`** and is maintained in:
 https://github.com/SergejSchweizer/regime-loader.git
 ```
 
-`market-regime-loader` is a retired name and must not be used in repository documentation, source identifiers, integration paths, configuration names, tests, or operator instructions.
+All repository documentation, source identifiers, integration paths, configuration names, tests, and operator instructions must use the canonical name `regime-loader`.
 
 ## Ownership boundary
 
