@@ -3,9 +3,6 @@ name: PR-053 unify backlog
 on:
   push:
     branches:
-      - pr/PR-053-unify-backlog
-  pull_request:
-    branches:
       - main
 
 permissions:
@@ -18,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: pr/PR-053-unify-backlog
+          ref: main
           fetch-depth: 0
 
       - name: Consolidate backlog files
@@ -84,4 +81,4 @@ This section is authoritative for PR-045 through PR-050 and for its explicit fea
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'docs(PR-053-unify-backlog): consolidate backlog files'
-          git push origin HEAD:pr/PR-053-unify-backlog
+          git push origin HEAD:main
