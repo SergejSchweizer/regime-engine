@@ -1,7 +1,7 @@
-name: PR-054 feature selection visual audit
+name: PR-054 feature selection visual audit updater
 
 on:
-  push:
+  pull_request:
     branches:
       - main
 
@@ -10,12 +10,12 @@ permissions:
 
 jobs:
   update-backlog:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && github.head_ref == 'pr/PR-055-feature-selection-visual-audit-backlog'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: pr/PR-055-feature-selection-visual-audit-backlog
           fetch-depth: 0
 
       - name: Extend feature-selection observability backlog
@@ -25,6 +25,7 @@ jobs:
           from pathlib import Path
 
           path = Path('BACKLOG.md')
+          trigger = Path('.pr-055-trigger')
           text = path.read_text(encoding='utf-8')
 
           pr050_marker = "- [ ] `EVALUATION.md` documents the exact MLflow tags/artifact paths.\n\n---\n\n# Addenda to existing backlog PRs"
@@ -75,6 +76,8 @@ The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` sele
           text = text.replace(pr036_marker, pr036_extension, 1)
 
           path.write_text(text, encoding='utf-8')
+          if trigger.exists():
+              trigger.unlink()
           PY
 
       - name: Validate backlog extension
@@ -85,12 +88,13 @@ The parent MLflow evaluation run must make the complete `48 -> 8 -> d <= 8` sele
           grep -q 'feature_selection/plots/stage2_cross_block_correlations.png' BACKLOG.md
           grep -q 'feature_selection/selection_summary.md' BACKLOG.md
           test "$(grep -c 'Visual audit extension' BACKLOG.md)" -eq 1
+          test ! -e .pr-055-trigger
 
-      - name: Commit backlog extension
+      - name: Commit backlog extension to PR branch
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add BACKLOG.md
-          git commit -m 'docs(PR-054-feature-selection-visual-audit): expand feature selection observability'
-          git push origin HEAD:main
+          git add -A
+          git commit -m 'docs(PR-055-feature-selection-visual-audit-backlog): expand MLflow feature selection audit'
+          git push origin HEAD:pr/PR-055-feature-selection-visual-audit-backlog
