@@ -7,14 +7,14 @@ This backlog defines the complete implementation plan for `market-regime-engine`
 The repository owns model training, causal HMM inference, leak-free walk-forward validation, statistical model comparison, MLflow tracking/registry integration, immutable prediction artifacts, and batch/realtime inference APIs. It does **not** own market-data acquisition or portfolio optimization.
 
 ```text
-market-regime-loader
+regime-loader
     -> immutable causal feature data
     -> market-regime-engine
     -> MLflow Model Registry + RegimePrediction.v1 + OOS prediction artifacts + API
     -> portfell and future consumers
 ```
 
-`market-regime-loader` remains the reusable data product. `portfell` remains the Xetra ETF portfolio application. `market-regime-engine` stays consumer-agnostic so registered HMM models can later be reused by BTC, equity, rates, covered-call, or other projects.
+`regime-loader` remains the reusable data product. `portfell` remains the Xetra ETF portfolio application. `market-regime-engine` stays consumer-agnostic so registered HMM models can later be reused by BTC, equity, rates, covered-call, or other projects.
 
 ## Repository bootstrap facts
 
@@ -238,7 +238,7 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 - [ ] Separates `fixed_model_replay` from `walk_forward_oos`.
 - [ ] Requires filtered probabilities for causal inference; smoothing/Viterbi are diagnostic-only.
 - [ ] Requires persistent state alignment for consumer-facing predictions.
-- [ ] Defines `market-regime-loader -> engine -> consumers` dependency direction without package coupling.
+- [ ] Defines `regime-loader -> engine -> consumers` dependency direction without package coupling.
 - [ ] Model lifecycle defines `candidate`, `validated`, `engine-champion`, `challenger`, and consumer-specific aliases such as `portfell-production`.
 - [ ] `EVALUATION.md` is linked as the normative evaluation sidecar and its maintenance rule is documented.
 - [ ] README includes system diagram and links.
@@ -291,7 +291,7 @@ After PR-001, PR-005 and PR-006 may run in parallel. After PR-006, PR-007 throug
 
 ### Acceptance criteria
 
-- [ ] Narrow `FeatureSource` protocol has no `market-regime-loader` import.
+- [ ] Narrow `FeatureSource` protocol has no `regime-loader` import.
 - [ ] Parquet adapter reads data plus explicit lineage/manifest input.
 - [ ] Selects features in exact profile order.
 - [ ] Duplicate/non-monotonic timestamps, missing/duplicate features, and non-finite values fail.
@@ -548,7 +548,7 @@ PR-014 follows PR-009/010. After PR-014, PR-015, PR-016, PR-018, and PR-019 may 
 ### Acceptance criteria
 
 - [ ] Profile ID/version is `xetra_cross_asset_v1`.
-- [ ] Features come only from reusable `market-regime-loader` Gold contract; no ETF-return/portfolio feature is embedded.
+- [ ] Features come only from reusable `regime-loader` Gold contract; no ETF-return/portfolio feature is embedded.
 - [ ] Candidate grid includes exactly the MVP Gaussian candidates: K=2 diagonal, K=3 diagonal, K=4 diagonal, K=3 full.
 - [ ] Multi-start, convergence, minimum valid-start rate, minimum occupancy, maximum drift, minimum valid-fold rate, and walk-forward settings are explicit.
 - [ ] Inference mode is filtered.
@@ -799,13 +799,13 @@ PR-032 through PR-035 run in parallel after their prerequisites. PR-036 consolid
 - [ ] No credentials/tokens are embedded.
 - [ ] Integration test asserts compose default and environment override behavior.
 
-## PR-033 — Add market-regime-loader Gold compatibility integration test
+## PR-033 — Add regime-loader Gold compatibility integration test
 
 - **Status:** BLOCKED by PR-008, PR-021
 - **Git status:** PLANNED — clean before/after.
 - **Branch:** `pr/033-loader-contract-integration`
 - **Depends on:** PR-008, PR-021
-- **Allowed files:** `tests/fixtures/loader_gold/*`, `tests/integration/test_loader_gold_contract.py`, `docs/integrations/market_regime_loader.md`
+- **Allowed files:** `tests/fixtures/loader_gold/*`, `tests/integration/test_loader_gold_contract.py`, `docs/integrations/regime_loader.md`
 
 ### Acceptance criteria
 
