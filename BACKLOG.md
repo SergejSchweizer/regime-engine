@@ -1697,3 +1697,42 @@ For PR-045 through PR-050, an orchestrator gives a weak agent only:
 4. only the exact upstream contract/doc needed by that PR.
 
 The agent must stop rather than broaden scope if it needs an unmerged dependency, a file outside `Allowed files`, a different threshold or method, a replacement search, per-fold re-selection, HMM-based feature-subset optimization, or downstream ETF/portfolio data.
+
+---
+
+# Feature-selection visual audit addendum
+
+This addendum is authoritative and additive for PR-050, PR-035, and PR-036. An orchestrator assigning any of those PRs to a weak agent must include the corresponding subsection below together with the original PR section. The additions are observability/documentation only and must not change Stage-1 medoid selection, Stage-2 pruning, the `0.85` threshold, the no-replacement rule, or HMM champion-selection semantics.
+
+## PR-050 visual audit extension — MLflow parent-run evidence
+
+- [ ] Parent run additionally records `pruned_feature_count = 8 - d` and `maximum_cross_block_abs_spearman = 0.85` as explicit feature-selection metadata.
+- [ ] Parent stores `feature_selection/selection_summary.md` containing policy ID/version, first-fold TRAIN bounds, all eight Stage-1 block winners with medoid score and coverage, every Stage-2 pruning decision with `abs_rho` and exact removal reason, and the final ordered feature list.
+- [ ] Parent stores `feature_selection/plots/stage1_medoid_scores.png`, showing every eligible Stage-1 candidate grouped by canonical semantic block, the exact feature name, medoid score, and a clearly distinguishable marker for each selected block medoid.
+- [ ] `stage1_medoid_scores.png` is sourced only from `feature_selection/scores.parquet`; candidate ordering is deterministic and follows canonical block order then configured candidate order.
+- [ ] Parent stores exactly eight within-block Stage-1 Spearman heatmaps at `feature_selection/plots/stage1_<block_id>_correlations.png`, one for every canonical block ID.
+- [ ] Every Stage-1 heatmap uses the exact configured candidate order on both axes, shows Spearman correlation `rho`, identifies the selected medoid visually, and is backed by `feature_selection/within_block_correlations.parquet` without recomputation from another sample.
+- [ ] Parent stores `feature_selection/plots/stage2_cross_block_correlations.png`, an `8 x 8` heatmap of the fixed Stage-2 preliminary-medoid Spearman matrix before pruning.
+- [ ] The Stage-2 heatmap uses the eight preliminary medoids in canonical block order on both axes and visually marks every pair where `abs(rho) > 0.85`; exactly `0.85` is not marked as a conflict.
+- [ ] Removed Stage-2 features remain visible in the `8 x 8` heatmap because it represents the fixed pre-pruning matrix; no replacement feature is shown and the matrix is never recomputed after pruning.
+- [ ] `stage2_cross_block_correlations.png` is sourced only from `feature_selection/cross_block_correlations.parquet`; conflict/removal overlays are sourced only from `feature_selection/pruning.parquet`.
+- [ ] All feature-selection plots satisfy `PLOT_STYLE.md`, have self-explanatory titles, axes, labels, legend/annotations where needed, and deterministic export quality.
+- [ ] Required PNG output uses the repository plot-quality contract; SVG is emitted in addition where vector-compatible.
+- [ ] Every feature-selection plot is registered in the parent `plots/manifest.json` with plot path, plot type, source artifact/table, source columns, selection hash, policy ID, first-fold ID, axis labels, dimensions/DPI, and source artifact hash.
+- [ ] Unit tests inspect plotting objects/specification and deterministic source ordering rather than pixel-perfect screenshots.
+- [ ] Hermetic local-file MLflow integration verifies all required feature-selection PNGs, applicable SVG counterparts, `selection_summary.md`, and manifest entries exist and trace exactly to the Stage-1/Stage-2 machine-readable evidence.
+
+## PR-035 visual-audit E2E extension
+
+- [ ] Parent MLflow run contains `feature_selection/selection_summary.md`, `feature_selection/plots/stage1_medoid_scores.png`, all eight `feature_selection/plots/stage1_<block_id>_correlations.png` heatmaps, and `feature_selection/plots/stage2_cross_block_correlations.png`.
+- [ ] E2E verifies the selected Stage-1 markers match `feature_selection/scores.parquet` exactly.
+- [ ] E2E verifies Stage-1 heatmap values/order match `feature_selection/within_block_correlations.parquet` exactly.
+- [ ] E2E verifies the Stage-2 `8 x 8` heatmap values/order match `feature_selection/cross_block_correlations.parquet`, and all conflict/removal annotations match `feature_selection/pruning.parquet`.
+- [ ] E2E verifies every required feature-selection plot is represented in `plots/manifest.json` with the same feature-selection hash and source-artifact lineage.
+
+## PR-036 visual-audit documentation extension
+
+- [ ] Documentation explains how to audit Stage 1 in MLflow via `feature_selection/selection_summary.md`, `feature_selection/scores.parquet`, `feature_selection/plots/stage1_medoid_scores.png`, and the eight within-block correlation heatmaps.
+- [ ] Documentation explains how to audit Stage 2 via `feature_selection/cross_block_correlations.parquet`, `feature_selection/pruning.parquet`, and `feature_selection/plots/stage2_cross_block_correlations.png`, including the exact `abs(rho) > 0.85` conflict rule.
+- [ ] Documentation states that the Stage-2 heatmap is intentionally the fixed pre-pruning `8 x 8` matrix, so features later removed by pruning remain visible for auditability.
+- [ ] Documentation explains that K=2/K=3/K=4 candidate runs reference the same frozen `feature_selection_hash`; the feature-selection evidence itself lives on the parent evaluation run rather than being recomputed per candidate.
