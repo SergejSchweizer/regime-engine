@@ -1,123 +1,115 @@
 # Contributing and Git Policy
 
-This repository uses a strict PR/branch/commit naming contract so work can be delegated safely to weak parallel agents and audited deterministically.
+Status date: 2026-08-23
 
-## Canonical PR name
+`BACKLOG.md` is the single authoritative implementation plan for `SergejSchweizer/regime-engine`. The consolidated backlog has no Wave-7/Wave-8 override/addendum mechanism: each PR has one effective dependency set, scope, allowed-file list, and acceptance list.
 
-Every PR has one machine-stable canonical name:
+## Canonical identities
+
+- GitHub repository: `SergejSchweizer/regime-engine`
+- repository short name: `regime-engine`
+- Python distribution: `market-regime-engine`
+- Python import package: `market_regime_engine`
+- initial public profile ID: `xetra`
+- Xetra registered model: `regime-xetra`
+- production MLflow alias: `champion`
+
+Do not substitute legacy `xetra_cross_asset_v1` as the public profile ID or `engine-champion` as a serving alias.
+
+## PR naming
+
+Canonical PR name:
 
 ```text
 PR-<three-digit-number>-<kebab-case-slug>
 ```
 
-Example:
+PR title:
 
 ```text
-PR-014-gaussian-hmm-adapter
+PR-014-gaussian-hmm-adapter: Implement full-covariance Gaussian HMM adapter
 ```
 
-The canonical PR name is the identifier that must appear unchanged in the PR title, branch name, and every commit subject belonging to that PR.
-
-## PR title
-
-PR titles must start with the exact canonical PR name followed by a colon and a short human-readable title:
-
-```text
-PR-014-gaussian-hmm-adapter: Implement configurable Gaussian HMM adapter
-```
-
-## Branch name
-
-The branch name must be exactly:
-
-```text
-pr/<canonical-pr-name>
-```
-
-Example:
+Branch:
 
 ```text
 pr/PR-014-gaussian-hmm-adapter
 ```
 
-For legacy `BACKLOG.md` entries that currently show `pr/014-gaussian-hmm-adapter`, agents must normalize the branch to `pr/PR-014-gaussian-hmm-adapter`. The insertion of the `PR-` prefix is a repository-wide naming normalization only; it does not change the PR number, scope, dependencies, or allowed files.
-
-## Conventional Commits
-
-Every commit subject must follow Conventional Commits and use the exact canonical PR name as its scope:
+Commit subject:
 
 ```text
-<type>(<canonical-pr-name>): <imperative description>
+<type>(PR-014-gaussian-hmm-adapter): <imperative description>
 ```
 
-Examples:
+Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 
-```text
-feat(PR-014-gaussian-hmm-adapter): implement full-covariance fitting
-test(PR-014-gaussian-hmm-adapter): cover deterministic model reconstruction
-docs(PR-014-gaussian-hmm-adapter): document Gaussian HMM parameters
-```
+Generic/WIP commit subjects are forbidden. The squash commit follows the same canonical naming rule.
 
-Allowed commit types:
+## Required Git state
 
-```text
-feat
-fix
-docs
-style
-refactor
-perf
-test
-build
-ci
-chore
-revert
-```
-
-Breaking changes may use the standard Conventional Commits marker:
-
-```text
-feat(PR-014-gaussian-hmm-adapter)!: change fitted artifact contract
-```
-
-Generic subjects such as `update`, `changes`, `fix stuff`, or `WIP` are forbidden.
-
-## Squash / merge commit
-
-The final squash commit must also follow the same rule and contain the canonical PR name, for example:
-
-```text
-feat(PR-014-gaussian-hmm-adapter): implement configurable Gaussian HMM adapter
-```
-
-## Required Git status
-
-Before creating the PR branch:
+Before branch creation:
 
 ```text
 git switch main
 git pull --ff-only
 git status --short
+git branch --show-current
 ```
 
-Required result:
+Required state is a clean tree on `main`.
+
+Immediately before final push:
 
 ```text
-<empty output>
+git status --short
+git branch --show-current
 ```
 
-Before the final push, `git status --short` must again be empty after all intended files have been committed.
+Required state is an empty status and the exact PR branch declared by `BACKLOG.md`.
 
-## Scope discipline
+## Weak-agent scope discipline
 
-Agents must follow the PR's `Allowed files`, dependencies, and acceptance criteria from the single authoritative `BACKLOG.md`. For PR-045 through PR-050, and for the explicit PR-021/PR-022/PR-024/PR-035/PR-036 feature-selection addenda, agents must use the `Wave 7 — Statistical feature selection and frozen HMM input` section in `BACKLOG.md`; that section takes precedence over older conflicting feature-selection wording in earlier PR sections. Agents must not broaden scope, refactor unrelated code, or edit another PR's files. `EVALUATION.md` must be updated in the same PR whenever the evaluation-sidecar rule in `BACKLOG.md` applies.
+An implementation agent receives one PR section plus only the already-merged contracts/interfaces needed by that PR.
 
-For feature-selection work, the orchestrator should provide a weak agent only the single assigned PR section plus the shared `Statistical feature-selection contract` section from `BACKLOG.md`. An agent must stop if it would need an unmerged dependency, a file outside its declared scope, a different selection method/threshold, per-fold feature re-selection, HMM-based feature-subset search, or downstream ETF/portfolio data.
+The agent must:
 
-Any PR that creates or changes human-facing diagnostic plots must also satisfy `PLOT_STYLE.md`. This applies to MLflow fold-history plots, parent candidate-comparison plots, transition-matrix heatmaps, covariance heatmaps, and any future evaluation visualization even when the individual BACKLOG acceptance criteria do not repeat every rendering requirement.
+1. edit only allowed files;
+2. implement every acceptance checkbox;
+3. ship tests in the same PR;
+4. stop when a dependency is unmerged or required work is outside scope;
+5. never invent thresholds, aliases, profile IDs, database names, fallback libraries, covariance modes, API fields, ports, or deployment services;
+6. never edit `BACKLOG.md`;
+7. never broaden into portfolio/economic logic;
+8. never contact NAS services from required CI tests.
 
-The production feature-source boundary is governed by `DATA_SOURCE.md`. Any legacy backlog wording that describes direct upstream `regime-loader` Parquet as the production engine input must be interpreted according to `DATA_SOURCE.md`: production features are served by the `regime-loader` PostgreSQL replica at `10.10.1.3:54321`, while required CI remains hermetic.
+If a pinned dependency such as Python 3.14.7, MLflow 3.15.1, or `hmmlearn==0.3.3` fails its required compatibility test, the agent stops. It does not change the pinned architecture independently.
 
-## Precedence
+## Contract-owner files
 
-For Git naming and commit-message conventions, this file is authoritative. For implementation scope, dependency order, allowed files, acceptance criteria, and all feature-selection backlog requirements, the single `BACKLOG.md` file is authoritative. Within `BACKLOG.md`, the `Wave 7 — Statistical feature selection and frozen HMM input` section takes precedence over older conflicting feature-selection wording for PR-045 through PR-050 and its explicit addenda to PR-021, PR-022, PR-024, PR-035, and PR-036. `DATA_SOURCE.md` is authoritative for upstream naming, production feature-source transport, PostgreSQL serving contract, lineage-snapshot semantics, and credential boundary. `EVALUATION.md` remains authoritative for implemented evaluation methodology and champion-selection semantics. `PLOT_STYLE.md` is authoritative for presentation quality, titles, legends, axis labels, state/candidate labeling, date-axis semantics, heatmap labeling, accessibility, export quality, and plot-manifest presentation metadata. Plot styling must never alter the statistical semantics defined by `EVALUATION.md`.
+These are normative contract-owner files:
+
+- `BACKLOG.md`: implementation scope, dependencies, constants, API/deployment contracts, execution plan;
+- `DATA_SOURCE.md`: upstream PostgreSQL source, lineage, time/missing-value semantics and credentials;
+- `EVALUATION.md`: exact statistical/HMM/evaluation/final-refit semantics;
+- `PLOT_STYLE.md`: presentation/rendering only;
+- `CONTRIBUTING.md`: Git/weak-agent execution rules.
+
+Weak implementation agents do not rewrite contract-owner files unless their PR explicitly lists that file and exact purpose.
+
+`PLOT_STYLE.md` can never alter statistical semantics. `DATA_SOURCE.md` can never alter feature-selection/model-selection semantics. `EVALUATION.md` can never introduce consumer portfolio metrics.
+
+## Production source and serving boundaries
+
+Production features come from the external `regime-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `regime-engine`. Direct upstream Parquet is not the production source.
+
+Production serving is one MLflow service at `http://10.10.1.3:5000`, extended by the `regime-engine` MLflow Flask app and explicitly run through Gunicorn. There is no separate FastAPI/Uvicorn application, model-serving port 5001, reverse proxy, or Prometheus exposure.
+
+## Required tests
+
+Push/merge required tests are hermetic. Only explicitly marked `external_service` smoke tests may contact:
+
+- feature PostgreSQL `10.10.1.3:54321`;
+- MLflow `http://10.10.1.3:5000`.
+
+Those external tests are opt-in and excluded from required gates.
