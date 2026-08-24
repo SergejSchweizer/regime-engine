@@ -96,9 +96,15 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
 ) -> None:
     downloaded: dict[str, str | None] = {}
 
-    def download(*, artifact_uri: str, tracking_uri: str | None) -> str:
+    def download(
+        *,
+        artifact_uri: str,
+        tracking_uri: str | None,
+        registry_uri: str | None,
+    ) -> str:
         downloaded["artifact_uri"] = artifact_uri
         downloaded["tracking_uri"] = tracking_uri
+        downloaded["registry_uri"] = registry_uri
         return "/packages/xetra/2"
 
     expected = artifact(build="build-2")
@@ -110,6 +116,7 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
     assert downloaded == {
         "artifact_uri": "runs:/evaluation-run/production-package",
         "tracking_uri": "http://127.0.0.1:5000",
+        "registry_uri": "http://127.0.0.1:5000",
     }
     with pytest.raises(ValueError, match="tracking URI"):
         model_resolver.mlflow_package_loader(tracking_uri="")
