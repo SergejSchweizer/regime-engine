@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime
 from threading import Event, Lock, Thread
 
@@ -15,12 +14,12 @@ from market_regime_engine.serving.model_resolver import ModelResolver
 from market_regime_engine.serving.profile_registry import ProfileModelTarget, ProfileRegistry
 
 
-def artifact(*, build: str = "build-1", profile: str = "xetra", model: str = "regime-xetra") -> ProductionModelArtifact:
+def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
     features = ("f0",)
     return ProductionModelArtifact(
-        profile_id=profile,
+        profile_id="xetra",
         profile_config_version=1,
-        registered_model=model,
+        registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
         source_build_id=build,
@@ -215,7 +214,7 @@ def test_invalid_new_champion_fails_without_falling_back_or_relabelling() -> Non
     def loader(uri: str) -> ProductionModelArtifact:
         version = uri.rsplit("/", 1)[-1]
         if version == "2":
-            return artifact(build="bad", profile="crypto", model="regime-crypto")
+            raise ValueError("invalid new champion package")
         return artifact(build="good")
 
     resolver = ModelResolver(registry, alias_ttl_seconds=10.0, package_loader=loader, clock=clock)
@@ -224,11 +223,11 @@ def test_invalid_new_champion_fails_without_falling_back_or_relabelling() -> Non
 
     registry.alias_version = "2"
     clock.value = 111.0
-    with pytest.raises(ValueError, match="profile differs"):
+    with pytest.raises(ValueError, match="invalid new champion package"):
         resolver.resolve("xetra")
     assert registry.package_calls[-1] == "2"
 
-    with pytest.raises(ValueError, match="profile differs"):
+    with pytest.raises(ValueError, match="invalid new champion package"):
         resolver.resolve("xetra")
     assert registry.alias_calls == 2
     assert registry.package_calls[-1] == "2"
@@ -253,7 +252,9 @@ def test_resolver_validates_alias_identity_and_configuration() -> None:
     with pytest.raises(ValueError, match="alias TTL"):
         ModelResolver(FakeRegistry(), alias_ttl_seconds=0.0)
 
-    wrong_version_loader: Callable[[str], ProductionModelArtifact] = lambda _: artifact()
+    def wrong_version_loader(_: str) -> ProductionModelArtifact:
+        return artifact()
+
     custom = ProfileRegistry((ProfileModelTarget("xetra", 2, "regime-xetra", "champion"),))
     with pytest.raises(ValueError, match="configuration version differs"):
         ModelResolver(
