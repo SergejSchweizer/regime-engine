@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -17,6 +18,8 @@ from market_regime_engine.contracts import (
 )
 from market_regime_engine.serving.latest_handler import StaleDefaultChampionError
 from market_regime_engine.serving.replay_limits import ReplayGuardrailError
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -225,6 +228,12 @@ def map_exception(exc: Exception, request_id: str) -> tuple[dict[str, object], i
                 ),
                 404,
             )
+        _LOGGER.warning(
+            "MLflow registry request failed: error_code=%s exception=%s",
+            error_code,
+            type(exc).__name__,
+            exc_info=True,
+        )
         return (
             _error_payload(
                 request_id=request_id,
