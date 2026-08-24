@@ -105,9 +105,7 @@ class ModelCache:
         if len(self._entries) < self._max_versions:
             return
         candidates = (
-            (entry.last_used, key)
-            for key, entry in self._entries.items()
-            if entry.references == 0
+            (entry.last_used, key) for key, entry in self._entries.items() if entry.references == 0
         )
         try:
             _, victim = min(candidates)
