@@ -2,6 +2,18 @@
 
 All procedures in this document run from the clean deployment checkout on the host that owns the local Unix-socket Docker daemon. They operate on the `regime-engine` Compose project only. A remote Docker host, registry-hosted application image, Swarm and Kubernetes are not part of the contract.
 
+## Host-state directory migration
+
+The persistent MLflow backend and artifacts live in
+`/volume2/docker/mfllow/postgres` and `/volume2/docker/mfllow/artifacts`.
+When moving an existing named-volume deployment to these bind mounts, first
+create and verify a backup. Quiesce both services, copy the existing backend
+and artifact data into the empty target directories while the services remain
+stopped, then start the updated Compose topology with `--no-build` and run both
+local Compose verification and the unified MLflow smoke. Retain the verified
+backup until those checks succeed; never delete the old named volumes as part
+of the initial migration.
+
 ## Verified backup
 
 Create a new backup directory on local durable storage:
