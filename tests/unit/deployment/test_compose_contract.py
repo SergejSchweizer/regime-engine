@@ -73,12 +73,8 @@ def test_backend_and_feature_database_settings_are_strictly_namespaced() -> None
     )
     assert environment["REGIME_FEATURE_PGHOST"] == "${REGIME_FEATURE_PGHOST:-10.10.1.3}"
     assert environment["REGIME_FEATURE_PGPORT"] == "${REGIME_FEATURE_PGPORT:-54321}"
-    assert environment["REGIME_FEATURE_PGUSER"] == (
-        "${REGIME_FEATURE_PGUSER:-regime-engine}"
-    )
-    assert environment["REGIME_FEATURE_PGPASSWORD_FILE"] == (
-        "/run/secrets/regime_feature_password"
-    )
+    assert environment["REGIME_FEATURE_PGUSER"] == ("${REGIME_FEATURE_PGUSER:-regime-engine}")
+    assert environment["REGIME_FEATURE_PGPASSWORD_FILE"] == ("/run/secrets/regime_feature_password")
     assert environment["REGIME_FEATURE_PGSSLMODE"] == "${REGIME_FEATURE_PGSSLMODE:-require}"
     generic_pg = {"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"}
     assert not (generic_pg & set(environment))
@@ -95,19 +91,13 @@ def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
         "REGIME_PG_POOL_MIN_SIZE": "${REGIME_PG_POOL_MIN_SIZE:-1}",
         "REGIME_PG_POOL_MAX_SIZE": "${REGIME_PG_POOL_MAX_SIZE:-4}",
         "REGIME_PG_ACQUIRE_TIMEOUT_SECONDS": "${REGIME_PG_ACQUIRE_TIMEOUT_SECONDS:-5}",
-        "REGIME_PG_STATEMENT_TIMEOUT_SECONDS": (
-            "${REGIME_PG_STATEMENT_TIMEOUT_SECONDS:-30}"
-        ),
-        "REGIME_FEATURE_PG_CONNECTION_BUDGET": (
-            "${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}"
-        ),
+        "REGIME_PG_STATEMENT_TIMEOUT_SECONDS": ("${REGIME_PG_STATEMENT_TIMEOUT_SECONDS:-30}"),
+        "REGIME_FEATURE_PG_CONNECTION_BUDGET": ("${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}"),
         "REGIME_REPLAY_MAX_ROWS": "${REGIME_REPLAY_MAX_ROWS:-10000}",
         "REGIME_REPLAY_MAX_INTERNAL_ROWS": "${REGIME_REPLAY_MAX_INTERNAL_ROWS:-15000}",
         "REGIME_REPLAY_MAX_RANGE_DAYS": "${REGIME_REPLAY_MAX_RANGE_DAYS:-14610}",
         "REGIME_REPLAY_TIMEOUT_SECONDS": "${REGIME_REPLAY_TIMEOUT_SECONDS:-60}",
-        "REGIME_REPLAY_MAX_RESPONSE_BYTES": (
-            "${REGIME_REPLAY_MAX_RESPONSE_BYTES:-26214400}"
-        ),
+        "REGIME_REPLAY_MAX_RESPONSE_BYTES": ("${REGIME_REPLAY_MAX_RESPONSE_BYTES:-26214400}"),
         "REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER": (
             "${REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER:-1}"
         ),
@@ -128,9 +118,7 @@ def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
     assert "*" not in environment["MLFLOW_SERVER_CORS_ALLOWED_ORIGINS"]
     workers = int(expected["MLFLOW_WORKERS"].removesuffix("}").split(":-")[-1])
     pool_max = int(expected["REGIME_PG_POOL_MAX_SIZE"].removesuffix("}").split(":-")[-1])
-    budget = int(
-        expected["REGIME_FEATURE_PG_CONNECTION_BUDGET"].removesuffix("}").split(":-")[-1]
-    )
+    budget = int(expected["REGIME_FEATURE_PG_CONNECTION_BUDGET"].removesuffix("}").split(":-")[-1])
     assert workers * pool_max <= budget
 
 
