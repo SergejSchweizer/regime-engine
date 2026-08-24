@@ -148,7 +148,7 @@ def test_package_loader_rejects_runtime_version_drift(tmp_path) -> None:
     metadata = json.loads(path.read_text(encoding="utf-8"))
     metadata["mlflow_version"] = "3.16.0"
     path.write_text(json.dumps(metadata), encoding="utf-8")
-    with pytest.raises(ValueError, match="MLflow 3.15.1"):
+    with pytest.raises(ValueError, match=r"MLflow 3\.15\.1"):
         load_production_package(package)
 
     package = save_production_package(artifact(), tmp_path / "bad-python")
@@ -156,7 +156,7 @@ def test_package_loader_rejects_runtime_version_drift(tmp_path) -> None:
     metadata = json.loads(path.read_text(encoding="utf-8"))
     metadata["python_version"] = "3.14.8"
     path.write_text(json.dumps(metadata), encoding="utf-8")
-    with pytest.raises(ValueError, match="Python 3.14.7"):
+    with pytest.raises(ValueError, match=r"Python 3\.14\.7"):
         load_production_package(package)
 
 
