@@ -88,12 +88,8 @@ class FeatureSelectionLineage:
     feature_selection_execution_hash: str | None
 
     def __post_init__(self) -> None:
-        _require_sha256(
-            self.feature_selection_definition_hash, "feature_selection_definition_hash"
-        )
-        _require_sha256(
-            self.feature_selection_execution_hash, "feature_selection_execution_hash"
-        )
+        _require_sha256(self.feature_selection_definition_hash, "feature_selection_definition_hash")
+        _require_sha256(self.feature_selection_execution_hash, "feature_selection_execution_hash")
 
 
 @dataclass(frozen=True, slots=True)
