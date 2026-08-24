@@ -152,7 +152,11 @@ class MlflowModelRegistry:
                 raise
             self._client.create_registered_model(REGISTERED_MODEL_NAME)
 
-        source = package_source_uri if package_source_uri is not None else _package_uri(package_path)
+        source = (
+            package_source_uri
+            if package_source_uri is not None
+            else _package_uri(package_path)
+        )
         if not source:
             raise ValueError("production package source URI cannot be empty")
         version = self._client.create_model_version(
