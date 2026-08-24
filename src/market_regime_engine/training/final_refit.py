@@ -104,8 +104,7 @@ def _aligned_artifact(
         feature_order=artifact.feature_order,
         start_probabilities=tuple(artifact.start_probabilities[index] for index in mapping),
         transition_matrix=tuple(
-            tuple(artifact.transition_matrix[row][column] for column in mapping)
-            for row in mapping
+            tuple(artifact.transition_matrix[row][column] for column in mapping) for row in mapping
         ),
         means=tuple(artifact.means[index] for index in mapping),
         full_covariances=tuple(artifact.full_covariances[index] for index in mapping),
