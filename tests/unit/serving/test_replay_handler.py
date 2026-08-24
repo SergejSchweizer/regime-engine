@@ -90,8 +90,7 @@ def snapshot(
 ) -> FeatureSnapshot:
     if rows is None:
         rows = tuple(
-            FeatureRow(BASE + timedelta(days=day), (float(day) / 10.0,))
-            for day in range(0, 7)
+            FeatureRow(BASE + timedelta(days=day), (float(day) / 10.0,)) for day in range(0, 7)
         )
     return FeatureSnapshot(
         lineage=source or lineage(),
@@ -185,8 +184,7 @@ def test_replay_including_training_period_filters_from_persisted_origin() -> Non
     assert result.timestamps == tuple(BASE + timedelta(days=day) for day in (1, 2, 3))
     assert result.warmup_observation_count == 1
     assert all(
-        abs(sum(probabilities) - 1.0) <= 1e-10
-        for probabilities in result.filtered_probabilities
+        abs(sum(probabilities) - 1.0) <= 1e-10 for probabilities in result.filtered_probabilities
     )
 
 
