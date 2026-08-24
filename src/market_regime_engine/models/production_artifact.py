@@ -53,7 +53,9 @@ class ProductionModelArtifact:
         if self.state_count not in (2, 3, 4):
             raise ValueError("production artifact supports exactly K2/K3/K4")
         if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
-            raise ValueError("production candidate identity must match state count and full covariance")
+            raise ValueError(
+                "production candidate identity must match state count and full covariance"
+            )
         if not self.source_build_id or not self.source_data_sha256:
             raise ValueError("production source identity cannot be empty")
         if len(self.source_data_sha256) != 64:
@@ -83,7 +85,11 @@ class ProductionModelArtifact:
             raise ValueError("production refit requires at least 504 retained observations")
         if self.skipped_incomplete_observation_count < 0:
             raise ValueError("skipped incomplete observation count cannot be negative")
-        if self.scaler.feature_order != self.feature_order or self.hmm.feature_order != self.feature_order:
+        feature_order_mismatch = (
+            self.scaler.feature_order != self.feature_order
+            or self.hmm.feature_order != self.feature_order
+        )
+        if feature_order_mismatch:
             raise ValueError("scaler/HMM feature order must equal frozen production feature order")
         if self.hmm.state_count != self.state_count:
             raise ValueError("HMM state count must equal production state count")
