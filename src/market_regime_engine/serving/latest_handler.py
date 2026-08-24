@@ -178,7 +178,7 @@ class LatestHandler:
                 )
             prediction = _prediction(inference.timestamp, inference.filtered_probabilities)
             alias_time = request_time_utc if lease.resolved_via_alias is not None else None
-            requested_fields = ()
+            requested_fields: tuple[tuple[str, str], ...] = ()
             if invocation.as_of is not None:
                 requested_fields = (("as_of", _utc_text(invocation.as_of)),)
             return RegimeInvocationResponse(
