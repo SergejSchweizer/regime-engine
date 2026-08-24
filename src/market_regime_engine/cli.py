@@ -1,4 +1,4 @@
-"""Operator CLI for explicit regime-engine lifecycle actions; there is no standalone serve command."""
+"""Operator CLI for explicit regime-engine lifecycle actions without standalone serving."""
 
 from __future__ import annotations
 
