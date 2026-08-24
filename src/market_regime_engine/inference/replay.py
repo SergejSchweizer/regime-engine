@@ -57,9 +57,7 @@ def fixed_model_replay(
     _validate_snapshot(artifact, snapshot)
     continuation = start > artifact.trained_through_timestamp
     origin = (
-        artifact.trained_through_timestamp
-        if continuation
-        else artifact.inference_origin_timestamp
+        artifact.trained_through_timestamp if continuation else artifact.inference_origin_timestamp
     )
     rows = tuple(
         row
