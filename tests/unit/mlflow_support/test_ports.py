@@ -6,8 +6,8 @@ import pytest
 
 from market_regime_engine.mlflow_support.ports import MetricPoint, ResolvedModelVersion
 from market_regime_engine.mlflow_support.settings import (
-    MLflowSettings,
     PRODUCTION_MLFLOW_URI,
+    MLflowSettings,
 )
 
 
