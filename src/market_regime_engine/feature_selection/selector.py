@@ -181,6 +181,4 @@ def select_stage1(
 ) -> tuple[BlockSelectionEvidence, ...]:
     """Run Stage 1 for all eight blocks in canonical policy order."""
 
-    return tuple(
-        select_stage1_block(first_train_rows, block, policy) for block in policy.blocks
-    )
+    return tuple(select_stage1_block(first_train_rows, block, policy) for block in policy.blocks)
