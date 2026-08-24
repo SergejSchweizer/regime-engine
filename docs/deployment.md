@@ -1,0 +1,87 @@
+# Local two-service deployment
+
+PR-061 defines the production Compose topology for `regime-engine`. The deployment host owns a local checkout of this repository and talks only to its local Docker daemon over a Unix socket. Remote Docker contexts/builders, Docker Swarm, Kubernetes and an application-image registry are outside the MVP contract.
+
+## Topology
+
+`compose.yaml` declares exactly two services:
+
+- `mlflow`: the repository-built `regime-engine-mlflow:local` image, publishing only `5000:5000`;
+- `mlflow-postgres`: private MLflow metadata PostgreSQL, with no host port.
+
+The feature PostgreSQL at `10.10.1.3:54321` is external and never becomes a Compose service. MLflow backend metadata and feature-source credentials/settings are separate namespaces.
+
+## Immutable upstream images
+
+The application Dockerfile pins `python:3.14.7-slim-bookworm` through `docker/python-base.lock`. Compose pins the official `postgres:18.6-alpine` input through `docker/postgres-backend.lock` and the exact multi-platform index digest. PostgreSQL 18 uses `/var/lib/postgresql` as the official volume target; the named backend volume is mounted there.
+
+The repository-owned application image is never pulled from or pushed to Docker Hub, GHCR or another registry. Its canonical tag is exactly `regime-engine-mlflow:local`, with `pull_policy: never`.
+
+## Required local configuration
+
+Copy `.env.example` to `.env` on the deployment host and replace placeholders locally. Do not commit `.env` or password files. Two Docker secrets are mounted:
+
+- MLflow backend password -> `/run/secrets/mlflow_backend_password`;
+- feature PostgreSQL password -> `/run/secrets/regime_feature_password`.
+
+`REGIME_FEATURE_PGDATABASE` and the MLflow backend database/user are required runtime values with no guessed defaults. Feature transport is fixed to `sslmode=require`; do not downgrade it.
+
+The trusted-LAN host/origin defaults contain only `10.10.1.3`, localhost and loopback. Do not use wildcard Host/CORS values. Network/firewall policy must keep port 5000 private to trusted clients/operators.
+
+## Build
+
+The only supported production application-image build is:
+
+```sh
+scripts/local_compose_build.sh
+```
+
+The wrapper verifies that Docker is reached through a local Unix socket, rejects remote Buildx endpoints, records the current repository Git SHA and UTC build timestamp as image build arguments, and executes exactly:
+
+```sh
+docker compose build --pull mlflow
+```
+
+The build may pull the pinned Python base input. It does not push or pull a repository-owned application image.
+
+## Start
+
+Normal production startup is:
+
+```sh
+scripts/local_compose_up.sh
+```
+
+The wrapper first requires `regime-engine-mlflow:local` to exist locally, then executes exactly:
+
+```sh
+docker compose up -d --no-build
+```
+
+Startup therefore never rebuilds the application image and cannot silently fetch it from a registry. The pinned official PostgreSQL backend image may be pulled only when it is absent locally.
+
+Normal startup performs no MLflow schema migration. Migration remains the explicit PR-032 one-shot command and must be paired with the operational backup/quiesce procedure before use.
+
+## Verify
+
+After startup run:
+
+```sh
+scripts/verify_local_compose.sh
+```
+
+Verification fails closed unless the project is `regime-engine`, the running service set is exactly `mlflow` plus `mlflow-postgres`, the application container uses the local canonical tag, its actual Docker image ID has no registry RepoDigest, the embedded Git revision equals the local checkout, MLflow is exactly `3.15.1`, only host port 5000 is published, and the backend database remains private. It prints only non-secret deployment evidence: project, service set, local image ID, Git SHA, MLflow version, build timestamp and port mapping.
+
+## Stop
+
+```sh
+scripts/local_compose_down.sh
+```
+
+The default down path preserves named backend/artifact volumes. Deleting volumes is an explicit destructive operator action and is not performed by the wrapper.
+
+## Runtime resource contract
+
+The defaults are four Gunicorn workers and four gthread threads per worker. Each worker may own a feature PostgreSQL pool of at most four connections, and the global feature-connection budget is sixteen, so the required inequality is `4 * 4 <= 16`. Replay admission remains one per worker, yielding at most four admitted replay requests under the exact default topology.
+
+All BLAS thread counts are pinned to one. Replay bounds, cache TTL and source/model staleness thresholds are passed explicitly from Compose and match the contract-owner values. No second serving port, proxy, Prometheus exporter or separate Python serving environment is introduced.
