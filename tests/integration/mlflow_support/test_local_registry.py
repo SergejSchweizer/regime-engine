@@ -71,6 +71,7 @@ def test_local_sqlite_mlflow_registry_package_and_alias_roundtrip(tmp_path) -> N
     )
     resolved = registry.resolve_alias("regime-xetra", "champion")
     assert resolved.exact_version == version.exact_version
-    assert registry.get_model_package_uri(
-        "regime-xetra", version.exact_version
-    ) == package.resolve().as_uri()
+    assert (
+        registry.get_model_package_uri("regime-xetra", version.exact_version)
+        == package.resolve().as_uri()
+    )
