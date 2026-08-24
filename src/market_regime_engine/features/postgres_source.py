@@ -162,7 +162,7 @@ class PostgresFeatureSource:
         if request.end is not None:
             clauses.append(sql.SQL("timestamp_m1 <= %s"))
             parameters.append(request.end)
-        where = sql.SQL("")
+        where: sql.Composed | sql.SQL = sql.SQL("")
         if clauses:
             where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
         query = (
