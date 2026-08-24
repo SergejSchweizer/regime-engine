@@ -1,24 +1,22 @@
-from pathlib import Path
-
-import yaml
-
-
-COMPOSE = Path("compose.yaml")
-LOCK = Path("docker/postgres-backend.lock")
-ENV_EXAMPLE = Path(".env.example")
-BUILD = Path("scripts/local_compose_build.sh")
-UP = Path("scripts/local_compose_up.sh")
-DOWN = Path("scripts/local_compose_down.sh")
-VERIFY = Path("scripts/verify_local_compose.sh")
+COMPOSE = "compose.yaml"
+LOCK = "docker/postgres-backend.lock"
+ENV_EXAMPLE = ".env.example"
+BUILD = "scripts/local_compose_build.sh"
+UP = "scripts/local_compose_up.sh"
+DOWN = "scripts/local_compose_down.sh"
+VERIFY = "scripts/verify_local_compose.sh"
+DEPLOYMENT_DOC = "docs/deployment.md"
 POSTGRES_DIGEST = "sha256:432b3b824c0769275ec9b0947736ef8b376d6997bcaa9de29818f613819c2feb"
+AMD64_DIGEST = "sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
 
 
-def _text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def _text(path: str) -> str:
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
 
 
 def _compose() -> dict[str, object]:
-    value = yaml.safe_load(_text(COMPOSE))
+    value = __import__("yaml").safe_load(_text(COMPOSE))
     assert isinstance(value, dict)
     return value
 
@@ -42,9 +40,17 @@ def test_mlflow_is_local_build_only_and_never_registry_pulled() -> None:
     assert mlflow["pull_policy"] == "never"
     assert mlflow["build"]["context"] == "."
     assert mlflow["build"]["dockerfile"] == "Dockerfile"
-    text = _text(COMPOSE)
-    for banned in ("ghcr.io", "docker.io/SergejSchweizer", "5001", "prometheus", "nginx", "traefik"):
-        assert banned not in text.lower()
+    text = _text(COMPOSE).lower()
+    banned = (
+        "ghcr.io",
+        "docker.io/sergejschweizer",
+        "5001",
+        "prometheus",
+        "nginx",
+        "traefik",
+    )
+    for token in banned:
+        assert token not in text
 
 
 def test_postgres_backend_is_official_digest_pinned_and_persistent() -> None:
@@ -56,19 +62,26 @@ def test_postgres_backend_is_official_digest_pinned_and_persistent() -> None:
     lock = _text(LOCK)
     assert "image=postgres:18.6-alpine" in lock
     assert f"index_digest={POSTGRES_DIGEST}" in lock
-    assert "linux_amd64_manifest_digest=sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8" in lock
+    assert f"linux_amd64_manifest_digest={AMD64_DIGEST}" in lock
 
 
 def test_backend_and_feature_database_settings_are_strictly_namespaced() -> None:
     services = _compose()["services"]
     environment = services["mlflow"]["environment"]
-    assert environment["MLFLOW_BACKEND_DB_PASSWORD_FILE"] == "/run/secrets/mlflow_backend_password"
+    assert environment["MLFLOW_BACKEND_DB_PASSWORD_FILE"] == (
+        "/run/secrets/mlflow_backend_password"
+    )
     assert environment["REGIME_FEATURE_PGHOST"] == "${REGIME_FEATURE_PGHOST:-10.10.1.3}"
     assert environment["REGIME_FEATURE_PGPORT"] == "${REGIME_FEATURE_PGPORT:-54321}"
-    assert environment["REGIME_FEATURE_PGUSER"] == "${REGIME_FEATURE_PGUSER:-regime-engine}"
-    assert environment["REGIME_FEATURE_PGPASSWORD_FILE"] == "/run/secrets/regime_feature_password"
+    assert environment["REGIME_FEATURE_PGUSER"] == (
+        "${REGIME_FEATURE_PGUSER:-regime-engine}"
+    )
+    assert environment["REGIME_FEATURE_PGPASSWORD_FILE"] == (
+        "/run/secrets/regime_feature_password"
+    )
     assert environment["REGIME_FEATURE_PGSSLMODE"] == "${REGIME_FEATURE_PGSSLMODE:-require}"
-    assert not ({"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"} & set(environment))
+    generic_pg = {"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"}
+    assert not (generic_pg & set(environment))
 
 
 def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
@@ -82,14 +95,22 @@ def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
         "REGIME_PG_POOL_MIN_SIZE": "${REGIME_PG_POOL_MIN_SIZE:-1}",
         "REGIME_PG_POOL_MAX_SIZE": "${REGIME_PG_POOL_MAX_SIZE:-4}",
         "REGIME_PG_ACQUIRE_TIMEOUT_SECONDS": "${REGIME_PG_ACQUIRE_TIMEOUT_SECONDS:-5}",
-        "REGIME_PG_STATEMENT_TIMEOUT_SECONDS": "${REGIME_PG_STATEMENT_TIMEOUT_SECONDS:-30}",
-        "REGIME_FEATURE_PG_CONNECTION_BUDGET": "${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}",
+        "REGIME_PG_STATEMENT_TIMEOUT_SECONDS": (
+            "${REGIME_PG_STATEMENT_TIMEOUT_SECONDS:-30}"
+        ),
+        "REGIME_FEATURE_PG_CONNECTION_BUDGET": (
+            "${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}"
+        ),
         "REGIME_REPLAY_MAX_ROWS": "${REGIME_REPLAY_MAX_ROWS:-10000}",
         "REGIME_REPLAY_MAX_INTERNAL_ROWS": "${REGIME_REPLAY_MAX_INTERNAL_ROWS:-15000}",
         "REGIME_REPLAY_MAX_RANGE_DAYS": "${REGIME_REPLAY_MAX_RANGE_DAYS:-14610}",
         "REGIME_REPLAY_TIMEOUT_SECONDS": "${REGIME_REPLAY_TIMEOUT_SECONDS:-60}",
-        "REGIME_REPLAY_MAX_RESPONSE_BYTES": "${REGIME_REPLAY_MAX_RESPONSE_BYTES:-26214400}",
-        "REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER": "${REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER:-1}",
+        "REGIME_REPLAY_MAX_RESPONSE_BYTES": (
+            "${REGIME_REPLAY_MAX_RESPONSE_BYTES:-26214400}"
+        ),
+        "REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER": (
+            "${REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER:-1}"
+        ),
         "REGIME_SOURCE_STALE_WARN_DAYS": "${REGIME_SOURCE_STALE_WARN_DAYS:-4}",
         "REGIME_SOURCE_STALE_FAIL_DAYS": "${REGIME_SOURCE_STALE_FAIL_DAYS:-7}",
         "REGIME_MODEL_STALE_WARN_DAYS": "${REGIME_MODEL_STALE_WARN_DAYS:-14}",
@@ -100,19 +121,26 @@ def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
     assert environment["OMP_NUM_THREADS"] == "1"
     assert environment["OPENBLAS_NUM_THREADS"] == "1"
     assert environment["MKL_NUM_THREADS"] == "1"
-    assert environment["MLFLOW_SERVER_ALLOWED_HOSTS"] == "${MLFLOW_SERVER_ALLOWED_HOSTS:-10.10.1.3,localhost,127.0.0.1}"
+    assert environment["MLFLOW_SERVER_ALLOWED_HOSTS"] == (
+        "${MLFLOW_SERVER_ALLOWED_HOSTS:-10.10.1.3,localhost,127.0.0.1}"
+    )
     assert "*" not in environment["MLFLOW_SERVER_ALLOWED_HOSTS"]
     assert "*" not in environment["MLFLOW_SERVER_CORS_ALLOWED_ORIGINS"]
-    assert int(expected["MLFLOW_WORKERS"].removesuffix("}").split(":-")[-1]) * int(
-        expected["REGIME_PG_POOL_MAX_SIZE"].removesuffix("}").split(":-")[-1]
-    ) <= int(expected["REGIME_FEATURE_PG_CONNECTION_BUDGET"].removesuffix("}").split(":-")[-1])
+    workers = int(expected["MLFLOW_WORKERS"].removesuffix("}").split(":-")[-1])
+    pool_max = int(expected["REGIME_PG_POOL_MAX_SIZE"].removesuffix("}").split(":-")[-1])
+    budget = int(
+        expected["REGIME_FEATURE_PG_CONNECTION_BUDGET"].removesuffix("}").split(":-")[-1]
+    )
+    assert workers * pool_max <= budget
 
 
 def test_secrets_are_file_backed_and_env_example_contains_placeholders_only() -> None:
     config = _compose()
     secrets = config["secrets"]
-    assert secrets["mlflow_backend_password"]["file"].startswith("${MLFLOW_BACKEND_DB_PASSWORD_SECRET_FILE:?")
-    assert secrets["regime_feature_password"]["file"].startswith("${REGIME_FEATURE_PGPASSWORD_SECRET_FILE:?")
+    backend_secret = secrets["mlflow_backend_password"]["file"]
+    feature_secret = secrets["regime_feature_password"]["file"]
+    assert backend_secret.startswith("${MLFLOW_BACKEND_DB_PASSWORD_SECRET_FILE:?")
+    assert feature_secret.startswith("${REGIME_FEATURE_PGPASSWORD_SECRET_FILE:?")
     env = _text(ENV_EXAMPLE)
     assert "<required-mlflow-backend-database>" in env
     assert "<required-mlflow-backend-user>" in env
@@ -134,9 +162,17 @@ def test_scripts_enforce_local_build_and_no_build_start_contract() -> None:
         assert "unix://*" in script
         assert "remote DOCKER_HOST is forbidden" in script
     assert "docker buildx inspect" in build
-    combined = "\n".join((build, up, down, verify, _text(Path("docs/deployment.md"))))
-    for banned in ("docker compose push", "docker login", "ssh://", "tcp://", "kubectl", "docker stack"):
-        assert banned not in combined
+    combined = "\n".join((build, up, down, verify, _text(DEPLOYMENT_DOC)))
+    banned = (
+        "docker compose push",
+        "docker login",
+        "ssh://",
+        "tcp://",
+        "kubectl",
+        "docker stack",
+    )
+    for token in banned:
+        assert token not in combined
 
 
 def test_normal_compose_path_never_runs_database_migration_and_verifies_provenance() -> None:
@@ -158,6 +194,6 @@ def test_normal_compose_path_never_runs_database_migration_and_verifies_provenan
 
 
 def test_production_contract_uses_compose_yaml_not_example_file() -> None:
-    assert COMPOSE.exists()
-    assert not Path("compose.example.yaml").exists()
+    assert __import__("os").path.exists(COMPOSE)
+    assert not __import__("os").path.exists("compose.example.yaml")
     assert "--build" not in _text(UP)
