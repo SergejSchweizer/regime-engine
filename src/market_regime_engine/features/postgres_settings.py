@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _FEATURE_HOST = "10.10.1.3"
@@ -20,7 +20,7 @@ _CONNECTION_BUDGET = 16
 @dataclass(frozen=True, slots=True)
 class FeaturePostgresSettings:
     database: str
-    password: str
+    password: str = field(repr=False)
     host: str = _FEATURE_HOST
     port: int = _FEATURE_PORT
     user: str = _FEATURE_USER
