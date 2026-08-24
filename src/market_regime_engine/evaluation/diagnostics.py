@@ -110,9 +110,7 @@ def uncertainty(filtered_probabilities: npt.ArrayLike) -> UncertaintyDiagnostics
     return UncertaintyDiagnostics(
         confidence=tuple(float(value) for value in confidence_values),
         entropy=tuple(float(value) for value in entropy_values),
-        low_confidence=tuple(
-            bool(value < LOW_CONFIDENCE_THRESHOLD) for value in confidence_values
-        ),
+        low_confidence=tuple(bool(value < LOW_CONFIDENCE_THRESHOLD) for value in confidence_values),
     )
 
 
