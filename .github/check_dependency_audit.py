@@ -15,11 +15,7 @@ _REQUIRED_EXCEPTION_KEYS = {"id", "package", "version", "expires", "reason"}
 
 def _load_findings(path: Path) -> set[tuple[str, str, str]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
-    dependencies: Any
-    if isinstance(raw, dict):
-        dependencies = raw.get("dependencies", [])
-    else:
-        dependencies = raw
+    dependencies: Any = raw.get("dependencies", []) if isinstance(raw, dict) else raw
     if not isinstance(dependencies, list):
         raise ValueError("pip-audit JSON must contain a dependency list")
     findings: set[tuple[str, str, str]] = set()
