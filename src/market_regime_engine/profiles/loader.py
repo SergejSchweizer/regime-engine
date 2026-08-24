@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import yaml
 
@@ -17,13 +17,17 @@ from market_regime_engine.profiles.config import (
     WalkForwardConfig,
 )
 
-T = TypeVar("T")
 
-
-def _strict_kwargs(cls: type[T], raw: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {field.name for field in fields(cls)}
+def _strict_kwargs[T](cls: type[T], raw: Mapping[str, Any]) -> dict[str, Any]:
+    field_definitions = fields(cls)
+    allowed = {field.name for field in field_definitions}
     unknown = set(raw) - allowed
-    missing = {field.name for field in fields(cls) if field.default is field.default_factory} - set(raw)
+    required = {
+        field.name
+        for field in field_definitions
+        if field.default is field.default_factory
+    }
+    missing = required - set(raw)
     if unknown:
         raise ValueError(f"unknown keys for {cls.__name__}: {sorted(unknown)}")
     if missing:
