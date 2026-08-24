@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from math import isfinite
-import re
 from typing import Any, Protocol, cast
 
 from psycopg import sql
@@ -55,13 +55,20 @@ class PostgresFeatureSource:
         self,
         connect: Callable[[], ConnectionLike],
         registered_feature_names: Iterable[str],
+        *,
+        expected_schema_version: int = 1,
+        expected_feature_version: int = 1,
     ) -> None:
         self._connect = connect
         self._registered = frozenset(registered_feature_names)
+        self._expected_schema_version = expected_schema_version
+        self._expected_feature_version = expected_feature_version
         if not self._registered:
             raise ValueError("registered_feature_names cannot be empty")
         if any(_IDENTIFIER_RE.fullmatch(name) is None for name in self._registered):
             raise ValueError("registered feature names must be safe SQL identifiers")
+        if expected_schema_version < 1 or expected_feature_version < 1:
+            raise ValueError("expected source versions must be positive")
 
     def read(self, request: FeatureRequest) -> FeatureSnapshot:
         self._validate_requested_features(request.feature_names)
@@ -70,14 +77,15 @@ class PostgresFeatureSource:
             with connection.cursor() as cursor:
                 cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 lineage = self._read_lineage(cursor)
-                rows = self._read_rows(cursor, request, lineage)
+                raw_rows = self._read_rows(cursor, request)
+                snapshot = self._materialize(request, lineage, raw_rows)
             connection.commit()
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
-        return self._materialize(request, lineage, rows)
+        return snapshot
 
     def _validate_requested_features(self, names: tuple[str, ...]) -> None:
         invalid = [
@@ -88,8 +96,7 @@ class PostgresFeatureSource:
         if invalid:
             raise ValueError(f"unregistered or invalid feature columns: {invalid}")
 
-    @staticmethod
-    def _read_lineage(cursor: CursorLike) -> SourceLineage:
+    def _read_lineage(self, cursor: CursorLike) -> SourceLineage:
         query = sql.SQL(
             "SELECT source_build_id, data_sha256, schema_version, feature_version, "
             "row_count, min_timestamp, max_timestamp, synced_at_utc "
@@ -101,35 +108,52 @@ class PostgresFeatureSource:
             raise ValueError("missing sync-state for regime_features_daily")
         if len(row) != 8:
             raise ValueError("unexpected sync-state shape")
-        source_build_id, digest, schema_version, feature_version, row_count, min_ts, max_ts, synced = row
-        if int(row_count) < 0:
+        (
+            source_build_id,
+            digest,
+            schema_version,
+            feature_version,
+            row_count,
+            min_ts,
+            max_ts,
+            synced,
+        ) = row
+        schema_version_int = int(schema_version)
+        feature_version_int = int(feature_version)
+        if schema_version_int != self._expected_schema_version:
+            raise ValueError("incompatible source schema_version")
+        if feature_version_int != self._expected_feature_version:
+            raise ValueError("incompatible source feature_version")
+        row_count_int = int(row_count)
+        if row_count_int < 0:
             raise ValueError("source row_count cannot be negative")
-        min_timestamp = cast(datetime, min_ts)
-        max_timestamp = cast(datetime, max_ts)
-        if min_timestamp.tzinfo is None or max_timestamp.tzinfo is None:
-            raise ValueError("source timestamp bounds must be timezone-aware")
+        min_timestamp = _utc_datetime(min_ts, "source min_timestamp")
+        max_timestamp = _utc_datetime(max_ts, "source max_timestamp")
         if min_timestamp > max_timestamp:
             raise ValueError("source timestamp bounds are inverted")
-        synced_at = cast(datetime, synced).astimezone(UTC)
+        synced_at = _utc_datetime(synced, "source synced_at_utc")
         return SourceLineage(
             source_dataset="regime_loader.regime_features_daily",
             source_build_id=str(source_build_id),
             data_sha256=str(digest),
-            schema_version=int(schema_version),
-            feature_version=int(feature_version),
+            schema_version=schema_version_int,
+            feature_version=feature_version_int,
             source_table="regime_loader.regime_features_daily",
             synced_at_utc=synced_at,
             data_time_semantics=DATA_TIME_SEMANTICS,
+            row_count=row_count_int,
+            min_timestamp=min_timestamp,
+            max_timestamp=max_timestamp,
         )
 
     @staticmethod
     def _read_rows(
         cursor: CursorLike,
         request: FeatureRequest,
-        lineage: SourceLineage,
     ) -> Sequence[Sequence[Any]]:
-        del lineage
-        columns = sql.SQL(", ").join([sql.Identifier("timestamp_m1"), *map(sql.Identifier, request.feature_names)])
+        columns = sql.SQL(", ").join(
+            [sql.Identifier("timestamp_m1"), *map(sql.Identifier, request.feature_names)]
+        )
         clauses: list[sql.Composed | sql.SQL] = []
         parameters: list[Any] = []
         if request.start is not None:
@@ -141,8 +165,10 @@ class PostgresFeatureSource:
         where = sql.SQL("")
         if clauses:
             where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
-        query = sql.SQL("SELECT {} FROM {}").format(columns, _FEATURE_TABLE) + where + sql.SQL(
-            " ORDER BY timestamp_m1 ASC"
+        query = (
+            sql.SQL("SELECT {} FROM {}").format(columns, _FEATURE_TABLE)
+            + where
+            + sql.SQL(" ORDER BY timestamp_m1 ASC")
         )
         cursor.execute(query, tuple(parameters))
         return cursor.fetchall()
@@ -153,16 +179,17 @@ class PostgresFeatureSource:
         lineage: SourceLineage,
         raw_rows: Sequence[Sequence[Any]],
     ) -> FeatureSnapshot:
+        if lineage.min_timestamp is None or lineage.max_timestamp is None:
+            raise ValueError("source lineage is missing validated timestamp bounds")
         rows: list[FeatureRow] = []
         skipped = 0
         previous: datetime | None = None
         for raw in raw_rows:
             if len(raw) != len(request.feature_names) + 1:
                 raise ValueError("feature row shape does not match requested columns")
-            timestamp = cast(datetime, raw[0])
-            if timestamp.tzinfo is None:
-                raise ValueError("feature timestamp must be timezone-aware")
-            timestamp = timestamp.astimezone(UTC)
+            timestamp = _utc_datetime(raw[0], "feature timestamp")
+            if not lineage.min_timestamp <= timestamp <= lineage.max_timestamp:
+                raise ValueError("feature row lies outside validated source bounds")
             if previous is not None and timestamp <= previous:
                 raise ValueError("feature timestamps must be unique and strictly increasing")
             previous = timestamp
@@ -187,3 +214,12 @@ class PostgresFeatureSource:
             rows=tuple(rows),
             skipped_incomplete_row_count=skipped,
         )
+
+
+def _utc_datetime(value: Any, field: str) -> datetime:
+    result = cast(datetime, value)
+    if not isinstance(result, datetime):
+        raise ValueError(f"{field} must be a datetime")
+    if result.tzinfo is None or result.utcoffset() != UTC.utcoffset(result):
+        raise ValueError(f"{field} must be timezone-aware UTC")
+    return result
