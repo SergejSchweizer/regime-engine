@@ -15,7 +15,7 @@ def test_operation_scripts_are_bash_valid_and_local_compose_only() -> None:
     for path in (BACKUP, VERIFY, RESTORE, UPGRADE):
         subprocess.run(["bash", "-n", path], check=True)
         text = _text(path)
-        assert "docker context show" in text or path == UPGRADE
+        assert "docker context show" in text
         assert "docker compose" in text
         assert "ssh://" not in text
         assert "tcp://" not in text
@@ -43,6 +43,8 @@ def test_verifier_rejects_hash_version_provenance_and_secret_failures() -> None:
     text = _text(VERIFY)
     assert '"$(field manifest_version)" == "1"' in text
     assert '"$(field mlflow_version)" == "3.15.1"' in text
+    assert '"$(field database_dump)" == "mlflow-backend.dump"' in text
+    assert '"$(field artifact_archive)" == "mlflow-artifacts.tar.gz"' in text
     assert "database dump hash mismatch" in text
     assert "artifact archive hash mismatch" in text
     assert "pg_restore --list" in text

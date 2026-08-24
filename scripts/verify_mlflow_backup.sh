@@ -34,6 +34,10 @@ MANIFEST="$BACKUP_DIR/manifest.env"
 [[ "$(field mlflow_version)" == "3.15.1" ]] || fail "backup MLflow version is not 3.15.1"
 [[ "$(field application_image_id)" == sha256:* ]] || fail "application image ID is missing"
 [[ "$(field repository_git_sha)" =~ ^[0-9a-f]{40}$ ]] || fail "repository Git SHA is invalid"
+[[ "$(field database_dump)" == "mlflow-backend.dump" ]] \
+  || fail "database dump filename is invalid"
+[[ "$(field artifact_archive)" == "mlflow-artifacts.tar.gz" ]] \
+  || fail "artifact archive filename is invalid"
 
 db_file="$BACKUP_DIR/$(field database_dump)"
 artifact_file="$BACKUP_DIR/$(field artifact_archive)"

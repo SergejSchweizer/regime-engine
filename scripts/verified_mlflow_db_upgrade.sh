@@ -6,8 +6,19 @@ fail() {
   exit 64
 }
 
+assert_local_docker() {
+  if [[ -n "${DOCKER_HOST:-}" && "${DOCKER_HOST}" != unix://* ]]; then
+    fail "remote DOCKER_HOST is forbidden"
+  fi
+  local context endpoint
+  context="$(docker context show)"
+  endpoint="$(docker context inspect "$context" --format '{{(index .Endpoints "docker").Host}}')"
+  [[ "$endpoint" == unix://* ]] || fail "Docker context must use a local Unix socket"
+}
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+assert_local_docker
 [[ $# -eq 1 ]] || fail "usage: scripts/verified_mlflow_db_upgrade.sh <verified-backup-directory>"
 BACKUP_DIR="$1"
 
