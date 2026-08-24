@@ -86,13 +86,11 @@ def test_resolution_shares_exact_frozen_contract_across_k2_k3_k4() -> None:
     )
     assert all(candidate.source_build_id == "build-1" for candidate in resolved.candidates)
     assert all(
-        candidate.feature_selection_definition_hash
-        == selection.feature_selection_definition_hash
+        candidate.feature_selection_definition_hash == selection.feature_selection_definition_hash
         for candidate in resolved.candidates
     )
     assert all(
-        candidate.feature_selection_execution_hash
-        == selection.feature_selection_execution_hash
+        candidate.feature_selection_execution_hash == selection.feature_selection_execution_hash
         for candidate in resolved.candidates
     )
 
