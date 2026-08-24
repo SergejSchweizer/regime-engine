@@ -95,6 +95,7 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     downloaded: dict[str, str | None] = {}
+    configured_uris: list[tuple[str, str]] = []
 
     def download(
         *,
@@ -110,6 +111,16 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
     expected = artifact(build="build-2")
     monkeypatch.setattr(model_resolver, "download_artifacts", download)
     monkeypatch.setattr(model_resolver, "load_production_package", lambda _: expected)
+    monkeypatch.setattr(
+        model_resolver.mlflow,
+        "set_tracking_uri",
+        lambda uri: configured_uris.append(("tracking", uri)),
+    )
+    monkeypatch.setattr(
+        model_resolver.mlflow,
+        "set_registry_uri",
+        lambda uri: configured_uris.append(("registry", uri)),
+    )
 
     loader = model_resolver.mlflow_package_loader(tracking_uri="http://127.0.0.1:5000")
     assert loader("runs:/evaluation-run/production-package") is expected
@@ -118,6 +129,10 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
         "tracking_uri": "http://127.0.0.1:5000",
         "registry_uri": "http://127.0.0.1:5000",
     }
+    assert configured_uris == [
+        ("tracking", "http://127.0.0.1:5000"),
+        ("registry", "http://127.0.0.1:5000"),
+    ]
     with pytest.raises(ValueError, match="tracking URI"):
         model_resolver.mlflow_package_loader(tracking_uri="")
 

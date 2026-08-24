@@ -8,6 +8,7 @@ from pathlib import Path
 from time import monotonic
 from urllib.parse import unquote, urlparse
 
+import mlflow
 from mlflow.artifacts import download_artifacts
 
 from market_regime_engine.mlflow_support.model_package import load_production_package
@@ -58,6 +59,9 @@ def _load_mlflow_package(
     if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
         path = Path(unquote(parsed.path))
     elif parsed.scheme == "runs":
+        if tracking_uri is not None:
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_registry_uri(tracking_uri)
         path = Path(
             download_artifacts(
                 artifact_uri=package_uri,
