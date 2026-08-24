@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 from mlflow.exceptions import MlflowException
+from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
 
 from market_regime_engine.mlflow_support.model_package import save_production_package
 from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
@@ -28,7 +29,7 @@ class FakeRegistryClient:
         self.next_version = 1
 
     def _missing(self) -> MlflowException:
-        return MlflowException("missing", error_code="RESOURCE_DOES_NOT_EXIST")
+        return MlflowException("missing", error_code=RESOURCE_DOES_NOT_EXIST)
 
     def get_registered_model(self, name: str) -> object:
         if name not in self.models:
@@ -159,7 +160,9 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
     )
     assert mismatch.changed is False
     assert mismatch.observed_current_version == first.exact_version
-    assert registry.resolve_alias("regime-xetra", "challenger").exact_version == first.exact_version
+    assert registry.resolve_alias(
+        "regime-xetra", "challenger"
+    ).exact_version == first.exact_version
 
     changed = registry.compare_and_swap_alias_with_audit(
         model_name="regime-xetra",
@@ -169,7 +172,9 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
         reason="validated replacement",
     )
     assert changed.changed is True
-    assert registry.resolve_alias("regime-xetra", "challenger").exact_version == second.exact_version
+    assert registry.resolve_alias(
+        "regime-xetra", "challenger"
+    ).exact_version == second.exact_version
     assert any("alias_audit" in key for _, key in client.tags)
 
 
