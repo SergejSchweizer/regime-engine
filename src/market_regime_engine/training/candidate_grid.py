@@ -122,10 +122,7 @@ class CandidateGridEvaluation:
                 != self.feature_selection_definition_hash
             ):
                 raise ValueError("candidate definition hash differs inside candidate grid")
-            if (
-                evaluation.feature_selection_execution_hash
-                != self.feature_selection_execution_hash
-            ):
+            if evaluation.feature_selection_execution_hash != self.feature_selection_execution_hash:
                 raise ValueError("candidate execution hash differs inside candidate grid")
             if evaluation.evaluation_plan_hash != self.evaluation_plan_hash:
                 raise ValueError("candidate evaluation-plan hash differs inside candidate grid")
