@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from statistics import fmean, pstdev
-from typing import Any
 
 import numpy as np
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -61,7 +60,10 @@ class FileMlflowTrackingPort:
         if parent_run_id is not None:
             tags["mlflow.parentRunId"] = parent_run_id
         run = self._client.create_run(self._experiment_id, tags=tags)
-        return run.info.run_id
+        run_id = run.info.run_id
+        if not isinstance(run_id, str):
+            raise TypeError("MLflow run_id must be a string")
+        return run_id
 
     def log_params(self, run_id: str, params: dict[str, str]) -> None:
         for key, value in sorted(params.items()):
@@ -276,7 +278,8 @@ def _aligned_parameter_payload(
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n", encoding="utf-8")
+    rendered = json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n"
+    path.write_text(rendered, encoding="utf-8")
 
 
 def _validate_inputs(
@@ -323,13 +326,18 @@ def track_walk_forward_evaluations(
 ) -> EvaluationTrackingResult:
     """Persist parent/candidate/fold MLflow evidence without changing statistical decisions."""
 
-    if not statistical_selection_result or statistical_selection_result.strip() != statistical_selection_result:
+    invalid_selection_result = (
+        not statistical_selection_result
+        or statistical_selection_result.strip() != statistical_selection_result
+    )
+    if invalid_selection_result:
         raise ValueError("statistical_selection_result must be a non-empty trimmed string")
     ordered = _validate_inputs(source_lineage, plan, evaluations)
     first = ordered[0]
     root = Path(artifact_root)
     root.mkdir(parents=True, exist_ok=True)
-    parent_run_id = port.start_run(run_name=f"evaluation-{first.profile_id}-{source_lineage.source_build_id}")
+    parent_run_name = f"evaluation-{first.profile_id}-{source_lineage.source_build_id}"
+    parent_run_id = port.start_run(run_name=parent_run_name)
     port.log_params(
         parent_run_id,
         {
@@ -364,10 +372,17 @@ def track_walk_forward_evaluations(
                 "candidate_id": evaluation.candidate_id,
                 "state_count": str(evaluation.state_count),
                 "covariance_type": "full",
-                "feature_order": json.dumps(evaluation.feature_order, separators=(",", ":")),
+                "feature_order": json.dumps(
+                    evaluation.feature_order,
+                    separators=(",", ":"),
+                ),
                 "feature_order_sha256": _feature_order_hash(evaluation.feature_order),
-                "feature_selection_definition_hash": evaluation.feature_selection_definition_hash,
-                "feature_selection_execution_hash": evaluation.feature_selection_execution_hash,
+                "feature_selection_definition_hash": (
+                    evaluation.feature_selection_definition_hash
+                ),
+                "feature_selection_execution_hash": (
+                    evaluation.feature_selection_execution_hash
+                ),
                 "multistart_seeds": "11,23,37,53,71,89,107,131",
                 "minimum_valid_starts": "6",
                 "minimum_multistart_success_rate": "0.75",
