@@ -79,9 +79,7 @@ def block_evidence(
 
 
 def identity_matrix() -> tuple[tuple[float, ...], ...]:
-    return tuple(
-        tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8)
-    )
+    return tuple(tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8))
 
 
 def test_threshold_sensitivity_uses_exact_levels_and_only_085_is_canonical() -> None:
@@ -227,9 +225,7 @@ def test_diagnostic_prune_validation_and_all_tie_break_paths() -> None:
     score_winners = _winner_evidence(block_evidence(scores=(0.4, 0.2, *([0.0] * 6))))
     assert _choose_removal("f0", "f1", score_winners, 1e-12)[0] == "f0"
     assert _choose_removal("f1", "f0", score_winners, 1e-12)[0] == "f0"
-    coverage_winners = _winner_evidence(
-        block_evidence(coverages=(0.9, 1.0, *([1.0] * 6)))
-    )
+    coverage_winners = _winner_evidence(block_evidence(coverages=(0.9, 1.0, *([1.0] * 6))))
     assert _choose_removal("f0", "f1", coverage_winners, 1e-12)[0] == "f0"
     assert _choose_removal("f1", "f0", coverage_winners, 1e-12)[0] == "f0"
     with pytest.raises(ValueError, match="exactly eight"):
