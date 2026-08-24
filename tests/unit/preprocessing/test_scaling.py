@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from market_regime_engine.preprocessing import StandardScalerArtifact, fit_standard_scaler
+from market_regime_engine.preprocessing import (
+    StandardScalerArtifact,
+    fit_standard_scaler,
+)
 
 
 def test_scaler_fits_only_supplied_train_rows_and_round_trips() -> None:
