@@ -110,9 +110,7 @@ def test_oos_query_is_bounded_utc_and_rejects_unknown_fields() -> None:
         parse_oos_query({"latest": "true"})
     assert exc.value.error_code == "unknown_query_field"
     with pytest.raises(ApiInputError) as exc:
-        parse_oos_query(
-            {"start": "2026-01-03T00:00:00Z", "end": "2026-01-02T00:00:00Z"}
-        )
+        parse_oos_query({"start": "2026-01-03T00:00:00Z", "end": "2026-01-02T00:00:00Z"})
     assert exc.value.error_code == "invalid_oos_interval"
 
 
