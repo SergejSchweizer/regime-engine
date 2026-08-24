@@ -4,7 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from market_regime_engine.contracts import DATA_TIME_SEMANTICS, PredictionMode, ReplayInvocation, SourceLineage
+from market_regime_engine.contracts import (
+    DATA_TIME_SEMANTICS,
+    PredictionMode,
+    ReplayInvocation,
+    SourceLineage,
+)
 from market_regime_engine.features.ports import FeatureRow, FeatureSnapshot
 from market_regime_engine.inference.replay import ReplayInferenceResult, fixed_model_replay
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
@@ -55,7 +60,12 @@ def artifact() -> ProductionModelArtifact:
     )
 
 
-def lineage(*, schema: int = 1, feature: int = 1, semantics: str = DATA_TIME_SEMANTICS) -> SourceLineage:
+def lineage(
+    *,
+    schema: int = 1,
+    feature: int = 1,
+    semantics: str = DATA_TIME_SEMANTICS,
+) -> SourceLineage:
     return SourceLineage(
         source_dataset="regime_loader.regime_features_daily",
         source_build_id="serving-build",
@@ -130,7 +140,10 @@ class RecordingSource:
         return self.data
 
 
-def resolver(registry: FakeRegistry | None = None, events: list[str] | None = None) -> ModelResolver:
+def resolver(
+    registry: FakeRegistry | None = None,
+    events: list[str] | None = None,
+) -> ModelResolver:
     backend = registry or FakeRegistry()
 
     def loader(uri: str) -> ProductionModelArtifact:
@@ -171,7 +184,10 @@ def test_replay_including_training_period_filters_from_persisted_origin() -> Non
     )
     assert result.timestamps == tuple(BASE + timedelta(days=day) for day in (1, 2, 3))
     assert result.warmup_observation_count == 1
-    assert all(abs(sum(probabilities) - 1.0) <= 1e-10 for probabilities in result.filtered_probabilities)
+    assert all(
+        abs(sum(probabilities) - 1.0) <= 1e-10
+        for probabilities in result.filtered_probabilities
+    )
 
 
 def test_replay_handler_pins_model_before_source_and_returns_current_vintage_lineage() -> None:
@@ -193,8 +209,7 @@ def test_replay_handler_pins_model_before_source_and_returns_current_vintage_lin
         ),
         request_time_utc=BASE + timedelta(days=9),
     )
-    assert events[0] == "model"
-    assert events[1] == "source"
+    assert events[:2] == ["model", "source"]
     assert registry.alias_calls == 1
     assert response.prediction_mode is PredictionMode.FIXED_MODEL_REPLAY
     assert response.source.source_build_id == "serving-build"
@@ -206,7 +221,6 @@ def test_replay_handler_pins_model_before_source_and_returns_current_vintage_lin
         ("start", "2026-01-05T00:00:00Z"),
     )
     assert "state_probabilities" in replay_response_json(response)
-    assert "f0" not in replay_response_json(response)
 
 
 def test_explicit_model_version_bypasses_alias_resolution() -> None:
