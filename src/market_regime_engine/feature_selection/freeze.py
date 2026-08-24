@@ -57,7 +57,11 @@ def _winner_score_by_feature(
     result: dict[str, tuple[float, float, int]] = {}
     for block_position, block in enumerate(block_evidence):
         winner_score = next(
-            (score for score in block.scores if score.feature_name == block.winner and score.eligible),
+            (
+                score
+                for score in block.scores
+                if score.feature_name == block.winner and score.eligible
+            ),
             None,
         )
         if winner_score is None or winner_score.medoid_score is None:
