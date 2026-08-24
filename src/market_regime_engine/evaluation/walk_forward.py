@@ -405,21 +405,19 @@ def run_walk_forward_candidate(
         try:
             train_source, test_source = _fold_source_frames(source_rows, fold)
             train_rows, _, skipped_train = _complete_case(train_source, candidate.feature_order)
+            train_model_count = int(train_rows.shape[0])
             test_rows, test_timestamps, skipped_test = _complete_case(
                 test_source,
                 candidate.feature_order,
             )
-            train_model_count = int(train_rows.shape[0])
             test_model_count = int(test_rows.shape[0])
             if train_model_count < profile.walk_forward.minimum_model_train_observations:
                 raise ValueError(
-                    "retained TRAIN observations are below pinned minimum 504: "
-                    f"{train_model_count}"
+                    f"retained TRAIN observations are below pinned minimum 504: {train_model_count}"
                 )
             if test_model_count < profile.walk_forward.minimum_model_test_observations:
                 raise ValueError(
-                    "retained TEST observations are below pinned minimum 42: "
-                    f"{test_model_count}"
+                    f"retained TEST observations are below pinned minimum 42: {test_model_count}"
                 )
 
             scaler = fit_standard_scaler(train_rows, candidate.feature_order)
@@ -436,9 +434,7 @@ def run_walk_forward_candidate(
             validate_full_covariances(artifact)
 
             train_filter = causal_filter(scaled_train, artifact)
-            train_occupancy_raw = validate_train_occupancy(
-                train_filter.filtered_probabilities
-            )
+            train_occupancy_raw = validate_train_occupancy(train_filter.filtered_probabilities)
             continued = continued_test_predictive_likelihood(
                 scaled_train,
                 scaled_test,
