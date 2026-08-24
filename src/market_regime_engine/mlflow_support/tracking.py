@@ -82,6 +82,9 @@ class FileMlflowTrackingPort:
     def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
         self._client.log_artifact(run_id, local_path, artifact_path)
 
+    def end_run(self, run_id: str) -> None:
+        self._client.set_terminated(run_id, status="FINISHED")
+
 
 def _feature_order_hash(feature_order: tuple[str, ...]) -> str:
     payload = json.dumps(feature_order, separators=(",", ":")).encode("utf-8")
@@ -415,6 +418,7 @@ def track_walk_forward_evaluations(
                 },
             )
             if not result.valid:
+                port.end_run(fold_run_id)
                 continue
             parameter_path = candidate_dir / result.fold_id / "aligned_parameters.json"
             _write_json(parameter_path, _aligned_parameter_payload(evaluation, result))
@@ -436,6 +440,7 @@ def track_walk_forward_evaluations(
                 entries.append(covariance_entry)
                 port.log_artifact(fold_run_id, covariance_entry.png_path, "plots")
                 port.log_artifact(fold_run_id, covariance_entry.svg_path, "plots")
+            port.end_run(fold_run_id)
 
         for entry in entries:
             if entry.fold_id is None:
@@ -451,6 +456,7 @@ def track_walk_forward_evaluations(
         ]
         _write_json(manifest_path, manifest_payload)
         port.log_artifact(candidate_run_id, str(manifest_path), "evaluation")
+        port.end_run(candidate_run_id)
 
     comparison = render_candidate_comparison(ordered, plan, root)
     parent_entries.append(comparison)
@@ -462,6 +468,7 @@ def track_walk_forward_evaluations(
         [entry.as_json_dict() for entry in parent_entries],
     )
     port.log_artifact(parent_run_id, str(parent_manifest_path), "evaluation")
+    port.end_run(parent_run_id)
     return EvaluationTrackingResult(
         parent_run_id=parent_run_id,
         candidate_run_ids=tuple(candidate_run_ids),

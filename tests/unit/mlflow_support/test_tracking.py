@@ -43,6 +43,7 @@ class FakeTrackingPort:
         self.params: dict[str, dict[str, str]] = {}
         self.metrics: dict[str, list[MetricPoint]] = {}
         self.artifacts: list[tuple[str, str, str]] = []
+        self.ended_runs: list[str] = []
 
     def start_run(self, *, run_name: str, parent_run_id: str | None = None) -> str:
         run_id = f"run-{len(self.runs) + 1}"
@@ -57,6 +58,9 @@ class FakeTrackingPort:
 
     def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
         self.artifacts.append((run_id, local_path, artifact_path))
+
+    def end_run(self, run_id: str) -> None:
+        self.ended_runs.append(run_id)
 
 
 def candidate() -> ResolvedCandidateProfile:
