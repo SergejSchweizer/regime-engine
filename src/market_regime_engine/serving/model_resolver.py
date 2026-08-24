@@ -8,6 +8,8 @@ from pathlib import Path
 from time import monotonic
 from urllib.parse import unquote, urlparse
 
+from mlflow.artifacts import download_artifacts
+
 from market_regime_engine.mlflow_support.model_package import load_production_package
 from market_regime_engine.mlflow_support.ports import RegistryPort
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
@@ -47,11 +49,14 @@ class ResolvedModelLease:
         self.release()
 
 
-def _load_file_package(package_uri: str) -> ProductionModelArtifact:
+def _load_mlflow_package(package_uri: str) -> ProductionModelArtifact:
     parsed = urlparse(package_uri)
-    if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
-        raise ValueError("production package URI must be a local file URI")
-    path = Path(unquote(parsed.path))
+    if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
+        path = Path(unquote(parsed.path))
+    elif parsed.scheme == "runs":
+        path = Path(download_artifacts(artifact_uri=package_uri))
+    else:
+        raise ValueError("production package URI must be a local file URI or MLflow run URI")
     return load_production_package(path)
 
 
@@ -65,7 +70,7 @@ class ModelResolver:
         profiles: ProfileRegistry | None = None,
         cache: ModelCache | None = None,
         alias_ttl_seconds: float = DEFAULT_ALIAS_TTL_SECONDS,
-        package_loader: PackageLoader = _load_file_package,
+        package_loader: PackageLoader = _load_mlflow_package,
         clock: Clock = monotonic,
     ) -> None:
         if alias_ttl_seconds <= 0.0:

@@ -133,6 +133,7 @@ class MlflowModelRegistry:
         package_directory: str | Path,
         *,
         description: str | None = None,
+        package_source_uri: str | None = None,
     ) -> RegisteredProductionModel:
         if type(artifact) is not ProductionModelArtifact:
             raise TypeError("only PR-063 ProductionModelArtifact objects can be registered")
@@ -151,7 +152,11 @@ class MlflowModelRegistry:
                 raise
             self._client.create_registered_model(REGISTERED_MODEL_NAME)
 
-        source = _package_uri(package_path)
+        source = (
+            package_source_uri if package_source_uri is not None else _package_uri(package_path)
+        )
+        if not source:
+            raise ValueError("production package source URI cannot be empty")
         version = self._client.create_model_version(
             name=REGISTERED_MODEL_NAME,
             source=source,
