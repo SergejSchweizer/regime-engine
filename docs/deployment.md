@@ -26,7 +26,7 @@ Copy `.env.example` to `.env` on the deployment host and replace placeholders lo
 
 `REGIME_FEATURE_PGDATABASE` and the MLflow backend database/user are required runtime values with no guessed defaults. Feature transport is fixed to `sslmode=require`; do not downgrade it.
 
-The trusted-LAN host/origin defaults contain only `10.10.1.3`, localhost and loopback. Do not use wildcard Host/CORS values. Network/firewall policy must keep port 5000 private to trusted clients/operators.
+The trusted-LAN host/origin defaults contain only `10.10.1.3`, localhost and loopback, with their explicit `:5000` Host-header forms. Do not use wildcard Host/CORS values. Network/firewall policy must keep port 5000 private to trusted clients/operators.
 
 ## Build
 
