@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -25,10 +26,10 @@ from market_regime_engine.models.production_artifact import ProductionModelArtif
 from market_regime_engine.serving.model_resolver import ModelResolver, ResolvedModelLease
 
 _SECONDS_PER_DAY = 86_400.0
-SOURCE_STALE_WARN_DAYS = 4.0
-SOURCE_STALE_FAIL_DAYS = 7.0
-MODEL_STALE_WARN_DAYS = 14.0
-MODEL_STALE_FAIL_DAYS = 35.0
+SOURCE_STALE_WARN_DAYS = float(os.environ.get("REGIME_SOURCE_STALE_WARN_DAYS", "4"))
+SOURCE_STALE_FAIL_DAYS = float(os.environ.get("REGIME_SOURCE_STALE_FAIL_DAYS", "7"))
+MODEL_STALE_WARN_DAYS = float(os.environ.get("REGIME_MODEL_STALE_WARN_DAYS", "14"))
+MODEL_STALE_FAIL_DAYS = float(os.environ.get("REGIME_MODEL_STALE_FAIL_DAYS", "35"))
 
 
 class FreshnessState(StrEnum):
