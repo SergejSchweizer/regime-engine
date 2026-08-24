@@ -6,8 +6,14 @@ from datetime import UTC, datetime
 import pytest
 
 from market_regime_engine.evaluation.selection import select_statistical_champion
-from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation, WalkForwardFoldResult
-from market_regime_engine.training.candidate_grid import CandidateAggregate, CandidateGridEvaluation
+from market_regime_engine.evaluation.walk_forward import (
+    WalkForwardEvaluation,
+    WalkForwardFoldResult,
+)
+from market_regime_engine.training.candidate_grid import (
+    CandidateAggregate,
+    CandidateGridEvaluation,
+)
 
 
 def fold() -> WalkForwardFoldResult:
