@@ -77,8 +77,13 @@ def test_resolution_shares_exact_frozen_contract_across_k2_k3_k4() -> None:
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
     )
-    assert all(candidate.feature_order == selection.final_features for candidate in resolved.candidates)
-    assert all(candidate.feature_dimension == len(selection.final_features) for candidate in resolved.candidates)
+    assert all(
+        candidate.feature_order == selection.final_features for candidate in resolved.candidates
+    )
+    assert all(
+        candidate.feature_dimension == len(selection.final_features)
+        for candidate in resolved.candidates
+    )
     assert all(candidate.source_build_id == "build-1" for candidate in resolved.candidates)
     assert all(
         candidate.feature_selection_definition_hash
@@ -135,11 +140,16 @@ def test_resolution_rejects_policy_and_source_identity_mismatches() -> None:
     with pytest.raises(ValueError, match="source_build_id"):
         resolve_selected_feature_profile(profile, policy, selection, source_build_id=" build-1")
 
-    wrong_selection = replace(selection, policy_id="other")
-    with pytest.raises(ValueError, match="policy/result"):
+    static_feature_config = replace(
+        profile.feature_selection,
+        policy_id=None,
+        static_features=("vix_level",),
+    )
+    mismatched_profile = replace(profile, feature_selection=static_feature_config)
+    with pytest.raises(ValueError, match="policy_id mismatch"):
         resolve_selected_feature_profile(
-            profile,
+            mismatched_profile,
             policy,
-            wrong_selection,
+            selection,
             source_build_id="build-1",
         )
