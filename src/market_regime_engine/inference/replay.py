@@ -21,7 +21,9 @@ class ReplayInferenceResult:
 
     def __post_init__(self) -> None:
         if not self.timestamps or len(self.timestamps) != len(self.filtered_probabilities):
-            raise ValueError("replay inference requires matching non-empty timestamps/probabilities")
+            raise ValueError(
+                "replay inference requires matching non-empty timestamps/probabilities"
+            )
         if self.warmup_observation_count < 0:
             raise ValueError("warmup_observation_count cannot be negative")
 
@@ -75,9 +77,10 @@ def fixed_model_replay(
     warmup = 0
     for row in rows:
         deadline_check()
-        if any(value is None for value in row.values):
+        complete_values = tuple(value for value in row.values if value is not None)
+        if len(complete_values) != len(row.values):
             raise ValueError("resolved-model snapshot cannot contain incomplete feature rows")
-        matrix = np.asarray([[float(value) for value in row.values]], dtype=np.float64)
+        matrix = np.asarray([complete_values], dtype=np.float64)
         scaled = artifact.scaler.transform(matrix)
         filtered = causal_filter(
             scaled,
