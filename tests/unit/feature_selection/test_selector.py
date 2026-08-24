@@ -62,9 +62,7 @@ def test_coverage_nonfinite_and_variance_exclusions_are_explicit() -> None:
     frame = pd.DataFrame(
         {
             "good": np.arange(rows, dtype=np.float64),
-            "low_coverage": [
-                float(index) if index < 500 else np.nan for index in range(rows)
-            ],
+            "low_coverage": [float(index) if index < 500 else np.nan for index in range(rows)],
             "nonfinite": np.arange(rows, dtype=np.float64),
             "constant": np.ones(rows),
         }
@@ -140,20 +138,12 @@ def test_undefined_spearman_fails_without_fallback() -> None:
     with pytest.raises(ValueError, match="two rows and two columns"):
         average_rank_spearman(pd.DataFrame({"a": [1.0, 2.0]}))
     with pytest.raises(ValueError, match="finite"):
-        average_rank_spearman(
-            pd.DataFrame({"a": [1.0, np.inf], "b": [1.0, 2.0]})
-        )
+        average_rank_spearman(pd.DataFrame({"a": [1.0, np.inf], "b": [1.0, 2.0]}))
 
 
 def test_select_stage1_preserves_eight_block_order() -> None:
     blocks = tuple(FeatureBlock(f"b{index}", (f"f{index}",)) for index in range(8))
-    frame = pd.DataFrame(
-        {f"f{index}": np.arange(600, dtype=float) + index for index in range(8)}
-    )
+    frame = pd.DataFrame({f"f{index}": np.arange(600, dtype=float) + index for index in range(8)})
     result = select_stage1(frame, policy(blocks))
-    assert tuple(item.block_id for item in result) == tuple(
-        f"b{index}" for index in range(8)
-    )
-    assert tuple(item.winner for item in result) == tuple(
-        f"f{index}" for index in range(8)
-    )
+    assert tuple(item.block_id for item in result) == tuple(f"b{index}" for index in range(8))
+    assert tuple(item.winner for item in result) == tuple(f"f{index}" for index in range(8))
