@@ -12,8 +12,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from market_regime_engine.contracts import DATA_TIME_SEMANTICS, PredictionMode
 
