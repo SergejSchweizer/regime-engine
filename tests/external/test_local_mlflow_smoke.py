@@ -36,9 +36,7 @@ def _verification() -> dict[str, str]:
         text=True,
     )
     evidence = dict(
-        line.split("=", 1)
-        for line in completed.stdout.splitlines()
-        if line and "=" in line
+        line.split("=", 1) for line in completed.stdout.splitlines() if line and "=" in line
     )
     assert evidence["compose_project"] == "regime-engine"
     assert set(evidence["services"].split(",")) == {"mlflow", "mlflow-postgres"}
