@@ -9,9 +9,9 @@ import pytest
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.training.multistart import (
-    MULTISTART_SEEDS,
     MINIMUM_SUCCESS_RATE,
     MINIMUM_VALID_STARTS,
+    MULTISTART_SEEDS,
     TRAIN_LOGLIK_TIE_ABS_TOLERANCE,
     run_multistart,
 )
