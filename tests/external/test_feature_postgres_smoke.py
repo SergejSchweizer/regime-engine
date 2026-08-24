@@ -51,7 +51,8 @@ def test_external_feature_postgres_is_tls_read_only_and_least_privilege() -> Non
                 "has_schema_privilege(current_user, 'regime_loader', 'CREATE'), "
                 "has_schema_privilege(current_user, 'regime_loader_sync', 'CREATE'), "
                 "has_table_privilege(current_user, "
-                "'regime_loader.regime_features_daily', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
+                "'regime_loader.regime_features_daily', "
+                "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
             )
             privileges = cursor.fetchone()
             assert privileges is not None
