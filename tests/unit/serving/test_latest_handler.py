@@ -86,8 +86,7 @@ def lineage(
 
 def rows_through(day: int) -> tuple[FeatureRow, ...]:
     return tuple(
-        FeatureRow(BASE + timedelta(days=index), (float(index) / 10.0,))
-        for index in range(day + 1)
+        FeatureRow(BASE + timedelta(days=index), (float(index) / 10.0,)) for index in range(day + 1)
     )
 
 
