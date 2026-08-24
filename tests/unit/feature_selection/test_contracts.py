@@ -25,9 +25,7 @@ HASH_B = "b" * 64
 def policy() -> FeatureSelectionPolicy:
     return FeatureSelectionPolicy(
         policy_id="xetra_semantic_medoid_v1",
-        blocks=tuple(
-            FeatureBlock(f"block_{index}", (f"f{index}",)) for index in range(8)
-        ),
+        blocks=tuple(FeatureBlock(f"block_{index}", (f"f{index}",)) for index in range(8)),
     )
 
 
@@ -56,8 +54,7 @@ def evidence() -> FeatureSelectionEvidence:
         preliminary_medoids=tuple(f"f{index}" for index in range(8)),
         stage2_complete_observation_count=1260,
         stage2_abs_spearman_matrix=tuple(
-            tuple(1.0 if row == column else 0.1 for column in range(8))
-            for row in range(8)
+            tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8)
         ),
         conflicts=(
             Stage2ConflictEvidence(
@@ -131,9 +128,7 @@ def test_policy_validation_paths() -> None:
             "xetra_semantic_medoid_v1",
             (FeatureBlock("one", ("f",)),),
         )
-    duplicate_blocks = tuple(
-        FeatureBlock("same", (f"f{index}",)) for index in range(8)
-    )
+    duplicate_blocks = tuple(FeatureBlock("same", (f"f{index}",)) for index in range(8))
     with pytest.raises(ValueError, match="eight"):
         FeatureSelectionPolicy("xetra_semantic_medoid_v1", duplicate_blocks)
     duplicate_feature_blocks = tuple(
