@@ -7,7 +7,7 @@ from datetime import datetime
 
 import numpy as np
 
-from market_regime_engine.features.ports import FeatureSnapshot
+from market_regime_engine.features.ports import FeatureRow, FeatureSnapshot
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 
@@ -38,15 +38,14 @@ def _validate_snapshot(artifact: ProductionModelArtifact, snapshot: FeatureSnaps
 
 def _filter_rows(
     artifact: ProductionModelArtifact,
-    rows: tuple[object, ...],
+    rows: tuple[FeatureRow, ...],
     *,
     initial: tuple[float, ...] | None,
 ) -> tuple[tuple[float, ...], int]:
     alpha = initial
     count = 0
-    for raw in rows:
-        row = raw
-        values = row.values  # type: ignore[attr-defined]
+    for row in rows:
+        values = row.values
         if any(value is None for value in values):
             raise ValueError("resolved-model snapshot cannot contain incomplete feature rows")
         matrix = np.asarray([[float(value) for value in values]], dtype=np.float64)
