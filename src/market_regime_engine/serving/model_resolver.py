@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,16 +60,22 @@ def _load_mlflow_package(
     if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
         path = Path(unquote(parsed.path))
     elif parsed.scheme == "runs":
-        if tracking_uri is not None:
-            mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_registry_uri(tracking_uri)
-        path = Path(
-            download_artifacts(
-                artifact_uri=package_uri,
-                tracking_uri=tracking_uri,
-                registry_uri=tracking_uri,
+        run_id, _, artifact_subpath = parsed.path.lstrip("/").partition("/")
+        artifact_root = Path(os.environ.get("MLFLOW_ARTIFACT_ROOT", "/mlflow/artifacts"))
+        matching_paths = tuple(artifact_root.glob(f"*/{run_id}/artifacts/{artifact_subpath}"))
+        if len(matching_paths) == 1 and matching_paths[0].is_dir():
+            path = matching_paths[0]
+        else:
+            if tracking_uri is not None:
+                mlflow.set_tracking_uri(tracking_uri)
+                mlflow.set_registry_uri(tracking_uri)
+            path = Path(
+                download_artifacts(
+                    artifact_uri=package_uri,
+                    tracking_uri=tracking_uri,
+                    registry_uri=tracking_uri,
+                )
             )
-        )
     else:
         raise ValueError("production package URI must be a local file URI or MLflow run URI")
     return load_production_package(path)
