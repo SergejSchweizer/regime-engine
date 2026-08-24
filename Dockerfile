@@ -31,9 +31,13 @@ COPY configs ./configs
 COPY scripts/mlflow_entrypoint.sh /usr/local/bin/regime-engine-mlflow-entrypoint
 COPY scripts/mlflow_db_upgrade.sh /usr/local/bin/regime-engine-mlflow-db-upgrade
 
-RUN python -m pip install --no-cache-dir -r uv.lock \
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes build-essential \
+    && python -m pip install --no-cache-dir -r uv.lock \
     && python -m pip install --no-cache-dir --no-deps . \
-    && python -c 'import mlflow, platform; assert platform.python_version() == "3.14.7"; assert mlflow.__version__ == "3.15.1"' \
+    && apt-get purge --auto-remove --yes build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -c 'import hmmlearn, mlflow, platform; assert platform.python_version() == "3.14.7"; assert hmmlearn.__version__ == "0.3.3"; assert mlflow.__version__ == "3.15.1"' \
     && groupadd --system --gid 10001 regime-engine \
     && useradd --system --uid 10001 --gid regime-engine --home-dir /opt/regime-engine --shell /usr/sbin/nologin regime-engine \
     && install -d -o regime-engine -g regime-engine /mlflow/artifacts /opt/regime-engine/build \
