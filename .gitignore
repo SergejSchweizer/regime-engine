@@ -6,10 +6,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Test, type-checker, linter, and coverage caches
+# Test, type-checker, linter, dependency, and coverage caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
 .coverage
 .coverage.*
 htmlcov/
@@ -24,11 +25,16 @@ dist/
 .env
 .env.*
 !.env.example
+secrets/
+*.pem
+*.key
+*.crt
 
 # Local MLflow state / artifacts
 mlruns/
 mlartifacts/
 .mlflow/
+mlflow/
 
 # Local engine output and generated prediction data
 artifacts/
