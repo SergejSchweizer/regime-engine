@@ -225,12 +225,18 @@ class LifecycleOperatorService(OperatorService):
     def _required(request: OperatorRequest, name: str) -> str:
         value = request.parameter(name)
         if value is None:
-            raise OperatorCommandError("missing_parameter", f"required parameter is missing: {name}")
+            raise OperatorCommandError(
+                "missing_parameter",
+                f"required parameter is missing: {name}",
+            )
         return value
 
     def execute(self, request: OperatorRequest) -> OperatorResult:
         if request.profile_id != "xetra":
-            raise OperatorCommandError("unknown_profile", f"unsupported profile: {request.profile_id}")
+            raise OperatorCommandError(
+                "unknown_profile",
+                f"unsupported profile: {request.profile_id}",
+            )
         if request.action is OperatorAction.STATUS:
             status = self._backend.status(request.profile_id)
             fields = [
