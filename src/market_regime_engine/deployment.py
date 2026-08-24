@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+import mlflow
 import psycopg
 import yaml
 from mlflow.tracking import MlflowClient
@@ -68,6 +69,10 @@ def compose_serving_dependencies() -> ServiceDependencies:
         policy.feature_universe,
     )
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
+    # MLflow server config points its global fluent client at the SQL backend.
+    # The custom route resolves run artifacts through the local HTTP server instead.
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(tracking_uri)
     client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
     registry = MlflowModelRegistry(cast(Any, client))
     profiles = ProfileRegistry(
