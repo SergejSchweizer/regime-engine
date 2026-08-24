@@ -1,0 +1,6 @@
+# PR-032 immutable upstream Python image identity.
+image=python:3.14.7-slim-bookworm
+index_digest=sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52
+linux_amd64_manifest_digest=sha256:ff4ceef5258b9303b40c004af0bd31ac82c6248a6b951f9d9b329bf456f1f4b7
+registry=docker.io/library/python
+verified_utc=2026-08-24T14:15:00Z
