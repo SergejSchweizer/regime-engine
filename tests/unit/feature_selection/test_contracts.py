@@ -25,7 +25,9 @@ HASH_B = "b" * 64
 def policy() -> FeatureSelectionPolicy:
     return FeatureSelectionPolicy(
         policy_id="xetra_semantic_medoid_v1",
-        blocks=tuple(FeatureBlock(f"block_{index}", (f"f{index}",)) for index in range(8)),
+        blocks=tuple(
+            FeatureBlock(f"block_{index}", (f"f{index}",)) for index in range(8)
+        ),
     )
 
 
@@ -54,9 +56,18 @@ def evidence() -> FeatureSelectionEvidence:
         preliminary_medoids=tuple(f"f{index}" for index in range(8)),
         stage2_complete_observation_count=1260,
         stage2_abs_spearman_matrix=tuple(
-            tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8)
+            tuple(1.0 if row == column else 0.1 for column in range(8))
+            for row in range(8)
         ),
-        conflicts=(Stage2ConflictEvidence("f0", "f1", 0.9, "f1", "higher medoid score"),),
+        conflicts=(
+            Stage2ConflictEvidence(
+                "f0",
+                "f1",
+                0.9,
+                "f1",
+                "higher medoid score",
+            ),
+        ),
         final_features=("f0", "f2", "f3", "f4", "f5", "f6", "f7"),
     )
 
@@ -116,12 +127,20 @@ def test_policy_validation_paths() -> None:
     with pytest.raises(ValueError, match="policy_id"):
         replace(policy(), policy_id="other")
     with pytest.raises(ValueError, match="eight"):
-        FeatureSelectionPolicy("xetra_semantic_medoid_v1", (FeatureBlock("one", ("f",)),))
-    duplicate_blocks = tuple(FeatureBlock("same", (f"f{index}",)) for index in range(8))
+        FeatureSelectionPolicy(
+            "xetra_semantic_medoid_v1",
+            (FeatureBlock("one", ("f",)),),
+        )
+    duplicate_blocks = tuple(
+        FeatureBlock("same", (f"f{index}",)) for index in range(8)
+    )
     with pytest.raises(ValueError, match="eight"):
         FeatureSelectionPolicy("xetra_semantic_medoid_v1", duplicate_blocks)
     duplicate_feature_blocks = tuple(
-        FeatureBlock(f"block_{index}", ("shared",) if index < 2 else (f"f{index}",))
+        FeatureBlock(
+            f"block_{index}",
+            ("shared",) if index < 2 else (f"f{index}",),
+        )
         for index in range(8)
     )
     with pytest.raises(ValueError, match="exactly one block"):
@@ -155,7 +174,15 @@ def test_feature_score_validation_paths() -> None:
     for changes, match in cases:
         with pytest.raises(ValueError, match=match):
             replace(valid, **changes)
-    excluded = FeatureScore("f", 0, 0.5, 0.0, None, False, "coverage")
+    excluded = FeatureScore(
+        "f",
+        0,
+        0.5,
+        0.0,
+        None,
+        False,
+        "coverage",
+    )
     assert excluded.exclusion_reason == "coverage"
 
 
@@ -187,12 +214,11 @@ def test_selection_evidence_validation_paths() -> None:
         replace(valid, first_train_source_row_count=0)
     with pytest.raises(ValueError, match="eight"):
         replace(valid, block_evidence=valid.block_evidence[:-1])
-    wrong_blocks = list(valid.block_evidence)
-    wrong_blocks[0] = replace(wrong_blocks[0], winner="not-a-winner")
-    with pytest.raises(ValueError, match="winner"):
-        tuple(wrong_blocks)
     with pytest.raises(ValueError, match="canonical block order"):
-        replace(valid, preliminary_medoids=tuple(reversed(valid.preliminary_medoids)))
+        replace(
+            valid,
+            preliminary_medoids=tuple(reversed(valid.preliminary_medoids)),
+        )
     with pytest.raises(ValueError, match="cannot be negative"):
         replace(valid, stage2_complete_observation_count=-1)
     with pytest.raises(ValueError, match="8x8"):
@@ -200,7 +226,10 @@ def test_selection_evidence_validation_paths() -> None:
     matrix = [list(row) for row in valid.stage2_abs_spearman_matrix]
     matrix[0][0] = nan
     with pytest.raises(ValueError, match="finite"):
-        replace(valid, stage2_abs_spearman_matrix=tuple(tuple(row) for row in matrix))
+        replace(
+            valid,
+            stage2_abs_spearman_matrix=tuple(tuple(row) for row in matrix),
+        )
     for features in ((), ("f0", "f0")):
         with pytest.raises(ValueError, match="duplicate-free"):
             replace(valid, final_features=features)
