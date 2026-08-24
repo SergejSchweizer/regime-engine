@@ -49,15 +49,35 @@ class ResolvedModelLease:
         self.release()
 
 
-def _load_mlflow_package(package_uri: str) -> ProductionModelArtifact:
+def _load_mlflow_package(
+    package_uri: str,
+    *,
+    tracking_uri: str | None = None,
+) -> ProductionModelArtifact:
     parsed = urlparse(package_uri)
     if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
         path = Path(unquote(parsed.path))
     elif parsed.scheme == "runs":
-        path = Path(download_artifacts(artifact_uri=package_uri))
+        path = Path(download_artifacts(artifact_uri=package_uri, tracking_uri=tracking_uri))
     else:
         raise ValueError("production package URI must be a local file URI or MLflow run URI")
     return load_production_package(path)
+
+
+def mlflow_package_loader(*, tracking_uri: str) -> PackageLoader:
+    """Bind run-artifact downloads to the public MLflow HTTP endpoint.
+
+    The MLflow server process changes its global tracking URI to its SQL backend.
+    Custom serving routes must therefore not rely on that process-global value.
+    """
+
+    if not tracking_uri:
+        raise ValueError("tracking URI must be non-empty")
+
+    def load(package_uri: str) -> ProductionModelArtifact:
+        return _load_mlflow_package(package_uri, tracking_uri=tracking_uri)
+
+    return load
 
 
 class ModelResolver:
