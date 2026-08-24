@@ -86,9 +86,14 @@ class FeatureSelectionStabilityDiagnostics:
 
 def _winner_evidence(
     blocks: tuple[BlockSelectionEvidence, ...],
+    *,
+    expected_block_count: int = 8,
 ) -> dict[str, tuple[float, float, int]]:
-    if len(blocks) != 8:
-        raise ValueError("diagnostic Stage 2 requires exactly eight Stage-1 blocks")
+    block_count = len(blocks)
+    if block_count != expected_block_count:
+        raise ValueError(
+            "diagnostic Stage 2 requires exactly eight Stage-1 blocks for v1, or seven for v2"
+        )
     winners: dict[str, tuple[float, float, int]] = {}
     for block_position, block in enumerate(blocks):
         score = next(
@@ -102,8 +107,8 @@ def _winner_evidence(
         if score is None or score.medoid_score is None or not isfinite(score.medoid_score):
             raise ValueError("diagnostic Stage 2 requires finite Stage-1 winner evidence")
         winners[block.winner] = (score.medoid_score, score.coverage, block_position)
-    if len(winners) != 8:
-        raise ValueError("diagnostic Stage 2 requires eight unique Stage-1 winners")
+    if len(winners) != block_count:
+        raise ValueError("diagnostic Stage 2 requires unique Stage-1 winners")
     return winners
 
 
@@ -141,16 +146,17 @@ def _diagnostic_prune(
     if threshold not in THRESHOLD_SENSITIVITY_LEVELS:
         raise ValueError("diagnostic threshold must be one of 0.80, 0.85, 0.90")
     winners_in_order = tuple(block.winner for block in blocks)
-    if len(preliminary_medoids) != 8 or winners_in_order != preliminary_medoids:
-        raise ValueError("diagnostic medoids must match eight Stage-1 winners in canonical order")
+    block_count = len(blocks)
+    if len(preliminary_medoids) != block_count or winners_in_order != preliminary_medoids:
+        raise ValueError("diagnostic medoids must match Stage-1 winners in canonical order")
     matrix = np.asarray(matrix_rows, dtype=np.float64)
-    if matrix.shape != (8, 8) or not np.all(np.isfinite(matrix)):
-        raise ValueError("diagnostic Stage-2 matrix must be finite 8x8")
-    winners = _winner_evidence(blocks)
+    if matrix.shape != (block_count, block_count) or not np.all(np.isfinite(matrix)):
+        raise ValueError("diagnostic Stage-2 matrix must be finite 8x8 for v1, or 7x7 for v2")
+    winners = _winner_evidence(blocks, expected_block_count=block_count)
     candidates = [
         (float(matrix[left, right]), left, right)
-        for left in range(8)
-        for right in range(left + 1, 8)
+        for left in range(block_count)
+        for right in range(left + 1, block_count)
         if float(matrix[left, right]) > threshold
     ]
     candidates.sort(key=lambda item: (-item[0], item[1], item[2]))

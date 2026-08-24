@@ -379,8 +379,8 @@ def run_walk_forward_candidate(
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection."""
 
-    if profile.profile_id != "xetra" or profile.profile_config_version != 1:
-        raise ValueError("walk-forward runner supports xetra profile configuration version 1")
+    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2}:
+        raise ValueError("walk-forward runner supports xetra profile configurations 1 and 2")
     if candidate.state_count not in profile.gaussian_hmm.candidate_states:
         raise ValueError("resolved candidate state count is absent from model profile")
     if candidate.feature_order == ():

@@ -102,8 +102,8 @@ class CandidateGridEvaluation:
     aggregates: tuple[CandidateAggregate, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version != 1:
-            raise ValueError("candidate grid requires xetra profile configuration version 1")
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
+            raise ValueError("candidate grid requires a supported xetra profile configuration")
         if tuple(item.candidate_id for item in self.evaluations) != EXPECTED_CANDIDATE_IDS:
             raise ValueError("candidate grid evaluations must be ordered exactly K2/K3/K4")
         if tuple(item.candidate_id for item in self.aggregates) != EXPECTED_CANDIDATE_IDS:
