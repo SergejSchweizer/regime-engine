@@ -22,20 +22,21 @@ jobs:
         with:
           python-version: "3.14.7"
           enable-cache: true
-      - name: Install frozen dependency roots
+      - name: Create exact Python environment
         run: |
-          uv pip install --python "$(command -v python)" -r uv.lock
-          uv pip install --python "$(command -v python)" --no-deps -e .
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
       - name: Verify interpreter and package pins
         run: |
-          test "$(python -c 'import platform; print(platform.python_version())')" = "3.14.7"
-          python -c 'import hmmlearn, mlflow; assert hmmlearn.__version__ == "0.3.3"; assert mlflow.__version__ == "3.15.1"'
+          test "$(.venv/bin/python -c 'import platform; print(platform.python_version())')" = "3.14.7"
+          .venv/bin/python -c 'import hmmlearn, mlflow; assert hmmlearn.__version__ == "0.3.3"; assert mlflow.__version__ == "3.15.1"'
       - name: Ruff lint and format
         run: |
-          ruff check .
-          ruff format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
       - name: Dependency audit
-        run: pip-audit -r uv.lock
+        run: .venv/bin/pip-audit -r uv.lock
 
   type:
     runs-on: ubuntu-latest
@@ -45,12 +46,13 @@ jobs:
         with:
           python-version: "3.14.7"
           enable-cache: true
-      - name: Install frozen dependency roots
+      - name: Create exact Python environment
         run: |
-          uv pip install --python "$(command -v python)" -r uv.lock
-          uv pip install --python "$(command -v python)" --no-deps -e .
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
       - name: Strict mypy
-        run: mypy src/market_regime_engine
+        run: .venv/bin/mypy src/market_regime_engine
 
   unit:
     runs-on: ubuntu-latest
@@ -60,16 +62,17 @@ jobs:
         with:
           python-version: "3.14.7"
           enable-cache: true
-      - name: Install frozen dependency roots
+      - name: Create exact Python environment
         run: |
-          uv pip install --python "$(command -v python)" -r uv.lock
-          uv pip install --python "$(command -v python)" --no-deps -e .
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
       - name: Unit tests with coverage
         env:
           COVERAGE_FILE: .coverage.unit
         run: |
-          coverage run -m pytest tests -m "not integration and not external"
-          coverage run --append -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
+          .venv/bin/coverage run -m pytest tests -m "not integration and not external"
+          .venv/bin/coverage run --append -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-unit
@@ -84,18 +87,19 @@ jobs:
         with:
           python-version: "3.14.7"
           enable-cache: true
-      - name: Install frozen dependency roots
+      - name: Create exact Python environment
         run: |
-          uv pip install --python "$(command -v python)" -r uv.lock
-          uv pip install --python "$(command -v python)" --no-deps -e .
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
       - name: Hermetic integration tests with coverage
         env:
           COVERAGE_FILE: .coverage.integration
         shell: bash
         run: |
-          coverage run -c 'import market_regime_engine'
+          .venv/bin/coverage run -c 'import market_regime_engine'
           set +e
-          coverage run --append -m pytest tests -m "integration and not external"
+          .venv/bin/coverage run --append -m pytest tests -m "integration and not external"
           code=$?
           set -e
           if [[ ${code} -ne 0 && ${code} -ne 5 ]]; then
@@ -127,13 +131,15 @@ jobs:
           test "${TYPE}" = success
           test "${UNIT}" = success
           test "${INTEGRATION}" = success
-      - name: Install coverage tooling
-        run: uv pip install --python "$(command -v python)" coverage==7.10.7
+      - name: Create coverage environment
+        run: |
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python coverage==7.10.7
       - uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
           merge-multiple: true
       - name: Enforce combined coverage >= 90%
         run: |
-          coverage combine .coverage.unit .coverage.integration
-          coverage report --fail-under=90
+          .venv/bin/coverage combine .coverage.unit .coverage.integration
+          .venv/bin/coverage report --fail-under=90
