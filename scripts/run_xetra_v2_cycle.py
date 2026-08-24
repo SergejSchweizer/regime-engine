@@ -133,6 +133,7 @@ def main() -> None:
         artifact_root
         / "packages"
         / snapshot.lineage.source_build_id
+        / evidence.parent_run_id
         / champion.champion_candidate_id,
     )
     feature_contract_hash = sha256(
