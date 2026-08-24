@@ -171,6 +171,19 @@ def test_registers_only_matching_final_refit_package(tmp_path) -> None:
         registry.register_production_model(object(), package)  # type: ignore[arg-type]
 
 
+def test_registers_a_validated_package_from_a_mlflow_run_uri(tmp_path) -> None:
+    client = FakeRegistryClient()
+    package = save_production_package(artifact(), tmp_path / "package")
+
+    registered = MlflowModelRegistry(client).register_production_model(
+        artifact(),
+        package,
+        package_source_uri="runs:/evaluation-run/production-package",
+    )
+
+    assert registered.package_uri == "runs:/evaluation-run/production-package"
+
+
 def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
     client = FakeRegistryClient()
     registry = MlflowModelRegistry(client)

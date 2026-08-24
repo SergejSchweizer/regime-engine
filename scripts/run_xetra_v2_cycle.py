@@ -144,7 +144,17 @@ def main() -> None:
     registry = MlflowModelRegistry(
         MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
     )
-    registered = registry.register_production_model(production, package)
+    registry_client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    registry_client.log_artifacts(
+        evidence.parent_run_id,
+        str(package),
+        artifact_path="production-package",
+    )
+    registered = registry.register_production_model(
+        production,
+        package,
+        package_source_uri=f"runs:/{evidence.parent_run_id}/production-package",
+    )
     try:
         previous = registry.resolve_alias("regime-xetra", "champion").exact_version
     except Exception:

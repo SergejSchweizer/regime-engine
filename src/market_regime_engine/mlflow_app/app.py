@@ -30,6 +30,24 @@ _INVOCATION_ENDPOINT = "regime_engine_placeholder_invocation"
 _OOS_ENDPOINT = "regime_engine_placeholder_oos"
 _HEALTH_ENDPOINT = "regime_engine_placeholder_health"
 _EXTENSION_KEY = "regime_engine_dependencies"
+_GENAI_NAVIGATION_FILTER = """<script>
+(() => {
+  const hideGenAiNavigation = () => {
+    document.querySelectorAll("a, button").forEach((element) => {
+      const label = (element.textContent || "").trim().toLowerCase();
+      const href = element.getAttribute("href") || "";
+      if (label === "genai" || href.startsWith("/genai")) {
+        (element.closest("li, [role=listitem]") || element).style.display = "none";
+      }
+    });
+  };
+  hideGenAiNavigation();
+  new MutationObserver(hideGenAiNavigation).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+})();
+</script>"""
 
 
 def _dependencies() -> ServiceDependencies | None:
@@ -139,6 +157,16 @@ def _health() -> Response:
     )
 
 
+def _filter_genai_navigation(response: Response) -> Response:
+    """Hide MLflow's optional GenAI navigation from the self-hosted UI only."""
+
+    if request.path != "/" or response.mimetype != "text/html":
+        return response
+    html = response.get_data(as_text=True)
+    response.set_data(html.replace("</body>", f"{_GENAI_NAVIGATION_FILTER}</body>"))
+    return response
+
+
 def _install_route(
     app: Flask,
     *,
@@ -169,6 +197,9 @@ def create_app(
 
         configure_serving_defaults()
     app.extensions[_EXTENSION_KEY] = dependencies
+    if "regime_engine_genai_navigation_filter" not in app.extensions:
+        app.after_request(_filter_genai_navigation)
+        app.extensions["regime_engine_genai_navigation_filter"] = True
     _install_route(
         app,
         rule=_INVOCATION_PATH,
