@@ -1,0 +1,373 @@
+"""Deterministic MLflow evaluation plots governed by PLOT_STYLE.md."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from hashlib import sha256
+from math import isfinite
+from pathlib import Path
+from typing import cast
+
+import matplotlib
+import matplotlib.dates as mdates
+import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from market_regime_engine.evaluation.walk_forward import (
+    WalkForwardEvaluation,
+    WalkForwardFoldResult,
+)
+from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+
+PNG_DPI = 180
+WIDE_FIGSIZE = (10.0, 5.5)
+SQUARE_FIGSIZE = (7.0, 6.5)
+
+_FOLD_METRICS: dict[str, tuple[str, str]] = {
+    "fold_train_loglik": ("train_log_likelihood", "TRAIN log likelihood"),
+    "fold_oos_predictive_loglik": (
+        "oos_predictive_log_likelihood",
+        "OOS predictive log likelihood",
+    ),
+    "fold_oos_predictive_loglik_per_obs": (
+        "oos_predictive_log_likelihood_per_observation",
+        "OOS predictive log likelihood per observation",
+    ),
+    "fold_aic": ("aic", "AIC"),
+    "fold_bic": ("bic", "BIC"),
+    "fold_multistart_success_rate": (
+        "multistart_success_rate",
+        "Multistart success rate",
+    ),
+    "fold_min_train_hard_occupancy": (
+        "train_hard_occupancy",
+        "Minimum TRAIN hard occupancy fraction",
+    ),
+    "fold_min_train_soft_occupancy": (
+        "train_soft_occupancy",
+        "Minimum TRAIN soft occupancy fraction",
+    ),
+    "fold_max_state_signature_drift": (
+        "max_state_signature_drift",
+        "State-signature drift",
+    ),
+    "fold_mean_state_duration": (
+        "mean_state_duration",
+        "Mean state duration (observations)",
+    ),
+    "fold_switches_per_year": ("switches_per_year", "Switches per year"),
+    "fold_oos_entropy_mean": ("oos_entropy_mean", "Mean OOS entropy"),
+    "fold_oos_confidence_mean": ("oos_confidence_mean", "Mean OOS confidence"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PlotManifestEntry:
+    png_path: str
+    svg_path: str
+    plot_type: str
+    candidate_id: str
+    fold_id: str | None
+    source_metric_keys: tuple[str, ...]
+    x_axis_field: str
+    x_axis_label: str
+    y_axis_label: str
+    legend_entries: tuple[str, ...]
+    image_dimensions_inches: tuple[float, float]
+    dpi: int
+    source_artifact_hash: str
+    scale_bounds: tuple[float, float] | None = None
+
+    def as_json_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
+
+
+def _canonical_hash(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _validate_plan(evaluation: WalkForwardEvaluation, plan: WalkForwardPlan) -> None:
+    if evaluation.evaluation_plan_hash != plan.plan_hash:
+        raise ValueError("evaluation and walk-forward plan hashes differ")
+    if len(evaluation.folds) != len(plan.folds):
+        raise ValueError("evaluation and walk-forward plan fold counts differ")
+    if tuple(fold.fold_id for fold in evaluation.folds) != tuple(
+        fold.fold_id for fold in plan.folds
+    ):
+        raise ValueError("evaluation and walk-forward plan fold IDs differ")
+
+
+def _metric_value(fold: WalkForwardFoldResult, metric_key: str) -> float | None:
+    attribute = _FOLD_METRICS[metric_key][0]
+    value = getattr(fold, attribute)
+    if metric_key in {"fold_min_train_hard_occupancy", "fold_min_train_soft_occupancy"}:
+        vector = cast(tuple[float, ...] | None, value)
+        return None if vector is None else min(vector)
+    scalar = cast(float | None, value)
+    if scalar is not None and not isfinite(scalar):
+        raise ValueError(f"{metric_key} must be finite when present")
+    return scalar
+
+
+def _date_axis(ax: matplotlib.axes.Axes, x_values: tuple[datetime, ...]) -> np.ndarray:
+    dates = mdates.date2num(list(x_values))  # type: ignore[no-untyped-call]
+    locator = mdates.AutoDateLocator()  # type: ignore[no-untyped-call]
+    formatter = mdates.ConciseDateFormatter(locator)  # type: ignore[no-untyped-call]
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    return np.asarray(dates, dtype=np.float64)
+
+
+def _save_figure(fig: matplotlib.figure.Figure, base_path: Path) -> tuple[Path, Path]:
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    png_path = base_path.with_suffix(".png")
+    svg_path = base_path.with_suffix(".svg")
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=PNG_DPI, bbox_inches="tight")
+    fig.savefig(svg_path, bbox_inches="tight")
+    plt.close(fig)
+    return png_path, svg_path
+
+
+def render_fold_history(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+    metric_key: str,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render one candidate history using real TEST-end UTC values and NaN invalid gaps."""
+
+    _validate_plan(evaluation, plan)
+    if metric_key not in _FOLD_METRICS:
+        raise ValueError(f"unsupported fold-history metric: {metric_key}")
+    x_values = tuple(fold.test_end for fold in plan.folds)
+    raw_values = tuple(
+        _metric_value(fold, metric_key) if fold.valid else None for fold in evaluation.folds
+    )
+    y_values = np.asarray(
+        [float("nan") if value is None else value for value in raw_values], dtype=np.float64
+    )
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    x_plot = _date_axis(ax, x_values)
+    ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
+    ax.set_title(f"{metric_key} — {evaluation.candidate_id}")
+    ax.set_xlabel("Test window end (UTC)")
+    ax.set_ylabel(_FOLD_METRICS[metric_key][1])
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.autofmt_xdate()
+    base = Path(output_dir) / evaluation.candidate_id / "histories" / metric_key
+    png_path, svg_path = _save_figure(fig, base)
+    payload = {
+        "candidate_id": evaluation.candidate_id,
+        "metric_key": metric_key,
+        "test_end": [value.isoformat() for value in x_values],
+        "values": raw_values,
+    }
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="fold_history",
+        candidate_id=evaluation.candidate_id,
+        fold_id=None,
+        source_metric_keys=(metric_key,),
+        x_axis_field="test_end",
+        x_axis_label="Test window end (UTC)",
+        y_axis_label=_FOLD_METRICS[metric_key][1],
+        legend_entries=(evaluation.candidate_id,),
+        image_dimensions_inches=WIDE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+    )
+
+
+def candidate_covariance_scale(evaluation: WalkForwardEvaluation) -> float:
+    """Return one shared absolute covariance scale for every valid fold/state heatmap."""
+
+    maxima: list[float] = []
+    for fold in evaluation.valid_folds:
+        if fold.model_artifact is None:
+            raise ValueError("valid fold is missing model artifact")
+        values = np.asarray(fold.model_artifact.full_covariances, dtype=np.float64)
+        maxima.append(float(np.max(np.abs(values))))
+    if not maxima:
+        raise ValueError("candidate has no valid covariance artifacts")
+    scale = max(maxima)
+    if not isfinite(scale) or scale <= 0.0:
+        raise ValueError("candidate covariance scale must be finite and positive")
+    return scale
+
+
+def render_transition_heatmap(
+    evaluation: WalkForwardEvaluation,
+    fold: WalkForwardFoldResult,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render one persistent-state transition matrix on the fixed probability scale [0,1]."""
+
+    if not fold.valid or fold.model_artifact is None or fold.alignment is None:
+        raise ValueError("transition heatmap requires a valid aligned fold")
+    mapping = fold.alignment.persistent_to_fitted
+    raw = np.asarray(fold.model_artifact.transition_matrix, dtype=np.float64)
+    matrix = raw[np.ix_(mapping, mapping)]
+    state_ids = fold.alignment.persistent_state_ids
+    fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
+    image = ax.imshow(matrix, vmin=0.0, vmax=1.0)
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("Transition probability")
+    ax.set_title(f"Transition matrix — {evaluation.candidate_id} — {fold.fold_id}")
+    ax.set_xlabel("Next state")
+    ax.set_ylabel("Current state")
+    ax.set_xticks(range(len(state_ids)), labels=state_ids)
+    ax.set_yticks(range(len(state_ids)), labels=state_ids)
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            ax.text(column, row, f"{matrix[row, column]:.3f}", ha="center", va="center")
+    base = Path(output_dir) / evaluation.candidate_id / fold.fold_id / "transition_matrix"
+    png_path, svg_path = _save_figure(fig, base)
+    payload = {
+        "candidate_id": evaluation.candidate_id,
+        "fold_id": fold.fold_id,
+        "matrix": matrix.tolist(),
+    }
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="transition_heatmap",
+        candidate_id=evaluation.candidate_id,
+        fold_id=fold.fold_id,
+        source_metric_keys=("transition_matrix",),
+        x_axis_field="persistent_state_id",
+        x_axis_label="Next state",
+        y_axis_label="Current state",
+        legend_entries=state_ids,
+        image_dimensions_inches=SQUARE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+        scale_bounds=(0.0, 1.0),
+    )
+
+
+def render_covariance_heatmap(
+    evaluation: WalkForwardEvaluation,
+    fold: WalkForwardFoldResult,
+    persistent_state_index: int,
+    shared_scale: float,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render one aligned full covariance matrix with a candidate-wide deterministic scale."""
+
+    if not fold.valid or fold.model_artifact is None or fold.alignment is None:
+        raise ValueError("covariance heatmap requires a valid aligned fold")
+    if persistent_state_index not in range(evaluation.state_count):
+        raise ValueError("persistent state index is outside candidate state range")
+    if not isfinite(shared_scale) or shared_scale <= 0.0:
+        raise ValueError("shared covariance scale must be finite and positive")
+    fitted_index = fold.alignment.persistent_to_fitted[persistent_state_index]
+    matrix = np.asarray(fold.model_artifact.full_covariances[fitted_index], dtype=np.float64)
+    features = evaluation.feature_order
+    state_id = fold.alignment.persistent_state_ids[persistent_state_index]
+    fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
+    image = ax.imshow(matrix, vmin=-shared_scale, vmax=shared_scale, cmap="coolwarm")
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("Covariance")
+    ax.set_title(f"Full covariance — {evaluation.candidate_id} — {fold.fold_id} — {state_id}")
+    ax.set_xlabel("Feature")
+    ax.set_ylabel("Feature")
+    ax.set_xticks(range(len(features)), labels=features, rotation=45, ha="right")
+    ax.set_yticks(range(len(features)), labels=features)
+    if len(features) <= 8:
+        for row in range(matrix.shape[0]):
+            for column in range(matrix.shape[1]):
+                ax.text(column, row, f"{matrix[row, column]:.3f}", ha="center", va="center")
+    base = Path(output_dir) / evaluation.candidate_id / fold.fold_id / f"covariance_{state_id}"
+    png_path, svg_path = _save_figure(fig, base)
+    payload = {
+        "candidate_id": evaluation.candidate_id,
+        "fold_id": fold.fold_id,
+        "state_id": state_id,
+        "feature_order": features,
+        "matrix": matrix.tolist(),
+        "shared_scale": shared_scale,
+    }
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="full_covariance_heatmap",
+        candidate_id=evaluation.candidate_id,
+        fold_id=fold.fold_id,
+        source_metric_keys=("full_covariance",),
+        x_axis_field="feature_order",
+        x_axis_label="Feature",
+        y_axis_label="Feature",
+        legend_entries=(state_id,),
+        image_dimensions_inches=SQUARE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+        scale_bounds=(-shared_scale, shared_scale),
+    )
+
+
+def render_candidate_comparison(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Compare valid-fold OOS PLL/observation histories without shifting missing folds."""
+
+    if not evaluations:
+        raise ValueError("candidate comparison requires at least one evaluation")
+    ordered = tuple(sorted(evaluations, key=lambda item: (item.state_count, item.candidate_id)))
+    for evaluation in ordered:
+        _validate_plan(evaluation, plan)
+    x_values = tuple(fold.test_end for fold in plan.folds)
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    x_plot = _date_axis(ax, x_values)
+    source_values: dict[str, list[float | None]] = {}
+    for evaluation in ordered:
+        values = [
+            _metric_value(fold, "fold_oos_predictive_loglik_per_obs") if fold.valid else None
+            for fold in evaluation.folds
+        ]
+        source_values[evaluation.candidate_id] = values
+        y_values = np.asarray(
+            [float("nan") if value is None else value for value in values], dtype=np.float64
+        )
+        ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
+    ax.set_title("Walk-forward OOS candidate comparison")
+    ax.set_xlabel("Test window end (UTC)")
+    ax.set_ylabel("OOS predictive log likelihood per observation")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.autofmt_xdate()
+    base = Path(output_dir) / "parent" / "candidate_oos_predictive_loglik_per_obs"
+    png_path, svg_path = _save_figure(fig, base)
+    payload = {
+        "test_end": [value.isoformat() for value in x_values],
+        "values": source_values,
+    }
+    candidate_ids = tuple(evaluation.candidate_id for evaluation in ordered)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="candidate_comparison",
+        candidate_id="all_candidates",
+        fold_id=None,
+        source_metric_keys=("fold_oos_predictive_loglik_per_obs",),
+        x_axis_field="test_end",
+        x_axis_label="Test window end (UTC)",
+        y_axis_label="OOS predictive log likelihood per observation",
+        legend_entries=candidate_ids,
+        image_dimensions_inches=WIDE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+    )
+
+
+def fold_history_metric_keys() -> tuple[str, ...]:
+    return tuple(_FOLD_METRICS)
