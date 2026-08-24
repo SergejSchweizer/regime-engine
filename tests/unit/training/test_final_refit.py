@@ -232,5 +232,10 @@ def test_refit_matrix_enforces_cutoff_reach_order_finiteness_and_minimum() -> No
     nonfinite.loc[10, "f0"] = np.inf
     with pytest.raises(ValueError, match="finite"):
         _refit_matrix(nonfinite, feature_order=FEATURES, evaluation_cutoff=cutoff)
+    short = source_rows(503)
     with pytest.raises(ValueError, match="at least 504"):
-        _refit_matrix(source_rows(503), feature_order=FEATURES, evaluation_cutoff=source_rows(503)["timestamp_m1"].iloc[-1])
+        _refit_matrix(
+            short,
+            feature_order=FEATURES,
+            evaluation_cutoff=short["timestamp_m1"].iloc[-1],
+        )
