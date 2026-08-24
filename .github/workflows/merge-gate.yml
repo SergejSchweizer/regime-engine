@@ -72,11 +72,12 @@ jobs:
           COVERAGE_FILE: .coverage.unit
         run: |
           .venv/bin/coverage run -m pytest tests -m "not integration and not external"
-          .venv/bin/coverage run --append -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
+          .venv/bin/python -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-unit
           path: .coverage.unit
+          include-hidden-files: true
           if-no-files-found: error
 
   integration:
@@ -97,18 +98,19 @@ jobs:
           COVERAGE_FILE: .coverage.integration
         shell: bash
         run: |
-          .venv/bin/coverage run -c 'import market_regime_engine'
           set +e
-          .venv/bin/coverage run --append -m pytest tests -m "integration and not external"
+          .venv/bin/coverage run -m pytest tests -m "integration and not external"
           code=$?
           set -e
           if [[ ${code} -ne 0 && ${code} -ne 5 ]]; then
             exit "${code}"
           fi
+          test -f .coverage.integration
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
           path: .coverage.integration
+          include-hidden-files: true
           if-no-files-found: error
 
   merge-gate:
@@ -134,7 +136,7 @@ jobs:
       - name: Create coverage environment
         run: |
           uv venv --python 3.14.7 .venv
-          uv pip install --python .venv/bin/python coverage==7.10.7
+          uv pip install --python .venv/bin/python coverage==7.15.4
       - uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
