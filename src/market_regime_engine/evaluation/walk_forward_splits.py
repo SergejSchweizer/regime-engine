@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from itertools import pairwise
 
 from market_regime_engine.profiles.config import WalkForwardConfig
 
@@ -71,7 +72,7 @@ def plan_walk_forward(
 
     _assert_pinned(config)
     ordered = tuple(_utc(value, "source timestamp") for value in timestamps)
-    if any(current <= previous for previous, current in zip(ordered, ordered[1:], strict=False)):
+    if any(current <= previous for previous, current in pairwise(ordered)):
         raise ValueError("source timestamps must be strictly increasing and unique")
 
     folds: list[WalkForwardFold] = []
