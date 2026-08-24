@@ -115,7 +115,9 @@ class ModelResolver:
         if artifact.profile_id != target.profile_id:
             raise ValueError("production package profile differs from requested public profile")
         if artifact.profile_config_version != target.profile_config_version:
-            raise ValueError("production package profile configuration version differs from routing target")
+            raise ValueError(
+                "production package profile configuration version differs from routing target"
+            )
         if artifact.registered_model != target.model_name:
             raise ValueError("production package registered model differs from routing target")
         return artifact
