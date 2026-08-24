@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
-import os
 from pathlib import Path
-import shutil
-import tempfile
 from typing import Any
 
 import pyarrow as pa
@@ -37,7 +37,8 @@ class PredictionBuildManifest:
     created_at_utc: str
 
     def __post_init__(self) -> None:
-        for field_name in ("build_id", "profile_id", "source_build_id", "feature_contract_hash"):
+        identity_fields = ("build_id", "profile_id", "source_build_id", "feature_contract_hash")
+        for field_name in identity_fields:
             value = getattr(self, field_name)
             if not value or value.strip() != value:
                 raise ValueError(f"{field_name} must be a non-empty trimmed string")
