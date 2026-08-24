@@ -16,7 +16,10 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardFoldResult,
     run_walk_forward_candidate,
 )
-from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.evaluation.walk_forward_splits import (
+    WalkForwardPlan,
+    plan_walk_forward,
+)
 from market_regime_engine.mlflow_support.plots import (
     candidate_covariance_scale,
     render_candidate_comparison,
@@ -127,7 +130,7 @@ def source_rows(row_count: int = 1323) -> pd.DataFrame:
     )
 
 
-def valid_evaluation() -> tuple[WalkForwardEvaluation, object]:
+def valid_evaluation() -> tuple[WalkForwardEvaluation, WalkForwardPlan]:
     rows = source_rows()
     profile = load_profile(PROFILE_CONFIG)
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
@@ -157,7 +160,9 @@ def lineage() -> SourceLineage:
     )
 
 
-def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(tmp_path: Path) -> None:
+def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
+    tmp_path: Path,
+) -> None:
     evaluation, plan = valid_evaluation()
     assert candidate_covariance_scale(evaluation) == pytest.approx(0.30)
     port = FakeTrackingPort()
@@ -202,7 +207,9 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(tm
     metrics = pq.read_table(tmp_path / "gaussian_hmm_k2_full" / "fold_metrics.parquet")
     assert metrics.column("valid").to_pylist() == [True]
 
-    parameter_path = tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
+    parameter_path = (
+        tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
+    )
     parameters = json.loads(parameter_path.read_text(encoding="utf-8"))
     assert parameters["persistent_state_ids"] == ["state_0", "state_1"]
     assert parameters["feature_order"] == ["f0", "f1"]
@@ -216,7 +223,9 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(tm
     assert history["x_axis_field"] == "test_end"
     assert history["x_axis_label"] == "Test window end (UTC)"
     assert history["dpi"] == 180
-    covariance_entries = [item for item in manifest if item["plot_type"] == "full_covariance_heatmap"]
+    covariance_entries = [
+        item for item in manifest if item["plot_type"] == "full_covariance_heatmap"
+    ]
     assert {tuple(item["scale_bounds"]) for item in covariance_entries} == {(-0.3, 0.3)}
     assert all(Path(item["png_path"]).exists() for item in manifest)
     assert all(Path(item["svg_path"]).exists() for item in manifest)
@@ -254,7 +263,10 @@ def test_invalid_fold_is_kept_in_parquet_and_creates_plot_gaps_without_fold_arti
     )
     assert port.params["run-3"]["valid"] == "false"
     assert port.params["run-3"]["failure_reason"].startswith("retained TEST")
-    assert not (tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json").exists()
+    parameter_path = (
+        tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
+    )
+    assert not parameter_path.exists()
     metrics = pq.read_table(tmp_path / "gaussian_hmm_k2_full" / "fold_metrics.parquet")
     assert metrics.column("valid").to_pylist() == [False]
     assert metrics.column("fold_oos_predictive_loglik_per_obs").to_pylist() == [None]
