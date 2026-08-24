@@ -162,12 +162,12 @@ class HmmlearnGaussianHMMAdapter:
     def __init__(
         self,
         feature_order: tuple[str, ...],
-        settings: GaussianHMMSettings = GaussianHMMSettings(),
+        settings: GaussianHMMSettings | None = None,
     ) -> None:
         if not feature_order or len(set(feature_order)) != len(feature_order):
             raise ValueError("feature_order must be non-empty and duplicate-free")
         self.feature_order = feature_order
-        self.settings = settings
+        self.settings = settings or GaussianHMMSettings()
         self._model: GaussianHMM | None = None
         self._artifact: GaussianHMMArtifact | None = None
 
