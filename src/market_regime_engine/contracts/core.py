@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from math import isclose, isfinite
 from string import hexdigits
-from typing import TypeAlias
 
 DATA_TIME_SEMANTICS = "current_vintage_observation_day"
 PREDICTION_SCHEMA_VERSION = "RegimePrediction.v1"
@@ -53,6 +52,9 @@ class SourceLineage:
     source_table: str
     synced_at_utc: datetime
     data_time_semantics: str = DATA_TIME_SEMANTICS
+    row_count: int | None = None
+    min_timestamp: datetime | None = None
+    max_timestamp: datetime | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("source_dataset", "source_build_id", "source_table"):
@@ -63,6 +65,17 @@ class SourceLineage:
         _require_utc(self.synced_at_utc, "synced_at_utc")
         if self.data_time_semantics != DATA_TIME_SEMANTICS:
             raise ValueError(f"unsupported data_time_semantics: {self.data_time_semantics}")
+        bounds = (self.row_count, self.min_timestamp, self.max_timestamp)
+        if any(value is not None for value in bounds):
+            if any(value is None for value in bounds):
+                raise ValueError("source row_count/min_timestamp/max_timestamp must be supplied together")
+            if self.row_count is None or self.row_count < 0:
+                raise ValueError("source row_count cannot be negative")
+            assert self.min_timestamp is not None and self.max_timestamp is not None
+            _require_utc(self.min_timestamp, "min_timestamp")
+            _require_utc(self.max_timestamp, "max_timestamp")
+            if self.min_timestamp > self.max_timestamp:
+                raise ValueError("source timestamp bounds are inverted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +206,7 @@ class ReplayInvocation:
             _require_text(self.model_version, "model_version")
 
 
-InvocationRequest: TypeAlias = LatestInvocation | ReplayInvocation
+type InvocationRequest = LatestInvocation | ReplayInvocation
 
 
 @dataclass(frozen=True, slots=True)
