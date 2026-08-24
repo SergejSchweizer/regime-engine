@@ -150,6 +150,8 @@ def test_scripts_enforce_local_build_and_no_build_start_contract() -> None:
         assert "unix://*" in script
         assert "remote DOCKER_HOST is forbidden" in script
     assert "docker buildx inspect" in build
+    assert "Endpoint:" in build
+    assert ".Current" not in build
     combined = "\n".join((build, up, down, verify, _text(DEPLOYMENT_DOC)))
     banned = (
         "docker compose push",
