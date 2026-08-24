@@ -65,7 +65,11 @@ docker compose up -d --no-build
 
 Startup therefore never rebuilds the application image and cannot silently fetch it from a registry. The pinned official PostgreSQL backend image may be pulled only when it is absent locally.
 
-Normal startup performs no MLflow schema migration. Migration remains the explicit PR-032 one-shot command and must be paired with the operational backup/quiesce procedure before use.
+Normal startup performs no MLflow schema migration. Migration is the explicit
+PR-065 guarded operation in [the backup/restore guide](ops/backup_restore.md):
+operators must first create and verify a backup, then run only
+`scripts/verified_mlflow_db_upgrade.sh <verified-backup-directory>`. It must
+never be combined with an implicit image rebuild.
 
 ## Verify
 

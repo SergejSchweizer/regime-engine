@@ -1,6 +1,6 @@
 # Contributing and Git Policy
 
-Status date: 2026-08-23
+Status date: 2026-08-24
 
 `BACKLOG.md` is the single authoritative implementation plan for `SergejSchweizer/regime-engine`. The consolidated backlog has no Wave-7/Wave-8 override/addendum mechanism: each PR has one effective dependency set, scope, allowed-file list, and acceptance list.
 

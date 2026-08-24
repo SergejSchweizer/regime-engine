@@ -52,13 +52,18 @@ Feature PostgreSQL credentials remain a separate runtime concern and must use th
 
 ## Explicit database migration
 
-Normal image startup never executes `mlflow db upgrade`. Backend schema migration is an explicit one-shot operator action:
+Normal image startup never executes `mlflow db upgrade`. Backend migration is
+an explicit PR-065 guarded local operation, documented in
+[the backup/restore guide](ops/backup_restore.md). Operators must first create
+and verify a backup, then run only:
 
 ```sh
-docker compose exec -T mlflow /usr/local/bin/regime-engine-mlflow-db-upgrade
+scripts/verified_mlflow_db_upgrade.sh <verified-backup-directory>
 ```
 
-The service must be quiesced and backed up according to the later operational migration/restore contract before this command is used. The migration script consumes the same backend database secret file without printing its contents.
+The wrapper quiesces MLflow, runs the image-owned migration helper as a
+one-shot local Compose container, restarts with `--no-build`, and verifies the
+deployment. The helper consumes the backend secret file without printing it.
 
 ## Local verification
 

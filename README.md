@@ -46,6 +46,12 @@ docker compose up -d --no-build
 
 The custom image is `regime-engine-mlflow:local` with `pull_policy: never`; it is not published to an application registry. Operator/model-cycle commands run inside the local service with `docker compose exec -T mlflow ...`.
 
+Use [the local deployment guide](docs/deployment.md) for the required build,
+start, verification, and resource-budget sequence. Backup, restore, explicit
+database migration, and backend/feature-secret rotation are documented in
+[the operations guide](docs/ops/backup_restore.md). Normal startup never
+performs a migration or an implicit application-image build.
+
 ## Statistical lifecycle
 
 Feature selection uses first-fold TRAIN only. K=2/K=3/K=4 full-covariance Gaussian HMM candidates are compared by the deterministic walk-forward contract in `EVALUATION.md`. No ETF/portfolio/trading metric participates in feature selection or model ranking.
@@ -61,5 +67,7 @@ A walk-forward fold model is never registered for production. After a statistica
 - `PLOT_STYLE.md`: diagnostic plot presentation
 - `ARCHITECTURE.md`: durable architecture overview
 - `docs/model_lifecycle.md`: lifecycle and serving continuation
+- `docs/deployment.md`: exact local two-service Compose operations
+- `docs/ops/backup_restore.md`: verified backup/restore, migration, and secret rotation
 
 Consumer portfolio/economic evaluation belongs downstream and is deliberately outside this repository.
