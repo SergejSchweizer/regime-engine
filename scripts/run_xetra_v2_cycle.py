@@ -161,13 +161,17 @@ def main() -> None:
         package_source_uri=f"runs:/{evidence.parent_run_id}/production-package",
     )
     try:
-        previous = registry.resolve_alias("regime-xetra", "champion").exact_version
+        previous_champion = registry.resolve_alias("regime-xetra", "champion").exact_version
     except Exception:
-        previous = None
+        previous_champion = None
+    try:
+        previous_challenger = registry.resolve_alias("regime-xetra", "challenger").exact_version
+    except Exception:
+        previous_challenger = None
     if not registry.compare_and_swap_alias(
         model_name="regime-xetra",
         alias="challenger",
-        expected_current_version=None,
+        expected_current_version=previous_challenger,
         new_version=registered.exact_version,
         reason="real Xetra v2 full evaluation completed",
     ):
@@ -175,7 +179,7 @@ def main() -> None:
     if not registry.compare_and_swap_alias(
         model_name="regime-xetra",
         alias="champion",
-        expected_current_version=previous,
+        expected_current_version=previous_champion,
         new_version=registered.exact_version,
         reason="statistical champion promoted after real Xetra v2 evaluation",
     ):
