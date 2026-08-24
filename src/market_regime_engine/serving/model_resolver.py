@@ -58,7 +58,13 @@ def _load_mlflow_package(
     if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
         path = Path(unquote(parsed.path))
     elif parsed.scheme == "runs":
-        path = Path(download_artifacts(artifact_uri=package_uri, tracking_uri=tracking_uri))
+        path = Path(
+            download_artifacts(
+                artifact_uri=package_uri,
+                tracking_uri=tracking_uri,
+                registry_uri=tracking_uri,
+            )
+        )
     else:
         raise ValueError("production package URI must be a local file URI or MLflow run URI")
     return load_production_package(path)
