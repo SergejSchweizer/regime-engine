@@ -160,9 +160,8 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
     )
     assert mismatch.changed is False
     assert mismatch.observed_current_version == first.exact_version
-    assert registry.resolve_alias(
-        "regime-xetra", "challenger"
-    ).exact_version == first.exact_version
+    current = registry.resolve_alias("regime-xetra", "challenger")
+    assert current.exact_version == first.exact_version
 
     changed = registry.compare_and_swap_alias_with_audit(
         model_name="regime-xetra",
@@ -172,9 +171,8 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
         reason="validated replacement",
     )
     assert changed.changed is True
-    assert registry.resolve_alias(
-        "regime-xetra", "challenger"
-    ).exact_version == second.exact_version
+    current = registry.resolve_alias("regime-xetra", "challenger")
+    assert current.exact_version == second.exact_version
     assert any("alias_audit" in key for _, key in client.tags)
 
 
