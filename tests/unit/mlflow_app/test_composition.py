@@ -4,11 +4,15 @@ from datetime import UTC, datetime
 
 from market_regime_engine.contracts import LatestInvocation, ReplayInvocation
 from market_regime_engine.mlflow_app.app import create_app
-from market_regime_engine.mlflow_app.dependencies import ReadinessSnapshot, ServiceDependencies
+from market_regime_engine.mlflow_app.dependencies import (
+    ReadinessSnapshot,
+    ServiceDependencies,
+)
 from market_regime_engine.serving.replay_limits import ReplayGuardrailError
 
 
 NOW = datetime(2026, 8, 24, 13, 45, tzinfo=UTC)
+HEALTHY = ReadinessSnapshot("healthy", True)
 
 
 class FakeLatest:
@@ -76,13 +80,14 @@ def dependencies(
     replay: FakeReplay | None = None,
     oos: FakeOOS | None = None,
     *,
-    readiness: ReadinessSnapshot = ReadinessSnapshot("healthy", True),
+    readiness: ReadinessSnapshot | None = None,
 ) -> ServiceDependencies:
+    current_readiness = readiness or HEALTHY
     return ServiceDependencies(
         latest_handler=latest or FakeLatest(),  # type: ignore[arg-type]
         replay_handler=replay or FakeReplay(),  # type: ignore[arg-type]
         oos_handler=oos or FakeOOS(),  # type: ignore[arg-type]
-        readiness=lambda: readiness,
+        readiness=lambda: current_readiness,
         request_id_factory=lambda: "request-fixed",
         request_time_factory=lambda: NOW,
     )
