@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from flask import Flask, Response, current_app, jsonify, request
 from mlflow.server import app as mlflow_app
 
@@ -162,6 +164,10 @@ def create_app(
 ) -> Flask:
     """Extend canonical MLflow Flask routes with injected regime-engine handlers."""
 
+    if dependencies is None and os.environ.get("REGIME_AUTO_COMPOSE") == "1":
+        from market_regime_engine.deployment import configure_serving_defaults
+
+        configure_serving_defaults()
     app.extensions[_EXTENSION_KEY] = dependencies
     _install_route(
         app,
