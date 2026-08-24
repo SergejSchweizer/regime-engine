@@ -148,7 +148,8 @@ def test_corrupt_immutable_oos_rows_are_rejected(
 ) -> None:
     store = PredictionStore(tmp_path)
     rows = oos_rows()
-    rows[0][field] = value
+    for row in rows:
+        row[field] = value
     publish(store, rows=rows)
     with pytest.raises(ValueError, match=message):
         query_oos_build(store, OOSQuery(profile_id="xetra", build_id="oos-build"))
