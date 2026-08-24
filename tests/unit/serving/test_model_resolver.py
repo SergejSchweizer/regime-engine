@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Event, Lock, Thread
 
 import pytest
@@ -135,6 +136,28 @@ def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
     ]
     with pytest.raises(ValueError, match="tracking URI"):
         model_resolver.mlflow_package_loader(tracking_uri="")
+
+
+def test_mlflow_run_package_loader_prefers_unambiguous_local_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "10" / "evaluation-run" / "artifacts" / "production-package"
+    package.mkdir(parents=True)
+    expected = artifact(build="local-build")
+    monkeypatch.setenv("MLFLOW_ARTIFACT_ROOT", str(tmp_path))
+    monkeypatch.setattr(model_resolver, "load_production_package", lambda path: expected)
+
+    def unexpected_download(**_: object) -> str:
+        raise AssertionError("remote artifact download is not expected")
+
+    monkeypatch.setattr(model_resolver, "download_artifacts", unexpected_download)
+
+    loaded = model_resolver._load_mlflow_package(
+        "runs:/evaluation-run/production-package",
+        tracking_uri="http://127.0.0.1:5000",
+    )
+    assert loaded is expected
 
 
 def test_profile_registry_is_data_driven_and_version_checked() -> None:
