@@ -25,4 +25,6 @@ docker image inspect regime-engine-mlflow:local >/dev/null 2>&1 \
 
 source scripts/compose_provenance_env.sh
 
+mkdir -p /volume2/docker/mfllow/artifacts /volume2/docker/mfllow/postgres
+
 docker compose up -d --no-build

@@ -30,6 +30,8 @@ def test_compose_has_exact_project_services_and_public_port() -> None:
     assert set(services) == {"mlflow", "mlflow-postgres"}
     mlflow = services["mlflow"]
     backend = services["mlflow-postgres"]
+    assert mlflow["container_name"] == "regime-engine-mlflow"
+    assert backend["container_name"] == "regime-engine-mlflow-postgres"
     assert mlflow["ports"] == ["5000:5000"]
     assert "ports" not in backend
 
@@ -60,7 +62,12 @@ def test_postgres_backend_is_official_digest_pinned_and_persistent() -> None:
     backend = services["mlflow-postgres"]
     assert backend["image"] == f"postgres:18.6-alpine@{POSTGRES_DIGEST}"
     assert backend["pull_policy"] == "missing"
-    assert "mlflow_backend_data:/var/lib/postgresql" in backend["volumes"]
+    backend_volume = backend["volumes"][0]
+    assert backend_volume == {
+        "type": "bind",
+        "source": "${MLFLOW_BACKEND_DATA_HOST_PATH:-/volume2/docker/mfllow/postgres}",
+        "target": "/var/lib/postgresql",
+    }
     lock = _text(LOCK)
     assert "image=postgres:18.6-alpine" in lock
     assert f"index_digest={POSTGRES_DIGEST}" in lock
@@ -136,6 +143,8 @@ def test_secrets_are_file_backed_and_env_example_contains_placeholders_only() ->
     assert "<required-mlflow-backend-database>" in env
     assert "<required-mlflow-backend-user>" in env
     assert "<required-regime-loader-serving-database>" in env
+    assert "MLFLOW_ARTIFACTS_HOST_PATH=/volume2/docker/mfllow/artifacts" in env
+    assert "MLFLOW_BACKEND_DATA_HOST_PATH=/volume2/docker/mfllow/postgres" in env
     assert "password=" not in env.lower()
 
 
@@ -147,6 +156,7 @@ def test_scripts_enforce_local_build_and_no_build_start_contract() -> None:
     assert "docker compose build --pull mlflow" in build
     assert "docker compose up -d --no-build" in up
     assert "docker image inspect regime-engine-mlflow:local" in up
+    assert "mkdir -p /volume2/docker/mfllow/artifacts /volume2/docker/mfllow/postgres" in up
     assert "source scripts/compose_provenance_env.sh" in build
     assert "source scripts/compose_provenance_env.sh" in up
     assert "export REGIME_ENGINE_GIT_SHA" in _text(COMPOSE_PROVENANCE)
