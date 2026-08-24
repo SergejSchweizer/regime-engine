@@ -100,7 +100,10 @@ def _prediction_from_row(row: dict[str, Any]) -> RegimePrediction:
     timestamp = _row_timestamp(row)
     raw_state_ids = row.get("state_ids")
     raw_probabilities = row.get("state_probabilities")
-    if not isinstance(raw_state_ids, list) or not all(isinstance(value, str) for value in raw_state_ids):
+    valid_state_ids = isinstance(raw_state_ids, list) and all(
+        isinstance(value, str) for value in raw_state_ids
+    )
+    if not valid_state_ids:
         raise ValueError("OOS row state_ids must be a list of strings")
     if not isinstance(raw_probabilities, list):
         raise ValueError("OOS row state_probabilities must be a list")
@@ -141,7 +144,8 @@ def query_oos_build(store: PredictionStore, query: OOSQuery) -> OOSBuildSlice:
     if manifest.prediction_mode is not PredictionMode.WALK_FORWARD_OOS:
         raise ValueError("requested prediction build is not walk_forward_oos")
 
-    raw_rows = cast(list[dict[str, Any]], store.read_table(query.profile_id, query.build_id).to_pylist())
+    table = store.read_table(query.profile_id, query.build_id)
+    raw_rows = cast(list[dict[str, Any]], table.to_pylist())
     parsed: list[OOSPredictionRow] = []
     timestamps: list[datetime] = []
     for row in raw_rows:
@@ -160,10 +164,12 @@ def query_oos_build(store: PredictionStore, query: OOSQuery) -> OOSBuildSlice:
                 fold_id=_metadata_text(row, "fold_id"),
                 evaluation_plan_hash=_metadata_text(row, "evaluation_plan_hash"),
                 feature_selection_definition_hash=_metadata_text(
-                    row, "feature_selection_definition_hash"
+                    row,
+                    "feature_selection_definition_hash",
                 ),
                 feature_selection_execution_hash=_metadata_text(
-                    row, "feature_selection_execution_hash"
+                    row,
+                    "feature_selection_execution_hash",
                 ),
             )
         )
