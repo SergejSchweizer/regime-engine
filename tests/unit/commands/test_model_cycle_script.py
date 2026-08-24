@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 
-SCRIPT = Path("scripts/model_cycle.sh")
+SCRIPT = "scripts/model_cycle.sh"
+
+
+def _script_text() -> str:
+    with open(SCRIPT, encoding="utf-8") as handle:
+        return handle.read()
 
 
 def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> None:
-    subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
-    text = SCRIPT.read_text(encoding="utf-8")
+    subprocess.run(["bash", "-n", SCRIPT], check=True)
+    text = _script_text()
     assert "set -euo pipefail" in text
     assert 'PROFILE="${REGIME_ENGINE_PROFILE:-xetra}"' in text
     assert "docker context show" in text
@@ -22,7 +26,7 @@ def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> N
 
 
 def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion() -> None:
-    text = SCRIPT.read_text(encoding="utf-8")
+    text = _script_text()
     status = text.index('run_cli status --profile "$PROFILE"')
     evaluate = text.index('run_cli evaluate --profile "$PROFILE"')
     refit = text.index('run_cli final-refit --profile "$PROFILE"')
@@ -41,7 +45,7 @@ def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion
 
 
 def test_model_cycle_script_contains_no_remote_or_build_path() -> None:
-    text = SCRIPT.read_text(encoding="utf-8")
+    text = _script_text()
     banned = (
         "docker compose build",
         "docker compose push",
