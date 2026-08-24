@@ -80,7 +80,9 @@ class FeatureScore:
         if self.medoid_score is not None and not isfinite(self.medoid_score):
             raise ValueError("medoid score must be finite when supplied")
         if self.eligible == (self.exclusion_reason is not None):
-            raise ValueError("eligible scores have no exclusion reason; excluded scores require one")
+            raise ValueError(
+                "eligible scores have no exclusion reason; excluded scores require one"
+            )
 
 
 @dataclass(frozen=True, slots=True)
