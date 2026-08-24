@@ -139,9 +139,8 @@ def test_feature_pool_acquire_timeout_is_bounded_and_propagated_without_external
     fake = _TimeoutPool()
     settings = FeaturePostgresSettings(database="fixture", password="not-a-real-secret")
     pool = ProcessLocalPostgresPool(settings, workers=4, pool_factory=lambda _: fake)
-    with pytest.raises(PoolTimeout, match="synthetic acquire timeout"):
-        with pool.connection():
-            raise AssertionError("unreachable")
+    with pytest.raises(PoolTimeout, match="synthetic acquire timeout"), pool.connection():
+        raise AssertionError("unreachable")
     assert fake.opened
     pool.close()
     assert not fake.opened
@@ -175,9 +174,8 @@ def test_all_replay_413_503_504_paths_fail_closed_and_release_capacity() -> None
     clock = [100.0]
     admission = ReplayAdmission(limits, clock=lambda: clock[0])
     with admission.admit() as permit:
-        with pytest.raises(ReplayGuardrailError) as capacity:
-            with admission.admit():
-                raise AssertionError("unreachable")
+        with pytest.raises(ReplayGuardrailError) as capacity, admission.admit():
+            raise AssertionError("unreachable")
         assert (capacity.value.status_code, capacity.value.error_code) == (
             503,
             "replay_capacity_exhausted",
