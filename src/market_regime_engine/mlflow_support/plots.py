@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path
@@ -113,11 +114,12 @@ def _metric_value(fold: WalkForwardFoldResult, metric_key: str) -> float | None:
     return scalar
 
 
-def _date_axis(ax: matplotlib.axes.Axes, x_values: tuple[object, ...]) -> np.ndarray:
-    dates = mdates.date2num(list(x_values))
-    locator = mdates.AutoDateLocator()
+def _date_axis(ax: matplotlib.axes.Axes, x_values: tuple[datetime, ...]) -> np.ndarray:
+    dates = mdates.date2num(list(x_values))  # type: ignore[no-untyped-call]
+    locator = mdates.AutoDateLocator()  # type: ignore[no-untyped-call]
+    formatter = mdates.ConciseDateFormatter(locator)  # type: ignore[no-untyped-call]
     ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+    ax.xaxis.set_major_formatter(formatter)
     return np.asarray(dates, dtype=np.float64)
 
 
@@ -151,7 +153,7 @@ def render_fold_history(
         [float("nan") if value is None else value for value in raw_values], dtype=np.float64
     )
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    x_plot = _date_axis(ax, cast(tuple[object, ...], x_values))
+    x_plot = _date_axis(ax, x_values)
     ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
     ax.set_title(f"{metric_key} — {evaluation.candidate_id}")
     ax.set_xlabel("Test window end (UTC)")
@@ -325,7 +327,7 @@ def render_candidate_comparison(
         _validate_plan(evaluation, plan)
     x_values = tuple(fold.test_end for fold in plan.folds)
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    x_plot = _date_axis(ax, cast(tuple[object, ...], x_values))
+    x_plot = _date_axis(ax, x_values)
     source_values: dict[str, list[float | None]] = {}
     for evaluation in ordered:
         values = [
