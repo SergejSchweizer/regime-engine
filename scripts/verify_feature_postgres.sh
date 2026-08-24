@@ -69,4 +69,5 @@ export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-require}"
 }
 
 export REGIME_RUN_EXTERNAL_FEATURE_PG=1
+export REGIME_RUN_EXTERNAL_TESTS=1
 exec .venv/bin/pytest -m external tests/external/test_feature_postgres_smoke.py
