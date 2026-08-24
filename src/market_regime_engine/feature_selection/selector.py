@@ -5,7 +5,7 @@ from __future__ import annotations
 from math import isfinite
 
 import numpy as np
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.feature_selection.contracts import (
     BlockSelectionEvidence,
@@ -111,7 +111,9 @@ def select_stage1_block(
 
     if len(first_train_rows) < 1:
         raise ValueError("first TRAIN rows must be non-empty")
-    missing = tuple(feature for feature in block.features if feature not in first_train_rows.columns)
+    missing = tuple(
+        feature for feature in block.features if feature not in first_train_rows.columns
+    )
     if missing:
         raise ValueError(f"missing configured feature columns: {', '.join(missing)}")
 
