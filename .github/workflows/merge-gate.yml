@@ -36,7 +36,17 @@ jobs:
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
       - name: Dependency audit
-        run: .venv/bin/pip-audit -r uv.lock
+        shell: bash
+        run: |
+          set +e
+          .venv/bin/pip-audit -r uv.lock -f json -o dependency-audit.json
+          code=$?
+          set -e
+          if [[ ${code} -eq 0 ]]; then
+            exit 0
+          fi
+          .venv/bin/python .github/check_dependency_audit.py \
+            dependency-audit.json .github/dependency-audit-exceptions.yml
 
   type:
     runs-on: ubuntu-latest

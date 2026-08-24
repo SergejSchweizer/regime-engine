@@ -1,0 +1,9 @@
+exceptions:
+  - id: PYSEC-2026-3552
+    package: cryptography
+    version: "49.0.0"
+    expires: "2026-09-30"
+    reason: >-
+      MLflow 3.15.1 is an architecture pin and requires cryptography <50;
+      the advisory fix begins at cryptography 50.0.0. Re-evaluate when a
+      compatible pinned MLflow release is approved.
