@@ -30,8 +30,8 @@ def test_compose_has_exact_project_services_and_public_port() -> None:
     assert set(services) == {"mlflow", "mlflow-postgres"}
     mlflow = services["mlflow"]
     backend = services["mlflow-postgres"]
-    assert mlflow["container_name"] == "regime-engine-mlflow"
-    assert backend["container_name"] == "regime-engine-mlflow-postgres"
+    assert mlflow["container_name"] == "mlflow"
+    assert backend["container_name"] == "mlflow-postgres"
     assert mlflow["ports"] == ["5000:5000"]
     assert "ports" not in backend
 
@@ -42,6 +42,8 @@ def test_mlflow_is_local_build_only_and_never_registry_pulled() -> None:
     assert mlflow["image"] == "regime-engine-mlflow:local"
     assert mlflow["pull_policy"] == "never"
     assert mlflow["user"] == "0:0"
+    assert mlflow["environment"]["MLFLOW_RUNTIME_UID"] == "${MLFLOW_RUNTIME_UID:-10001}"
+    assert mlflow["environment"]["MLFLOW_RUNTIME_GID"] == "${MLFLOW_RUNTIME_GID:-10001}"
     assert mlflow["build"]["context"] == "."
     assert mlflow["build"]["dockerfile"] == "Dockerfile"
     text = _text(COMPOSE).lower()
@@ -62,6 +64,9 @@ def test_postgres_backend_is_official_digest_pinned_and_persistent() -> None:
     backend = services["mlflow-postgres"]
     assert backend["image"] == f"postgres:18.6-alpine@{POSTGRES_DIGEST}"
     assert backend["pull_policy"] == "missing"
+    assert backend["user"] == (
+        "${MLFLOW_POSTGRES_RUNTIME_UID:-70}:${MLFLOW_POSTGRES_RUNTIME_GID:-70}"
+    )
     backend_volume = backend["volumes"][0]
     assert backend_volume == {
         "type": "bind",
@@ -145,6 +150,8 @@ def test_secrets_are_file_backed_and_env_example_contains_placeholders_only() ->
     assert "<required-regime-loader-serving-database>" in env
     assert "MLFLOW_ARTIFACTS_HOST_PATH=/volume2/docker/mlflow/artifacts" in env
     assert "MLFLOW_BACKEND_DATA_HOST_PATH=/volume2/docker/mlflow/postgres" in env
+    assert "MLFLOW_RUNTIME_UID=10001" in env
+    assert "MLFLOW_POSTGRES_RUNTIME_UID=70" in env
     assert "password=" not in env.lower()
 
 
@@ -205,3 +212,14 @@ def test_production_contract_uses_compose_yaml_not_example_file() -> None:
     assert __import__("os").path.exists(COMPOSE)
     assert not __import__("os").path.exists("compose.example.yaml")
     assert "--build" not in _text(UP)
+
+
+def test_runtime_identities_are_configurable_for_host_acl_bind_mounts() -> None:
+    entrypoint = _text("scripts/mlflow_entrypoint.sh")
+    assert 'MLFLOW_RUNTIME_UID="${MLFLOW_RUNTIME_UID:-10001}"' in entrypoint
+    assert 'MLFLOW_RUNTIME_GID="${MLFLOW_RUNTIME_GID:-10001}"' in entrypoint
+    assert 'chown -R "$MLFLOW_RUNTIME_UID:$MLFLOW_RUNTIME_GID"' in entrypoint
+    privilege_drop = (
+        'setpriv --reuid "$MLFLOW_RUNTIME_UID" --regid "$MLFLOW_RUNTIME_GID" --clear-groups'
+    )
+    assert privilege_drop in entrypoint
