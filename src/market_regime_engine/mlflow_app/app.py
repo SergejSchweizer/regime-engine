@@ -162,6 +162,7 @@ def _filter_genai_navigation(response: Response) -> Response:
 
     if request.path != "/" or response.mimetype != "text/html":
         return response
+    response.direct_passthrough = False
     html = response.get_data(as_text=True)
     response.set_data(html.replace("</body>", f"{_GENAI_NAVIGATION_FILTER}</body>"))
     return response
