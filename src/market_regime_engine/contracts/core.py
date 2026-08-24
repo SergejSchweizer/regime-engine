@@ -68,7 +68,9 @@ class SourceLineage:
         bounds = (self.row_count, self.min_timestamp, self.max_timestamp)
         if any(value is not None for value in bounds):
             if any(value is None for value in bounds):
-                raise ValueError("source row_count/min_timestamp/max_timestamp must be supplied together")
+                raise ValueError(
+                    "source row_count/min_timestamp/max_timestamp must be supplied together"
+                )
             if self.row_count is None or self.row_count < 0:
                 raise ValueError("source row_count cannot be negative")
             assert self.min_timestamp is not None and self.max_timestamp is not None
