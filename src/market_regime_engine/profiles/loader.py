@@ -18,11 +18,7 @@ from market_regime_engine.profiles.config import (
 )
 
 type ProfileDataclass = (
-    ModelProfile
-    | FeatureSelectionConfig
-    | WalkForwardConfig
-    | GaussianHMMConfig
-    | EvaluationGates
+    ModelProfile | FeatureSelectionConfig | WalkForwardConfig | GaussianHMMConfig | EvaluationGates
 )
 
 
