@@ -46,15 +46,12 @@ def _hmm_payload(hmm: GaussianHMMArtifact) -> dict[str, Any]:
         "covariance_type": hmm.covariance_type,
         "feature_order": list(hmm.feature_order),
         "full_covariances_hex": [
-            [[_hex(value) for value in row] for row in matrix]
-            for matrix in hmm.full_covariances
+            [[_hex(value) for value in row] for row in matrix] for matrix in hmm.full_covariances
         ],
         "means_hex": [[_hex(value) for value in row] for row in hmm.means],
         "start_probabilities_hex": [_hex(value) for value in hmm.start_probabilities],
         "state_count": hmm.state_count,
-        "transition_matrix_hex": [
-            [_hex(value) for value in row] for row in hmm.transition_matrix
-        ],
+        "transition_matrix_hex": [[_hex(value) for value in row] for row in hmm.transition_matrix],
     }
 
 
@@ -154,12 +151,9 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
             _from_hex(value) for value in hmm_payload["start_probabilities_hex"]
         ),
         transition_matrix=tuple(
-            tuple(_from_hex(value) for value in row)
-            for row in hmm_payload["transition_matrix_hex"]
+            tuple(_from_hex(value) for value in row) for row in hmm_payload["transition_matrix_hex"]
         ),
-        means=tuple(
-            tuple(_from_hex(value) for value in row) for row in hmm_payload["means_hex"]
-        ),
+        means=tuple(tuple(_from_hex(value) for value in row) for row in hmm_payload["means_hex"]),
         full_covariances=tuple(
             tuple(tuple(_from_hex(value) for value in row) for row in matrix)
             for matrix in hmm_payload["full_covariances_hex"]
@@ -185,17 +179,13 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         scaler=scaler,
         hmm=hmm,
         winning_seed=int(payload["winning_seed"]),
-        inference_origin_timestamp=_parse_timestamp(
-            str(payload["inference_origin_timestamp"])
-        ),
+        inference_origin_timestamp=_parse_timestamp(str(payload["inference_origin_timestamp"])),
         trained_through_timestamp=_parse_timestamp(str(payload["trained_through_timestamp"])),
         terminal_filtered_probabilities=tuple(
             _from_hex(value) for value in payload["terminal_filtered_probabilities_hex"]
         ),
         retained_observation_count=int(payload["retained_observation_count"]),
-        skipped_incomplete_observation_count=int(
-            payload["skipped_incomplete_observation_count"]
-        ),
+        skipped_incomplete_observation_count=int(payload["skipped_incomplete_observation_count"]),
     )
 
 
