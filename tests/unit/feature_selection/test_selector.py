@@ -18,6 +18,11 @@ def policy(blocks: tuple[FeatureBlock, ...] | None = None) -> FeatureSelectionPo
     return FeatureSelectionPolicy("xetra_semantic_medoid_v1", blocks)
 
 
+def padded_policy(block: FeatureBlock) -> FeatureSelectionPolicy:
+    pads = tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7))
+    return policy((block, *pads))
+
+
 def test_average_rank_spearman_handles_ties_exactly() -> None:
     frame = pd.DataFrame(
         {
@@ -44,9 +49,7 @@ def test_medoid_selects_most_representative_feature() -> None:
         }
     )
     block = FeatureBlock("semantic", ("a", "b", "c"))
-    evidence = select_stage1_block(frame, block, policy(tuple([block] + [
-        FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)
-    ])))
+    evidence = select_stage1_block(frame, block, padded_policy(block))
     assert evidence.complete_observation_count == rows
     assert evidence.winner == "a"
     scores = {score.feature_name: score for score in evidence.scores}
@@ -59,18 +62,16 @@ def test_coverage_nonfinite_and_variance_exclusions_are_explicit() -> None:
     frame = pd.DataFrame(
         {
             "good": np.arange(rows, dtype=np.float64),
-            "low_coverage": [float(index) if index < 500 else np.nan for index in range(rows)],
+            "low_coverage": [
+                float(index) if index < 500 else np.nan for index in range(rows)
+            ],
             "nonfinite": np.arange(rows, dtype=np.float64),
             "constant": np.ones(rows),
         }
     )
     frame.loc[10, "nonfinite"] = np.inf
     block = FeatureBlock("semantic", ("good", "low_coverage", "nonfinite", "constant"))
-    evidence = select_stage1_block(
-        frame,
-        block,
-        policy((block, *tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)))),
-    )
+    evidence = select_stage1_block(frame, block, padded_policy(block))
     scores = {score.feature_name: score for score in evidence.scores}
     assert scores["good"].eligible is True
     assert scores["low_coverage"].exclusion_reason == "coverage_below_minimum"
@@ -82,11 +83,7 @@ def test_coverage_nonfinite_and_variance_exclusions_are_explicit() -> None:
 def test_singleton_eligible_feature_has_zero_medoid_score() -> None:
     frame = pd.DataFrame({"good": np.arange(600, dtype=float), "bad": np.ones(600)})
     block = FeatureBlock("semantic", ("good", "bad"))
-    evidence = select_stage1_block(
-        frame,
-        block,
-        policy((block, *tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)))),
-    )
+    evidence = select_stage1_block(frame, block, padded_policy(block))
     good = next(score for score in evidence.scores if score.feature_name == "good")
     assert good.medoid_score == 0.0
     assert evidence.winner == "good"
@@ -98,35 +95,31 @@ def test_tie_break_uses_coverage_then_configured_position() -> None:
     frame = pd.DataFrame({"a": base, "b": base})
     frame.loc[0:29, "a"] = np.nan
     block = FeatureBlock("semantic", ("a", "b"))
-    evidence = select_stage1_block(
-        frame,
-        block,
-        policy((block, *tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)))),
-    )
+    evidence = select_stage1_block(frame, block, padded_policy(block))
     assert evidence.winner == "b"
 
     equal = pd.DataFrame({"a": base, "b": base})
-    equal_evidence = select_stage1_block(
-        equal,
-        block,
-        policy((block, *tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)))),
-    )
+    equal_evidence = select_stage1_block(equal, block, padded_policy(block))
     assert equal_evidence.winner == "a"
 
 
 def test_missing_columns_empty_rows_no_eligible_and_complete_row_gate_fail_closed() -> None:
     block = FeatureBlock("semantic", ("a", "b"))
-    stage_policy = policy(
-        (block, *tuple(FeatureBlock(f"pad{i}", (f"p{i}",)) for i in range(7)))
-    )
+    stage_policy = padded_policy(block)
     with pytest.raises(ValueError, match="non-empty"):
         select_stage1_block(pd.DataFrame(columns=["a", "b"]), block, stage_policy)
     with pytest.raises(ValueError, match="missing configured feature columns: b"):
         select_stage1_block(pd.DataFrame({"a": np.arange(600)}), block, stage_policy)
     with pytest.raises(ValueError, match="no eligible"):
-        select_stage1_block(pd.DataFrame({"a": np.ones(600), "b": np.ones(600)}), block, stage_policy)
+        constant = pd.DataFrame({"a": np.ones(600), "b": np.ones(600)})
+        select_stage1_block(constant, block, stage_policy)
 
-    sparse = pd.DataFrame({"a": np.arange(600, dtype=float), "b": np.arange(600, dtype=float)})
+    sparse = pd.DataFrame(
+        {
+            "a": np.arange(600, dtype=float),
+            "b": np.arange(600, dtype=float),
+        }
+    )
     sparse.loc[:50, "a"] = np.nan
     sparse.loc[51:100, "b"] = np.nan
     with pytest.raises(ValueError, match="complete observations"):
@@ -147,7 +140,9 @@ def test_undefined_spearman_fails_without_fallback() -> None:
     with pytest.raises(ValueError, match="two rows and two columns"):
         average_rank_spearman(pd.DataFrame({"a": [1.0, 2.0]}))
     with pytest.raises(ValueError, match="finite"):
-        average_rank_spearman(pd.DataFrame({"a": [1.0, np.inf], "b": [1.0, 2.0]}))
+        average_rank_spearman(
+            pd.DataFrame({"a": [1.0, np.inf], "b": [1.0, 2.0]})
+        )
 
 
 def test_select_stage1_preserves_eight_block_order() -> None:
@@ -156,5 +151,9 @@ def test_select_stage1_preserves_eight_block_order() -> None:
         {f"f{index}": np.arange(600, dtype=float) + index for index in range(8)}
     )
     result = select_stage1(frame, policy(blocks))
-    assert tuple(item.block_id for item in result) == tuple(f"b{index}" for index in range(8))
-    assert tuple(item.winner for item in result) == tuple(f"f{index}" for index in range(8))
+    assert tuple(item.block_id for item in result) == tuple(
+        f"b{index}" for index in range(8)
+    )
+    assert tuple(item.winner for item in result) == tuple(
+        f"f{index}" for index in range(8)
+    )
