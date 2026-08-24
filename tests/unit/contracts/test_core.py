@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -150,12 +150,7 @@ def test_prediction_and_response_validate_modes_and_cardinality() -> None:
     )
     assert response.predictions == (item,)
     with pytest.raises(ValueError, match="mode"):
-        RegimeInvocationResponse(
-            **{
-                **response.__dict__,  # type: ignore[attr-defined]
-                "prediction_mode": PredictionMode.FIXED_MODEL_REPLAY,
-            }
-        )
+        replace(response, prediction_mode=PredictionMode.FIXED_MODEL_REPLAY)
 
 
 def test_prediction_probability_shape_and_error_contract() -> None:
