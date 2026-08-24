@@ -43,9 +43,22 @@ def test_preflight_and_final_size_limits_are_exact_413() -> None:
         estimated_response_bytes=26_214_400,
     )
     cases = (
-        ({"response_rows": 10_001, "internal_rows": 1, "estimated_response_bytes": 1}, "replay_row_limit"),
-        ({"response_rows": 1, "internal_rows": 15_001, "estimated_response_bytes": 1}, "replay_internal_row_limit"),
-        ({"response_rows": 1, "internal_rows": 1, "estimated_response_bytes": 26_214_401}, "replay_response_too_large"),
+        (
+            {"response_rows": 10_001, "internal_rows": 1, "estimated_response_bytes": 1},
+            "replay_row_limit",
+        ),
+        (
+            {"response_rows": 1, "internal_rows": 15_001, "estimated_response_bytes": 1},
+            "replay_internal_row_limit",
+        ),
+        (
+            {
+                "response_rows": 1,
+                "internal_rows": 1,
+                "estimated_response_bytes": 26_214_401,
+            },
+            "replay_response_too_large",
+        ),
     )
     for values, code in cases:
         with pytest.raises(ReplayGuardrailError) as exc_info:
@@ -60,9 +73,8 @@ def test_preflight_and_final_size_limits_are_exact_413() -> None:
 def test_process_capacity_is_nonblocking_and_released_after_work_stops() -> None:
     admission = ReplayAdmission(ReplayLimits())
     with admission.admit():
-        with pytest.raises(ReplayGuardrailError) as capacity:
-            with admission.admit():
-                raise AssertionError("unreachable")
+        with pytest.raises(ReplayGuardrailError) as capacity, admission.admit():
+            raise AssertionError("unreachable")
         assert capacity.value.status_code == 503
         assert capacity.value.error_code == "replay_capacity_exhausted"
     with admission.admit():
@@ -72,13 +84,12 @@ def test_process_capacity_is_nonblocking_and_released_after_work_stops() -> None
 def test_cooperative_monotonic_deadline_returns_504_after_unwind() -> None:
     now = [100.0]
     admission = ReplayAdmission(ReplayLimits(timeout_seconds=60), clock=lambda: now[0])
-    with pytest.raises(ReplayGuardrailError) as timed_out:
-        with admission.admit() as permit:
-            permit.check_deadline()
-            now[0] = 160.0
-            permit.check_deadline()
-            now[0] = 160.0001
-            permit.check_deadline()
+    with pytest.raises(ReplayGuardrailError) as timed_out, admission.admit() as permit:
+        permit.check_deadline()
+        now[0] = 160.0
+        permit.check_deadline()
+        now[0] = 160.0001
+        permit.check_deadline()
     assert timed_out.value.status_code == 504
     assert timed_out.value.error_code == "replay_timeout"
     with admission.admit():
