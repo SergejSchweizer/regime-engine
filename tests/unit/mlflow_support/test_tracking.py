@@ -207,9 +207,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     metrics = pq.read_table(tmp_path / "gaussian_hmm_k2_full" / "fold_metrics.parquet")
     assert metrics.column("valid").to_pylist() == [True]
 
-    parameter_path = (
-        tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
-    )
+    parameter_path = tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
     parameters = json.loads(parameter_path.read_text(encoding="utf-8"))
     assert parameters["persistent_state_ids"] == ["state_0", "state_1"]
     assert parameters["feature_order"] == ["f0", "f1"]
@@ -263,9 +261,7 @@ def test_invalid_fold_is_kept_in_parquet_and_creates_plot_gaps_without_fold_arti
     )
     assert port.params["run-3"]["valid"] == "false"
     assert port.params["run-3"]["failure_reason"].startswith("retained TEST")
-    parameter_path = (
-        tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
-    )
+    parameter_path = tmp_path / "gaussian_hmm_k2_full" / "fold_001" / "aligned_parameters.json"
     assert not parameter_path.exists()
     metrics = pq.read_table(tmp_path / "gaussian_hmm_k2_full" / "fold_metrics.parquet")
     assert metrics.column("valid").to_pylist() == [False]
