@@ -154,9 +154,7 @@ def prune_stage2(
             )
         )
 
-    final_features = tuple(
-        feature for feature in preliminary_medoids if feature in surviving
-    )
+    final_features = tuple(feature for feature in preliminary_medoids if feature in surviving)
     if not final_features:
         raise ValueError("Stage-2 pruning cannot remove every preliminary medoid")
     return tuple(conflicts), final_features
