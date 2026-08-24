@@ -140,7 +140,8 @@ def _diagnostic_prune(
 ) -> tuple[tuple[Stage2ConflictEvidence, ...], tuple[str, ...]]:
     if threshold not in THRESHOLD_SENSITIVITY_LEVELS:
         raise ValueError("diagnostic threshold must be one of 0.80, 0.85, 0.90")
-    if len(preliminary_medoids) != 8 or tuple(block.winner for block in blocks) != preliminary_medoids:
+    winners_in_order = tuple(block.winner for block in blocks)
+    if len(preliminary_medoids) != 8 or winners_in_order != preliminary_medoids:
         raise ValueError("diagnostic medoids must match eight Stage-1 winners in canonical order")
     matrix = np.asarray(matrix_rows, dtype=np.float64)
     if matrix.shape != (8, 8) or not np.all(np.isfinite(matrix)):
