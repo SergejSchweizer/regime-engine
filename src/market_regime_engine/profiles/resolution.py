@@ -61,7 +61,9 @@ class ResolvedCandidateProfile:
             len(self.original_feature_universe) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE
             or len(set(self.original_feature_universe)) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE
         ):
-            raise ValueError("original Xetra feature universe must contain exactly 48 unique features")
+            raise ValueError(
+                "original Xetra feature universe must contain exactly 48 unique features"
+            )
         if (
             len(self.preliminary_medoids) != EXPECTED_PRELIMINARY_MEDOID_COUNT
             or len(set(self.preliminary_medoids)) != EXPECTED_PRELIMINARY_MEDOID_COUNT
@@ -69,7 +71,9 @@ class ResolvedCandidateProfile:
             raise ValueError("preliminary medoids must contain exactly eight unique features")
         universe = set(self.original_feature_universe)
         if any(feature not in universe for feature in self.preliminary_medoids):
-            raise ValueError("every preliminary medoid must belong to the original feature universe")
+            raise ValueError(
+                "every preliminary medoid must belong to the original feature universe"
+            )
         medoids = set(self.preliminary_medoids)
         if any(feature not in medoids for feature in self.feature_order):
             raise ValueError("final feature_order must be a subset of preliminary medoids")
@@ -151,7 +155,8 @@ def validate_candidate_comparison_inputs(
 
     if len(candidates) != 3:
         raise ValueError("candidate comparison requires exactly K2, K3, and K4")
-    if tuple(candidate.state_count for candidate in candidates) != EXPECTED_XETRA_CANDIDATE_STATES:
+    states = tuple(candidate.state_count for candidate in candidates)
+    if states != EXPECTED_XETRA_CANDIDATE_STATES:
         raise ValueError("candidate comparison order must be exactly K2, K3, K4")
     expected_ids = tuple(f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4))
     if tuple(candidate.candidate_id for candidate in candidates) != expected_ids:
@@ -171,7 +176,9 @@ def _validate_selection_against_policy(
     if policy.policy_id != selection.policy_id:
         raise ValueError("feature-selection policy/result policy_id mismatch")
     if len(policy.feature_universe) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE:
-        raise ValueError("Xetra feature-selection policy must retain the original 48-feature universe")
+        raise ValueError(
+            "Xetra feature-selection policy must retain the original 48-feature universe"
+        )
     evidence = selection.evidence
     if tuple(block.block_id for block in evidence.block_evidence) != tuple(
         block.block_id for block in policy.blocks
