@@ -29,7 +29,11 @@ def _load_findings(path: Path) -> set[tuple[str, str, str]]:
         package = dependency.get("name")
         version = dependency.get("version")
         vulns = dependency.get("vulns", [])
-        if not isinstance(package, str) or not isinstance(version, str) or not isinstance(vulns, list):
+        if (
+            not isinstance(package, str)
+            or not isinstance(version, str)
+            or not isinstance(vulns, list)
+        ):
             raise ValueError("pip-audit dependency entry has invalid fields")
         for vuln in vulns:
             if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str):
@@ -54,7 +58,8 @@ def _load_exceptions(path: Path, today: date) -> set[tuple[str, str, str]]:
         version = entry["version"]
         expires = entry["expires"]
         reason = entry["reason"]
-        if not all(isinstance(value, str) and value.strip() for value in (advisory, package, version, reason)):
+        text_values = (advisory, package, version, reason)
+        if not all(isinstance(value, str) and value.strip() for value in text_values):
             raise ValueError("dependency exception text fields must be non-empty strings")
         if not isinstance(expires, str):
             raise ValueError("dependency exception expires must be an ISO date string")
@@ -82,7 +87,10 @@ def main() -> int:
     unused = sorted(allowed - findings)
     if unused:
         for package, version, advisory in unused:
-            print(f"stale/unused audit exception: {package}=={version} {advisory}", file=sys.stderr)
+            print(
+                f"stale/unused audit exception: {package}=={version} {advisory}",
+                file=sys.stderr,
+            )
         return 1
     print(f"dependency audit findings covered by live exceptions: {len(findings)}")
     return 0
