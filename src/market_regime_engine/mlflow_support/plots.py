@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import cast
 
 import matplotlib
+import matplotlib.dates as mdates
 import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
 from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
@@ -112,6 +113,14 @@ def _metric_value(fold: WalkForwardFoldResult, metric_key: str) -> float | None:
     return scalar
 
 
+def _date_axis(ax: matplotlib.axes.Axes, x_values: tuple[object, ...]) -> np.ndarray:
+    dates = mdates.date2num(list(x_values))
+    locator = mdates.AutoDateLocator()
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+    return np.asarray(dates, dtype=np.float64)
+
+
 def _save_figure(fig: matplotlib.figure.Figure, base_path: Path) -> tuple[Path, Path]:
     base_path.parent.mkdir(parents=True, exist_ok=True)
     png_path = base_path.with_suffix(".png")
@@ -142,7 +151,8 @@ def render_fold_history(
         [float("nan") if value is None else value for value in raw_values], dtype=np.float64
     )
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    ax.plot(x_values, y_values, marker="o", label=evaluation.candidate_id)
+    x_plot = _date_axis(ax, cast(tuple[object, ...], x_values))
+    ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
     ax.set_title(f"{metric_key} — {evaluation.candidate_id}")
     ax.set_xlabel("Test window end (UTC)")
     ax.set_ylabel(_FOLD_METRICS[metric_key][1])
@@ -218,7 +228,11 @@ def render_transition_heatmap(
             ax.text(column, row, f"{matrix[row, column]:.3f}", ha="center", va="center")
     base = Path(output_dir) / evaluation.candidate_id / fold.fold_id / "transition_matrix"
     png_path, svg_path = _save_figure(fig, base)
-    payload = {"candidate_id": evaluation.candidate_id, "fold_id": fold.fold_id, "matrix": matrix.tolist()}
+    payload = {
+        "candidate_id": evaluation.candidate_id,
+        "fold_id": fold.fold_id,
+        "matrix": matrix.tolist(),
+    }
     return PlotManifestEntry(
         png_path=str(png_path),
         svg_path=str(svg_path),
@@ -311,6 +325,7 @@ def render_candidate_comparison(
         _validate_plan(evaluation, plan)
     x_values = tuple(fold.test_end for fold in plan.folds)
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    x_plot = _date_axis(ax, cast(tuple[object, ...], x_values))
     source_values: dict[str, list[float | None]] = {}
     for evaluation in ordered:
         values = [
@@ -321,7 +336,7 @@ def render_candidate_comparison(
         y_values = np.asarray(
             [float("nan") if value is None else value for value in values], dtype=np.float64
         )
-        ax.plot(x_values, y_values, marker="o", label=evaluation.candidate_id)
+        ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
     ax.set_title("Walk-forward OOS candidate comparison")
     ax.set_xlabel("Test window end (UTC)")
     ax.set_ylabel("OOS predictive log likelihood per observation")
