@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from mlflow.exceptions import MlflowException
-from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
+from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 
 from market_regime_engine.mlflow_support.model_package import save_production_package
-from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
+from market_regime_engine.mlflow_support.registry import (
+    AliasMutationAudit,
+    MlflowModelRegistry,
+    RegisteredProductionModel,
+)
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
@@ -74,6 +78,24 @@ class FakeRegistryClient:
         self.tags[(name, key)] = value
 
 
+class FailingLookupClient(FakeRegistryClient):
+    def get_registered_model(self, name: str) -> object:
+        del name
+        raise MlflowException("backend unavailable", error_code=INVALID_PARAMETER_VALUE)
+
+
+class FailingAliasClient(FakeRegistryClient):
+    def get_model_version_by_alias(self, name: str, alias: str) -> Version:
+        del name, alias
+        raise MlflowException("unexpected alias failure", error_code=INVALID_PARAMETER_VALUE)
+
+
+class MismatchedTargetClient(FakeRegistryClient):
+    def get_model_version(self, name: str, version: str) -> Version:
+        del name, version
+        return Version("unexpected", "file:///target")
+
+
 def artifact() -> ProductionModelArtifact:
     features = ("f0", "f1")
     return ProductionModelArtifact(
@@ -118,6 +140,21 @@ def artifact() -> ProductionModelArtifact:
     )
 
 
+def audit(**changes: object) -> AliasMutationAudit:
+    values: dict[str, object] = {
+        "model_name": "regime-xetra",
+        "alias": "champion",
+        "expected_current_version": "1",
+        "observed_current_version": "1",
+        "new_version": "2",
+        "reason": "validated promotion",
+        "changed": True,
+        "observed_at_utc": datetime(2026, 8, 24, tzinfo=UTC),
+    }
+    values.update(changes)
+    return AliasMutationAudit(**values)  # type: ignore[arg-type]
+
+
 def test_registers_only_matching_final_refit_package(tmp_path) -> None:
     client = FakeRegistryClient()
     registry = MlflowModelRegistry(client)
@@ -130,6 +167,8 @@ def test_registers_only_matching_final_refit_package(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="differs"):
         registry.register_production_model(replace(artifact(), winning_seed=23), package)
+    with pytest.raises(TypeError, match="PR-063"):
+        registry.register_production_model(object(), package)  # type: ignore[arg-type]
 
 
 def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
@@ -176,12 +215,52 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
     assert any("alias_audit" in key for _, key in client.tags)
 
 
-def test_registry_rejects_unknown_model_alias_and_empty_reason() -> None:
-    registry = MlflowModelRegistry(FakeRegistryClient())
+def test_registry_contract_dataclasses_fail_closed() -> None:
+    with pytest.raises(ValueError, match="regime-xetra"):
+        RegisteredProductionModel("other", "1", "file:///model")
+    with pytest.raises(ValueError, match="cannot be empty"):
+        RegisteredProductionModel("regime-xetra", "", "file:///model")
+
+    invalid_cases = (
+        ({"model_name": "other"}, "regime-xetra"),
+        ({"alias": "production"}, "challenger/champion"),
+        ({"new_version": ""}, "target version"),
+        ({"reason": " bad "}, "trimmed reason"),
+        ({"observed_at_utc": datetime(2026, 8, 24)}, "timezone-aware UTC"),
+        (
+            {"observed_at_utc": datetime(2026, 8, 24, tzinfo=UTC) + timedelta(hours=1)},
+            "timezone-aware UTC",
+        ),
+        ({"changed": False}, "CAS comparison"),
+    )
+    for changes, message in invalid_cases:
+        with pytest.raises(ValueError, match=message):
+            audit(**changes)
+    assert '"changed":true' in audit().canonical_json()
+
+
+def test_registry_rejects_unknown_model_alias_and_invalid_inputs() -> None:
+    client = FakeRegistryClient()
+    registry = MlflowModelRegistry(client)
     with pytest.raises(ValueError, match="regime-xetra"):
         registry.resolve_alias("other", "champion")
     with pytest.raises(ValueError, match="challenger/champion"):
         registry.resolve_alias("regime-xetra", "production")
+    with pytest.raises(ValueError, match="exact model version"):
+        registry.get_model_package_uri("regime-xetra", "")
+
+    client.versions[("regime-xetra", "1")] = Version("1", "")
+    with pytest.raises(ValueError, match="no package source URI"):
+        registry.get_model_package_uri("regime-xetra", "1")
+
+    with pytest.raises(ValueError, match="new alias version"):
+        registry.compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias="champion",
+            expected_current_version=None,
+            new_version="",
+            reason="valid reason",
+        )
     with pytest.raises(ValueError, match="reason"):
         registry.compare_and_swap_alias(
             model_name="regime-xetra",
@@ -189,4 +268,30 @@ def test_registry_rejects_unknown_model_alias_and_empty_reason() -> None:
             expected_current_version=None,
             new_version="1",
             reason="",
+        )
+
+
+def test_registry_propagates_unexpected_backend_failures(tmp_path) -> None:
+    package = save_production_package(artifact(), tmp_path / "package")
+    with pytest.raises(MlflowException, match="backend unavailable"):
+        MlflowModelRegistry(FailingLookupClient()).register_production_model(artifact(), package)
+
+    alias_client = FailingAliasClient()
+    alias_client.versions[("regime-xetra", "1")] = Version("1", package.resolve().as_uri())
+    with pytest.raises(MlflowException, match="unexpected alias failure"):
+        MlflowModelRegistry(alias_client).compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias="champion",
+            expected_current_version=None,
+            new_version="1",
+            reason="valid reason",
+        )
+
+    with pytest.raises(ValueError, match="mismatched target"):
+        MlflowModelRegistry(MismatchedTargetClient()).compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias="champion",
+            expected_current_version=None,
+            new_version="1",
+            reason="valid reason",
         )
