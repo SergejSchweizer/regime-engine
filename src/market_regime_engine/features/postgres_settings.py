@@ -42,7 +42,12 @@ class FeaturePostgresSettings:
             raise ValueError("feature PostgreSQL user must be exactly regime-engine")
         if self.sslmode != _FEATURE_SSLMODE:
             raise ValueError("feature PostgreSQL sslmode must be exactly require")
-        if self.pool_min_size < 0 or self.pool_max_size < 1 or self.pool_min_size > self.pool_max_size:
+        invalid_pool_bounds = (
+            self.pool_min_size < 0
+            or self.pool_max_size < 1
+            or self.pool_min_size > self.pool_max_size
+        )
+        if invalid_pool_bounds:
             raise ValueError("invalid feature PostgreSQL pool bounds")
         if self.acquire_timeout_seconds <= 0.0 or self.statement_timeout_seconds <= 0.0:
             raise ValueError("PostgreSQL timeouts must be positive")
@@ -72,7 +77,11 @@ class FeaturePostgresSettings:
             sslmode=env.get("REGIME_FEATURE_PGSSLMODE", _FEATURE_SSLMODE),
             pool_min_size=_integer(env, "REGIME_PG_POOL_MIN_SIZE", _POOL_MIN),
             pool_max_size=_integer(env, "REGIME_PG_POOL_MAX_SIZE", _POOL_MAX),
-            acquire_timeout_seconds=_float(env, "REGIME_PG_ACQUIRE_TIMEOUT_SECONDS", _ACQUIRE_TIMEOUT),
+            acquire_timeout_seconds=_float(
+                env,
+                "REGIME_PG_ACQUIRE_TIMEOUT_SECONDS",
+                _ACQUIRE_TIMEOUT,
+            ),
             statement_timeout_seconds=_float(
                 env, "REGIME_PG_STATEMENT_TIMEOUT_SECONDS", _STATEMENT_TIMEOUT
             ),
