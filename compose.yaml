@@ -1,0 +1,90 @@
+name: regime-engine
+
+services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REGIME_ENGINE_GIT_SHA: ${REGIME_ENGINE_GIT_SHA:?REGIME_ENGINE_GIT_SHA is required for local image provenance}
+        REGIME_ENGINE_BUILD_TIMESTAMP: ${REGIME_ENGINE_BUILD_TIMESTAMP:?REGIME_ENGINE_BUILD_TIMESTAMP is required for local image provenance}
+    image: regime-engine-mlflow:local
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_DB_NAME: ${MLFLOW_BACKEND_DB_NAME:?MLFLOW_BACKEND_DB_NAME is required}
+      MLFLOW_BACKEND_DB_USER: ${MLFLOW_BACKEND_DB_USER:?MLFLOW_BACKEND_DB_USER is required}
+      MLFLOW_BACKEND_DB_PASSWORD_FILE: /run/secrets/mlflow_backend_password
+      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+      MLFLOW_WORKERS: ${MLFLOW_WORKERS:-4}
+      MLFLOW_THREADS_PER_WORKER: ${MLFLOW_THREADS_PER_WORKER:-4}
+      MLFLOW_HTTP_TIMEOUT_SECONDS: ${MLFLOW_HTTP_TIMEOUT_SECONDS:-120}
+      MLFLOW_GRACEFUL_TIMEOUT_SECONDS: ${MLFLOW_GRACEFUL_TIMEOUT_SECONDS:-30}
+      MLFLOW_SERVER_ALLOWED_HOSTS: ${MLFLOW_SERVER_ALLOWED_HOSTS:-10.10.1.3,localhost,127.0.0.1}
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: ${MLFLOW_SERVER_CORS_ALLOWED_ORIGINS:-http://10.10.1.3:5000,http://localhost:5000,http://127.0.0.1:5000}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      REGIME_MODEL_ALIAS_CACHE_TTL_SECONDS: ${REGIME_MODEL_ALIAS_CACHE_TTL_SECONDS:-30}
+      REGIME_PG_POOL_MIN_SIZE: ${REGIME_PG_POOL_MIN_SIZE:-1}
+      REGIME_PG_POOL_MAX_SIZE: ${REGIME_PG_POOL_MAX_SIZE:-4}
+      REGIME_PG_ACQUIRE_TIMEOUT_SECONDS: ${REGIME_PG_ACQUIRE_TIMEOUT_SECONDS:-5}
+      REGIME_PG_STATEMENT_TIMEOUT_SECONDS: ${REGIME_PG_STATEMENT_TIMEOUT_SECONDS:-30}
+      REGIME_FEATURE_PG_CONNECTION_BUDGET: ${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}
+      REGIME_REPLAY_MAX_ROWS: ${REGIME_REPLAY_MAX_ROWS:-10000}
+      REGIME_REPLAY_MAX_INTERNAL_ROWS: ${REGIME_REPLAY_MAX_INTERNAL_ROWS:-15000}
+      REGIME_REPLAY_MAX_RANGE_DAYS: ${REGIME_REPLAY_MAX_RANGE_DAYS:-14610}
+      REGIME_REPLAY_TIMEOUT_SECONDS: ${REGIME_REPLAY_TIMEOUT_SECONDS:-60}
+      REGIME_REPLAY_MAX_RESPONSE_BYTES: ${REGIME_REPLAY_MAX_RESPONSE_BYTES:-26214400}
+      REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER: ${REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER:-1}
+      REGIME_SOURCE_STALE_WARN_DAYS: ${REGIME_SOURCE_STALE_WARN_DAYS:-4}
+      REGIME_SOURCE_STALE_FAIL_DAYS: ${REGIME_SOURCE_STALE_FAIL_DAYS:-7}
+      REGIME_MODEL_STALE_WARN_DAYS: ${REGIME_MODEL_STALE_WARN_DAYS:-14}
+      REGIME_MODEL_STALE_FAIL_DAYS: ${REGIME_MODEL_STALE_FAIL_DAYS:-35}
+      REGIME_FEATURE_PGHOST: ${REGIME_FEATURE_PGHOST:-10.10.1.3}
+      REGIME_FEATURE_PGPORT: ${REGIME_FEATURE_PGPORT:-54321}
+      REGIME_FEATURE_PGDATABASE: ${REGIME_FEATURE_PGDATABASE:?REGIME_FEATURE_PGDATABASE is required}
+      REGIME_FEATURE_PGUSER: ${REGIME_FEATURE_PGUSER:-regime-engine}
+      REGIME_FEATURE_PGPASSWORD_FILE: /run/secrets/regime_feature_password
+      REGIME_FEATURE_PGSSLMODE: ${REGIME_FEATURE_PGSSLMODE:-require}
+    secrets:
+      - mlflow_backend_password
+      - regime_feature_password
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+
+  mlflow-postgres:
+    image: postgres:18.6-alpine@sha256:432b3b824c0769275ec9b0947736ef8b376d6997bcaa9de29818f613819c2feb
+    pull_policy: missing
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MLFLOW_BACKEND_DB_NAME:?MLFLOW_BACKEND_DB_NAME is required}
+      POSTGRES_USER: ${MLFLOW_BACKEND_DB_USER:?MLFLOW_BACKEND_DB_USER is required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/mlflow_backend_password
+    secrets:
+      - mlflow_backend_password
+    volumes:
+      - mlflow_backend_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+secrets:
+  mlflow_backend_password:
+    file: ${MLFLOW_BACKEND_DB_PASSWORD_SECRET_FILE:?MLFLOW_BACKEND_DB_PASSWORD_SECRET_FILE must point to a local secret file}
+  regime_feature_password:
+    file: ${REGIME_FEATURE_PGPASSWORD_SECRET_FILE:?REGIME_FEATURE_PGPASSWORD_SECRET_FILE must point to a local secret file}
+
+volumes:
+  mlflow_backend_data:
+  mlflow_artifacts:
