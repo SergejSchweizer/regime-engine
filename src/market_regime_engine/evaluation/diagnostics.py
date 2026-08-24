@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import pairwise
 from math import isfinite, log
 
 import numpy as np
@@ -86,9 +87,7 @@ def _probability_rows(filtered_probabilities: npt.ArrayLike) -> np.ndarray:
 def occupancy(filtered_probabilities: npt.ArrayLike) -> OccupancyDiagnostics:
     values = _probability_rows(filtered_probabilities)
     hard_states = np.argmax(values, axis=1)
-    hard = tuple(
-        float(np.mean(hard_states == state)) for state in range(values.shape[1])
-    )
+    hard = tuple(float(np.mean(hard_states == state)) for state in range(values.shape[1]))
     soft = tuple(float(value) for value in values.mean(axis=0))
     return OccupancyDiagnostics(hard=hard, soft=soft)
 
@@ -111,7 +110,9 @@ def uncertainty(filtered_probabilities: npt.ArrayLike) -> UncertaintyDiagnostics
     return UncertaintyDiagnostics(
         confidence=tuple(float(value) for value in confidence_values),
         entropy=tuple(float(value) for value in entropy_values),
-        low_confidence=tuple(bool(value < LOW_CONFIDENCE_THRESHOLD) for value in confidence_values),
+        low_confidence=tuple(
+            bool(value < LOW_CONFIDENCE_THRESHOLD) for value in confidence_values
+        ),
     )
 
 
@@ -142,7 +143,7 @@ def switches_per_year(
         raise ValueError("timestamp count must match filtered observations")
     if any(timestamp.tzinfo is None for timestamp in timestamps):
         raise ValueError("switch timestamps must be timezone-aware")
-    if any(left >= right for left, right in zip(timestamps, timestamps[1:], strict=False)):
+    if any(left >= right for left, right in pairwise(timestamps)):
         raise ValueError("switch timestamps must be strictly increasing")
     elapsed_days = (timestamps[-1] - timestamps[0]).total_seconds() / 86_400.0
     if elapsed_days == 0.0:
