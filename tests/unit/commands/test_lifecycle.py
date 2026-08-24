@@ -296,9 +296,7 @@ def test_operator_service_dispatches_refit_publish_and_register() -> None:
     service = LifecycleOperatorService(backend)
     refit = service.execute(request(OperatorAction.FINAL_REFIT, ("evaluation_id", "eval-1")))
     assert refit.fields == (("production_package", "/packages/final"),)
-    publication = service.execute(
-        request(OperatorAction.PUBLISH_OOS, ("evaluation_id", "eval-1"))
-    )
+    publication = service.execute(request(OperatorAction.PUBLISH_OOS, ("evaluation_id", "eval-1")))
     assert publication.fields == (("oos_build_id", "oos-1"),)
     registration = service.execute(
         request(
@@ -332,9 +330,7 @@ def test_operator_service_rejects_unknown_profile_and_missing_parameters() -> No
         assert expected in exc.value.message
 
     with pytest.raises(OperatorCommandError, match="oos_build_id"):
-        service.execute(
-            request(OperatorAction.REGISTER, ("production_package", "/packages/final"))
-        )
+        service.execute(request(OperatorAction.REGISTER, ("production_package", "/packages/final")))
 
 
 def test_lazy_operator_backend_factory_can_be_installed_and_cleared() -> None:
