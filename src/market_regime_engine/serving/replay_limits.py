@@ -46,9 +46,7 @@ class ReplayLimits:
             max_range_days=_int(env, "REGIME_REPLAY_MAX_RANGE_DAYS", 14_610),
             timeout_seconds=_float(env, "REGIME_REPLAY_TIMEOUT_SECONDS", 60.0),
             max_response_bytes=_int(env, "REGIME_REPLAY_MAX_RESPONSE_BYTES", 26_214_400),
-            max_concurrency_per_worker=_int(
-                env, "REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER", 1
-            ),
+            max_concurrency_per_worker=_int(env, "REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER", 1),
         )
 
     def validate_interval(self, start: datetime, end: datetime) -> None:
