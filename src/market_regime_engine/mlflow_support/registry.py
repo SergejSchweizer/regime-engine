@@ -6,10 +6,11 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
-from mlflow.exceptions import MlflowException  # type: ignore[import-untyped]
-from mlflow.tracking import MlflowClient  # type: ignore[import-untyped]
+from mlflow.exceptions import MlflowException
+from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
+from mlflow.tracking import MlflowClient
 
 from market_regime_engine.mlflow_support.model_package import load_production_package
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
@@ -94,7 +95,10 @@ class AliasMutationAudit:
 
 
 def _is_missing(exc: MlflowException) -> bool:
-    return getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST"
+    return getattr(exc, "error_code", None) in {
+        RESOURCE_DOES_NOT_EXIST,
+        "RESOURCE_DOES_NOT_EXIST",
+    }
 
 
 def _require_model_name(model_name: str) -> None:
@@ -118,7 +122,9 @@ class MlflowModelRegistry:
     """Concrete registry boundary with production-package validation and audited CAS."""
 
     def __init__(self, client: _RegistryClient | None = None) -> None:
-        self._client: _RegistryClient = client or MlflowClient()
+        self._client = (
+            client if client is not None else cast(_RegistryClient, MlflowClient())
+        )
 
     def register_production_model(
         self,
@@ -133,7 +139,9 @@ class MlflowModelRegistry:
         package_path = Path(package_directory).resolve()
         packaged = load_production_package(package_path)
         if packaged != artifact:
-            raise ValueError("production package payload differs from supplied final-refit artifact")
+            raise ValueError(
+                "production package payload differs from supplied final-refit artifact"
+            )
 
         try:
             self._client.get_registered_model(REGISTERED_MODEL_NAME)
