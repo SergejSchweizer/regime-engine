@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +17,23 @@ from market_regime_engine.profiles.config import (
     WalkForwardConfig,
 )
 
+type ProfileDataclass = (
+    ModelProfile
+    | FeatureSelectionConfig
+    | WalkForwardConfig
+    | GaussianHMMConfig
+    | EvaluationGates
+)
 
-def _strict_kwargs[T](cls: type[T], raw: Mapping[str, Any]) -> dict[str, Any]:
+
+def _strict_kwargs(cls: type[ProfileDataclass], raw: Mapping[str, Any]) -> dict[str, Any]:
     field_definitions = fields(cls)
     allowed = {field.name for field in field_definitions}
     unknown = set(raw) - allowed
     required = {
         field.name
         for field in field_definitions
-        if field.default is field.default_factory
+        if field.default is MISSING and field.default_factory is MISSING
     }
     missing = required - set(raw)
     if unknown:
