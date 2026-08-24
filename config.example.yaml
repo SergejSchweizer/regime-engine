@@ -1,0 +1,10 @@
+# Copy to config.yaml on the deployment host. This file is intentionally ignored.
+# Store only PostgreSQL connection metadata and a local password-file path; never
+# put a password, DSN, certificate private key, or other credential value here.
+feature_postgres:
+  host: 10.10.1.3
+  port: 54321
+  database: <required-regime-loader-serving-database>
+  user: regime-engine
+  sslmode: require
+  password_file: /absolute/path/to/regime_feature_password

@@ -2,6 +2,39 @@
 set -euo pipefail
 set +x
 
+CONFIG_FILE="${REGIME_FEATURE_PG_CONFIG_FILE:-config.yaml}"
+if [[ -f "$CONFIG_FILE" ]]; then
+  eval "$(.venv/bin/python - "$CONFIG_FILE" <<'PY'
+from __future__ import annotations
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+if not isinstance(raw, dict) or not isinstance(raw.get("feature_postgres"), dict):
+    raise SystemExit("config.yaml requires a feature_postgres mapping")
+settings = raw["feature_postgres"]
+mapping = {
+    "host": "REGIME_FEATURE_PGHOST",
+    "port": "REGIME_FEATURE_PGPORT",
+    "database": "REGIME_FEATURE_PGDATABASE",
+    "user": "REGIME_FEATURE_PGUSER",
+    "sslmode": "REGIME_FEATURE_PGSSLMODE",
+    "password_file": "REGIME_FEATURE_PGPASSWORD_FILE",
+}
+for source_key, environment_key in mapping.items():
+    value = settings.get(source_key)
+    if value is not None and environment_key not in os.environ:
+        print(f"export {environment_key}={shlex.quote(str(value))}")
+PY
+)"
+fi
+
 : "${REGIME_FEATURE_PGDATABASE:?REGIME_FEATURE_PGDATABASE is required}"
 
 if [[ -n "${REGIME_FEATURE_PGPASSWORD:-}" && -n "${REGIME_FEATURE_PGPASSWORD_FILE:-}" ]]; then

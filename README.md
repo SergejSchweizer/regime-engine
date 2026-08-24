@@ -31,6 +31,10 @@ The script rejects any interpreter other than Python 3.14.7 and installs the exa
 
 The production feature source is the external PostgreSQL service at `10.10.1.3:54321`, read through the dedicated TLS-required `"regime-engine"` role. Source data has `data_time_semantics=current_vintage_observation_day`: evaluation is causal/split-leak-free relative to the current-vintage observation sequence, but it does not claim provider-release-time historical-vintage safety.
 
+For the opt-in external feature-PG verifier, copy `config.example.yaml` to the
+Git-ignored `config.yaml` and set the connection metadata plus a local
+password-file path. The file must never contain a password or DSN.
+
 After features are frozen, only rows where every selected feature is finite and non-null are HMM observations. Missing rows stay as gap evidence and do not create extra transition powers.
 
 ## One-port MLflow service
