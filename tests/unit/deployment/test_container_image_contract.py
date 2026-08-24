@@ -47,7 +47,7 @@ def test_entrypoint_runs_one_mlflow_gunicorn_service_on_5000() -> None:
     assert "--app-name regime-engine" in script
     assert "--host 0.0.0.0" in script
     assert "--port 5000" in script
-    assert "--workers \"$MLFLOW_WORKERS\"" in script
+    assert '--workers "$MLFLOW_WORKERS"' in script
     assert "--worker-class gthread" in script
     assert "--threads ${MLFLOW_THREADS_PER_WORKER}" in script
     assert "--timeout ${MLFLOW_HTTP_TIMEOUT_SECONDS}" in script
