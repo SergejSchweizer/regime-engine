@@ -25,6 +25,7 @@ def test_image_uses_frozen_repo_install_and_exact_runtime_versions() -> None:
     dockerfile = _read(DOCKERFILE)
     assert "COPY uv.lock pyproject.toml README.md ./" in dockerfile
     assert "apt-get install --no-install-recommends --yes build-essential" in dockerfile
+    assert "build-essential libstdc++6" in dockerfile
     assert "python -m pip install --no-cache-dir -r uv.lock" in dockerfile
     assert "python -m pip install --no-cache-dir --no-deps ." in dockerfile
     assert "apt-get purge --auto-remove --yes build-essential" in dockerfile
