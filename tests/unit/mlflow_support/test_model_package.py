@@ -101,6 +101,65 @@ def test_package_fails_closed_on_metadata_and_payload_drift(tmp_path) -> None:
         production_artifact_from_json(data_path.read_text(encoding="utf-8"))
 
 
+def test_json_loader_rejects_root_shape_fields_and_schema() -> None:
+    with pytest.raises(ValueError, match="root must be a mapping"):
+        production_artifact_from_json("[]")
+
+    raw = json.loads(production_artifact_json(artifact()))
+    raw.pop("candidate_id")
+    with pytest.raises(ValueError, match="unknown or missing"):
+        production_artifact_from_json(json.dumps(raw))
+
+    raw = json.loads(production_artifact_json(artifact()))
+    raw["schema_version"] = "future.v2"
+    with pytest.raises(ValueError, match="unsupported production package schema"):
+        production_artifact_from_json(json.dumps(raw))
+
+    raw = json.loads(production_artifact_json(artifact()))
+    raw["scaler"] = []
+    with pytest.raises(ValueError, match="scaler/HMM payloads must be mappings"):
+        production_artifact_from_json(json.dumps(raw))
+
+
+def test_package_loader_rejects_missing_or_incompatible_mlmodel(tmp_path) -> None:
+    with pytest.raises(ValueError, match="requires MLmodel"):
+        load_production_package(tmp_path / "missing")
+
+    package = save_production_package(artifact(), tmp_path / "bad-data-ref")
+    path = package / MLMODEL_FILE
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    metadata["flavors"]["regime_engine"]["data"] = "wrong.json"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical production data file"):
+        load_production_package(package)
+
+    package = save_production_package(artifact(), tmp_path / "bad-schema")
+    path = package / MLMODEL_FILE
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    metadata["flavors"]["regime_engine"]["schema_version"] = "future.v2"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema is incompatible"):
+        load_production_package(package)
+
+
+def test_package_loader_rejects_runtime_version_drift(tmp_path) -> None:
+    package = save_production_package(artifact(), tmp_path / "bad-mlflow")
+    path = package / MLMODEL_FILE
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    metadata["mlflow_version"] = "3.16.0"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="MLflow 3.15.1"):
+        load_production_package(package)
+
+    package = save_production_package(artifact(), tmp_path / "bad-python")
+    path = package / MLMODEL_FILE
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    metadata["python_version"] = "3.14.8"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="Python 3.14.7"):
+        load_production_package(package)
+
+
 def test_only_final_refit_artifact_type_is_accepted() -> None:
     with pytest.raises(TypeError, match="PR-063"):
         production_artifact_json(object())  # type: ignore[arg-type]
