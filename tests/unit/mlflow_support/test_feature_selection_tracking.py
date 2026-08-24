@@ -59,7 +59,9 @@ def selection_result() -> FeatureSelectionResult:
         for index in range(8)
     )
     medoids = tuple(block.winner for block in blocks)
-    identity = tuple(tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8))
+    identity = tuple(
+        tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8)
+    )
     evidence = FeatureSelectionEvidence(
         first_train_source_row_count=1260,
         block_evidence=blocks,
@@ -128,7 +130,10 @@ def test_complete_feature_selection_audit_is_deterministic_and_logged(tmp_path: 
         assert len(artifact.source_sha256) == 64
     manifest = json.loads(Path(tracked.manifest_path).read_text())
     assert len(manifest) == 10
-    assert sum(item["artifact_type"] == "stage1_within_block_abs_spearman" for item in manifest) == 8
+    within_block_count = sum(
+        item["artifact_type"] == "stage1_within_block_abs_spearman" for item in manifest
+    )
+    assert within_block_count == 8
     assert any(item["artifact_type"] == "stage2_cross_block_abs_spearman" for item in manifest)
     assert len(port.artifacts) == 24
     assert all(item[0] == "parent-1" for item in port.artifacts)
