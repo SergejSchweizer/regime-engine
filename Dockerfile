@@ -32,7 +32,7 @@ COPY scripts/mlflow_entrypoint.sh /usr/local/bin/regime-engine-mlflow-entrypoint
 COPY scripts/mlflow_db_upgrade.sh /usr/local/bin/regime-engine-mlflow-db-upgrade
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends --yes build-essential \
+    && apt-get install --no-install-recommends --yes build-essential libstdc++6 \
     && python -m pip install --no-cache-dir -r uv.lock \
     && python -m pip install --no-cache-dir --no-deps . \
     && apt-get purge --auto-remove --yes build-essential \
