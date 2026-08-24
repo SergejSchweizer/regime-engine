@@ -1,7 +1,8 @@
-"""Deterministic model-cycle, promotion, rollback, and freshness lifecycle operations."""
+"""Deterministic model-cycle, promotion, rollback, and lifecycle CLI operations."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -24,6 +25,12 @@ CHALLENGER_ALIAS = "challenger"
 CHAMPION_ALIAS = "champion"
 
 
+def _trimmed(value: str, field_name: str) -> str:
+    if not value or value.strip() != value:
+        raise ValueError(f"{field_name} must be a non-empty trimmed string")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluationOutcome:
     evaluation_id: str
@@ -31,14 +38,9 @@ class EvaluationOutcome:
     statistical_champion_candidate_id: str
 
     def __post_init__(self) -> None:
-        for field_name in (
-            "evaluation_id",
-            "source_build_id",
-            "statistical_champion_candidate_id",
-        ):
-            value = getattr(self, field_name)
-            if not value or value.strip() != value:
-                raise ValueError(f"{field_name} must be a non-empty trimmed string")
+        _trimmed(self.evaluation_id, "evaluation_id")
+        _trimmed(self.source_build_id, "source_build_id")
+        _trimmed(self.statistical_champion_candidate_id, "statistical_champion_candidate_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +48,7 @@ class FinalRefitOutcome:
     production_package: str
 
     def __post_init__(self) -> None:
-        if not self.production_package or self.production_package.strip() != self.production_package:
-            raise ValueError("production_package must be a non-empty trimmed string")
+        _trimmed(self.production_package, "production_package")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +56,7 @@ class OOSPublicationOutcome:
     oos_build_id: str
 
     def __post_init__(self) -> None:
-        if not self.oos_build_id or self.oos_build_id.strip() != self.oos_build_id:
-            raise ValueError("oos_build_id must be a non-empty trimmed string")
+        _trimmed(self.oos_build_id, "oos_build_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +64,7 @@ class RegistrationOutcome:
     exact_version: str
 
     def __post_init__(self) -> None:
-        if not self.exact_version or self.exact_version.strip() != self.exact_version:
-            raise ValueError("exact_version must be a non-empty trimmed string")
+        _trimmed(self.exact_version, "exact_version")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,17 +75,15 @@ class LifecycleStatus:
     challenger_version: str | None
 
     def __post_init__(self) -> None:
-        if not self.current_source_build_id or self.current_source_build_id.strip() != (
-            self.current_source_build_id
+        _trimmed(self.current_source_build_id, "current_source_build_id")
+        for field_name in (
+            "completed_source_build_id",
+            "champion_version",
+            "challenger_version",
         ):
-            raise ValueError("current_source_build_id must be a non-empty trimmed string")
-        for value in (
-            self.completed_source_build_id,
-            self.champion_version,
-            self.challenger_version,
-        ):
-            if value is not None and (not value or value.strip() != value):
-                raise ValueError("optional lifecycle status identities must be trimmed when present")
+            value = getattr(self, field_name)
+            if value is not None:
+                _trimmed(value, field_name)
 
     @property
     def source_changed(self) -> bool:
@@ -104,8 +101,7 @@ class ModelCycleOutcome:
     challenger_version: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.source_build_id or self.source_build_id.strip() != self.source_build_id:
-            raise ValueError("source_build_id must be a non-empty trimmed string")
+        _trimmed(self.source_build_id, "source_build_id")
         evidence = (
             self.evaluation_id,
             self.statistical_champion_candidate_id,
@@ -116,11 +112,14 @@ class ModelCycleOutcome:
         if self.changed and any(value is None for value in evidence):
             raise ValueError("changed model cycle requires complete lifecycle evidence")
         if not self.changed and any(value is not None for value in evidence):
-            raise ValueError("unchanged model cycle must be a deterministic evidence-free no-op")
+            raise ValueError("unchanged model cycle must be an evidence-free no-op")
+        for value in evidence:
+            if value is not None:
+                _trimmed(value, "model-cycle evidence")
 
 
 class LifecycleBackend(Protocol):
-    """Engine-specific operations kept behind the lifecycle orchestration boundary."""
+    """Engine-specific lifecycle primitives kept behind the orchestration boundary."""
 
     def status(self, profile_id: str) -> LifecycleStatus: ...
 
@@ -138,22 +137,8 @@ class LifecycleBackend(Protocol):
     ) -> RegistrationOutcome: ...
 
 
-class LifecycleRegistry(Protocol):
-    def resolve_alias(self, model_name: str, alias: str) -> object: ...
-
-    def compare_and_swap_alias(
-        self,
-        *,
-        model_name: str,
-        alias: str,
-        expected_current_version: str | None,
-        new_version: str,
-        reason: str,
-    ) -> bool: ...
-
-
 class ModelLifecycleOperations:
-    """Own alias mutations and deterministic changed-source model cycles."""
+    """Own changed-source model cycles and explicit champion alias mutations."""
 
     def __init__(self, backend: LifecycleBackend, registry: RegistryPort) -> None:
         self._backend = backend
@@ -164,13 +149,8 @@ class ModelLifecycleOperations:
         if profile_id != "xetra":
             raise ValueError("model lifecycle currently supports exactly the xetra profile")
 
-    @staticmethod
-    def _require_reason(reason: str) -> None:
-        if not reason or reason.strip() != reason:
-            raise ValueError("alias mutation reason must be a non-empty trimmed string")
-
     def run_model_cycle(self, profile_id: str = "xetra") -> ModelCycleOutcome:
-        """Evaluate a new source build exactly once; never promote champion automatically."""
+        """Run evaluate -> select -> final refit -> OOS publish -> challenger register once."""
 
         self._require_xetra(profile_id)
         status = self._backend.status(profile_id)
@@ -204,9 +184,10 @@ class ModelLifecycleOperations:
         new_version: str,
         reason: str,
     ) -> bool:
-        self._require_reason(reason)
-        if not new_version:
-            raise ValueError("promotion target version cannot be empty")
+        _trimmed(new_version, "promotion target version")
+        _trimmed(reason, "alias mutation reason")
+        if expected_current_version is not None:
+            _trimmed(expected_current_version, "expected current version")
         return self._registry.compare_and_swap_alias(
             model_name=REGISTERED_MODEL_NAME,
             alias=CHAMPION_ALIAS,
@@ -222,9 +203,9 @@ class ModelLifecycleOperations:
         target_version: str,
         reason: str,
     ) -> bool:
-        self._require_reason(reason)
-        if not expected_current_version or not target_version:
-            raise ValueError("rollback requires expected-current and target versions")
+        _trimmed(expected_current_version, "expected current version")
+        _trimmed(target_version, "rollback target version")
+        _trimmed(reason, "alias mutation reason")
         return self._registry.compare_and_swap_alias(
             model_name=REGISTERED_MODEL_NAME,
             alias=CHAMPION_ALIAS,
@@ -235,7 +216,7 @@ class ModelLifecycleOperations:
 
 
 class LifecycleOperatorService(OperatorService):
-    """Translate the PR-031 command contract into lifecycle backend operations."""
+    """Translate the PR-031 operator command contract into lifecycle primitives."""
 
     def __init__(self, backend: LifecycleBackend) -> None:
         self._backend = backend
@@ -268,6 +249,11 @@ class LifecycleOperatorService(OperatorService):
         if request.action is OperatorAction.EVALUATE:
             status = self._backend.status(request.profile_id)
             outcome = self._backend.evaluate(request.profile_id, status.current_source_build_id)
+            if outcome.source_build_id != status.current_source_build_id:
+                raise OperatorCommandError(
+                    "source_build_changed",
+                    "evaluation source build differs from the status-pinned source build",
+                )
             return OperatorResult(
                 request.action,
                 request.profile_id,
@@ -281,13 +267,8 @@ class LifecycleOperatorService(OperatorService):
                 ),
             )
 
-        evaluation_id = self._required(request, "evaluation_id") if request.action in {
-            OperatorAction.FINAL_REFIT,
-            OperatorAction.PUBLISH_OOS,
-        } else None
         if request.action is OperatorAction.FINAL_REFIT:
-            if evaluation_id is None:
-                raise AssertionError("evaluation_id required above")
+            evaluation_id = self._required(request, "evaluation_id")
             refit = self._backend.final_refit(request.profile_id, evaluation_id)
             return OperatorResult(
                 request.action,
@@ -295,8 +276,7 @@ class LifecycleOperatorService(OperatorService):
                 (("production_package", refit.production_package),),
             )
         if request.action is OperatorAction.PUBLISH_OOS:
-            if evaluation_id is None:
-                raise AssertionError("evaluation_id required above")
+            evaluation_id = self._required(request, "evaluation_id")
             publication = self._backend.publish_oos(request.profile_id, evaluation_id)
             return OperatorResult(
                 request.action,
@@ -319,16 +299,15 @@ class LifecycleOperatorService(OperatorService):
         raise AssertionError(f"unsupported operator action: {request.action}")
 
 
-_backend_factory: callable | None = None  # type: ignore[valid-type]
+OperatorBackendFactory = Callable[[], LifecycleBackend]
+_backend_factory: OperatorBackendFactory | None = None
 
 
-def configure_operator_backend_factory(factory: object) -> None:
-    """Configure process composition without importing model/source work at module import time."""
+def configure_operator_backend_factory(factory: OperatorBackendFactory | None) -> None:
+    """Install or clear the lazy backend factory used by the installed CLI."""
 
     global _backend_factory
-    if not callable(factory):
-        raise TypeError("operator backend factory must be callable")
-    _backend_factory = factory  # type: ignore[assignment]
+    _backend_factory = factory
 
 
 def build_operator_service() -> OperatorService:
@@ -339,5 +318,4 @@ def build_operator_service() -> OperatorService:
             "runtime_not_configured",
             "lifecycle backend factory has not been configured by deployment composition",
         )
-    backend = _backend_factory()
-    return LifecycleOperatorService(backend)  # type: ignore[arg-type]
+    return LifecycleOperatorService(_backend_factory())
