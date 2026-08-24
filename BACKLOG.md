@@ -1,6 +1,6 @@
 # Regime Engine — Consolidated Implementation Backlog
 
-Status date: 2026-08-23
+Status date: 2026-08-24
 
 This is the single authoritative implementation backlog for `SergejSchweizer/regime-engine`.
 
@@ -32,6 +32,8 @@ There are no legacy Wave overrides or addenda. Each PR below has exactly one eff
 | prediction contract | `RegimePrediction.v1` |
 | invocation response | `RegimeInvocationResponse.v1` |
 | error response | `RegimeError.v1` |
+| local Compose project | `regime-engine` |
+| local custom MLflow image tag | `regime-engine-mlflow:local` |
 
 `xetra_cross_asset_v1` is not a public profile ID. Use `profile_id=xetra` plus `profile_config_version=1`.
 
@@ -102,9 +104,28 @@ docker-compose
 
 Only `mlflow` publishes `5000:5000`. `mlflow-postgres` has no host port and stores MLflow relational metadata only. The feature PostgreSQL remains external.
 
+## Local-only build and execution contract
+
+The Compose project is built and executed locally on the deployment host. For production the deployment host is the NAS `10.10.1.3` with a local checkout of this repository.
+
+`local` has the following exact meaning:
+
+- Compose commands target the deployment host's local Docker daemon through a local Unix socket; TCP/SSH remote Docker contexts, remote BuildKit builders, Docker Swarm and Kubernetes are outside the MVP contract.
+- The repository-owned `mlflow` image is built locally from this repository's `Dockerfile` and local build context.
+- The canonical local custom-image tag is exactly `regime-engine-mlflow:local`.
+- The custom `regime-engine-mlflow:local` image is never pulled from or pushed to Docker Hub, GHCR or another image registry in the MVP.
+- Third-party/base images may be downloaded only as pinned upstream inputs: the pinned Python base image during local `mlflow` build and the pinned official PostgreSQL image for `mlflow-postgres`.
+- The production build step is explicit and separate from startup: `docker compose build --pull mlflow`.
+- Production startup is exactly `docker compose up -d --no-build`; startup must not rebuild the application image implicitly.
+- The `mlflow` service declares the local build context plus `image: regime-engine-mlflow:local` and `pull_policy: never`, so startup cannot silently replace the local custom image with a registry image.
+- If `regime-engine-mlflow:local` is absent, production startup fails rather than pulling an application image.
+- The Compose file itself is `compose.yaml`, committed in this repository; `compose.example.yaml` is not the production deployment contract.
+- Deployment verification records the local Docker image ID, repository Git SHA, MLflow version and build timestamp so the running local image is auditable.
+- Cron/operator model-cycle commands execute inside the already-running local `mlflow` service via `docker compose exec -T mlflow ...`; no separate remote execution environment is introduced.
+
 MLflow custom apps are Flask/WSGI. MLflow 3.15.1 must therefore be forced to Gunicorn; its default Uvicorn server is forbidden for this deployment.
 
-Canonical startup:
+Canonical startup inside the locally built image:
 
 ```text
 mlflow server
@@ -379,8 +400,11 @@ Mismatch performs no mutation. Every alias move is audited.
 - PR-001 must prove full-covariance HMM smoke under Python 3.14.7; failure blocks architecture rather than triggering a fallback.
 - Docker Python tag target: `python:3.14.7-slim-bookworm`.
 - MLflow backend PostgreSQL tag target: `postgres:18.6-alpine`.
-- tag-only production image references are not sufficient: PR-032/061 resolve and commit the exact official registry SHA-256 digest in dedicated image-lock files and Docker/Compose references use `tag@sha256:digest`.
-- floating `latest` tags are forbidden.
+- tag-only upstream image references are not sufficient: PR-032/061 resolve and commit exact official registry SHA-256 digests for the Python base and PostgreSQL inputs.
+- the repository-owned MLflow/regime-engine application image is always built locally as `regime-engine-mlflow:local`; no remote application-image registry is part of the MVP.
+- deployment evidence records the local application image ID plus Git SHA; the local tag alone is not treated as immutable provenance.
+- `docker compose up` must not build or pull the custom application image; only explicit `docker compose build --pull mlflow` creates/replaces it.
+- floating `latest` tags are forbidden for all upstream inputs.
 - dependency/image changes require a dedicated compatibility change plus lock/test updates.
 
 Required unit+integration code coverage threshold is 90%. External-service tests are excluded.
@@ -396,9 +420,10 @@ Before a pinned MLflow version change:
 1. quiesce/stop `mlflow`;
 2. dump MLflow backend PostgreSQL;
 3. archive artifact volume;
-4. write one manifest with UTC, MLflow/PostgreSQL versions and SHA-256 hashes;
+4. write one manifest with UTC, MLflow/PostgreSQL versions, local application image ID/Git SHA and SHA-256 hashes;
 5. run explicit one-shot `mlflow db upgrade`;
-6. start service and run metadata/registry/artifact smoke.
+6. rebuild the local application image explicitly when required;
+7. start service locally and run metadata/registry/artifact smoke.
 
 Restore requires the matching DB dump + artifact archive manifest and MLflow stopped.
 
@@ -496,7 +521,7 @@ Acceptance: targets exactly `SergejSchweizer/regime-engine/main`; authenticated 
 - **Depends on:** PR-001
 - **Allowed:** `ARCHITECTURE.md`, `CONTRIBUTING.md`, `DATA_SOURCE.md`, `EVALUATION.md`, `README.md`, `docs/model_lifecycle.md`
 
-Acceptance: all canonical identities, current-vintage claim boundary, complete-case observation clock, final-refit requirement, one-port Gunicorn MLflow architecture, trusted-LAN/TLS source boundary and `champion` terminology match current contract-owner files; no legacy addendum/alias/profile wording.
+Acceptance: all canonical identities, current-vintage claim boundary, complete-case observation clock, final-refit requirement, one-port Gunicorn MLflow architecture, local-only Compose build/run contract, trusted-LAN/TLS source boundary and `champion` terminology match current contract-owner files; no legacy addendum/alias/profile wording.
 
 ### PR-006 — Core versioned contracts
 
@@ -856,11 +881,20 @@ Acceptance: evaluate/final-refit/register/publish-oos/status; thin adapters; no 
 - **Depends on:** PR-031, PR-056
 - **Allowed:** `src/market_regime_engine/commands/lifecycle.py`, `scripts/model_cycle.sh`, lifecycle tests/doc
 
-Acceptance: CAS promote/rollback; new-source-build detection; unchanged build no-op; changed build evaluate -> select -> final refit -> register challenger; promotion remains explicit; exact 7-day recommended cadence and staleness thresholds; no economic/uncalibrated drift alias decision.
+Acceptance:
+
+- [ ] CAS promote/rollback.
+- [ ] New-source-build detection; unchanged build is a deterministic no-op.
+- [ ] Changed build executes evaluate -> statistical select -> final refit -> OOS publication -> register challenger.
+- [ ] Promotion remains explicit and uses expected-current-version plus non-empty reason.
+- [ ] Exact 7-day recommended cadence and staleness thresholds; no economic/uncalibrated drift alias decision.
+- [ ] `scripts/model_cycle.sh` is cron-safe and invokes the installed CLI inside the local Compose `mlflow` container with `docker compose exec -T mlflow ...` from the local repository checkout.
+- [ ] The lifecycle script never invokes a remote Docker context, remote container host, registry-hosted application image or a second Python environment on the NAS.
+- [ ] A process/profile single-run lock prevents overlapping scheduled `xetra` model cycles.
 
 ## Wave 5 — image/compose/external proof/operations
 
-### PR-032 — Unified MLflow/regime-engine image
+### PR-032 — Unified MLflow/regime-engine locally built image
 
 - **Branch:** `pr/PR-032-container-image`
 - **Depends on:** PR-031, PR-060
@@ -868,12 +902,16 @@ Acceptance: CAS promote/rollback; new-source-build detection; unchanged build no
 
 Acceptance:
 
-- [ ] Resolve/commit exact official SHA-256 for `python:3.14.7-slim-bookworm`; Dockerfile uses tag+digest.
+- [ ] Resolve/commit exact official SHA-256 for `python:3.14.7-slim-bookworm`; Dockerfile uses tag+digest as the local build input.
 - [ ] MLflow exactly 3.15.1/frozen package install.
-- [ ] one Gunicorn MLflow process with exact app/defaults; never Uvicorn/model-serve/proxy/Prometheus.
-- [ ] normal startup performs no DB migration; one-shot explicit upgrade script.
-- [ ] non-root; secrets not logged.
-- [ ] produces deterministic dependency/SBOM artifact for image build inspection.
+- [ ] Repository-root Docker build context produces the application image locally; no remote build service is required or allowed.
+- [ ] Canonical locally built application tag is exactly `regime-engine-mlflow:local`.
+- [ ] No Docker Hub/GHCR/private-registry application image is referenced, pushed or required by build, deployment or tests.
+- [ ] Local image labels/evidence include repository Git SHA and MLflow/package version; tests verify those labels can be read from the locally built image.
+- [ ] One Gunicorn MLflow process with exact app/defaults; never Uvicorn/model-serve/proxy/Prometheus.
+- [ ] Normal startup performs no DB migration; one-shot explicit upgrade script.
+- [ ] Non-root; secrets not logged.
+- [ ] Produces deterministic dependency/SBOM artifact for local image inspection.
 
 ### PR-033 — Real feature-PostgreSQL compatibility smoke
 
@@ -883,30 +921,45 @@ Acceptance:
 
 Acceptance: required integration hermetic; external opt-in target exact host/port, runtime DB/password, user `regime-engine`, `sslmode=require`; proves SELECT/source transaction/privileges/read-only; no destructive/write test.
 
-### PR-061 — Exact two-service Compose
+### PR-061 — Exact local two-service Compose
 
 - **Branch:** `pr/PR-061-two-service-mlflow-compose`
 - **Depends on:** PR-032, PR-057, PR-058, PR-059, PR-060
-- **Allowed:** `compose.example.yaml`, `.env.example`, `docker/postgres-backend.lock`, compose test, `docs/deployment.md`
+- **Allowed:** `compose.yaml`, `.env.example`, `docker/postgres-backend.lock`, `scripts/local_compose_build.sh`, `scripts/local_compose_up.sh`, `scripts/local_compose_down.sh`, `scripts/verify_local_compose.sh`, compose tests, `docs/deployment.md`
 
 Acceptance:
 
-- [ ] exactly `mlflow` + `mlflow-postgres`; only host port 5000.
-- [ ] resolve/commit exact official SHA-256 for `postgres:18.6-alpine`; Compose uses tag+digest.
-- [ ] persistent backend/artifact volumes; backend DB private.
+- [ ] `compose.yaml` declares exactly `mlflow` + `mlflow-postgres`; only host port 5000 is published.
+- [ ] Compose project runs on the same local Docker daemon/host where the repository checkout exists; scripts reject TCP/SSH remote Docker endpoints and remote builders.
+- [ ] `mlflow` declares local `build.context: .`, the repository Dockerfile, `image: regime-engine-mlflow:local`, and `pull_policy: never`.
+- [ ] The only supported production application-image build is explicit `docker compose build --pull mlflow` from the local repository checkout.
+- [ ] The only supported normal production start is `docker compose up -d --no-build`; it never builds or pulls the custom application image implicitly.
+- [ ] If `regime-engine-mlflow:local` does not exist locally, the startup wrapper fails clearly before `up` instead of pulling from a registry.
+- [ ] No `docker compose push`, application-image `pull`, registry login, remote buildx builder, Swarm or Kubernetes path exists in deployment scripts/docs.
+- [ ] Resolve/commit exact official SHA-256 for `postgres:18.6-alpine`; `mlflow-postgres` uses the pinned official image locally and may pull that exact digest only when absent.
+- [ ] Persistent backend/artifact volumes; backend DB private.
 - [ ] Docker secrets for backend and feature passwords; env examples placeholders only.
-- [ ] separate namespaced backend vs feature DB settings.
-- [ ] exact workers/threads/pool/budget/replay/staleness/BLAS settings.
-- [ ] allowed-host/CORS trusted-LAN policy; no wildcard/proxy/Prometheus/5001.
-- [ ] no automatic DB migration.
+- [ ] Separate namespaced backend vs feature DB settings.
+- [ ] Exact workers/threads/pool/budget/replay/staleness/BLAS settings.
+- [ ] Allowed-host/CORS trusted-LAN policy; no wildcard/proxy/Prometheus/5001.
+- [ ] No automatic DB migration.
+- [ ] `scripts/verify_local_compose.sh` records/verifies running project name, service set, local application image ID, repository Git SHA, MLflow version, port mapping and absence of remote custom-image provenance.
+- [ ] Compose contract tests fail if production file is renamed to/example-only `compose.example.yaml`, if `mlflow` loses `build`, if `pull_policy` permits registry pulls, or if normal startup includes `--build`.
 
-### PR-034 — Real unified MLflow smoke
+### PR-034 — Real locally running unified MLflow smoke
 
 - **Branch:** `pr/PR-034-external-mlflow-smoke`
 - **Depends on:** PR-023, PR-026, PR-061
 - **Allowed:** external MLflow/regime-service tests and verify script
 
-Acceptance: external opt-in only; same `:5000` supports standard MLflow + custom health; disposable tracking/registry/artifact/fold-history round-trip; optional read-only xetra latest if champion exists; no 5001/proxy/Prometheus assumptions.
+Acceptance:
+
+- [ ] External smoke is opt-in only.
+- [ ] Precondition/verification confirms the service under test is the locally running `compose.yaml` deployment and its `mlflow` container uses the locally built `regime-engine-mlflow:local` image ID recorded by PR-061 verification.
+- [ ] The same local `:5000` supports standard MLflow + custom health.
+- [ ] Disposable tracking/registry/artifact/fold-history round-trip succeeds.
+- [ ] Optional read-only `xetra` latest succeeds if champion exists.
+- [ ] No 5001/proxy/Prometheus/remote-registry assumption exists.
 
 ### PR-062 — Hermetic capacity/failure isolation proof
 
@@ -914,15 +967,23 @@ Acceptance: external opt-in only; same `:5000` supports standard MLflow + custom
 - **Depends on:** PR-060, PR-061
 - **Allowed:** serving capacity/failure integration tests + fixtures
 
-Acceptance: cache single-flight/LRU/atomic swap; pool timeout; all replay 413/503/504 paths; no hidden work after 504; resources released; exact default 4-worker x4-thread topology keeps health/tracking/registry read/latest serviceable at admitted 4-replay capacity; no secret/raw-feature logs.
+Acceptance: cache single-flight/LRU/atomic swap; pool timeout; all replay 413/503/504 paths; no hidden work after 504; resources released; exact default 4-worker x4-thread topology keeps health/tracking/registry read/latest serviceable at admitted 4-replay capacity; tests require no published application image and can exercise the locally built Compose image where Docker is available; no secret/raw-feature logs.
 
-### PR-065 — Backup/restore/migration/secret rotation
+### PR-065 — Local Compose backup/restore/migration/secret rotation
 
 - **Branch:** `pr/PR-065-mlflow-backup-restore`
 - **Depends on:** PR-061
 - **Allowed:** backup/restore/verify scripts, manifest-contract test, operations doc
 
-Acceptance: quiesced DB dump + artifact archive + version/hash manifest; matching restore and artifact/metadata verification; mandatory successful backup before explicit MLflow DB upgrade; no auto migration; exact backend/feature secret-rotation procedure with verify-before-revoke.
+Acceptance:
+
+- [ ] Operations target the local `regime-engine` Compose project through local `docker compose` commands; no remote Docker host or registry artifact is required.
+- [ ] Quiesced DB dump + artifact archive + version/hash manifest.
+- [ ] Manifest records local application image ID, Git SHA, MLflow/PostgreSQL versions and source archive hashes.
+- [ ] Matching restore and artifact/metadata verification.
+- [ ] Mandatory successful backup before explicit MLflow DB upgrade; no automatic migration.
+- [ ] After an application/dependency change requiring a new image, rebuild is explicit/local before restart.
+- [ ] Exact backend/feature secret-rotation procedure with verify-before-revoke.
 
 ### PR-035 — Complete hermetic E2E
 
@@ -947,7 +1008,7 @@ Acceptance:
 - **Depends on:** PR-033, PR-034, PR-035, PR-061, PR-064, PR-065
 - **Allowed:** `README.md`, `API.md`, `OPERATIONS.md`, `ARCHITECTURE.md`, `DATA_SOURCE.md`, `EVALUATION.md`, `CONTRIBUTING.md`, consumer/integration docs
 
-Acceptance: all contract-owner docs consistent; no duplicate/override/addendum text; canonical names only; current-vintage limitation; complete-case clock; selection hashes/diagnostics; continued OOS PLL; final refit; exact API; one-port Gunicorn Compose; TLS feature PG; trusted-LAN; cache/load/replay/staleness; lifecycle/CAS; backup/migration/secret rotation; image/version pinning; no Prometheus/5001/proxy.
+Acceptance: all contract-owner docs consistent; no duplicate/override/addendum text; canonical names only; current-vintage limitation; complete-case clock; selection hashes/diagnostics; continued OOS PLL; final refit; exact API; one-port Gunicorn Compose; exact local `docker compose build --pull mlflow` then `docker compose up -d --no-build` workflow; local application image only/no application registry; cron uses local `docker compose exec -T mlflow`; TLS feature PG; trusted-LAN; cache/load/replay/staleness; lifecycle/CAS; backup/migration/secret rotation; image/version pinning; no Prometheus/5001/proxy.
 
 ## Optional post-MVP challengers
 
@@ -1012,11 +1073,14 @@ Deployment-ready additionally requires operator evidence that:
 1. the external `"regime-engine"` feature reader was created with the runtime database/secret;
 2. feature PostgreSQL accepts TLS `sslmode=require`;
 3. PR-033 external feature-PG smoke passes;
-4. the exact two-service Compose deployment is running at `10.10.1.3:5000`;
-5. PR-034 unified MLflow/custom-service smoke passes;
-6. the configured feature-PG connection budget is adequate for the deployed workers/pools;
-7. an initial MLflow backend+artifact backup has been created and verified;
-8. port 5000 is restricted to the trusted private LAN and is not public;
-9. no `:5001`, reverse proxy, Prometheus exposure or second serving process exists.
+4. a clean/up-to-date repository checkout exists on the NAS `10.10.1.3` and Compose targets that host's local Unix-socket Docker daemon;
+5. the custom application image was built locally with `docker compose build --pull mlflow`, is present as `regime-engine-mlflow:local`, and its recorded local image ID matches the deployment evidence;
+6. the exact two-service `compose.yaml` deployment was started locally with `docker compose up -d --no-build` and is running at `10.10.1.3:5000`;
+7. PR-034 unified MLflow/custom-service smoke passes against that local deployment;
+8. the configured feature-PG connection budget is adequate for the deployed workers/pools;
+9. an initial MLflow backend+artifact backup has been created and verified with local image/Git provenance;
+10. port 5000 is restricted to the trusted private LAN and is not public;
+11. there is no remote/published `regime-engine-mlflow` application image dependency, no remote Docker context/build service and no implicit build during normal startup;
+12. no `:5001`, reverse proxy, Prometheus exposure or second serving process exists.
 
 Only after both states are satisfied is the unified-serving MVP operationally complete.
