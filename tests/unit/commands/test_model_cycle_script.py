@@ -1,6 +1,3 @@
-import subprocess
-
-
 SCRIPT = "scripts/model_cycle.sh"
 
 
@@ -10,6 +7,7 @@ def _script_text() -> str:
 
 
 def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> None:
+    subprocess = __import__("subprocess")
     subprocess.run(["bash", "-n", SCRIPT], check=True)
     text = _script_text()
     assert "set -euo pipefail" in text
