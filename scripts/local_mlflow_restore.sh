@@ -25,6 +25,7 @@ field() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 assert_local_docker
+source scripts/compose_provenance_env.sh
 [[ $# -eq 2 && "$2" == "--confirm-destructive-restore" ]] \
   || fail "usage: scripts/local_mlflow_restore.sh <backup-directory> --confirm-destructive-restore"
 BACKUP_DIR="$(cd "$1" && pwd)"

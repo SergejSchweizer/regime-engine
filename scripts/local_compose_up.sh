@@ -23,4 +23,6 @@ assert_local_docker
 docker image inspect regime-engine-mlflow:local >/dev/null 2>&1 \
   || fail "local image regime-engine-mlflow:local is missing; run scripts/local_compose_build.sh first"
 
+source scripts/compose_provenance_env.sh
+
 docker compose up -d --no-build

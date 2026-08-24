@@ -10,6 +10,10 @@ services:
         REGIME_ENGINE_BUILD_TIMESTAMP: ${REGIME_ENGINE_BUILD_TIMESTAMP:?REGIME_ENGINE_BUILD_TIMESTAMP is required for local image provenance}
     image: regime-engine-mlflow:local
     pull_policy: never
+    # Compose file secrets are bind mounts and retain host ownership.  Start the
+    # entrypoint as root only long enough to read the 0600 secret, then it drops
+    # to the image's dedicated runtime user before launching MLflow.
+    user: "0:0"
     restart: unless-stopped
     depends_on:
       mlflow-postgres:

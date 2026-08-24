@@ -19,6 +19,7 @@ assert_local_docker() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 assert_local_docker
+source scripts/compose_provenance_env.sh
 
 services="$(docker compose config --services | LC_ALL=C sort)"
 [[ "$services" == $'mlflow\nmlflow-postgres' ]] || fail "Compose service set is not exactly mlflow + mlflow-postgres"

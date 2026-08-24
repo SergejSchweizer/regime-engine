@@ -29,7 +29,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 assert_local_docker
 
-export REGIME_ENGINE_GIT_SHA="$(git rev-parse HEAD)"
-export REGIME_ENGINE_BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+source scripts/compose_provenance_env.sh
 
 docker compose build --pull mlflow
