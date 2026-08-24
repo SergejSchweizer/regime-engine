@@ -106,6 +106,11 @@ def test_contract_validation_rejects_unpinned_policy_and_invalid_scores() -> Non
 
 def test_hash_validation_and_canonical_json_reject_nonfinite() -> None:
     with pytest.raises(ValueError, match="data_sha256"):
-        execution_hash(HASH_A, source_build_id="build", data_sha256="bad", evaluation_plan_hash=HASH_B)
+        execution_hash(
+            HASH_A,
+            source_build_id="build",
+            data_sha256="bad",
+            evaluation_plan_hash=HASH_B,
+        )
     with pytest.raises(ValueError):
         canonical_json({"bad": nan})
