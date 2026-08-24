@@ -22,6 +22,9 @@ dependencies = [
   "scipy==1.18.0",
 ]
 
+[project.entry-points."mlflow.app"]
+regime-engine = "market_regime_engine.mlflow_app.app:create_app"
+
 [dependency-groups]
 dev = [
   "mypy==1.18.2",
