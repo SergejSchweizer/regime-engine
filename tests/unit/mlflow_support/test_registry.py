@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from mlflow.exceptions import MlflowException
@@ -228,7 +228,7 @@ def test_registry_contract_dataclasses_fail_closed() -> None:
         ({"reason": " bad "}, "trimmed reason"),
         ({"observed_at_utc": datetime(2026, 8, 24)}, "timezone-aware UTC"),
         (
-            {"observed_at_utc": datetime(2026, 8, 24, tzinfo=UTC) + timedelta(hours=1)},
+            {"observed_at_utc": datetime(2026, 8, 24, tzinfo=timezone(timedelta(hours=1)))},
             "timezone-aware UTC",
         ),
         ({"changed": False}, "CAS comparison"),
