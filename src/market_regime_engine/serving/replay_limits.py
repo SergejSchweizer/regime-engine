@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ReplayGuardrailError(Exception):
     status_code: int
     error_code: str
@@ -54,7 +54,12 @@ class ReplayLimits:
     def validate_interval(self, start: datetime, end: datetime) -> None:
         for value, name in ((start, "start"), (end, "end")):
             if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
-                raise ReplayGuardrailError(400, "invalid_replay_interval", f"{name} must be UTC", False)
+                raise ReplayGuardrailError(
+                    400,
+                    "invalid_replay_interval",
+                    f"{name} must be UTC",
+                    False,
+                )
         if start > end:
             raise ReplayGuardrailError(
                 400,
