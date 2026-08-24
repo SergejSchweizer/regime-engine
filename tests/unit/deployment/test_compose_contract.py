@@ -112,7 +112,8 @@ def test_exact_runtime_defaults_and_trusted_lan_policy_are_composed() -> None:
     assert environment["OPENBLAS_NUM_THREADS"] == "1"
     assert environment["MKL_NUM_THREADS"] == "1"
     assert environment["MLFLOW_SERVER_ALLOWED_HOSTS"] == (
-        "${MLFLOW_SERVER_ALLOWED_HOSTS:-10.10.1.3,localhost,127.0.0.1}"
+        "${MLFLOW_SERVER_ALLOWED_HOSTS:-10.10.1.3,10.10.1.3:5000,localhost,localhost:5000,"
+        "127.0.0.1,127.0.0.1:5000}"
     )
     assert "*" not in environment["MLFLOW_SERVER_ALLOWED_HOSTS"]
     assert "*" not in environment["MLFLOW_SERVER_CORS_ALLOWED_ORIGINS"]
