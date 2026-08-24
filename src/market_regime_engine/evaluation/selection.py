@@ -24,7 +24,9 @@ class CandidateSelectionEvidence:
 
     def __post_init__(self) -> None:
         if self.accepted == bool(self.rejection_reasons):
-            raise ValueError("accepted candidates have no rejections; rejected candidates require them")
+            raise ValueError(
+                "accepted candidates have no rejections; rejected candidates require them"
+            )
         if self.accepted != (self.rank is not None):
             raise ValueError("only accepted candidates receive a statistical rank")
         if self.rank is not None and self.rank < 1:
@@ -42,7 +44,11 @@ class StatisticalChampionSelection:
     def __post_init__(self) -> None:
         if self.ranking_abs_tolerance != 1e-12:
             raise ValueError("statistical ranking tolerance must be exactly 1e-12")
-        if not self.ranked_candidate_ids or self.ranked_candidate_ids[0] != self.champion_candidate_id:
+        invalid_champion_order = (
+            not self.ranked_candidate_ids
+            or self.ranked_candidate_ids[0] != self.champion_candidate_id
+        )
+        if invalid_champion_order:
             raise ValueError("champion must be the first accepted ranked candidate")
         champion = next(
             (item for item in self.evidence if item.candidate_id == self.champion_candidate_id),
@@ -112,7 +118,9 @@ def _compare(left: CandidateAggregate, right: CandidateAggregate) -> int:
 def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalChampionSelection:
     """Apply hard gates then the exact seven-stage EVALUATION ranking."""
 
-    rejection_map = {candidate.candidate_id: _rejections(candidate) for candidate in grid.aggregates}
+    rejection_map = {
+        candidate.candidate_id: _rejections(candidate) for candidate in grid.aggregates
+    }
     accepted = tuple(
         candidate for candidate in grid.aggregates if not rejection_map[candidate.candidate_id]
     )
