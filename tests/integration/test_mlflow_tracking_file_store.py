@@ -11,12 +11,19 @@ from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 pytestmark = pytest.mark.integration
 
 
-def test_file_mlflow_port_persists_parent_child_params_metrics_and_artifact(tmp_path: Path) -> None:
+def test_file_mlflow_port_persists_parent_child_params_metrics_and_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
     tracking_uri = (tmp_path / "mlruns").as_uri()
     port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-test")
     parent = port.start_run(run_name="evaluation-xetra-build-1")
     child = port.start_run(run_name="gaussian_hmm_k2_full", parent_run_id=parent)
-    port.log_params(child, {"candidate_id": "gaussian_hmm_k2_full", "covariance_type": "full"})
+    port.log_params(
+        child,
+        {"candidate_id": "gaussian_hmm_k2_full", "covariance_type": "full"},
+    )
     port.log_metric_points(
         child,
         (
