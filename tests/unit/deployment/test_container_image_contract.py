@@ -26,10 +26,12 @@ def test_image_uses_frozen_repo_install_and_exact_runtime_versions() -> None:
     assert "COPY uv.lock pyproject.toml README.md ./" in dockerfile
     assert "apt-get install --no-install-recommends --yes build-essential" in dockerfile
     assert "build-essential libstdc++6" in dockerfile
-    assert "python -m pip install --no-cache-dir -r uv.lock" in dockerfile
+    assert "apt-mark manual libstdc++6" in dockerfile
+    assert "CC=g++ CXX=g++ python -m pip install --no-cache-dir -r uv.lock" in dockerfile
     assert "python -m pip install --no-cache-dir --no-deps ." in dockerfile
     assert "apt-get purge --auto-remove --yes build-essential" in dockerfile
     assert 'hmmlearn.__version__ == "0.3.3"' in dockerfile
+    assert "from hmmlearn.hmm import GaussianHMM" in dockerfile
     assert 'mlflow.__version__ == "3.15.1"' in dockerfile
     assert 'platform.python_version() == "3.14.7"' in dockerfile
     assert 'io.regime-engine.mlflow-version="3.15.1"' in dockerfile
