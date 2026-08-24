@@ -210,7 +210,7 @@ MVP is trusted-private-LAN only:
 - current MVP accepts trusted-LAN registry/operator access rather than claiming multi-tenant application-layer isolation;
 - future untrusted/public access requires a separate versioned authentication/authorization design composed into the same MLflow app.
 
-Feature PostgreSQL transport is TLS-required (`sslmode=require`). An implementation may not silently downgrade it.
+Feature PostgreSQL transport is explicitly plaintext on the trusted LAN (`sslmode=disable`) because the canonical server does not offer TLS. An implementation may not silently change it.
 
 No secret, credential-bearing DSN, raw feature vector or model binary payload may appear in logs/errors/API output.
 
@@ -817,7 +817,7 @@ Acceptance: exact quoted role; idempotent least privileges from DATA_SOURCE; rea
 - **Depends on:** PR-008
 - **Allowed:** `src/market_regime_engine/features/postgres_settings.py`, `postgres_pool.py`, unit/runtime integration tests
 
-Acceptance: exact names/defaults/TLS from DATA_SOURCE/section4; password-file support; lazy process-local pool; acquire/statement timeout; pool closes on worker shutdown; startup connection-budget validation; no credential logging; hermetic tests.
+Acceptance: exact names/defaults/plain-transport contract from DATA_SOURCE/section4; password-file support; lazy process-local pool; acquire/statement timeout; pool closes on worker shutdown; startup connection-budget validation; no credential logging; hermetic tests.
 
 ### PR-056 — Profile/model resolver/cache
 
@@ -919,7 +919,7 @@ Acceptance:
 - **Depends on:** PR-021, PR-057, PR-058
 - **Allowed:** external PG test/verify script plus deterministic loader-shaped fixture integration
 
-Acceptance: required integration hermetic; external opt-in target exact host/port, runtime DB/password, user `regime-engine`, `sslmode=require`; proves SELECT/source transaction/privileges/read-only; no destructive/write test.
+Acceptance: required integration hermetic; external opt-in target exact host/port, runtime DB/password, user `regime-engine`, `sslmode=disable`; proves non-TLS SELECT/source transaction/privileges/read-only; no destructive/write test.
 
 ### PR-061 — Exact local two-service Compose
 
@@ -1008,7 +1008,7 @@ Acceptance:
 - **Depends on:** PR-033, PR-034, PR-035, PR-061, PR-064, PR-065
 - **Allowed:** `README.md`, `API.md`, `OPERATIONS.md`, `ARCHITECTURE.md`, `DATA_SOURCE.md`, `EVALUATION.md`, `CONTRIBUTING.md`, consumer/integration docs
 
-Acceptance: all contract-owner docs consistent; no duplicate/override/addendum text; canonical names only; current-vintage limitation; complete-case clock; selection hashes/diagnostics; continued OOS PLL; final refit; exact API; one-port Gunicorn Compose; exact local `docker compose build --pull mlflow` then `docker compose up -d --no-build` workflow; local application image only/no application registry; cron uses local `docker compose exec -T mlflow`; TLS feature PG; trusted-LAN; cache/load/replay/staleness; lifecycle/CAS; backup/migration/secret rotation; image/version pinning; no Prometheus/5001/proxy.
+Acceptance: all contract-owner docs consistent; no duplicate/override/addendum text; canonical names only; current-vintage limitation; complete-case clock; selection hashes/diagnostics; continued OOS PLL; final refit; exact API; one-port Gunicorn Compose; exact local `docker compose build --pull mlflow` then `docker compose up -d --no-build` workflow; local application image only/no application registry; cron uses local `docker compose exec -T mlflow`; explicit plaintext feature PG on the trusted LAN; cache/load/replay/staleness; lifecycle/CAS; backup/migration/secret rotation; image/version pinning; no Prometheus/5001/proxy.
 
 ## Optional post-MVP challengers
 
@@ -1071,7 +1071,7 @@ Code-complete means all required PRs through PR-036 plus PR-056–066 are merged
 Deployment-ready additionally requires operator evidence that:
 
 1. the external `"regime-engine"` feature reader was created with the runtime database/secret;
-2. feature PostgreSQL accepts TLS `sslmode=require`;
+2. feature PostgreSQL accepts explicit plaintext `sslmode=disable` on the trusted LAN;
 3. PR-033 external feature-PG smoke passes;
 4. a clean/up-to-date repository checkout exists on the NAS `10.10.1.3` and Compose targets that host's local Unix-socket Docker daemon;
 5. the custom application image was built locally with `docker compose build --pull mlflow`, is present as `regime-engine-mlflow:local`, and its recorded local image ID matches the deployment evidence;

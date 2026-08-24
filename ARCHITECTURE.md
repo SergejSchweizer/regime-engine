@@ -32,7 +32,7 @@ Production exposes exactly one MLflow 3.15.1 HTTP service on `10.10.1.3:5000`:
 
 There is no standalone FastAPI/Uvicorn service, `mlflow models serve`, port 5001, reverse proxy, or Prometheus exporter. MLflow custom apps are Flask/WSGI and the deployment forces Gunicorn `gthread` workers.
 
-Compose contains exactly `mlflow` and private `mlflow-postgres`. Only `mlflow` publishes `5000:5000`. Feature PostgreSQL is external and uses a dedicated read-only `"regime-engine"` role with TLS `sslmode=require`; feature credentials and MLflow-backend credentials use separate environment namespaces.
+Compose contains exactly `mlflow` and private `mlflow-postgres`. Only `mlflow` publishes `5000:5000`. Feature PostgreSQL is external and uses a dedicated read-only trusted-LAN `"regime-engine"` role with explicit plaintext `sslmode=disable`; feature credentials and MLflow-backend credentials use separate environment namespaces.
 
 ## Local-only application image
 
@@ -57,7 +57,7 @@ Latest and fixed-model replay are causal forward-filter operations. Replay start
 
 ## Security and capacity
 
-The MVP is trusted-private-LAN only. Port 5000 must not be Internet exposed. Host/CORS configuration is explicit and non-wildcard. Feature transport requires TLS and secrets/credential-bearing DSNs/raw feature vectors/model binaries are excluded from logs and API errors.
+The MVP is trusted-private-LAN only. Port 5000 must not be Internet exposed. Host/CORS configuration is explicit and non-wildcard. The canonical feature PostgreSQL endpoint does not offer TLS, so feature transport uses explicit `sslmode=disable`; secrets/credential-bearing DSNs/raw feature vectors/model binaries are excluded from logs and API errors.
 
 Each Gunicorn worker owns a process-local model cache and psycopg pool. With production defaults: 4 workers x 4 threads, pool max 4, feature-PG connection budget 16, and one admitted replay per worker. Replay uses bounded synchronous request-thread work with cooperative deadlines; there is no hidden unbounded executor.
 

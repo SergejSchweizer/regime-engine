@@ -58,7 +58,7 @@ services:
       REGIME_FEATURE_PGDATABASE: ${REGIME_FEATURE_PGDATABASE:?REGIME_FEATURE_PGDATABASE is required}
       REGIME_FEATURE_PGUSER: ${REGIME_FEATURE_PGUSER:-regime-engine}
       REGIME_FEATURE_PGPASSWORD_FILE: /run/secrets/regime_feature_password
-      REGIME_FEATURE_PGSSLMODE: ${REGIME_FEATURE_PGSSLMODE:-require}
+      REGIME_FEATURE_PGSSLMODE: ${REGIME_FEATURE_PGSSLMODE:-disable}
     secrets:
       - mlflow_backend_password
       - regime_feature_password
