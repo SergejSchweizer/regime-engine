@@ -12,7 +12,7 @@ PR-061 defines the production Compose topology for `regime-engine`. The deployme
 The feature PostgreSQL at `10.10.1.3:54321` is external and never becomes a Compose service. MLflow backend metadata and feature-source credentials/settings are separate namespaces.
 
 Persistent MLflow state uses explicit host bind mounts below
-`/volume2/docker/mfllow`: PostgreSQL data is in `postgres/` and MLflow
+`/volume2/docker/mlflow`: PostgreSQL data is in `postgres/` and MLflow
 artifacts are in `artifacts/`. These paths are local-host storage, not a remote
 Docker volume or an application-image registry. Existing named-volume state
 must be moved only with a verified backup and the documented storage migration

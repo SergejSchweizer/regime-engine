@@ -62,7 +62,7 @@ services:
       - regime_feature_password
     volumes:
       - type: bind
-        source: ${MLFLOW_ARTIFACTS_HOST_PATH:-/volume2/docker/mfllow/artifacts}
+        source: ${MLFLOW_ARTIFACTS_HOST_PATH:-/volume2/docker/mlflow/artifacts}
         target: /mlflow/artifacts
 
   mlflow-postgres:
@@ -78,7 +78,7 @@ services:
       - mlflow_backend_password
     volumes:
       - type: bind
-        source: ${MLFLOW_BACKEND_DATA_HOST_PATH:-/volume2/docker/mfllow/postgres}
+        source: ${MLFLOW_BACKEND_DATA_HOST_PATH:-/volume2/docker/mlflow/postgres}
         target: /var/lib/postgresql
     healthcheck:
       test:
