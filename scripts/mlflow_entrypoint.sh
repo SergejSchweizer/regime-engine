@@ -47,7 +47,8 @@ unset backend_password
 backend_uri="postgresql+psycopg://${backend_user}:${backend_password_escaped}@mlflow-postgres:5432/${backend_db}"
 unset backend_password_escaped
 
-exec mlflow server \
+exec setpriv --reuid 10001 --regid 10001 --init-groups \
+  mlflow server \
   --app-name regime-engine \
   --backend-store-uri "$backend_uri" \
   --artifacts-destination "$MLFLOW_ARTIFACT_ROOT" \

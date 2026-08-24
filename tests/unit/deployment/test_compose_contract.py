@@ -5,6 +5,7 @@ BUILD = "scripts/local_compose_build.sh"
 UP = "scripts/local_compose_up.sh"
 DOWN = "scripts/local_compose_down.sh"
 VERIFY = "scripts/verify_local_compose.sh"
+COMPOSE_PROVENANCE = "scripts/compose_provenance_env.sh"
 DEPLOYMENT_DOC = "docs/deployment.md"
 POSTGRES_DIGEST = "sha256:432b3b824c0769275ec9b0947736ef8b376d6997bcaa9de29818f613819c2feb"
 AMD64_DIGEST = "sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
@@ -38,6 +39,7 @@ def test_mlflow_is_local_build_only_and_never_registry_pulled() -> None:
     mlflow = services["mlflow"]
     assert mlflow["image"] == "regime-engine-mlflow:local"
     assert mlflow["pull_policy"] == "never"
+    assert mlflow["user"] == "0:0"
     assert mlflow["build"]["context"] == "."
     assert mlflow["build"]["dockerfile"] == "Dockerfile"
     text = _text(COMPOSE).lower()
@@ -145,11 +147,16 @@ def test_scripts_enforce_local_build_and_no_build_start_contract() -> None:
     assert "docker compose build --pull mlflow" in build
     assert "docker compose up -d --no-build" in up
     assert "docker image inspect regime-engine-mlflow:local" in up
+    assert "source scripts/compose_provenance_env.sh" in build
+    assert "source scripts/compose_provenance_env.sh" in up
+    assert "export REGIME_ENGINE_GIT_SHA" in _text(COMPOSE_PROVENANCE)
+    assert "export REGIME_ENGINE_BUILD_TIMESTAMP" in _text(COMPOSE_PROVENANCE)
     for script in (build, up, down, verify):
         assert "docker context show" in script
         assert "docker context inspect" in script
         assert "unix://*" in script
         assert "remote DOCKER_HOST is forbidden" in script
+        assert "compose_provenance_env.sh" in script
     assert "docker buildx inspect" in build
     assert "Endpoint:" in build
     assert ".Current" not in build

@@ -31,6 +31,8 @@ case "$DOCKER_ENDPOINT" in
   *) fail "Docker context $DOCKER_CONTEXT is not local Unix-socket based: $DOCKER_ENDPOINT" ;;
 esac
 
+source "$(git rev-parse --show-toplevel)/scripts/compose_provenance_env.sh"
+
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   printf 'regime-engine model cycle: profile %s is already running; deterministic no-op\n' "$PROFILE" >&2

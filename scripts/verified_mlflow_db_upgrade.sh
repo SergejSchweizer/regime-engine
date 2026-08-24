@@ -19,6 +19,7 @@ assert_local_docker() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 assert_local_docker
+source scripts/compose_provenance_env.sh
 [[ $# -eq 1 ]] || fail "usage: scripts/verified_mlflow_db_upgrade.sh <verified-backup-directory>"
 BACKUP_DIR="$1"
 

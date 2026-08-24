@@ -46,7 +46,7 @@ MLFLOW_BACKEND_DB_USER
 MLFLOW_BACKEND_DB_PASSWORD_FILE
 ```
 
-The password is read from the mounted Docker secret file and URI-escaped before the PostgreSQL backend URI is constructed. The script does not enable shell tracing or print the credential-bearing URI. `MLFLOW_ARTIFACT_ROOT` defaults to `/mlflow/artifacts`.
+The password is read from the mounted Docker secret file and URI-escaped before the PostgreSQL backend URI is constructed. For Compose file secrets, the entrypoint begins as root only to read the mode-`0600` secret and immediately drops the MLflow process to UID/GID `10001` using `setpriv`. The script does not enable shell tracing or print the credential-bearing URI. `MLFLOW_ARTIFACT_ROOT` defaults to `/mlflow/artifacts`.
 
 Feature PostgreSQL credentials remain a separate runtime concern and must use the `REGIME_FEATURE_*` variables defined by `DATA_SOURCE.md`; they are never folded into the MLflow backend variables.
 

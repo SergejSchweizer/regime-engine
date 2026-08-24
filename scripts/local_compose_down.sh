@@ -19,5 +19,6 @@ assert_local_docker() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 assert_local_docker
+source scripts/compose_provenance_env.sh
 
 docker compose down
