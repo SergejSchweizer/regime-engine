@@ -23,7 +23,15 @@ def test_external_feature_postgres_is_tls_read_only_and_least_privilege() -> Non
     assert settings.user == "regime-engine"
     assert settings.sslmode == "require"
 
-    with psycopg.connect(**settings.connection_kwargs()) as connection:
+    try:
+        connection = psycopg.connect(**settings.connection_kwargs())
+    except psycopg.OperationalError:
+        raise AssertionError(
+            "external feature PostgreSQL connection failed; verify the endpoint "
+            "accepts TLS with sslmode=require"
+        ) from None
+
+    with connection:
         with connection.cursor() as cursor:
             cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             cursor.execute(
