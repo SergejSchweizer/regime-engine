@@ -49,6 +49,8 @@ class FileMlflowTrackingPort:
     ) -> None:
         self._client = MlflowClient(tracking_uri=tracking_uri)
         experiment = self._client.get_experiment_by_name(experiment_name)
+        if experiment is not None and experiment.lifecycle_stage != "active":
+            self._client.restore_experiment(experiment.experiment_id)
         self._experiment_id = (
             self._client.create_experiment(experiment_name)
             if experiment is None
