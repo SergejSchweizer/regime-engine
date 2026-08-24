@@ -38,12 +38,19 @@ class ProfileRegistry:
             raise ValueError("profile registry contains duplicate profile IDs")
         self._targets = mapping
 
-    def resolve(self, profile_id: str, profile_config_version: int | None = None) -> ProfileModelTarget:
+    def resolve(
+        self,
+        profile_id: str,
+        profile_config_version: int | None = None,
+    ) -> ProfileModelTarget:
         try:
             target = self._targets[profile_id]
         except KeyError as exc:
             raise KeyError(f"unknown public profile: {profile_id}") from exc
-        if profile_config_version is not None and profile_config_version != target.profile_config_version:
+        if (
+            profile_config_version is not None
+            and profile_config_version != target.profile_config_version
+        ):
             raise ValueError(
                 f"unsupported profile configuration version for {profile_id}: "
                 f"{profile_config_version}"
