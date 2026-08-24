@@ -57,7 +57,7 @@ class FakePool:
         self.closed = True
 
 
-def test_exact_defaults_tls_password_file_and_safe_summary(tmp_path: Path) -> None:
+def test_exact_defaults_plain_transport_password_file_and_safe_summary(tmp_path: Path) -> None:
     secret = tmp_path / "feature-password"
     secret.write_text("s3cr3t\n", encoding="utf-8")
     settings = FeaturePostgresSettings.from_env(
@@ -69,7 +69,7 @@ def test_exact_defaults_tls_password_file_and_safe_summary(tmp_path: Path) -> No
     assert settings.host == "10.10.1.3"
     assert settings.port == 54321
     assert settings.user == "regime-engine"
-    assert settings.sslmode == "require"
+    assert settings.sslmode == "disable"
     assert settings.pool_min_size == 1
     assert settings.pool_max_size == 4
     assert settings.acquire_timeout_seconds == 5
@@ -79,7 +79,7 @@ def test_exact_defaults_tls_password_file_and_safe_summary(tmp_path: Path) -> No
     assert "s3cr3t" not in repr(settings.safe_summary())
 
 
-def test_required_database_password_and_tls_fail_closed(tmp_path: Path) -> None:
+def test_required_database_password_and_transport_contract_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="PGDATABASE"):
         FeaturePostgresSettings.from_env({"REGIME_FEATURE_PGPASSWORD": "x"})
     with pytest.raises(ValueError, match="password"):
@@ -99,7 +99,7 @@ def test_required_database_password_and_tls_fail_closed(tmp_path: Path) -> None:
             {
                 "REGIME_FEATURE_PGDATABASE": "features",
                 "REGIME_FEATURE_PGPASSWORD": "x",
-                "REGIME_FEATURE_PGSSLMODE": "prefer",
+                "REGIME_FEATURE_PGSSLMODE": "require",
             }
         )
 

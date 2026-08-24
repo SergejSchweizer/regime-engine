@@ -89,7 +89,7 @@ def test_backend_and_feature_database_settings_are_strictly_namespaced() -> None
     assert environment["REGIME_FEATURE_PGPORT"] == "${REGIME_FEATURE_PGPORT:-54321}"
     assert environment["REGIME_FEATURE_PGUSER"] == ("${REGIME_FEATURE_PGUSER:-regime-engine}")
     assert environment["REGIME_FEATURE_PGPASSWORD_FILE"] == ("/run/secrets/regime_feature_password")
-    assert environment["REGIME_FEATURE_PGSSLMODE"] == "${REGIME_FEATURE_PGSSLMODE:-require}"
+    assert environment["REGIME_FEATURE_PGSSLMODE"] == "${REGIME_FEATURE_PGSSLMODE:-disable}"
     generic_pg = {"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"}
     assert not (generic_pg & set(environment))
 

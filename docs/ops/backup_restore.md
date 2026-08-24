@@ -76,7 +76,7 @@ The external feature database is owned by `regime-loader` infrastructure, so thi
 
 1. Have the external database operator issue a new password for the existing quoted role `"regime-engine"` while retaining a rollback path for the old secret.
 2. Store the new value in a new `0600` file and point `REGIME_FEATURE_PGPASSWORD_SECRET_FILE` at that file locally.
-3. Before revoking the old secret, run the external read-only feature-PG smoke with the new credential and `sslmode=require`.
+3. Before revoking the old secret, run the external read-only feature-PG smoke with the new credential and `sslmode=disable`.
 4. Recreate only `mlflow` with `docker compose up -d --no-build --force-recreate mlflow`, then run local Compose verification and the optional `xetra` latest smoke.
 5. Only after all checks pass may the external operator revoke the old secret. On failure, restore the old secret path before any revocation.
 

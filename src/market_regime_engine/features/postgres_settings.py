@@ -9,7 +9,7 @@ from pathlib import Path
 _FEATURE_HOST = "10.10.1.3"
 _FEATURE_PORT = 54321
 _FEATURE_USER = "regime-engine"
-_FEATURE_SSLMODE = "require"
+_FEATURE_SSLMODE = "disable"
 _POOL_MIN = 1
 _POOL_MAX = 4
 _ACQUIRE_TIMEOUT = 5.0
@@ -41,7 +41,7 @@ class FeaturePostgresSettings:
         if self.user != _FEATURE_USER:
             raise ValueError("feature PostgreSQL user must be exactly regime-engine")
         if self.sslmode != _FEATURE_SSLMODE:
-            raise ValueError("feature PostgreSQL sslmode must be exactly require")
+            raise ValueError("feature PostgreSQL sslmode must be exactly disable")
         invalid_pool_bounds = (
             self.pool_min_size < 0
             or self.pool_max_size < 1

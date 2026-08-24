@@ -16,19 +16,19 @@ def _external_settings() -> FeaturePostgresSettings:
     return FeaturePostgresSettings.from_env(os.environ)
 
 
-def test_external_feature_postgres_is_tls_read_only_and_least_privilege() -> None:
+def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> None:
     settings = _external_settings()
     assert settings.host == "10.10.1.3"
     assert settings.port == 54321
     assert settings.user == "regime-engine"
-    assert settings.sslmode == "require"
+    assert settings.sslmode == "disable"
 
     try:
         connection = psycopg.connect(**settings.connection_kwargs())
     except psycopg.OperationalError:
         raise AssertionError(
             "external feature PostgreSQL connection failed; verify the endpoint "
-            "accepts TLS with sslmode=require"
+            "accepts plain transport with sslmode=disable"
         ) from None
 
     with connection:
@@ -45,7 +45,7 @@ def test_external_feature_postgres_is_tls_read_only_and_least_privilege() -> Non
 
             cursor.execute("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
             ssl_row = cursor.fetchone()
-            assert ssl_row is not None and ssl_row[0] is True
+            assert ssl_row is not None and ssl_row[0] is False
 
             cursor.execute(
                 "SELECT "

@@ -49,7 +49,7 @@ fi
 export REGIME_FEATURE_PGHOST="${REGIME_FEATURE_PGHOST:-10.10.1.3}"
 export REGIME_FEATURE_PGPORT="${REGIME_FEATURE_PGPORT:-54321}"
 export REGIME_FEATURE_PGUSER="${REGIME_FEATURE_PGUSER:-regime-engine}"
-export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-require}"
+export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-disable}"
 
 [[ "$REGIME_FEATURE_PGHOST" == "10.10.1.3" ]] || {
   echo "external feature PostgreSQL host must be exactly 10.10.1.3" >&2
@@ -63,8 +63,8 @@ export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-require}"
   echo "external feature PostgreSQL user must be exactly regime-engine" >&2
   exit 2
 }
-[[ "$REGIME_FEATURE_PGSSLMODE" == "require" ]] || {
-  echo "external feature PostgreSQL sslmode must be exactly require" >&2
+[[ "$REGIME_FEATURE_PGSSLMODE" == "disable" ]] || {
+  echo "external feature PostgreSQL sslmode must be exactly disable" >&2
   exit 2
 }
 

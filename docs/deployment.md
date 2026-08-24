@@ -43,7 +43,7 @@ local `.env` to the UID/GID that owns `/volume2/docker/mlflow` (for this host,
 `1016` and `100`). This keeps database and artifact writes non-root while
 leaving the portable image defaults unchanged.
 
-`REGIME_FEATURE_PGDATABASE` and the MLflow backend database/user are required runtime values with no guessed defaults. Feature transport is fixed to `sslmode=require`; do not downgrade it.
+`REGIME_FEATURE_PGDATABASE` and the MLflow backend database/user are required runtime values with no guessed defaults. The configured trusted-LAN feature server does not offer TLS, so feature transport is fixed to `sslmode=disable`; do not silently change the transport mode.
 
 The trusted-LAN host/origin defaults contain only `10.10.1.3`, localhost and loopback, with their explicit `:5000` Host-header forms. Do not use wildcard Host/CORS values. Network/firewall policy must keep port 5000 private to trusted clients/operators.
 
