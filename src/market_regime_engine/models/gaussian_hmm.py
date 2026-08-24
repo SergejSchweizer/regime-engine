@@ -66,9 +66,7 @@ def _probability_vector(values: npt.ArrayLike, state_count: int, name: str) -> A
     result = np.asarray(values, dtype=np.float64)
     if result.shape != (state_count,) or not np.all(np.isfinite(result)):
         raise ValueError(f"{name} has invalid shape or nonfinite values")
-    if np.any(result < 0.0) or not np.isclose(
-        float(result.sum()), 1.0, rtol=0.0, atol=_PROB_TOL
-    ):
+    if np.any(result < 0.0) or not np.isclose(float(result.sum()), 1.0, rtol=0.0, atol=_PROB_TOL):
         raise ValueError(f"{name} must be nonnegative and normalized within 1e-10")
     return result
 
