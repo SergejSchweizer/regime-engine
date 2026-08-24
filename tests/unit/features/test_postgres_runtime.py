@@ -76,6 +76,7 @@ def test_exact_defaults_plain_transport_password_file_and_safe_summary(tmp_path:
     assert settings.statement_timeout_seconds == 30
     assert settings.connection_budget == 16
     assert settings.connection_kwargs()["password"] == "s3cr3t"
+    assert "s3cr3t" not in repr(settings)
     assert "s3cr3t" not in repr(settings.safe_summary())
 
 
