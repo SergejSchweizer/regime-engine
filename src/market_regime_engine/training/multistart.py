@@ -130,7 +130,9 @@ def run_multistart(
                 diagnostics.append(_failure(seed, "invalid iteration count", converged=True))
                 continue
             if not isfinite(result.train_log_likelihood):
-                diagnostics.append(_failure(seed, "non-finite TRAIN log likelihood", converged=True))
+                diagnostics.append(
+                    _failure(seed, "non-finite TRAIN log likelihood", converged=True)
+                )
                 continue
             diagnostics.append(_successful_diagnostic(result))
             valid_results.append(result)
