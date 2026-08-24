@@ -122,9 +122,7 @@ class MlflowModelRegistry:
     """Concrete registry boundary with production-package validation and audited CAS."""
 
     def __init__(self, client: _RegistryClient | None = None) -> None:
-        self._client = (
-            client if client is not None else cast(_RegistryClient, MlflowClient())
-        )
+        self._client = client if client is not None else cast(_RegistryClient, MlflowClient())
 
     def register_production_model(
         self,
