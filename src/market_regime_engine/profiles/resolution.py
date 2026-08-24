@@ -11,8 +11,7 @@ from market_regime_engine.feature_selection.contracts import (
 from market_regime_engine.profiles.config import ModelProfile
 
 EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4)
-EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE = 48
-EXPECTED_PRELIMINARY_MEDOID_COUNT = 8
+_PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
 
 
 def _require_lower_sha256(value: str, field_name: str) -> None:
@@ -57,16 +56,19 @@ class ResolvedCandidateProfile:
             self.feature_selection_execution_hash,
             "feature_selection_execution_hash",
         )
+        expected_universe, expected_medoids = _PROFILE_CONTRACTS[
+            1 if len(self.original_feature_universe) == 48 else 2
+        ]
         if (
-            len(self.original_feature_universe) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE
-            or len(set(self.original_feature_universe)) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE
+            len(self.original_feature_universe) != expected_universe
+            or len(set(self.original_feature_universe)) != expected_universe
         ):
             raise ValueError(
                 "original Xetra feature universe must contain exactly 48 unique features"
             )
         if (
-            len(self.preliminary_medoids) != EXPECTED_PRELIMINARY_MEDOID_COUNT
-            or len(set(self.preliminary_medoids)) != EXPECTED_PRELIMINARY_MEDOID_COUNT
+            len(self.preliminary_medoids) != expected_medoids
+            or len(set(self.preliminary_medoids)) != expected_medoids
         ):
             raise ValueError("preliminary medoids must contain exactly eight unique features")
         universe = set(self.original_feature_universe)
@@ -100,8 +102,8 @@ class ResolvedSelectedFeatureProfile:
     candidates: tuple[ResolvedCandidateProfile, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version != 1:
-            raise ValueError("resolved public profile must be xetra configuration version 1")
+        if self.profile_id != "xetra" or self.profile_config_version not in _PROFILE_CONTRACTS:
+            raise ValueError("resolved public profile must use a supported xetra configuration")
         if self.registered_model != "regime-xetra":
             raise ValueError("resolved Xetra registered model must be regime-xetra")
         if not self.source_build_id or self.source_build_id.strip() != self.source_build_id:
@@ -175,10 +177,9 @@ def _validate_selection_against_policy(
 ) -> None:
     if policy.policy_id != selection.policy_id:
         raise ValueError("feature-selection policy/result policy_id mismatch")
-    if len(policy.feature_universe) != EXPECTED_XETRA_FEATURE_UNIVERSE_SIZE:
-        raise ValueError(
-            "Xetra feature-selection policy must retain the original 48-feature universe"
-        )
+    expected_universe, _ = _PROFILE_CONTRACTS[1 if policy.policy_id.endswith("v1") else 2]
+    if len(policy.feature_universe) != expected_universe:
+        raise ValueError("Xetra feature-selection policy has an invalid feature-universe size")
     evidence = selection.evidence
     if tuple(block.block_id for block in evidence.block_evidence) != tuple(
         block.block_id for block in policy.blocks
@@ -202,8 +203,8 @@ def resolve_selected_feature_profile(
 ) -> ResolvedSelectedFeatureProfile:
     """Bind the frozen first-TRAIN selection to every configured Gaussian candidate."""
 
-    if profile.profile_id != "xetra" or profile.profile_config_version != 1:
-        raise ValueError("only the public xetra profile configuration version 1 is supported")
+    if profile.profile_id != "xetra" or profile.profile_config_version not in _PROFILE_CONTRACTS:
+        raise ValueError("only supported public xetra profile configurations are allowed")
     if profile.feature_selection.policy_id != policy.policy_id:
         raise ValueError("model profile feature-selection policy_id mismatch")
     if profile.feature_selection.static_features:

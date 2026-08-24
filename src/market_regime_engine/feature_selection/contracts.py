@@ -36,10 +36,16 @@ class FeatureSelectionPolicy:
     numeric_tie_abs_tolerance: float = 1e-12
 
     def __post_init__(self) -> None:
-        if self.policy_id != "xetra_semantic_medoid_v1":
+        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2"}:
             raise ValueError("unsupported feature-selection policy_id")
-        if len(self.blocks) != 8 or len({block.block_id for block in self.blocks}) != 8:
-            raise ValueError("policy v1 requires exactly eight unique semantic blocks")
+        required_blocks = 8 if self.policy_id.endswith("v1") else 7
+        if (
+            len(self.blocks) != required_blocks
+            or len({block.block_id for block in self.blocks}) != required_blocks
+        ):
+            raise ValueError(
+                "feature-selection policy requires eight blocks for v1 or seven for v2"
+            )
         all_features = tuple(feature for block in self.blocks for feature in block.features)
         if len(set(all_features)) != len(all_features):
             raise ValueError("each configured feature must belong to exactly one block")
@@ -132,19 +138,23 @@ class FeatureSelectionEvidence:
     def __post_init__(self) -> None:
         if self.first_train_source_row_count < 1:
             raise ValueError("first TRAIN source row count must be positive")
-        if len(self.block_evidence) != 8 or len(self.preliminary_medoids) != 8:
-            raise ValueError("selection evidence requires exactly eight Stage-1 blocks/medoids")
+        block_count = len(self.block_evidence)
+        if block_count not in {7, 8} or len(self.preliminary_medoids) != block_count:
+            raise ValueError(
+                "selection evidence requires exactly eight Stage-1 blocks/medoids for v1, "
+                "or seven for v2"
+            )
         if tuple(block.winner for block in self.block_evidence) != self.preliminary_medoids:
             raise ValueError("preliminary medoids must preserve canonical block order")
         if self.stage2_complete_observation_count < 0:
             raise ValueError("Stage-2 complete observation count cannot be negative")
-        if len(self.stage2_abs_spearman_matrix) != 8 or any(
-            len(row) != 8 for row in self.stage2_abs_spearman_matrix
+        if len(self.stage2_abs_spearman_matrix) != block_count or any(
+            len(row) != block_count for row in self.stage2_abs_spearman_matrix
         ):
-            raise ValueError("Stage-2 evidence matrix must be fixed 8x8")
+            raise ValueError("Stage-2 evidence matrix must be fixed 8x8 for v1, or 7x7 for v2")
         if any(not isfinite(value) for row in self.stage2_abs_spearman_matrix for value in row):
             raise ValueError("Stage-2 matrix values must be finite")
-        if not 1 <= len(self.final_features) <= 8 or len(set(self.final_features)) != len(
+        if not 1 <= len(self.final_features) <= block_count or len(set(self.final_features)) != len(
             self.final_features
         ):
             raise ValueError("final feature set must be duplicate-free with dimension 1..8")
@@ -164,7 +174,7 @@ class FeatureSelectionResult:
     evidence: FeatureSelectionEvidence
 
     def __post_init__(self) -> None:
-        if self.policy_id != "xetra_semantic_medoid_v1":
+        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2"}:
             raise ValueError("unsupported result policy_id")
         if self.final_features != self.evidence.final_features:
             raise ValueError("result features must match immutable selection evidence")

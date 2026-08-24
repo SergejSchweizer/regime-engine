@@ -46,8 +46,8 @@ class ProductionModelArtifact:
     skipped_incomplete_observation_count: int
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version != 1:
-            raise ValueError("production artifact requires xetra profile configuration version 1")
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
+            raise ValueError("production artifact requires a supported xetra profile configuration")
         if self.registered_model != "regime-xetra":
             raise ValueError("production artifact registered model must be exactly regime-xetra")
         if self.state_count not in (2, 3, 4):

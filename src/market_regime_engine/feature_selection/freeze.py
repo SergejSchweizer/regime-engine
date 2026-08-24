@@ -26,8 +26,11 @@ def stage2_abs_spearman_matrix(
 ) -> tuple[int, tuple[tuple[float, ...], ...]]:
     """Build the one fixed complete-case 8x8 absolute-Spearman matrix."""
 
-    if len(preliminary_medoids) != 8 or len(set(preliminary_medoids)) != 8:
-        raise ValueError("Stage 2 requires exactly eight unique preliminary medoids")
+    block_count = len(policy.blocks)
+    if len(preliminary_medoids) != block_count or len(set(preliminary_medoids)) != block_count:
+        raise ValueError(
+            "Stage 2 requires exactly eight unique preliminary medoids for v1, or seven for v2"
+        )
     missing = tuple(
         feature for feature in preliminary_medoids if feature not in first_train_rows.columns
     )
@@ -44,16 +47,18 @@ def stage2_abs_spearman_matrix(
     if not np.all(np.isfinite(values)):
         raise ValueError("Stage-2 complete-case values must be finite")
     matrix = np.abs(average_rank_spearman(complete))
-    if matrix.shape != (8, 8) or not np.all(np.isfinite(matrix)):
-        raise ValueError("Stage-2 absolute Spearman matrix must be finite 8x8")
+    if matrix.shape != (block_count, block_count) or not np.all(np.isfinite(matrix)):
+        raise ValueError(
+            "Stage-2 absolute Spearman matrix must be finite 8x8 for v1, or 7x7 for v2"
+        )
     return complete_count, tuple(tuple(float(value) for value in row) for row in matrix)
 
 
 def _winner_score_by_feature(
     block_evidence: tuple[BlockSelectionEvidence, ...],
 ) -> dict[str, tuple[float, float, int]]:
-    if len(block_evidence) != 8:
-        raise ValueError("Stage-2 pruning requires exactly eight block evidence records")
+    if len(block_evidence) not in {7, 8}:
+        raise ValueError("Stage-2 pruning requires seven or eight block evidence records")
     result: dict[str, tuple[float, float, int]] = {}
     for block_position, block in enumerate(block_evidence):
         winner_score = next(
@@ -73,8 +78,8 @@ def _winner_score_by_feature(
             winner_score.coverage,
             block_position,
         )
-    if len(result) != 8:
-        raise ValueError("Stage-1 winners must be eight unique features")
+    if len(result) != len(block_evidence):
+        raise ValueError("Stage-1 winners must be unique by semantic block")
     return result
 
 
@@ -109,11 +114,18 @@ def prune_stage2(
 ) -> tuple[tuple[Stage2ConflictEvidence, ...], tuple[str, ...]]:
     """Prune fixed-matrix conflicts without recomputation or replacement."""
 
-    if len(preliminary_medoids) != 8 or len(set(preliminary_medoids)) != 8:
-        raise ValueError("Stage-2 pruning requires exactly eight unique preliminary medoids")
+    block_count = len(policy.blocks)
+    if len(preliminary_medoids) != block_count or len(set(preliminary_medoids)) != block_count:
+        raise ValueError(
+            "Stage-2 pruning requires exactly eight unique medoids for v1, or seven for v2"
+        )
+    if len(block_evidence) != block_count:
+        raise ValueError(
+            "Stage-2 pruning requires exactly eight block evidence records for v1, or seven for v2"
+        )
     matrix = np.asarray(stage2_abs_spearman_matrix, dtype=np.float64)
-    if matrix.shape != (8, 8) or not np.all(np.isfinite(matrix)):
-        raise ValueError("Stage-2 pruning matrix must be finite 8x8")
+    if matrix.shape != (block_count, block_count) or not np.all(np.isfinite(matrix)):
+        raise ValueError("Stage-2 pruning matrix must be finite 8x8 for v1, or 7x7 for v2")
     if np.any(matrix < 0.0) or np.any(matrix > 1.0):
         raise ValueError("Stage-2 absolute Spearman values must be in [0,1]")
 
@@ -123,8 +135,8 @@ def prune_stage2(
 
     candidates: list[tuple[float, int, int]] = []
     threshold = policy.maximum_cross_block_abs_spearman
-    for left in range(8):
-        for right in range(left + 1, 8):
+    for left in range(block_count):
+        for right in range(left + 1, block_count):
             value = float(matrix[left, right])
             if value > threshold:
                 candidates.append((value, left, right))
