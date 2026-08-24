@@ -21,7 +21,7 @@ def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> N
     assert "compose exec -T mlflow python" in text
 
 
-def test_model_cycle_script_runs_exact_changed-source_sequence_without_promotion() -> None:
+def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     status = text.index('run_cli status --profile "$PROFILE"')
     evaluate = text.index('run_cli evaluate --profile "$PROFILE"')
