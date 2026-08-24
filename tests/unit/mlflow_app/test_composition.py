@@ -206,9 +206,7 @@ def test_oos_missing_build_maps_to_404_without_leaking_path() -> None:
     oos = FakeOOS()
     oos.error = FileNotFoundError("/private/artifacts/xetra/build-secret")
     app = mlflow_app.create_app(dependencies=dependencies(oos=oos))
-    response = app.test_client().get(
-        "/regime-engine/v1/profiles/xetra/oos-builds/missing-build"
-    )
+    response = app.test_client().get("/regime-engine/v1/profiles/xetra/oos-builds/missing-build")
     assert response.status_code == 404
     payload = response.get_json()
     assert payload["error_code"] == "oos_build_not_found"
