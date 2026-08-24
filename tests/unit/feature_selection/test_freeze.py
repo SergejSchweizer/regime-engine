@@ -55,9 +55,7 @@ def block_evidence(
 
 
 def identity_matrix() -> tuple[tuple[float, ...], ...]:
-    return tuple(
-        tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8)
-    )
+    return tuple(tuple(1.0 if row == column else 0.1 for column in range(8)) for row in range(8))
 
 
 def set_pair(
