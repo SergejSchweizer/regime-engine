@@ -98,9 +98,7 @@ def _scalar_fold_metrics(fold: WalkForwardFoldResult) -> dict[str, float | None]
     return {
         "fold_train_loglik": fold.train_log_likelihood,
         "fold_oos_predictive_loglik": fold.oos_predictive_log_likelihood,
-        "fold_oos_predictive_loglik_per_obs": (
-            fold.oos_predictive_log_likelihood_per_observation
-        ),
+        "fold_oos_predictive_loglik_per_obs": (fold.oos_predictive_log_likelihood_per_observation),
         "fold_aic": fold.aic,
         "fold_bic": fold.bic,
         "fold_multistart_success_rate": fold.multistart_success_rate,
@@ -306,10 +304,8 @@ def _validate_inputs(
         if evaluation.feature_order != first.feature_order:
             raise ValueError("all candidates must share identical frozen feature order")
         if (
-            evaluation.feature_selection_definition_hash
-            != first.feature_selection_definition_hash
-            or evaluation.feature_selection_execution_hash
-            != first.feature_selection_execution_hash
+            evaluation.feature_selection_definition_hash != first.feature_selection_definition_hash
+            or evaluation.feature_selection_execution_hash != first.feature_selection_execution_hash
         ):
             raise ValueError("all candidates must share identical feature-selection hashes")
     return ordered
@@ -377,12 +373,8 @@ def track_walk_forward_evaluations(
                     separators=(",", ":"),
                 ),
                 "feature_order_sha256": _feature_order_hash(evaluation.feature_order),
-                "feature_selection_definition_hash": (
-                    evaluation.feature_selection_definition_hash
-                ),
-                "feature_selection_execution_hash": (
-                    evaluation.feature_selection_execution_hash
-                ),
+                "feature_selection_definition_hash": (evaluation.feature_selection_definition_hash),
+                "feature_selection_execution_hash": (evaluation.feature_selection_execution_hash),
                 "multistart_seeds": "11,23,37,53,71,89,107,131",
                 "minimum_valid_starts": "6",
                 "minimum_multistart_success_rate": "0.75",
@@ -403,9 +395,7 @@ def track_walk_forward_evaluations(
             render_fold_history(evaluation, plan, metric_key, root)
             for metric_key in fold_history_metric_keys()
         ]
-        shared_scale = (
-            candidate_covariance_scale(evaluation) if evaluation.valid_folds else None
-        )
+        shared_scale = candidate_covariance_scale(evaluation) if evaluation.valid_folds else None
         for result, planned in zip(evaluation.folds, plan.folds, strict=True):
             fold_run_id = port.start_run(
                 run_name=result.fold_id,
