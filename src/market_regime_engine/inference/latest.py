@@ -45,10 +45,10 @@ def _filter_rows(
     alpha = initial
     count = 0
     for row in rows:
-        values = row.values
-        if any(value is None for value in values):
+        complete_values = tuple(value for value in row.values if value is not None)
+        if len(complete_values) != len(row.values):
             raise ValueError("resolved-model snapshot cannot contain incomplete feature rows")
-        matrix = np.asarray([[float(value) for value in values]], dtype=np.float64)
+        matrix = np.asarray([complete_values], dtype=np.float64)
         filtered = causal_filter(
             artifact.scaler.transform(matrix),
             artifact.hmm,
@@ -70,17 +70,13 @@ def latest_prediction(
     _validate_snapshot(artifact, snapshot)
     bounded = tuple(row for row in snapshot.rows if row.timestamp <= as_of)
     if as_of <= artifact.trained_through_timestamp:
-        rows = tuple(
-            row for row in bounded if row.timestamp >= artifact.inference_origin_timestamp
-        )
+        rows = tuple(row for row in bounded if row.timestamp >= artifact.inference_origin_timestamp)
         if not rows:
             raise ValueError("no_complete_observations")
         alpha, count = _filter_rows(artifact, rows, initial=None)
         return LatestInferenceResult(rows[-1].timestamp, alpha, count - 1)
 
-    subsequent = tuple(
-        row for row in bounded if row.timestamp > artifact.trained_through_timestamp
-    )
+    subsequent = tuple(row for row in bounded if row.timestamp > artifact.trained_through_timestamp)
     if subsequent:
         alpha, count = _filter_rows(
             artifact,
