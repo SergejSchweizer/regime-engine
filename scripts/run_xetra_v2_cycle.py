@@ -59,8 +59,12 @@ def _policy(root: Path) -> FeatureSelectionPolicy:
     )
 
 
-def _first_eligible_window(rows: pd.DataFrame, policy: FeatureSelectionPolicy, size: int) -> int:
+def _aligned_eligible_window(rows: pd.DataFrame, policy: FeatureSelectionPolicy, size: int) -> int:
+    """Choose an eligible origin whose final complete fold reaches the latest row."""
+
     for index in range(len(rows) - size + 1):
+        if (len(rows) - index - size) % 63 != 0:
+            continue
         window = rows.iloc[index : index + size]
         if all(
             window.loc[:, list(block.features)].notna().mean().max()
@@ -68,7 +72,7 @@ def _first_eligible_window(rows: pd.DataFrame, policy: FeatureSelectionPolicy, s
             for block in policy.blocks
         ):
             return index
-    raise ValueError("no source window satisfies the v2 semantic-block coverage contract")
+    raise ValueError("no aligned source window satisfies the v2 semantic-block coverage contract")
 
 
 def main() -> None:
@@ -88,7 +92,7 @@ def main() -> None:
     rows = pd.DataFrame([row.values for row in snapshot.rows], columns=policy.feature_universe)
     rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
     rows = rows.iloc[
-        _first_eligible_window(
+        _aligned_eligible_window(
             rows, policy, profile.walk_forward.minimum_train_source_observations
         ) :
     ].reset_index(drop=True)
