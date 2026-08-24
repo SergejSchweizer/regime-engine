@@ -17,14 +17,11 @@ assert_local_docker() {
   [[ "$endpoint" == unix://* ]] || fail "Docker context must use a local Unix socket: $context"
 
   if docker buildx version >/dev/null 2>&1; then
-    local builder builder_endpoint
-    builder="$(docker buildx ls --format '{{if .Current}}{{.Name}}{{end}}' | head -n 1)"
-    if [[ -n "$builder" ]]; then
-      while IFS= read -r builder_endpoint; do
-        [[ -z "$builder_endpoint" || "$builder_endpoint" == unix://* ]] \
-          || fail "remote Buildx endpoint is forbidden: $builder_endpoint"
-      done < <(docker buildx inspect "$builder" --format '{{range .Nodes}}{{.Endpoint}}{{"\n"}}{{end}}')
-    fi
+    local builder_endpoint
+    while IFS= read -r builder_endpoint; do
+      [[ "$builder_endpoint" == "default" || "$builder_endpoint" == unix://* ]] \
+        || fail "remote Buildx endpoint is forbidden: $builder_endpoint"
+    done < <(docker buildx inspect | awk -F: '/^[[:space:]]*Endpoint:/ {sub(/^[[:space:]]*/, "", $2); print $2}')
   fi
 }
 
