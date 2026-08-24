@@ -5,7 +5,7 @@ All procedures in this document run from the clean deployment checkout on the ho
 ## Host-state directory migration
 
 The persistent MLflow backend and artifacts live in
-`/volume2/docker/mfllow/postgres` and `/volume2/docker/mfllow/artifacts`.
+`/volume2/docker/mlflow/postgres` and `/volume2/docker/mlflow/artifacts`.
 When moving an existing named-volume deployment to these bind mounts, first
 create and verify a backup. Quiesce both services, copy the existing backend
 and artifact data into the empty target directories while the services remain
