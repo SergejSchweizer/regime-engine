@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-import market_regime_engine.contracts as contracts
-import market_regime_engine.mlflow_app.app as mlflow_app
-import market_regime_engine.mlflow_app.dependencies as app_dependencies
-import market_regime_engine.serving.replay_limits as replay_limits
+import datetime
+import importlib
 
 
-NOW = datetime(2026, 8, 24, 13, 45, tzinfo=UTC)
+contracts = importlib.import_module("market_regime_engine.contracts")
+mlflow_app = importlib.import_module("market_regime_engine.mlflow_app.app")
+app_dependencies = importlib.import_module("market_regime_engine.mlflow_app.dependencies")
+replay_limits = importlib.import_module("market_regime_engine.serving.replay_limits")
+
+NOW = datetime.datetime(2026, 8, 24, 13, 45, tzinfo=datetime.UTC)
 HEALTHY = app_dependencies.ReadinessSnapshot("healthy", True)
 
 
