@@ -117,9 +117,15 @@ class CandidateGridEvaluation:
                 raise ValueError("candidate source build differs inside candidate grid")
             if evaluation.feature_order != self.feature_order:
                 raise ValueError("candidate feature order differs inside candidate grid")
-            if evaluation.feature_selection_definition_hash != self.feature_selection_definition_hash:
+            if (
+                evaluation.feature_selection_definition_hash
+                != self.feature_selection_definition_hash
+            ):
                 raise ValueError("candidate definition hash differs inside candidate grid")
-            if evaluation.feature_selection_execution_hash != self.feature_selection_execution_hash:
+            if (
+                evaluation.feature_selection_execution_hash
+                != self.feature_selection_execution_hash
+            ):
                 raise ValueError("candidate execution hash differs inside candidate grid")
             if evaluation.evaluation_plan_hash != self.evaluation_plan_hash:
                 raise ValueError("candidate evaluation-plan hash differs inside candidate grid")
@@ -157,7 +163,12 @@ def aggregate_candidate(evaluation: WalkForwardEvaluation) -> CandidateAggregate
     )
     bic_values = tuple(fold.bic for fold in valid if fold.bic is not None)
     aic_values = tuple(fold.aic for fold in valid if fold.aic is not None)
-    if len(oos_values) != valid_count or len(bic_values) != valid_count or len(aic_values) != valid_count:
+    missing_required_metric = (
+        len(oos_values) != valid_count
+        or len(bic_values) != valid_count
+        or len(aic_values) != valid_count
+    )
+    if missing_required_metric:
         raise ValueError("valid fold is missing required candidate aggregate metric")
     if any(not isfinite(value) for value in (*oos_values, *bic_values, *aic_values)):
         raise ValueError("candidate aggregate inputs must be finite")
