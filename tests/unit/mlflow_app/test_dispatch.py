@@ -63,8 +63,15 @@ def test_parse_invocation_rejects_profile_unknown_fields_and_bad_operations() ->
 
 def test_parse_timestamps_and_replay_interval_fail_closed() -> None:
     assert parse_utc_timestamp("2026-01-01T00:00:00Z", "at").tzinfo is UTC
-    for value in (None, "", "not-a-time", "2026-01-01T00:00:00", "2026-01-01T01:00:00+01:00"):
-        with pytest.raises(ApiInputError, match="UTC|RFC3339"):
+    invalid_values = (
+        None,
+        "",
+        "not-a-time",
+        "2026-01-01T00:00:00",
+        "2026-01-01T01:00:00+01:00",
+    )
+    for value in invalid_values:
+        with pytest.raises(ApiInputError, match=r"UTC|RFC3339"):
             parse_utc_timestamp(value, "at")
 
     with pytest.raises(ApiInputError) as exc:
