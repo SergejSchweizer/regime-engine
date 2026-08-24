@@ -22,7 +22,9 @@ class ContinuedPredictiveLikelihood:
 
     def __post_init__(self) -> None:
         if self.test_observation_count < 1:
-            raise ValueError("TEST predictive likelihood requires at least one retained observation")
+            raise ValueError(
+                "TEST predictive likelihood requires at least one retained observation"
+            )
         if not isfinite(self.test_log_likelihood):
             raise ValueError("TEST predictive log likelihood must be finite")
         if not isfinite(self.test_log_likelihood_per_observation):
