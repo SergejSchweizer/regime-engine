@@ -76,9 +76,7 @@ def test_selection_mode_preserves_nulls_and_snapshot_transaction() -> None:
     )
     connection = FakeConnection(cursor)
     source = PostgresFeatureSource(lambda: connection, ("f1", "f2"))
-    snapshot = source.read(
-        FeatureRequest(("f2", "f1"), None, None, SourceMode.FEATURE_SELECTION)
-    )
+    snapshot = source.read(FeatureRequest(("f2", "f1"), None, None, SourceMode.FEATURE_SELECTION))
     assert snapshot.feature_names == ("f2", "f1")
     assert snapshot.rows[0].values == (1.0, None)
     assert snapshot.skipped_incomplete_row_count == 0
