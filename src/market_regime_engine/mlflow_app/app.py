@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from flask import Flask, jsonify
+from flask import Flask, Response, jsonify
 from mlflow.server import app as mlflow_app
-
 
 _INVOCATION_PATH = "/regime-engine/v1/profiles/<profile_id>/invocations"
 _OOS_PATH = "/regime-engine/v1/profiles/<profile_id>/oos-builds/<build_id>"
@@ -37,7 +36,7 @@ def create_app(app: Flask = mlflow_app) -> Flask:
     return app
 
 
-def _placeholder_invocation(profile_id: str):
+def _placeholder_invocation(profile_id: str) -> tuple[Response, int]:
     return (
         jsonify(
             {
@@ -52,7 +51,7 @@ def _placeholder_invocation(profile_id: str):
     )
 
 
-def _placeholder_oos(profile_id: str, build_id: str):
+def _placeholder_oos(profile_id: str, build_id: str) -> tuple[Response, int]:
     return (
         jsonify(
             {
@@ -68,7 +67,7 @@ def _placeholder_oos(profile_id: str, build_id: str):
     )
 
 
-def _placeholder_health():
+def _placeholder_health() -> Response:
     return jsonify(
         {
             "schema_version": "RegimeHealth.v1",
