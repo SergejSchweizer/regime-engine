@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 import pytest
 
 from market_regime_engine.mlflow_support.ports import MetricPoint, ResolvedModelVersion
-from market_regime_engine.mlflow_support.settings import MLflowSettings, PRODUCTION_MLFLOW_URI
+from market_regime_engine.mlflow_support.settings import (
+    MLflowSettings,
+    PRODUCTION_MLFLOW_URI,
+)
 
 
 def test_one_port_mlflow_settings_are_exact() -> None:
@@ -13,7 +16,10 @@ def test_one_port_mlflow_settings_are_exact() -> None:
     assert settings.tracking_uri == PRODUCTION_MLFLOW_URI == "http://10.10.1.3:5000"
     assert settings.registry_uri == settings.tracking_uri
     with pytest.raises(ValueError, match="tracking URI"):
-        MLflowSettings(tracking_uri="http://10.10.1.3:5001", registry_uri="http://10.10.1.3:5001")
+        MLflowSettings(
+            tracking_uri="http://10.10.1.3:5001",
+            registry_uri="http://10.10.1.3:5001",
+        )
 
 
 def test_alias_resolution_contract_returns_exact_immutable_version() -> None:
