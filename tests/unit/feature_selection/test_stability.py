@@ -42,7 +42,8 @@ def test_threshold_sensitivity_uses_exact_levels_and_only_085_is_canonical() -> 
     diagnostics = threshold_sensitivity(frozen_result(), policy())
     assert tuple(item.threshold for item in diagnostics) == THRESHOLD_SENSITIVITY_LEVELS
     assert tuple(item.canonical for item in diagnostics) == (False, True, False)
-    assert next(item for item in diagnostics if item.canonical).threshold == CANONICAL_STAGE2_THRESHOLD
+    canonical = next(item for item in diagnostics if item.canonical)
+    assert canonical.threshold == CANONICAL_STAGE2_THRESHOLD
     assert all(item.selected_features is not None for item in diagnostics)
 
 
@@ -87,7 +88,8 @@ def test_build_stability_diagnostics_preserves_frozen_identity() -> None:
     assert result.frozen_final_features == frozen.final_features
     assert result.frozen_definition_hash == frozen.feature_selection_definition_hash
     assert result.frozen_execution_hash == frozen.feature_selection_execution_hash
-    assert tuple(item.threshold for item in result.threshold_sensitivity) == (0.80, 0.85, 0.90)
+    thresholds = tuple(item.threshold for item in result.threshold_sensitivity)
+    assert thresholds == (0.80, 0.85, 0.90)
     assert result.shadow_folds[0].jaccard_overlap == 1.0
 
 
