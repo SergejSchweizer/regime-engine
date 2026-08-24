@@ -32,7 +32,11 @@ from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.states.alignment import StateAlignment, align_first_fold, align_to_reference
+from market_regime_engine.states.alignment import (
+    StateAlignment,
+    align_first_fold,
+    align_to_reference,
+)
 from market_regime_engine.states.signatures import StateSignature
 from market_regime_engine.training.multistart import MultistartResult, run_multistart
 
@@ -150,7 +154,9 @@ class WalkForwardFoldResult:
             if len(self.oos_timestamps) != self.test_model_observation_count:
                 raise ValueError("valid fold OOS timestamps must match retained TEST observations")
             if len(self.oos_filtered_probabilities) != self.test_model_observation_count:
-                raise ValueError("valid fold OOS probabilities must match retained TEST observations")
+                raise ValueError(
+                    "valid fold OOS probabilities must match retained TEST observations"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,9 +187,11 @@ class WalkForwardEvaluation:
         ):
             raise ValueError("walk-forward results must preserve complete planned fold order")
         _require_utc(self.evaluation_cutoff, "evaluation_cutoff")
-        if self.folds[-1].oos_timestamps:
-            if self.folds[-1].oos_timestamps[-1] > self.evaluation_cutoff:
-                raise ValueError("OOS evidence cannot extend beyond evaluation cutoff")
+        if (
+            self.folds[-1].oos_timestamps
+            and self.folds[-1].oos_timestamps[-1] > self.evaluation_cutoff
+        ):
+            raise ValueError("OOS evidence cannot extend beyond evaluation cutoff")
 
     @property
     def valid_folds(self) -> tuple[WalkForwardFoldResult, ...]:
