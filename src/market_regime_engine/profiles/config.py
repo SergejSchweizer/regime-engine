@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from hashlib import sha256
-import json
 from math import isclose
 from typing import Any
 
@@ -151,7 +151,13 @@ class ModelProfile:
     gates: EvaluationGates
 
     def __post_init__(self) -> None:
-        for field_name in ("profile_id", "registered_model", "production_alias", "challenger_alias"):
+        identity_fields = (
+            "profile_id",
+            "registered_model",
+            "production_alias",
+            "challenger_alias",
+        )
+        for field_name in identity_fields:
             value = getattr(self, field_name)
             if not value or value.strip() != value:
                 raise ValueError(f"{field_name} must be a non-empty trimmed string")
