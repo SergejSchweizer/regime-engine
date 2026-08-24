@@ -17,6 +17,9 @@ from market_regime_engine.mlflow_app.dispatch import (
     parse_oos_query,
     to_jsonable,
 )
+from market_regime_engine.mlflow_app.registry_compat import install_postgres_model_version_cast
+
+install_postgres_model_version_cast()
 
 _INVOCATION_PATH = "/regime-engine/v1/profiles/<profile_id>/invocations"
 _OOS_PATH = "/regime-engine/v1/profiles/<profile_id>/oos-builds/<build_id>"
