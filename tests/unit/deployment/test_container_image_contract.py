@@ -49,7 +49,10 @@ def test_image_is_non_root_and_contains_inspectable_dependency_sbom() -> None:
 
 def test_entrypoint_runs_one_mlflow_gunicorn_service_on_5000() -> None:
     script = _read(ENTRYPOINT)
-    assert "exec setpriv --reuid 10001 --regid 10001 --init-groups" in script
+    assert 'MLFLOW_RUNTIME_UID="${MLFLOW_RUNTIME_UID:-10001}"' in script
+    assert 'MLFLOW_RUNTIME_GID="${MLFLOW_RUNTIME_GID:-10001}"' in script
+    assert 'exec setpriv --reuid "$MLFLOW_RUNTIME_UID" --regid "$MLFLOW_RUNTIME_GID"' in script
+    assert "--clear-groups" in script
     assert "mlflow server" in script
     assert "--app-name regime-engine" in script
     assert "--host 0.0.0.0" in script

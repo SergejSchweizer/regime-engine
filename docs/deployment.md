@@ -33,8 +33,15 @@ Copy `.env.example` to `.env` on the deployment host and replace placeholders lo
 
 Secret files remain mode `0600`. Because Compose mounts file secrets as host bind
 mounts, the container entrypoint starts as root solely to read the backend secret
-and immediately launches MLflow as UID/GID `10001`; the application process does
-not run as root.
+and immediately launches MLflow as its configured non-root runtime UID/GID
+(`10001:10001` by default); the application process does not run as root.
+
+Some NAS filesystems enforce host ACLs for bind mounts independently of POSIX
+mode bits. On such hosts set `MLFLOW_RUNTIME_UID`, `MLFLOW_RUNTIME_GID`,
+`MLFLOW_POSTGRES_RUNTIME_UID`, and `MLFLOW_POSTGRES_RUNTIME_GID` in the ignored
+local `.env` to the UID/GID that owns `/volume2/docker/mlflow` (for this host,
+`1016` and `100`). This keeps database and artifact writes non-root while
+leaving the portable image defaults unchanged.
 
 `REGIME_FEATURE_PGDATABASE` and the MLflow backend database/user are required runtime values with no guessed defaults. Feature transport is fixed to `sslmode=require`; do not downgrade it.
 
