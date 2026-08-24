@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import pathlib
+from pathlib import Path
 import subprocess
 
 
-SCRIPT = pathlib.Path("scripts/model_cycle.sh")
+SCRIPT = Path("scripts/model_cycle.sh")
 
 
 def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> None:
