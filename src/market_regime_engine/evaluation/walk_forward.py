@@ -174,8 +174,8 @@ class WalkForwardEvaluation:
     folds: tuple[WalkForwardFoldResult, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version != 1:
-            raise ValueError("walk-forward evaluation requires xetra profile version 1")
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
+            raise ValueError("walk-forward evaluation requires a supported xetra profile version")
         if self.state_count not in (2, 3, 4):
             raise ValueError("walk-forward evaluation supports exactly K2/K3/K4")
         if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
