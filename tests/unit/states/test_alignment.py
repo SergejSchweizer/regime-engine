@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from math import log
+from dataclasses import replace
+from math import log, nan
 
 import pytest
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.states.alignment import (
     ALIGNMENT_AMBIGUITY_ABS_TOLERANCE,
+    StateAlignment,
     StateAlignmentAmbiguityError,
     align_first_fold,
     align_to_reference,
@@ -138,5 +140,38 @@ def test_reference_shape_and_signature_helpers_fail_closed() -> None:
         align_to_reference(model, ((0.0,), (1.0, 2.0)))
     with pytest.raises(ValueError, match="same non-zero"):
         rms_distance((1.0,), (1.0, 2.0))
+    with pytest.raises(ValueError, match="finite"):
+        rms_distance((nan,), (1.0,))
     with pytest.raises(ValueError, match="non-empty"):
         signature_sort_key(())
+    with pytest.raises(ValueError, match="finite"):
+        signature_sort_key((nan,))
+
+
+def test_alignment_evidence_validation_paths() -> None:
+    valid = StateAlignment(
+        persistent_state_ids=("state_0", "state_1"),
+        persistent_to_fitted=(0, 1),
+        aligned_signatures=((0.0,), (1.0,)),
+        matched_rms=(0.0, 0.0),
+        total_cost=0.0,
+        max_drift=0.0,
+        initial_alignment=True,
+    )
+    cases = (
+        ({"persistent_state_ids": ("bad", "state_1")}, "canonical"),
+        ({"persistent_to_fitted": (0, 0)}, "one-to-one"),
+        ({"aligned_signatures": ((0.0,),)}, "one entry"),
+        ({"matched_rms": (0.0,)}, "one entry"),
+        ({"matched_rms": (-1.0, 1.0)}, "finite and non-negative"),
+        ({"matched_rms": (nan, 0.0)}, "finite and non-negative"),
+        ({"total_cost": -1.0}, "total cost"),
+        ({"total_cost": nan}, "total cost"),
+        ({"max_drift": -1.0}, "max drift"),
+        ({"max_drift": nan}, "max drift"),
+        ({"total_cost": 1.0}, "summed matched RMS"),
+        ({"max_drift": 1.0}, "maximum matched RMS"),
+    )
+    for changes, match in cases:
+        with pytest.raises(ValueError, match=match):
+            replace(valid, **changes)
