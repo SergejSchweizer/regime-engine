@@ -54,9 +54,9 @@ def artifact() -> ProductionModelArtifact:
 
 
 @pytest.mark.integration
-def test_file_backed_mlflow_registry_package_and_alias_roundtrip(tmp_path) -> None:
-    store_uri = (tmp_path / "mlruns").resolve().as_uri()
-    client = MlflowClient(tracking_uri=store_uri, registry_uri=store_uri)
+def test_local_sqlite_mlflow_registry_package_and_alias_roundtrip(tmp_path) -> None:
+    database_uri = f"sqlite:///{(tmp_path / 'mlflow.db').resolve()}"
+    client = MlflowClient(tracking_uri=database_uri, registry_uri=database_uri)
     registry = MlflowModelRegistry(client)
     package = save_production_package(artifact(), tmp_path / "package")
 
