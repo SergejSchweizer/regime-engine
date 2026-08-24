@@ -68,9 +68,7 @@ def test_train_continuation_is_distinct_from_backend_reset_test_score() -> None:
     continuation = adapter.score_continuation([[5.0]], (0.0, 1.0))
     reset = adapter.backend_reset_test_score([[5.0]])
     assert continuation > reset
-    assert continuation == pytest.approx(
-        adapter.causal_filter([[5.0]], (0.0, 1.0)).log_likelihood
-    )
+    assert continuation == pytest.approx(adapter.causal_filter([[5.0]], (0.0, 1.0)).log_likelihood)
 
 
 def test_non_positive_definite_covariance_fails_without_jitter() -> None:
