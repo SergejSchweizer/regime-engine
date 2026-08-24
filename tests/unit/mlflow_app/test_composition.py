@@ -2,17 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from market_regime_engine.contracts import LatestInvocation, ReplayInvocation
-from market_regime_engine.mlflow_app.app import create_app
-from market_regime_engine.mlflow_app.dependencies import (
-    ReadinessSnapshot,
-    ServiceDependencies,
-)
-from market_regime_engine.serving.replay_limits import ReplayGuardrailError
+import market_regime_engine.contracts as contracts
+import market_regime_engine.mlflow_app.app as mlflow_app
+import market_regime_engine.mlflow_app.dependencies as app_dependencies
+import market_regime_engine.serving.replay_limits as replay_limits
 
 
 NOW = datetime(2026, 8, 24, 13, 45, tzinfo=UTC)
-HEALTHY = ReadinessSnapshot("healthy", True)
+HEALTHY = app_dependencies.ReadinessSnapshot("healthy", True)
 
 
 class FakeLatest:
@@ -25,7 +22,7 @@ class FakeLatest:
         if self.error is not None:
             raise self.error
         invocation = kwargs["invocation"]
-        assert isinstance(invocation, LatestInvocation)
+        assert isinstance(invocation, contracts.LatestInvocation)
         return {
             "schema_version": "RegimeInvocationResponse.v1",
             "request_id": kwargs["request_id"],
@@ -46,7 +43,7 @@ class FakeReplay:
         if self.error is not None:
             raise self.error
         invocation = kwargs["invocation"]
-        assert isinstance(invocation, ReplayInvocation)
+        assert isinstance(invocation, contracts.ReplayInvocation)
         return {
             "schema_version": "RegimeInvocationResponse.v1",
             "request_id": kwargs["request_id"],
@@ -80,10 +77,10 @@ def dependencies(
     replay: FakeReplay | None = None,
     oos: FakeOOS | None = None,
     *,
-    readiness: ReadinessSnapshot | None = None,
-) -> ServiceDependencies:
+    readiness: app_dependencies.ReadinessSnapshot | None = None,
+) -> app_dependencies.ServiceDependencies:
     current_readiness = readiness or HEALTHY
-    return ServiceDependencies(
+    return app_dependencies.ServiceDependencies(
         latest_handler=latest or FakeLatest(),  # type: ignore[arg-type]
         replay_handler=replay or FakeReplay(),  # type: ignore[arg-type]
         oos_handler=oos or FakeOOS(),  # type: ignore[arg-type]
@@ -96,7 +93,7 @@ def dependencies(
 def test_composed_latest_and_replay_dispatch_to_injected_handlers() -> None:
     latest = FakeLatest()
     replay = FakeReplay()
-    app = create_app(dependencies=dependencies(latest, replay))
+    app = mlflow_app.create_app(dependencies=dependencies(latest, replay))
     client = app.test_client()
 
     latest_response = client.post(
@@ -112,7 +109,7 @@ def test_composed_latest_and_replay_dispatch_to_injected_handlers() -> None:
     assert latest_response.get_json()["prediction_mode"] == "fixed_model_latest"
     assert len(latest.calls) == 1
     latest_invocation = latest.calls[0]["invocation"]
-    assert isinstance(latest_invocation, LatestInvocation)
+    assert isinstance(latest_invocation, contracts.LatestInvocation)
     assert latest_invocation.model_version == "7"
     assert latest.calls[0]["request_time_utc"] == NOW
 
@@ -127,11 +124,11 @@ def test_composed_latest_and_replay_dispatch_to_injected_handlers() -> None:
     assert replay_response.status_code == 200
     assert replay_response.get_json()["prediction_mode"] == "fixed_model_replay"
     assert len(replay.calls) == 1
-    assert isinstance(replay.calls[0]["invocation"], ReplayInvocation)
+    assert isinstance(replay.calls[0]["invocation"], contracts.ReplayInvocation)
 
 
 def test_composed_invocation_rejects_forbidden_unknown_malformed_and_non_json_input() -> None:
-    app = create_app(dependencies=dependencies())
+    app = mlflow_app.create_app(dependencies=dependencies())
     client = app.test_client()
     path = "/regime-engine/v1/profiles/xetra/invocations"
 
@@ -159,8 +156,13 @@ def test_composed_invocation_rejects_forbidden_unknown_malformed_and_non_json_in
 
 def test_replay_guardrail_error_mapping_is_preserved_by_route() -> None:
     replay = FakeReplay()
-    replay.error = ReplayGuardrailError(413, "replay_row_limit", "too many rows", False)
-    app = create_app(dependencies=dependencies(replay=replay))
+    replay.error = replay_limits.ReplayGuardrailError(
+        413,
+        "replay_row_limit",
+        "too many rows",
+        False,
+    )
+    app = mlflow_app.create_app(dependencies=dependencies(replay=replay))
     response = app.test_client().post(
         "/regime-engine/v1/profiles/xetra/invocations",
         json={
@@ -177,7 +179,7 @@ def test_replay_guardrail_error_mapping_is_preserved_by_route() -> None:
 
 def test_oos_route_requires_explicit_build_and_supports_bounded_utc_slice() -> None:
     oos = FakeOOS()
-    app = create_app(dependencies=dependencies(oos=oos))
+    app = mlflow_app.create_app(dependencies=dependencies(oos=oos))
     client = app.test_client()
     response = client.get(
         "/regime-engine/v1/profiles/xetra/oos-builds/build-7"
@@ -207,7 +209,7 @@ def test_oos_route_requires_explicit_build_and_supports_bounded_utc_slice() -> N
 def test_oos_missing_build_maps_to_404_without_leaking_path() -> None:
     oos = FakeOOS()
     oos.error = FileNotFoundError("/private/artifacts/xetra/build-secret")
-    app = create_app(dependencies=dependencies(oos=oos))
+    app = mlflow_app.create_app(dependencies=dependencies(oos=oos))
     response = app.test_client().get(
         "/regime-engine/v1/profiles/xetra/oos-builds/missing-build"
     )
@@ -218,7 +220,9 @@ def test_oos_missing_build_maps_to_404_without_leaking_path() -> None:
 
 
 def test_health_is_readiness_only_and_standard_mlflow_route_survives() -> None:
-    app = create_app(dependencies=dependencies(readiness=ReadinessSnapshot("degraded", True)))
+    app = mlflow_app.create_app(
+        dependencies=dependencies(readiness=app_dependencies.ReadinessSnapshot("degraded", True))
+    )
     client = app.test_client()
     standard = client.get("/health")
     assert standard.status_code == 200
@@ -235,7 +239,7 @@ def test_health_is_readiness_only_and_standard_mlflow_route_survives() -> None:
 
 
 def test_uncomposed_service_remains_safe_not_ready_without_route_placeholders() -> None:
-    app = create_app(dependencies=None)
+    app = mlflow_app.create_app(dependencies=None)
     client = app.test_client()
     health = client.get("/regime-engine/v1/health")
     assert health.status_code == 200
