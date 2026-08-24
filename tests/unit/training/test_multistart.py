@@ -73,8 +73,7 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     assert MINIMUM_SUCCESS_RATE == 0.75
     assert TRAIN_LOGLIK_TIE_ABS_TOLERANCE == 1e-12
     outcomes: dict[int, FitResult | Exception] = {
-        seed: fit_result(seed, float(index))
-        for index, seed in enumerate(MULTISTART_SEEDS)
+        seed: fit_result(seed, float(index)) for index, seed in enumerate(MULTISTART_SEEDS)
     }
     outcomes[107] = RuntimeError("numerical failure")
     outcomes[131] = fit_result(131, 100.0, converged=False)
