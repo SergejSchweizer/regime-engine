@@ -1,0 +1,139 @@
+name: Merge Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Install frozen dependency roots
+        run: |
+          uv pip install --python "$(command -v python)" -r uv.lock
+          uv pip install --python "$(command -v python)" --no-deps -e .
+      - name: Verify interpreter and package pins
+        run: |
+          test "$(python -c 'import platform; print(platform.python_version())')" = "3.14.7"
+          python -c 'import hmmlearn, mlflow; assert hmmlearn.__version__ == "0.3.3"; assert mlflow.__version__ == "3.15.1"'
+      - name: Ruff lint and format
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Dependency audit
+        run: pip-audit -r uv.lock
+
+  type:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Install frozen dependency roots
+        run: |
+          uv pip install --python "$(command -v python)" -r uv.lock
+          uv pip install --python "$(command -v python)" --no-deps -e .
+      - name: Strict mypy
+        run: mypy src/market_regime_engine
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Install frozen dependency roots
+        run: |
+          uv pip install --python "$(command -v python)" -r uv.lock
+          uv pip install --python "$(command -v python)" --no-deps -e .
+      - name: Unit tests with coverage
+        env:
+          COVERAGE_FILE: .coverage.unit
+        run: |
+          coverage run -m pytest tests -m "not integration and not external"
+          coverage run --append -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: .coverage.unit
+          if-no-files-found: error
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Install frozen dependency roots
+        run: |
+          uv pip install --python "$(command -v python)" -r uv.lock
+          uv pip install --python "$(command -v python)" --no-deps -e .
+      - name: Hermetic integration tests with coverage
+        env:
+          COVERAGE_FILE: .coverage.integration
+        shell: bash
+        run: |
+          coverage run -c 'import market_regime_engine'
+          set +e
+          coverage run --append -m pytest tests -m "integration and not external"
+          code=$?
+          set -e
+          if [[ ${code} -ne 0 && ${code} -ne 5 ]]; then
+            exit "${code}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: .coverage.integration
+          if-no-files-found: error
+
+  merge-gate:
+    if: always()
+    needs: [lint, type, unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+      - name: Fail if any required lane failed
+        env:
+          LINT: ${{ needs.lint.result }}
+          TYPE: ${{ needs.type.result }}
+          UNIT: ${{ needs.unit.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+        run: |
+          test "${LINT}" = success
+          test "${TYPE}" = success
+          test "${UNIT}" = success
+          test "${INTEGRATION}" = success
+      - name: Install coverage tooling
+        run: uv pip install --python "$(command -v python)" coverage==7.10.7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Enforce combined coverage >= 90%
+        run: |
+          coverage combine .coverage.unit .coverage.integration
+          coverage report --fail-under=90
