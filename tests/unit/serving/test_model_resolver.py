@@ -9,6 +9,7 @@ from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.serving import model_resolver
 from market_regime_engine.serving.model_cache import ModelCache, ModelCacheCapacityError
 from market_regime_engine.serving.model_resolver import ModelResolver
 from market_regime_engine.serving.profile_registry import ProfileModelTarget, ProfileRegistry
@@ -88,6 +89,30 @@ class Clock:
 
     def __call__(self) -> float:
         return self.value
+
+
+def test_mlflow_run_package_loader_uses_explicit_tracking_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloaded: dict[str, str | None] = {}
+
+    def download(*, artifact_uri: str, tracking_uri: str | None) -> str:
+        downloaded["artifact_uri"] = artifact_uri
+        downloaded["tracking_uri"] = tracking_uri
+        return "/packages/xetra/2"
+
+    expected = artifact(build="build-2")
+    monkeypatch.setattr(model_resolver, "download_artifacts", download)
+    monkeypatch.setattr(model_resolver, "load_production_package", lambda _: expected)
+
+    loader = model_resolver.mlflow_package_loader(tracking_uri="http://127.0.0.1:5000")
+    assert loader("runs:/evaluation-run/production-package") is expected
+    assert downloaded == {
+        "artifact_uri": "runs:/evaluation-run/production-package",
+        "tracking_uri": "http://127.0.0.1:5000",
+    }
+    with pytest.raises(ValueError, match="tracking URI"):
+        model_resolver.mlflow_package_loader(tracking_uri="")
 
 
 def test_profile_registry_is_data_driven_and_version_checked() -> None:

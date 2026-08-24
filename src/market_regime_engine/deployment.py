@@ -21,7 +21,7 @@ from market_regime_engine.mlflow_app.dependencies import (
 from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
 from market_regime_engine.predictions.store import PredictionStore
 from market_regime_engine.serving.latest_handler import LatestHandler
-from market_regime_engine.serving.model_resolver import ModelResolver
+from market_regime_engine.serving.model_resolver import ModelResolver, mlflow_package_loader
 from market_regime_engine.serving.oos_handler import OOSPredictionHandler
 from market_regime_engine.serving.profile_registry import ProfileModelTarget, ProfileRegistry
 from market_regime_engine.serving.replay_admission import ReplayAdmission
@@ -80,7 +80,11 @@ def compose_serving_dependencies() -> ServiceDependencies:
             ),
         )
     )
-    resolver = ModelResolver(registry, profiles=profiles)
+    resolver = ModelResolver(
+        registry,
+        profiles=profiles,
+        package_loader=mlflow_package_loader(tracking_uri=tracking_uri),
+    )
     limits = ReplayLimits.from_env(os.environ)
     return ServiceDependencies(
         latest_handler=LatestHandler(resolver, source),
