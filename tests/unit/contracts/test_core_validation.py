@@ -111,9 +111,9 @@ def test_source_identity_hash_versions_and_bounds_validation() -> None:
         source(row_count=2)
     with pytest.raises(ValueError, match="cannot be negative"):
         source(row_count=-1, min_timestamp=NOW, max_timestamp=NOW)
-    with pytest.raises(ValueError, match="min_timestamp.*UTC"):
+    with pytest.raises(ValueError, match=r"min_timestamp.*UTC"):
         source(row_count=1, min_timestamp=NOW.replace(tzinfo=None), max_timestamp=NOW)
-    with pytest.raises(ValueError, match="max_timestamp.*UTC"):
+    with pytest.raises(ValueError, match=r"max_timestamp.*UTC"):
         source(row_count=1, min_timestamp=NOW, max_timestamp=NOW.replace(tzinfo=None))
     with pytest.raises(ValueError, match="inverted"):
         source(
@@ -149,7 +149,7 @@ def test_model_identity_rejects_invalid_identity_and_temporal_fields() -> None:
         )
     with pytest.raises(ValueError, match="model_alias"):
         model(model_alias="")
-    with pytest.raises(ValueError, match="alias_resolved_at_utc.*UTC"):
+    with pytest.raises(ValueError, match=r"alias_resolved_at_utc.*UTC"):
         model(alias_resolved_at_utc=NOW.replace(tzinfo=None))
 
 
@@ -168,7 +168,7 @@ def test_probability_contract_rejects_empty_negative_nonfinite_and_wrong_sum() -
 def test_prediction_validates_schema_timestamp_states_and_diagnostics() -> None:
     with pytest.raises(ValueError, match="prediction schema"):
         prediction(schema_version="RegimePrediction.v0")
-    with pytest.raises(ValueError, match="timestamp.*UTC"):
+    with pytest.raises(ValueError, match=r"timestamp.*UTC"):
         prediction(timestamp=NOW.replace(tzinfo=None))
     with pytest.raises(ValueError, match="state_ids"):
         prediction(state_ids=(), state_probabilities=())
@@ -187,16 +187,16 @@ def test_prediction_validates_schema_timestamp_states_and_diagnostics() -> None:
 def test_latest_and_replay_validate_operations_utc_and_versions() -> None:
     with pytest.raises(ValueError, match="operation"):
         LatestInvocation(operation=InvocationOperation.REPLAY)
-    with pytest.raises(ValueError, match="as_of.*UTC"):
+    with pytest.raises(ValueError, match=r"as_of.*UTC"):
         LatestInvocation(as_of=NOW.replace(tzinfo=None))
     with pytest.raises(ValueError, match="model_version"):
         LatestInvocation(model_version=" ")
 
     with pytest.raises(ValueError, match="operation"):
         ReplayInvocation(start=NOW, end=NOW, operation=InvocationOperation.LATEST)
-    with pytest.raises(ValueError, match="start.*UTC"):
+    with pytest.raises(ValueError, match=r"start.*UTC"):
         ReplayInvocation(start=NOW.replace(tzinfo=None), end=NOW)
-    with pytest.raises(ValueError, match="end.*UTC"):
+    with pytest.raises(ValueError, match=r"end.*UTC"):
         ReplayInvocation(start=NOW, end=NOW.replace(tzinfo=None))
     with pytest.raises(ValueError, match="model_version"):
         ReplayInvocation(start=NOW, end=NOW, model_version="")
