@@ -1,13 +1,10 @@
-import datetime
-import importlib
+datetime_module = __import__("datetime")
+contracts = __import__("market_regime_engine.contracts", fromlist=["*"])
+mlflow_app = __import__("market_regime_engine.mlflow_app.app", fromlist=["*"])
+app_dependencies = __import__("market_regime_engine.mlflow_app.dependencies", fromlist=["*"])
+replay_limits = __import__("market_regime_engine.serving.replay_limits", fromlist=["*"])
 
-
-contracts = importlib.import_module("market_regime_engine.contracts")
-mlflow_app = importlib.import_module("market_regime_engine.mlflow_app.app")
-app_dependencies = importlib.import_module("market_regime_engine.mlflow_app.dependencies")
-replay_limits = importlib.import_module("market_regime_engine.serving.replay_limits")
-
-NOW = datetime.datetime(2026, 8, 24, 13, 45, tzinfo=datetime.UTC)
+NOW = datetime_module.datetime(2026, 8, 24, 13, 45, tzinfo=datetime_module.UTC)
 HEALTHY = app_dependencies.ReadinessSnapshot("healthy", True)
 
 
@@ -76,8 +73,8 @@ def dependencies(
     replay: FakeReplay | None = None,
     oos: FakeOOS | None = None,
     *,
-    readiness: app_dependencies.ReadinessSnapshot | None = None,
-) -> app_dependencies.ServiceDependencies:
+    readiness: object | None = None,
+) -> object:
     current_readiness = readiness or HEALTHY
     return app_dependencies.ServiceDependencies(
         latest_handler=latest or FakeLatest(),  # type: ignore[arg-type]
