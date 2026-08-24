@@ -220,7 +220,8 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         "gaussian_hmm_k4_full",
     ]
     assert all(call[1] == FEATURES and call[2] == "build-1" for call in calls)
-    assert tuple(item.candidate_id for item in result.aggregates) == tuple(call[0] for call in calls)
+    aggregate_ids = tuple(item.candidate_id for item in result.aggregates)
+    assert aggregate_ids == tuple(call[0] for call in calls)
     assert all(item.valid_fold_rate == 1.0 for item in result.aggregates)
     assert result.evaluation_plan_hash == plan.plan_hash
 
