@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from mlflow.exceptions import MlflowException
-from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
+from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 from mlflow.tracking import MlflowClient
 
 from market_regime_engine.mlflow_support.model_package import load_production_package
@@ -95,10 +95,13 @@ class AliasMutationAudit:
 
 
 def _is_missing(exc: MlflowException) -> bool:
-    return getattr(exc, "error_code", None) in {
-        RESOURCE_DOES_NOT_EXIST,
-        "RESOURCE_DOES_NOT_EXIST",
-    }
+    code = getattr(exc, "error_code", None)
+    if code in {RESOURCE_DOES_NOT_EXIST, "RESOURCE_DOES_NOT_EXIST"}:
+        return True
+    message = str(exc)
+    return code in {INVALID_PARAMETER_VALUE, "INVALID_PARAMETER_VALUE"} and (
+        message.startswith("Registered model alias ") and message.endswith(" not found.")
+    )
 
 
 def _require_model_name(model_name: str) -> None:
