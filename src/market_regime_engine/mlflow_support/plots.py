@@ -26,6 +26,7 @@ from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 PNG_DPI = 180
 WIDE_FIGSIZE = (10.0, 5.5)
 SQUARE_FIGSIZE = (7.0, 6.5)
+COMPARISON_FIGSIZE = (11.0, 8.0)
 
 _FOLD_METRICS: dict[str, tuple[str, str]] = {
     "fold_train_loglik": ("train_log_likelihood", "TRAIN log likelihood"),
@@ -519,9 +520,17 @@ def render_candidate_comparison(
     for evaluation in ordered:
         _validate_plan(evaluation, plan)
     x_values = tuple(fold.test_end for fold in plan.folds)
-    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    x_plot = _date_axis(ax, x_values)
+    fig, (score_ax, gap_ax) = plt.subplots(
+        nrows=2,
+        ncols=1,
+        figsize=COMPARISON_FIGSIZE,
+        sharex=True,
+        height_ratios=(2.0, 1.0),
+    )
+    x_plot = _date_axis(score_ax, x_values)
     source_values: dict[str, list[float | None]] = {}
+    plotted_values: list[np.ndarray] = []
+    line_colors: list[str] = []
     for evaluation in ordered:
         values = [
             _metric_value(fold, "fold_oos_predictive_loglik_per_obs") if fold.valid else None
@@ -531,12 +540,56 @@ def render_candidate_comparison(
         y_values = np.asarray(
             [float("nan") if value is None else value for value in values], dtype=np.float64
         )
-        ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)
-    ax.set_title("Walk-forward OOS candidate comparison")
-    ax.set_xlabel("Test window end (UTC)")
-    ax.set_ylabel("OOS predictive log likelihood per observation")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+        line = score_ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)[0]
+        plotted_values.append(y_values)
+        line_colors.append(line.get_color())
+    matrix = np.asarray(plotted_values, dtype=np.float64)
+    finite_by_fold = np.any(np.isfinite(matrix), axis=0)
+    best_values = np.full(len(x_values), np.nan, dtype=np.float64)
+    best_values[finite_by_fold] = np.max(matrix[:, finite_by_fold], axis=0)
+    relative_to_best = matrix - best_values
+    leaders = np.full(len(x_values), -1, dtype=np.intp)
+    leaders[finite_by_fold] = np.argmax(matrix[:, finite_by_fold], axis=0)
+    if len(x_plot) == 1:
+        boundaries = np.asarray((x_plot[0] - 0.5, x_plot[0] + 0.5), dtype=np.float64)
+    else:
+        midpoints = (x_plot[:-1] + x_plot[1:]) / 2.0
+        boundaries = np.concatenate(
+            (
+                np.asarray((x_plot[0] - (midpoints[0] - x_plot[0]),)),
+                midpoints,
+                np.asarray((x_plot[-1] + (x_plot[-1] - midpoints[-1]),)),
+            )
+        )
+    segment_start = 0
+    while segment_start < len(leaders):
+        leader = leaders[segment_start]
+        segment_end = segment_start + 1
+        while segment_end < len(leaders) and leaders[segment_end] == leader:
+            segment_end += 1
+        if leader >= 0:
+            for axis in (score_ax, gap_ax):
+                axis.axvspan(
+                    boundaries[segment_start],
+                    boundaries[segment_end],
+                    color=line_colors[leader],
+                    alpha=0.09,
+                    linewidth=0,
+                    zorder=0,
+                )
+        segment_start = segment_end
+    for evaluation, values, color in zip(ordered, relative_to_best, line_colors, strict=True):
+        gap_ax.plot(x_plot, values, marker="o", label=evaluation.candidate_id, color=color)
+    score_ax.set_title("Walk-forward OOS candidate comparison")
+    score_ax.set_ylabel("OOS predictive log likelihood per observation")
+    score_ax.grid(True, alpha=0.25)
+    score_ax.legend(title="Candidate / shaded best candidate", loc="lower left")
+    gap_ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
+    gap_ax.set_xlabel("Test window end (UTC)")
+    gap_ax.set_ylabel("Gap to best OOS score\n(0 = best)")
+    gap_ax.grid(True, alpha=0.25)
+    gap_ax.set_title("Relative score makes candidate leadership transitions visible")
+    _date_axis(gap_ax, x_values)
     fig.autofmt_xdate()
     base = Path(output_dir) / "parent" / "candidate_oos_predictive_loglik_per_obs"
     png_path = _save_figure(fig, base)
@@ -553,9 +606,9 @@ def render_candidate_comparison(
         source_metric_keys=("fold_oos_predictive_loglik_per_obs",),
         x_axis_field="test_end",
         x_axis_label="Test window end (UTC)",
-        y_axis_label="OOS predictive log likelihood per observation",
+        y_axis_label="Absolute OOS score and gap to best OOS score",
         legend_entries=candidate_ids,
-        image_dimensions_inches=WIDE_FIGSIZE,
+        image_dimensions_inches=COMPARISON_FIGSIZE,
         dpi=PNG_DPI,
         source_artifact_hash=_canonical_hash(payload),
     )
