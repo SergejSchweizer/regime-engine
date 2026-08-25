@@ -15,7 +15,7 @@ services:
     # entrypoint as root only long enough to read the 0600 secret, then it drops
     # to the image's dedicated runtime user before launching MLflow.
     user: "0:0"
-    restart: unless-stopped
+    restart: always
     depends_on:
       mlflow-postgres:
         condition: service_healthy
@@ -74,7 +74,7 @@ services:
     image: postgres:18.6-alpine@sha256:432b3b824c0769275ec9b0947736ef8b376d6997bcaa9de29818f613819c2feb
     pull_policy: missing
     user: "${MLFLOW_POSTGRES_RUNTIME_UID:-70}:${MLFLOW_POSTGRES_RUNTIME_GID:-70}"
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_DB: ${MLFLOW_BACKEND_DB_NAME:?MLFLOW_BACKEND_DB_NAME is required}
       POSTGRES_USER: ${MLFLOW_BACKEND_DB_USER:?MLFLOW_BACKEND_DB_USER is required}

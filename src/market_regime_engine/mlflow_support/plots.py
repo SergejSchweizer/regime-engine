@@ -68,7 +68,6 @@ _FOLD_METRICS: dict[str, tuple[str, str]] = {
 @dataclass(frozen=True, slots=True)
 class PlotManifestEntry:
     png_path: str
-    svg_path: str
     plot_type: str
     candidate_id: str
     fold_id: str | None
@@ -123,15 +122,13 @@ def _date_axis(ax: matplotlib.axes.Axes, x_values: tuple[datetime, ...]) -> np.n
     return np.asarray(dates, dtype=np.float64)
 
 
-def _save_figure(fig: matplotlib.figure.Figure, base_path: Path) -> tuple[Path, Path]:
+def _save_figure(fig: matplotlib.figure.Figure, base_path: Path) -> Path:
     base_path.parent.mkdir(parents=True, exist_ok=True)
     png_path = base_path.with_suffix(".png")
-    svg_path = base_path.with_suffix(".svg")
     fig.tight_layout()
     fig.savefig(png_path, dpi=PNG_DPI, bbox_inches="tight")
-    fig.savefig(svg_path, bbox_inches="tight")
     plt.close(fig)
-    return png_path, svg_path
+    return png_path
 
 
 def render_fold_history(
@@ -162,7 +159,7 @@ def render_fold_history(
     ax.legend()
     fig.autofmt_xdate()
     base = Path(output_dir) / evaluation.candidate_id / "histories" / metric_key
-    png_path, svg_path = _save_figure(fig, base)
+    png_path = _save_figure(fig, base)
     payload = {
         "candidate_id": evaluation.candidate_id,
         "metric_key": metric_key,
@@ -171,7 +168,6 @@ def render_fold_history(
     }
     return PlotManifestEntry(
         png_path=str(png_path),
-        svg_path=str(svg_path),
         plot_type="fold_history",
         candidate_id=evaluation.candidate_id,
         fold_id=None,
@@ -229,7 +225,7 @@ def render_transition_heatmap(
         for column in range(matrix.shape[1]):
             ax.text(column, row, f"{matrix[row, column]:.3f}", ha="center", va="center")
     base = Path(output_dir) / evaluation.candidate_id / fold.fold_id / "transition_matrix"
-    png_path, svg_path = _save_figure(fig, base)
+    png_path = _save_figure(fig, base)
     payload = {
         "candidate_id": evaluation.candidate_id,
         "fold_id": fold.fold_id,
@@ -237,7 +233,6 @@ def render_transition_heatmap(
     }
     return PlotManifestEntry(
         png_path=str(png_path),
-        svg_path=str(svg_path),
         plot_type="transition_heatmap",
         candidate_id=evaluation.candidate_id,
         fold_id=fold.fold_id,
@@ -249,6 +244,107 @@ def render_transition_heatmap(
         image_dimensions_inches=SQUARE_FIGSIZE,
         dpi=PNG_DPI,
         source_artifact_hash=_canonical_hash(payload),
+        scale_bounds=(0.0, 1.0),
+    )
+
+
+def _state_persistence_history(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+) -> tuple[tuple[str, ...], tuple[datetime, ...], np.ndarray]:
+    """Return aligned self-transition probabilities for every planned fold."""
+
+    _validate_plan(evaluation, plan)
+    first_valid = next((fold for fold in evaluation.folds if fold.valid), None)
+    if first_valid is None or first_valid.alignment is None:
+        raise ValueError("state persistence plots require at least one valid aligned fold")
+    state_ids = first_valid.alignment.persistent_state_ids
+    values = np.full((evaluation.state_count, len(plan.folds)), np.nan, dtype=np.float64)
+    for column, fold in enumerate(evaluation.folds):
+        if not fold.valid or fold.model_artifact is None or fold.alignment is None:
+            continue
+        matrix = np.asarray(fold.model_artifact.transition_matrix, dtype=np.float64)
+        mapping = fold.alignment.persistent_to_fitted
+        aligned = matrix[np.ix_(mapping, mapping)]
+        values[:, column] = np.diag(aligned)
+    return state_ids, tuple(item.test_end for item in plan.folds), values
+
+
+def render_state_persistence_matrix(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render the persistent-state self-transition matrix across Walk-forward history."""
+
+    state_ids, test_ends, values = _state_persistence_history(evaluation, plan)
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    image = ax.imshow(values, vmin=0.0, vmax=1.0, aspect="auto")
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("Self-transition probability")
+    ax.set_title(f"State persistence matrix — {evaluation.candidate_id}")
+    ax.set_xlabel("Test window end (UTC)")
+    ax.set_ylabel("Persistent state")
+    ax.set_yticks(range(len(state_ids)), labels=state_ids)
+    ax.set_xticks(range(len(test_ends)), labels=[value.date().isoformat() for value in test_ends])
+    ax.tick_params(axis="x", rotation=45)
+    base = Path(output_dir) / evaluation.candidate_id / "state_persistence_matrix"
+    png_path = _save_figure(fig, base)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="state_persistence_matrix",
+        candidate_id=evaluation.candidate_id,
+        fold_id=None,
+        source_metric_keys=("fold_self_transition",),
+        x_axis_field="test_end",
+        x_axis_label="Test window end (UTC)",
+        y_axis_label="Persistent state",
+        legend_entries=state_ids,
+        image_dimensions_inches=WIDE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(
+            {"test_end": [item.isoformat() for item in test_ends], "values": values.tolist()}
+        ),
+        scale_bounds=(0.0, 1.0),
+    )
+
+
+def render_state_transition_history(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render each persistent state's self-transition probability through history."""
+
+    state_ids, test_ends, values = _state_persistence_history(evaluation, plan)
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    x_plot = _date_axis(ax, test_ends)
+    for index, state_id in enumerate(state_ids):
+        ax.plot(x_plot, values[index], marker="o", label=state_id)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_title(f"State transition history — {evaluation.candidate_id}")
+    ax.set_xlabel("Test window end (UTC)")
+    ax.set_ylabel("Self-transition probability")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.autofmt_xdate()
+    base = Path(output_dir) / evaluation.candidate_id / "state_transition_history"
+    png_path = _save_figure(fig, base)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="state_transition_history",
+        candidate_id=evaluation.candidate_id,
+        fold_id=None,
+        source_metric_keys=("fold_self_transition",),
+        x_axis_field="test_end",
+        x_axis_label="Test window end (UTC)",
+        y_axis_label="Self-transition probability",
+        legend_entries=state_ids,
+        image_dimensions_inches=WIDE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(
+            {"test_end": [item.isoformat() for item in test_ends], "values": values.tolist()}
+        ),
         scale_bounds=(0.0, 1.0),
     )
 
@@ -286,7 +382,7 @@ def render_covariance_heatmap(
             for column in range(matrix.shape[1]):
                 ax.text(column, row, f"{matrix[row, column]:.3f}", ha="center", va="center")
     base = Path(output_dir) / evaluation.candidate_id / fold.fold_id / f"covariance_{state_id}"
-    png_path, svg_path = _save_figure(fig, base)
+    png_path = _save_figure(fig, base)
     payload = {
         "candidate_id": evaluation.candidate_id,
         "fold_id": fold.fold_id,
@@ -297,7 +393,6 @@ def render_covariance_heatmap(
     }
     return PlotManifestEntry(
         png_path=str(png_path),
-        svg_path=str(svg_path),
         plot_type="full_covariance_heatmap",
         candidate_id=evaluation.candidate_id,
         fold_id=fold.fold_id,
@@ -346,7 +441,7 @@ def render_candidate_comparison(
     ax.legend()
     fig.autofmt_xdate()
     base = Path(output_dir) / "parent" / "candidate_oos_predictive_loglik_per_obs"
-    png_path, svg_path = _save_figure(fig, base)
+    png_path = _save_figure(fig, base)
     payload = {
         "test_end": [value.isoformat() for value in x_values],
         "values": source_values,
@@ -354,7 +449,6 @@ def render_candidate_comparison(
     candidate_ids = tuple(evaluation.candidate_id for evaluation in ordered)
     return PlotManifestEntry(
         png_path=str(png_path),
-        svg_path=str(svg_path),
         plot_type="candidate_comparison",
         candidate_id="all_candidates",
         fold_id=None,

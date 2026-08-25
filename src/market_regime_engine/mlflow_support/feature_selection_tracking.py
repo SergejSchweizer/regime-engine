@@ -24,7 +24,6 @@ _FIGSIZE_SQUARE = (7.5, 7.0)
 class FeatureSelectionArtifact:
     artifact_type: str
     png_path: str | None
-    svg_path: str | None
     title: str
     x_axis_label: str
     y_axis_label: str
@@ -46,15 +45,13 @@ def _sha256_json(value: Any) -> str:
     return sha256(payload).hexdigest()
 
 
-def _save_figure(fig: Any, stem: Path) -> tuple[str, str]:
+def _save_figure(fig: Any, stem: Path) -> str:
     stem.parent.mkdir(parents=True, exist_ok=True)
     png = stem.with_suffix(".png")
-    svg = stem.with_suffix(".svg")
     fig.tight_layout()
     fig.savefig(png, dpi=_DPI, bbox_inches="tight")
-    fig.savefig(svg, bbox_inches="tight")
     plt.close(fig)
-    return str(png), str(svg)
+    return str(png)
 
 
 def _render_stage1_scores(result: FeatureSelectionResult, root: Path) -> FeatureSelectionArtifact:
@@ -76,7 +73,7 @@ def _render_stage1_scores(result: FeatureSelectionResult, root: Path) -> Feature
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, rotation=75, ha="right")
     ax.grid(axis="y", alpha=0.25)
-    png, svg = _save_figure(fig, root / "stage1_medoid_scores")
+    png = _save_figure(fig, root / "stage1_medoid_scores")
     source_hash = _sha256_json(
         [
             {
@@ -90,7 +87,6 @@ def _render_stage1_scores(result: FeatureSelectionResult, root: Path) -> Feature
     return FeatureSelectionArtifact(
         artifact_type="stage1_medoid_scores",
         png_path=png,
-        svg_path=svg,
         title="Stage-1 absolute-Spearman medoid scores",
         x_axis_label="Semantic block and feature",
         y_axis_label="Mean distance 1 - |Spearman rho|",
@@ -128,11 +124,10 @@ def _render_heatmap(
         for row in range(len(labels)):
             for column in range(len(labels)):
                 ax.text(column, row, f"{matrix[row, column]:.2f}", ha="center", va="center")
-    png, svg = _save_figure(fig, stem)
+    png = _save_figure(fig, stem)
     return FeatureSelectionArtifact(
         artifact_type=artifact_type,
         png_path=png,
-        svg_path=svg,
         title=title,
         x_axis_label="Feature",
         y_axis_label="Feature",
@@ -243,8 +238,6 @@ def track_feature_selection_evidence(
     for artifact in artifacts:
         if artifact.png_path is not None:
             port.log_artifact(parent_run_id, artifact.png_path, "feature_selection/plots")
-        if artifact.svg_path is not None:
-            port.log_artifact(parent_run_id, artifact.svg_path, "feature_selection/plots")
     port.log_artifact(parent_run_id, str(manifest_path), "feature_selection/plots")
     return FeatureSelectionTrackingResult(
         summary_path=str(summary_path),

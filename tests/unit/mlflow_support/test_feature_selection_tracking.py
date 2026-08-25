@@ -123,7 +123,6 @@ def test_complete_feature_selection_audit_is_deterministic_and_logged(tmp_path: 
     assert "48 source features -> 8 Stage-1 medoids" in Path(tracked.summary_path).read_text()
     for artifact in tracked.artifacts:
         assert artifact.png_path is not None and Path(artifact.png_path).is_file()
-        assert artifact.svg_path is not None and Path(artifact.svg_path).is_file()
         assert artifact.title
         assert artifact.x_axis_label
         assert artifact.y_axis_label
@@ -135,7 +134,7 @@ def test_complete_feature_selection_audit_is_deterministic_and_logged(tmp_path: 
     )
     assert within_block_count == 8
     assert any(item["artifact_type"] == "stage2_cross_block_abs_spearman" for item in manifest)
-    assert len(port.artifacts) == 24
+    assert len(port.artifacts) == 14
     assert all(item[0] == "parent-1" for item in port.artifacts)
 
 
