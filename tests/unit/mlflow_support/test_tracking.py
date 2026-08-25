@@ -25,6 +25,8 @@ from market_regime_engine.mlflow_support.plots import (
     render_candidate_comparison,
     render_covariance_heatmap,
     render_fold_history,
+    render_state_persistence_matrix,
+    render_state_transition_history,
     render_transition_heatmap,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint
@@ -220,7 +222,13 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     manifest_path = tmp_path / "gaussian_hmm_k2_full" / "plot_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     plot_types = {item["plot_type"] for item in manifest}
-    assert {"fold_history", "transition_heatmap", "full_covariance_heatmap"} <= plot_types
+    assert {
+        "fold_history",
+        "transition_heatmap",
+        "full_covariance_heatmap",
+        "state_persistence_matrix",
+        "state_transition_history",
+    } <= plot_types
     history = next(item for item in manifest if item["plot_type"] == "fold_history")
     assert history["x_axis_field"] == "test_end"
     assert history["x_axis_label"] == "Test window end (UTC)"
@@ -230,7 +238,8 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     ]
     assert {tuple(item["scale_bounds"]) for item in covariance_entries} == {(-0.3, 0.3)}
     assert all(Path(item["png_path"]).exists() for item in manifest)
-    assert all(Path(item["svg_path"]).exists() for item in manifest)
+    assert all("svg_path" not in item for item in manifest)
+    assert not tuple(tmp_path.rglob("*.svg"))
 
     parent_manifest = json.loads(Path(result.parent_manifest_path).read_text(encoding="utf-8"))
     assert parent_manifest[0]["plot_type"] == "candidate_comparison"
@@ -291,6 +300,10 @@ def test_plot_and_tracking_validation_fail_closed(tmp_path: Path) -> None:
         render_fold_history(evaluation, plan, "unknown_metric", tmp_path)
     with pytest.raises(ValueError, match="valid aligned fold"):
         render_transition_heatmap(evaluation, invalid, tmp_path)
+    with pytest.raises(ValueError, match="at least one valid aligned fold"):
+        render_state_persistence_matrix(replace(evaluation, folds=(invalid,)), plan, tmp_path)
+    with pytest.raises(ValueError, match="at least one valid aligned fold"):
+        render_state_transition_history(replace(evaluation, folds=(invalid,)), plan, tmp_path)
     with pytest.raises(ValueError, match="valid aligned fold"):
         render_covariance_heatmap(evaluation, invalid, 0, 1.0, tmp_path)
     with pytest.raises(ValueError, match="outside candidate state range"):

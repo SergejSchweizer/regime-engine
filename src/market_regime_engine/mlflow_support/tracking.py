@@ -26,6 +26,8 @@ from market_regime_engine.mlflow_support.plots import (
     render_candidate_comparison,
     render_covariance_heatmap,
     render_fold_history,
+    render_state_persistence_matrix,
+    render_state_transition_history,
     render_transition_heatmap,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
@@ -400,6 +402,13 @@ def track_walk_forward_evaluations(
             render_fold_history(evaluation, plan, metric_key, root)
             for metric_key in fold_history_metric_keys()
         ]
+        if evaluation.valid_folds:
+            entries.extend(
+                (
+                    render_state_persistence_matrix(evaluation, plan, root),
+                    render_state_transition_history(evaluation, plan, root),
+                )
+            )
         shared_scale = candidate_covariance_scale(evaluation) if evaluation.valid_folds else None
         for result, planned in zip(evaluation.folds, plan.folds, strict=True):
             fold_run_id = port.start_run(
@@ -428,7 +437,6 @@ def track_walk_forward_evaluations(
             transition_entry = render_transition_heatmap(evaluation, result, root)
             entries.append(transition_entry)
             port.log_artifact(fold_run_id, transition_entry.png_path, "plots")
-            port.log_artifact(fold_run_id, transition_entry.svg_path, "plots")
             if shared_scale is None:
                 raise ValueError("valid fold requires a candidate covariance scale")
             for state_index in range(evaluation.state_count):
@@ -441,13 +449,11 @@ def track_walk_forward_evaluations(
                 )
                 entries.append(covariance_entry)
                 port.log_artifact(fold_run_id, covariance_entry.png_path, "plots")
-                port.log_artifact(fold_run_id, covariance_entry.svg_path, "plots")
             port.end_run(fold_run_id)
 
         for entry in entries:
             if entry.fold_id is None:
                 port.log_artifact(candidate_run_id, entry.png_path, "plots")
-                port.log_artifact(candidate_run_id, entry.svg_path, "plots")
         manifest_path = candidate_dir / "plot_manifest.json"
         manifest_payload = [
             entry.as_json_dict()
@@ -463,7 +469,6 @@ def track_walk_forward_evaluations(
     comparison = render_candidate_comparison(ordered, plan, root)
     parent_entries.append(comparison)
     port.log_artifact(parent_run_id, comparison.png_path, "plots")
-    port.log_artifact(parent_run_id, comparison.svg_path, "plots")
     parent_manifest_path = root / "parent" / "plot_manifest.json"
     _write_json(
         parent_manifest_path,
