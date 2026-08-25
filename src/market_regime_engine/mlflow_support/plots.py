@@ -271,23 +271,60 @@ def _state_persistence_history(
     return state_ids, tuple(item.test_end for item in plan.folds), values
 
 
+def _state_occupancy_history(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+) -> tuple[tuple[str, ...], tuple[datetime, ...], np.ndarray]:
+    """Return OOS soft-occupancy percentages for every planned fold.
+
+    Each valid column sums to 100 percent: it is the expected share of retained
+    OOS observations spent in each persistent state, not a transition probability.
+    """
+
+    _validate_plan(evaluation, plan)
+    first_valid = next((fold for fold in evaluation.folds if fold.valid), None)
+    if first_valid is None or first_valid.alignment is None:
+        raise ValueError("state occupancy matrix requires at least one valid aligned fold")
+    state_ids = first_valid.alignment.persistent_state_ids
+    values = np.full((evaluation.state_count, len(plan.folds)), np.nan, dtype=np.float64)
+    for column, fold in enumerate(evaluation.folds):
+        if not fold.valid:
+            continue
+        if fold.oos_soft_occupancy is None:
+            raise ValueError("valid fold is missing OOS soft occupancy")
+        occupancy = np.asarray(fold.oos_soft_occupancy, dtype=np.float64)
+        if occupancy.shape != (evaluation.state_count,):
+            raise ValueError("OOS soft occupancy dimensions do not match the candidate")
+        if not np.all(np.isfinite(occupancy)) or np.any(occupancy < 0.0):
+            raise ValueError("OOS soft occupancy must be finite and nonnegative")
+        if not np.isclose(np.sum(occupancy), 1.0, rtol=0.0, atol=1e-10):
+            raise ValueError("OOS soft occupancy must sum to one")
+        values[:, column] = occupancy * 100.0
+    return state_ids, tuple(item.test_end for item in plan.folds), values
+
+
 def render_state_persistence_matrix(
     evaluation: WalkForwardEvaluation,
     plan: WalkForwardPlan,
     output_dir: str | Path,
 ) -> PlotManifestEntry:
-    """Render the persistent-state self-transition matrix across Walk-forward history."""
+    """Render persistent-state OOS occupancy across Walk-forward history."""
 
-    state_ids, test_ends, values = _state_persistence_history(evaluation, plan)
+    state_ids, test_ends, values = _state_occupancy_history(evaluation, plan)
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    image = ax.imshow(values, vmin=0.0, vmax=1.0, aspect="auto")
+    image = ax.imshow(values, vmin=0.0, vmax=100.0, aspect="auto")
     colorbar = fig.colorbar(image, ax=ax)
-    colorbar.set_label("Self-transition probability")
-    ax.set_title(f"State persistence matrix — {evaluation.candidate_id}")
+    colorbar.set_label("Share of OOS observations (%)")
+    ax.set_title(f"State occupancy matrix — {evaluation.candidate_id}")
     ax.set_xlabel("Test window end (UTC)")
     ax.set_ylabel("Persistent state")
     ax.set_yticks(range(len(state_ids)), labels=state_ids)
-    ax.set_xticks(range(len(test_ends)), labels=[value.date().isoformat() for value in test_ends])
+    tick_count = min(9, len(test_ends))
+    tick_positions = np.unique(np.linspace(0, len(test_ends) - 1, tick_count, dtype=np.intp))
+    ax.set_xticks(
+        tick_positions,
+        labels=[test_ends[index].date().isoformat() for index in tick_positions],
+    )
     ax.tick_params(axis="x", rotation=45)
     base = Path(output_dir) / evaluation.candidate_id / "state_persistence_matrix"
     png_path = _save_figure(fig, base)
@@ -296,7 +333,7 @@ def render_state_persistence_matrix(
         plot_type="state_persistence_matrix",
         candidate_id=evaluation.candidate_id,
         fold_id=None,
-        source_metric_keys=("fold_self_transition",),
+        source_metric_keys=("fold_oos_soft_occupancy",),
         x_axis_field="test_end",
         x_axis_label="Test window end (UTC)",
         y_axis_label="Persistent state",
@@ -304,9 +341,12 @@ def render_state_persistence_matrix(
         image_dimensions_inches=WIDE_FIGSIZE,
         dpi=PNG_DPI,
         source_artifact_hash=_canonical_hash(
-            {"test_end": [item.isoformat() for item in test_ends], "values": values.tolist()}
+            {
+                "test_end": [item.isoformat() for item in test_ends],
+                "values_percent": values.tolist(),
+            }
         ),
-        scale_bounds=(0.0, 1.0),
+        scale_bounds=(0.0, 100.0),
     )
 
 
