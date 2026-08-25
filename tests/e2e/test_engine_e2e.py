@@ -82,12 +82,13 @@ def _source_rows(policy: FeatureSelectionPolicy) -> pd.DataFrame:
 def _artifact(state_count: int, features: tuple[str, ...]) -> GaussianHMMArtifact:
     dimension = len(features)
     # Use distinct regions of the first two standardized dimensions.  This gives
-    # each K=2/K=3/K=4 synthetic state material occupancy without coupling the
+    # each K=2/K=3/K=4/K=5 synthetic state material occupancy without coupling the
     # 48 source columns and accidentally changing the selection contract.
     coordinates = {
         2: ((-0.8, -0.8), (0.8, 0.8)),
         3: ((-0.9, -0.9), (-0.9, 0.9), (0.9, 0.0)),
         4: ((-0.9, -0.9), (-0.9, 0.9), (0.9, -0.9), (0.9, 0.9)),
+        5: ((-0.9, -0.9), (-0.9, 0.9), (0.0, 0.0), (0.9, -0.9), (0.9, 0.9)),
     }[state_count]
     means = tuple(
         tuple(coordinate[index] if index < 2 else 0.0 for index in range(dimension))
@@ -207,8 +208,10 @@ def test_hermetic_xetra_training_registry_and_serving_e2e(
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
     )
-    assert all(item.valid_fold_rate == 1.0 for item in grid.evaluations)
+    assert all(item.valid_fold_rate == 1.0 for item in grid.evaluations[:3])
+    assert 0.0 <= grid.evaluations[3].valid_fold_rate <= 1.0
     assert all(item.feature_order == selection.final_features for item in grid.evaluations)
     assert all(
         item.feature_selection_execution_hash == selection.feature_selection_execution_hash

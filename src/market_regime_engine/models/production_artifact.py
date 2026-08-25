@@ -50,8 +50,8 @@ class ProductionModelArtifact:
             raise ValueError("production artifact requires a supported xetra profile configuration")
         if self.registered_model != "regime-xetra":
             raise ValueError("production artifact registered model must be exactly regime-xetra")
-        if self.state_count not in (2, 3, 4):
-            raise ValueError("production artifact supports exactly K2/K3/K4")
+        if self.state_count not in (2, 3, 4, 5):
+            raise ValueError("production artifact supports exactly K2/K3/K4/K5")
         if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
             raise ValueError(
                 "production candidate identity must match state count and full covariance"

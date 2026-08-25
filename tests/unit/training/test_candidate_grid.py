@@ -60,7 +60,7 @@ def resolved_profile() -> ResolvedSelectedFeatureProfile:
         final_features=FEATURES,
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        candidates=tuple(candidate(k) for k in (2, 3, 4)),
+        candidates=tuple(candidate(k) for k in (2, 3, 4, 5)),
     )
 
 
@@ -218,6 +218,7 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
     ]
     assert all(call[1] == FEATURES and call[2] == "build-1" for call in calls)
     aggregate_ids = tuple(item.candidate_id for item in result.aggregates)

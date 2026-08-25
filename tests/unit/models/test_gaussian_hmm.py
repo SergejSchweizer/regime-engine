@@ -105,5 +105,5 @@ def test_bad_rows_and_state_count_fail_closed() -> None:
     adapter = HmmlearnGaussianHMMAdapter(("a", "b"))
     with pytest.raises(ValueError, match="shape"):
         adapter.fit([[1.0]], state_count=2, seed=11)
-    with pytest.raises(ValueError, match="2, 3, or 4"):
-        adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=5, seed=11)
+    with pytest.raises(ValueError, match="2, 3, 4, or 5"):
+        adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=6, seed=11)

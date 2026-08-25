@@ -34,8 +34,8 @@ class GaussianHMMArtifact:
     covariance_type: str = "full"
 
     def __post_init__(self) -> None:
-        if self.state_count not in (2, 3, 4):
-            raise ValueError("Gaussian MVP state_count must be 2, 3, or 4")
+        if self.state_count not in (2, 3, 4, 5):
+            raise ValueError("Gaussian MVP state_count must be 2, 3, 4, or 5")
         if self.covariance_type != "full":
             raise ValueError("covariance_type must be exactly full")
         dimension = len(self.feature_order)

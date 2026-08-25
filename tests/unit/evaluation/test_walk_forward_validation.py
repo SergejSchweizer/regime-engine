@@ -135,8 +135,8 @@ def test_evaluation_contract_failures_are_explicit() -> None:
     assert baseline.valid_fold_rate == 0.0
     with pytest.raises(ValueError, match="xetra"):
         replace(baseline, profile_id="other")
-    with pytest.raises(ValueError, match="K2/K3/K4"):
-        replace(baseline, state_count=5, candidate_id="gaussian_hmm_k5_full")
+    with pytest.raises(ValueError, match="K2/K3/K4/K5"):
+        replace(baseline, state_count=6, candidate_id="gaussian_hmm_k6_full")
     with pytest.raises(ValueError, match="candidate identity"):
         replace(baseline, candidate_id="other")
     with pytest.raises(ValueError, match="at least one"):

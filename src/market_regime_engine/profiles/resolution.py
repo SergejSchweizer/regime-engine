@@ -10,7 +10,7 @@ from market_regime_engine.feature_selection.contracts import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 
-EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4)
+EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4, 5)
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
 
 
@@ -36,7 +36,7 @@ class ResolvedCandidateProfile:
 
     def __post_init__(self) -> None:
         if self.state_count not in EXPECTED_XETRA_CANDIDATE_STATES:
-            raise ValueError("resolved Xetra candidate state count must be one of 2, 3, 4")
+            raise ValueError("resolved Xetra candidate state count must be one of 2, 3, 4, 5")
         expected_id = f"gaussian_hmm_k{self.state_count}_full"
         if self.candidate_id != expected_id:
             raise ValueError(f"candidate_id must be exactly {expected_id}")
@@ -153,20 +153,20 @@ def _candidate_shared_contract(candidate: ResolvedCandidateProfile) -> tuple[obj
 def validate_candidate_comparison_inputs(
     candidates: tuple[ResolvedCandidateProfile, ...],
 ) -> None:
-    """Fail before candidate comparison unless K2/K3/K4 share one exact feature contract."""
+    """Fail before candidate comparison unless K2/K3/K4/K5 share one feature contract."""
 
-    if len(candidates) != 3:
-        raise ValueError("candidate comparison requires exactly K2, K3, and K4")
+    if len(candidates) != 4:
+        raise ValueError("candidate comparison requires exactly K2, K3, K4, and K5")
     states = tuple(candidate.state_count for candidate in candidates)
     if states != EXPECTED_XETRA_CANDIDATE_STATES:
-        raise ValueError("candidate comparison order must be exactly K2, K3, K4")
-    expected_ids = tuple(f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4))
+        raise ValueError("candidate comparison order must be exactly K2, K3, K4, K5")
+    expected_ids = tuple(f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4, 5))
     if tuple(candidate.candidate_id for candidate in candidates) != expected_ids:
-        raise ValueError("candidate comparison IDs must be exact full-covariance K2/K3/K4 IDs")
+        raise ValueError("candidate comparison IDs must be exact full-covariance K2/K3/K4/K5 IDs")
     shared = _candidate_shared_contract(candidates[0])
     if any(_candidate_shared_contract(candidate) != shared for candidate in candidates[1:]):
         raise ValueError(
-            "K2/K3/K4 candidates must share exact feature order, dimension, source build, "
+            "K2/K3/K4/K5 candidates must share exact feature order, dimension, source build, "
             "selection hashes, original universe, and preliminary medoids"
         )
 
@@ -210,7 +210,7 @@ def resolve_selected_feature_profile(
     if profile.feature_selection.static_features:
         raise ValueError("selected-feature profile cannot also configure static features")
     if profile.gaussian_hmm.candidate_states != EXPECTED_XETRA_CANDIDATE_STATES:
-        raise ValueError("Xetra Gaussian candidate states must be exactly K2/K3/K4")
+        raise ValueError("Xetra Gaussian candidate states must be exactly K2/K3/K4/K5")
     if profile.gaussian_hmm.covariance_type != "full":
         raise ValueError("Xetra Gaussian candidates must use full covariance")
     if not source_build_id or source_build_id.strip() != source_build_id:

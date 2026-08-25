@@ -170,8 +170,8 @@ class HmmlearnGaussianHMMAdapter:
         self._artifact: GaussianHMMArtifact | None = None
 
     def _new_model(self, state_count: int, seed: int) -> GaussianHMM:
-        if state_count not in (2, 3, 4):
-            raise ValueError("Gaussian MVP state_count must be 2, 3, or 4")
+        if state_count not in (2, 3, 4, 5):
+            raise ValueError("Gaussian MVP state_count must be 2, 3, 4, or 5")
         settings = self.settings
         return GaussianHMM(
             n_components=state_count,

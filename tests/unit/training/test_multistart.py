@@ -130,5 +130,5 @@ def test_invalid_result_paths_are_counted_as_failed_starts() -> None:
 
 
 def test_invalid_state_count_fails_before_adapter_use() -> None:
-    with pytest.raises(ValueError, match="K=2,3,4"):
-        run_multistart([[0.0]], state_count=5, adapter_factory=factory({}))
+    with pytest.raises(ValueError, match="K=2,3,4,5"):
+        run_multistart([[0.0]], state_count=6, adapter_factory=factory({}))

@@ -50,8 +50,8 @@ class MultistartResult:
     diagnostics: tuple[StartDiagnostic, ...]
 
     def __post_init__(self) -> None:
-        if self.state_count not in (2, 3, 4):
-            raise ValueError("state_count must be K=2,3,4")
+        if self.state_count not in (2, 3, 4, 5):
+            raise ValueError("state_count must be K=2,3,4,5")
         if tuple(item.seed for item in self.diagnostics) != MULTISTART_SEEDS:
             raise ValueError("diagnostics must retain all eight starts in pinned seed order")
         valid = sum(item.success for item in self.diagnostics)
@@ -113,8 +113,8 @@ def run_multistart(
 ) -> MultistartResult:
     """Fit exactly eight starts and choose the valid TRAIN-loglik winner deterministically."""
 
-    if state_count not in (2, 3, 4):
-        raise ValueError("state_count must be K=2,3,4")
+    if state_count not in (2, 3, 4, 5):
+        raise ValueError("state_count must be K=2,3,4,5")
 
     diagnostics: list[StartDiagnostic] = []
     valid_results: list[FitResult] = []
