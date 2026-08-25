@@ -243,7 +243,10 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     assert influence["x_axis_label"] == "Input feature"
     assert influence["y_axis_label"] == "Persistent state"
     assert influence["legend_entries"] == ["state_0", "state_1"]
-    assert tuple(influence["scale_bounds"]) == pytest.approx((-2.0 / np.sqrt(0.20), 2.0 / np.sqrt(0.20)))
+    expected_influence_scale = 2.0 / np.sqrt(0.20)
+    assert tuple(influence["scale_bounds"]) == pytest.approx(
+        (-expected_influence_scale, expected_influence_scale)
+    )
     assert all(Path(item["png_path"]).exists() for item in manifest)
     assert all("svg_path" not in item for item in manifest)
     assert not tuple(tmp_path.rglob("*.svg"))

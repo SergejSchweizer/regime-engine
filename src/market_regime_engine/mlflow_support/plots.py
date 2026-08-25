@@ -379,9 +379,7 @@ def _state_feature_separation(
             raise ValueError("emission parameters must be finite")
         if np.any(variances <= 0.0):
             raise ValueError("emission variances must be positive")
-        other_means = (np.sum(means, axis=0, keepdims=True) - means) / (
-            evaluation.state_count - 1
-        )
+        other_means = (np.sum(means, axis=0, keepdims=True) - means) / (evaluation.state_count - 1)
         fold_values.append((means - other_means) / np.sqrt(variances))
 
     summary = np.median(np.stack(fold_values), axis=0)
