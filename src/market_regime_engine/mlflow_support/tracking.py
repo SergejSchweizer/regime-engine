@@ -103,12 +103,17 @@ def _timestamp_ms(fold: WalkForwardFold) -> int:
 def _scalar_fold_metrics(fold: WalkForwardFoldResult) -> dict[str, float | None]:
     hard = fold.train_hard_occupancy
     soft = fold.train_soft_occupancy
+    train_count = fold.train_model_observation_count
+    if train_count < 1:
+        raise ValueError("normalized information criteria require positive TRAIN observations")
     return {
         "fold_train_loglik": fold.train_log_likelihood,
         "fold_oos_predictive_loglik": fold.oos_predictive_log_likelihood,
         "fold_oos_predictive_loglik_per_obs": (fold.oos_predictive_log_likelihood_per_observation),
         "fold_aic": fold.aic,
         "fold_bic": fold.bic,
+        "fold_aic_per_train_obs": None if fold.aic is None else fold.aic / train_count,
+        "fold_bic_per_train_obs": None if fold.bic is None else fold.bic / train_count,
         "fold_multistart_success_rate": fold.multistart_success_rate,
         "fold_min_train_hard_occupancy": None if hard is None else min(hard),
         "fold_min_train_soft_occupancy": None if soft is None else min(soft),

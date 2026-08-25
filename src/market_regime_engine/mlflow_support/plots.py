@@ -40,6 +40,8 @@ _FOLD_METRICS: dict[str, tuple[str, str]] = {
     ),
     "fold_aic": ("aic", "AIC"),
     "fold_bic": ("bic", "BIC"),
+    "fold_aic_per_train_obs": ("aic", "AIC per TRAIN observation"),
+    "fold_bic_per_train_obs": ("bic", "BIC per TRAIN observation"),
     "fold_multistart_success_rate": (
         "multistart_success_rate",
         "Multistart success rate",
@@ -111,6 +113,10 @@ def _metric_value(fold: WalkForwardFoldResult, metric_key: str) -> float | None:
     scalar = cast(float | None, value)
     if scalar is not None and not isfinite(scalar):
         raise ValueError(f"{metric_key} must be finite when present")
+    if metric_key in {"fold_aic_per_train_obs", "fold_bic_per_train_obs"}:
+        if fold.train_model_observation_count < 1:
+            raise ValueError("normalized information criteria require positive TRAIN observations")
+        return None if scalar is None else scalar / fold.train_model_observation_count
     return scalar
 
 

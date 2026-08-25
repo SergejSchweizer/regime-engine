@@ -198,6 +198,8 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     candidate_points = port.metrics["run-2"]
     keys = {point.key for point in candidate_points}
     assert "fold_oos_predictive_loglik_per_obs" in keys
+    assert "fold_aic_per_train_obs" in keys
+    assert "fold_bic_per_train_obs" in keys
     assert "fold_train_hard_occupancy_state_0" in keys
     assert "fold_self_transition_state_1" in keys
     assert "candidate_valid_fold_rate" in keys
