@@ -247,6 +247,9 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     assert tuple(influence["scale_bounds"]) == pytest.approx(
         (-expected_influence_scale, expected_influence_scale)
     )
+    occupancy = next(item for item in manifest if item["plot_type"] == "state_persistence_matrix")
+    assert occupancy["source_metric_keys"] == ["fold_oos_soft_occupancy"]
+    assert tuple(occupancy["scale_bounds"]) == (0.0, 100.0)
     assert all(Path(item["png_path"]).exists() for item in manifest)
     assert all("svg_path" not in item for item in manifest)
     assert not tuple(tmp_path.rglob("*.svg"))
@@ -312,7 +315,10 @@ def test_plot_and_tracking_validation_fail_closed(tmp_path: Path) -> None:
         render_fold_history(evaluation, plan, "unknown_metric", tmp_path)
     with pytest.raises(ValueError, match="valid aligned fold"):
         render_transition_heatmap(evaluation, invalid, tmp_path)
-    with pytest.raises(ValueError, match="at least one valid aligned fold"):
+    with pytest.raises(
+        ValueError,
+        match="state occupancy matrix requires at least one valid aligned fold",
+    ):
         render_state_persistence_matrix(replace(evaluation, folds=(invalid,)), plan, tmp_path)
     with pytest.raises(ValueError, match="at least one valid aligned fold"):
         render_state_transition_history(replace(evaluation, folds=(invalid,)), plan, tmp_path)
