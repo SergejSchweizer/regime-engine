@@ -26,7 +26,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_covariance_heatmap,
     render_fold_history,
     render_state_feature_influence,
-    render_state_persistence_matrix,
+    render_state_occupancy_table,
     render_state_transition_history,
     render_transition_heatmap,
 )
@@ -229,7 +229,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         "fold_history",
         "transition_heatmap",
         "full_covariance_heatmap",
-        "state_persistence_matrix",
+        "state_occupancy_table",
         "state_transition_history",
         "state_feature_influence",
     } <= plot_types
@@ -249,7 +249,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     assert tuple(influence["scale_bounds"]) == pytest.approx(
         (-expected_influence_scale, expected_influence_scale)
     )
-    occupancy = next(item for item in manifest if item["plot_type"] == "state_persistence_matrix")
+    occupancy = next(item for item in manifest if item["plot_type"] == "state_occupancy_table")
     assert occupancy["source_metric_keys"] == ["fold_oos_soft_occupancy"]
     assert tuple(occupancy["scale_bounds"]) == (0.0, 100.0)
     assert all(Path(item["png_path"]).exists() for item in manifest)
@@ -319,9 +319,9 @@ def test_plot_and_tracking_validation_fail_closed(tmp_path: Path) -> None:
         render_transition_heatmap(evaluation, invalid, tmp_path)
     with pytest.raises(
         ValueError,
-        match="state occupancy matrix requires at least one valid aligned fold",
+        match="state occupancy table requires at least one valid aligned fold",
     ):
-        render_state_persistence_matrix(replace(evaluation, folds=(invalid,)), plan, tmp_path)
+        render_state_occupancy_table(replace(evaluation, folds=(invalid,)), plan, tmp_path)
     with pytest.raises(ValueError, match="at least one valid aligned fold"):
         render_state_transition_history(replace(evaluation, folds=(invalid,)), plan, tmp_path)
     with pytest.raises(ValueError, match="at least one valid aligned fold"):

@@ -41,7 +41,7 @@ def xetra_mapping() -> dict[str, object]:
             "ranking_abs_tolerance": 1e-12,
         },
         "gaussian_hmm": {
-            "candidate_states": [2, 3, 4],
+            "candidate_states": [2, 3, 4, 5],
             "backend": "hmmlearn==0.3.3",
             "covariance_type": "full",
             "implementation": "log",
@@ -178,7 +178,7 @@ def test_walk_forward_guards(key: str, value: object, match: str) -> None:
 @pytest.mark.parametrize(
     ("key", "value", "match"),
     [
-        ("candidate_states", [2, 3], "K=2,3,4"),
+        ("candidate_states", [2, 3], "K=2,3,4,5"),
         ("backend", "other", "backend"),
         ("implementation", "scaling", "implementation"),
         ("seeds", [11, 11], "unique"),

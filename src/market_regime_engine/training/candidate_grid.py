@@ -27,6 +27,7 @@ EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k2_full",
     "gaussian_hmm_k3_full",
     "gaussian_hmm_k4_full",
+    "gaussian_hmm_k5_full",
 )
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
 RANKING_ABS_TOLERANCE = 1e-12
@@ -57,8 +58,8 @@ class CandidateAggregate:
     def __post_init__(self) -> None:
         if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
             raise ValueError("aggregate candidate identity must match full-covariance state count")
-        if self.state_count not in (2, 3, 4):
-            raise ValueError("candidate aggregate supports exactly K2/K3/K4")
+        if self.state_count not in (2, 3, 4, 5):
+            raise ValueError("candidate aggregate supports exactly K2/K3/K4/K5")
         if self.planned_fold_count < 1:
             raise ValueError("candidate aggregate requires at least one planned fold")
         if self.valid_fold_count < 0 or self.invalid_fold_count < 0:
@@ -105,9 +106,9 @@ class CandidateGridEvaluation:
         if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
             raise ValueError("candidate grid requires a supported xetra profile configuration")
         if tuple(item.candidate_id for item in self.evaluations) != EXPECTED_CANDIDATE_IDS:
-            raise ValueError("candidate grid evaluations must be ordered exactly K2/K3/K4")
+            raise ValueError("candidate grid evaluations must be ordered exactly K2/K3/K4/K5")
         if tuple(item.candidate_id for item in self.aggregates) != EXPECTED_CANDIDATE_IDS:
-            raise ValueError("candidate grid aggregates must be ordered exactly K2/K3/K4")
+            raise ValueError("candidate grid aggregates must be ordered exactly K2/K3/K4/K5")
         for evaluation, aggregate in zip(self.evaluations, self.aggregates, strict=True):
             if evaluation.candidate_id != aggregate.candidate_id:
                 raise ValueError("candidate evaluation and aggregate identities differ")
@@ -219,7 +220,7 @@ def evaluate_candidate_grid(
     adapter_factory_builder: AdapterFactoryBuilder = _default_adapter_builder,
     runner: CandidateRunner = _default_runner,
 ) -> CandidateGridEvaluation:
-    """Evaluate exactly K2/K3/K4 against one identical frozen source/fold/feature contract."""
+    """Evaluate exactly K2/K3/K4/K5 against one identical frozen source/fold/feature contract."""
 
     if profile.profile_id != resolved_profile.profile_id:
         raise ValueError("model and resolved profile IDs differ")

@@ -22,7 +22,7 @@ walk_forward:
   minimum_model_test_observations: 42
   ranking_abs_tolerance: 1.0e-12
 gaussian_hmm:
-  candidate_states: [2, 3, 4]
+  candidate_states: [2, 3, 4, 5]
   backend: hmmlearn==0.3.3
   covariance_type: full
   implementation: log

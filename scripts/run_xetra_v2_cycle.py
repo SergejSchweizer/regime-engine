@@ -1,4 +1,4 @@
-"""Execute the real Xetra v2 K2/K3/K4 lifecycle against the deployed MLflow server."""
+"""Execute the real Xetra v2 K2/K3/K4/K5 lifecycle against the deployed MLflow server."""
 
 from __future__ import annotations
 

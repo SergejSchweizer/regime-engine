@@ -92,13 +92,13 @@ def grid(items: tuple[CandidateAggregate, ...]) -> CandidateGridEvaluation:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluations=tuple(evaluation(k) for k in (2, 3, 4)),
+        evaluations=tuple(evaluation(k) for k in (2, 3, 4, 5)),
         aggregates=items,
     )
 
 
 def base() -> tuple[CandidateAggregate, ...]:
-    return tuple(aggregate(k) for k in (2, 3, 4))
+    return tuple(aggregate(k) for k in (2, 3, 4, 5))
 
 
 def with_candidate(
@@ -186,7 +186,7 @@ def test_zero_eligible_candidates_fails_closed() -> None:
             bic_mean=None,
             aic_mean=None,
         )
-        for k in (2, 3, 4)
+        for k in (2, 3, 4, 5)
     )
     with pytest.raises(ValueError, match="no candidate passes"):
         select_statistical_champion(grid(rejected))
@@ -294,12 +294,12 @@ def test_candidate_aggregate_contract_guards_identity_counts_rate_gate_and_score
     kwargs = _candidate_kwargs()
     with pytest.raises(ValueError, match="identity"):
         CandidateAggregate(**{**kwargs, "candidate_id": "wrong"})  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="exactly K2/K3/K4"):
+    with pytest.raises(ValueError, match="exactly K2/K3/K4/K5"):
         CandidateAggregate(
             **{
                 **kwargs,
-                "candidate_id": "gaussian_hmm_k5_full",
-                "state_count": 5,
+                "candidate_id": "gaussian_hmm_k6_full",
+                "state_count": 6,
             }  # type: ignore[arg-type]
         )
     with pytest.raises(ValueError, match="at least one planned"):

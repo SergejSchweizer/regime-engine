@@ -27,7 +27,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_covariance_heatmap,
     render_fold_history,
     render_state_feature_influence,
-    render_state_persistence_matrix,
+    render_state_occupancy_table,
     render_state_transition_history,
     render_transition_heatmap,
 )
@@ -411,7 +411,7 @@ def track_walk_forward_evaluations(
         if evaluation.valid_folds:
             entries.extend(
                 (
-                    render_state_persistence_matrix(evaluation, plan, root),
+                    render_state_occupancy_table(evaluation, plan, root),
                     render_state_transition_history(evaluation, plan, root),
                     render_state_feature_influence(evaluation, root),
                 )

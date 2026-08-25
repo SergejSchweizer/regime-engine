@@ -88,8 +88,8 @@ class GaussianHMMConfig:
     init_params: str
 
     def __post_init__(self) -> None:
-        if self.candidate_states != (2, 3, 4):
-            raise ValueError("Gaussian MVP candidates must be exactly K=2,3,4")
+        if self.candidate_states != (2, 3, 4, 5):
+            raise ValueError("Gaussian MVP candidates must be exactly K=2,3,4,5")
         if self.backend != "hmmlearn==0.3.3":
             raise ValueError("unsupported Gaussian HMM backend")
         if self.covariance_type != "full":

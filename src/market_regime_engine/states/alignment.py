@@ -54,8 +54,8 @@ class StateAlignment:
 
 
 def _state_ids(state_count: int) -> tuple[str, ...]:
-    if state_count not in (2, 3, 4):
-        raise ValueError("persistent state alignment supports only K=2,3,4")
+    if state_count not in (2, 3, 4, 5):
+        raise ValueError("persistent state alignment supports only K=2,3,4,5")
     return tuple(f"state_{index}" for index in range(state_count))
 
 

@@ -290,7 +290,7 @@ def _state_occupancy_history(
     _validate_plan(evaluation, plan)
     first_valid = next((fold for fold in evaluation.folds if fold.valid), None)
     if first_valid is None or first_valid.alignment is None:
-        raise ValueError("state occupancy matrix requires at least one valid aligned fold")
+        raise ValueError("state occupancy table requires at least one valid aligned fold")
     state_ids = first_valid.alignment.persistent_state_ids
     values = np.full((evaluation.state_count, len(plan.folds)), np.nan, dtype=np.float64)
     for column, fold in enumerate(evaluation.folds):
@@ -309,47 +309,60 @@ def _state_occupancy_history(
     return state_ids, tuple(item.test_end for item in plan.folds), values
 
 
-def render_state_persistence_matrix(
+def render_state_occupancy_table(
     evaluation: WalkForwardEvaluation,
     plan: WalkForwardPlan,
     output_dir: str | Path,
 ) -> PlotManifestEntry:
-    """Render persistent-state OOS occupancy across Walk-forward history."""
+    """Render the total OOS time share spent in every persistent state."""
 
-    state_ids, test_ends, values = _state_occupancy_history(evaluation, plan)
-    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
-    image = ax.imshow(values, vmin=0.0, vmax=100.0, aspect="auto")
-    colorbar = fig.colorbar(image, ax=ax)
-    colorbar.set_label("Share of OOS observations (%)")
-    ax.set_title(f"State occupancy matrix — {evaluation.candidate_id}")
-    ax.set_xlabel("Test window end (UTC)")
-    ax.set_ylabel("Persistent state")
-    ax.set_yticks(range(len(state_ids)), labels=state_ids)
-    tick_count = min(9, len(test_ends))
-    tick_positions = np.unique(np.linspace(0, len(test_ends) - 1, tick_count, dtype=np.intp))
-    ax.set_xticks(
-        tick_positions,
-        labels=[test_ends[index].date().isoformat() for index in tick_positions],
+    state_ids, _, values = _state_occupancy_history(evaluation, plan)
+    weights = np.asarray(
+        [fold.test_model_observation_count if fold.valid else 0 for fold in evaluation.folds],
+        dtype=np.float64,
     )
-    ax.tick_params(axis="x", rotation=45)
-    base = Path(output_dir) / evaluation.candidate_id / "state_persistence_matrix"
+    valid_weight = float(np.sum(weights))
+    if valid_weight <= 0.0:
+        raise ValueError("state occupancy table requires retained OOS observations")
+    percentages = np.nansum(values * weights[np.newaxis, :], axis=1) / valid_weight
+    if not np.all(np.isfinite(percentages)) or not np.isclose(np.sum(percentages), 100.0):
+        raise ValueError("total OOS occupancy percentages must sum to 100")
+    fig, ax = plt.subplots(figsize=(7.0, 1.6 + 0.55 * evaluation.state_count))
+    ax.axis("off")
+    rows = [
+        [state_id, f"{percentage:.2f}%"]
+        for state_id, percentage in zip(state_ids, percentages, strict=True)
+    ]
+    table = ax.table(
+        cellText=rows,
+        colLabels=("Persistent state", "Share of total OOS time"),
+        cellLoc="center",
+        colLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.0, 1.5)
+    ax.set_title(f"Total OOS state occupancy — {evaluation.candidate_id}", pad=16)
+    base = Path(output_dir) / evaluation.candidate_id / "state_occupancy_table"
     png_path = _save_figure(fig, base)
     return PlotManifestEntry(
         png_path=str(png_path),
-        plot_type="state_persistence_matrix",
+        plot_type="state_occupancy_table",
         candidate_id=evaluation.candidate_id,
         fold_id=None,
         source_metric_keys=("fold_oos_soft_occupancy",),
-        x_axis_field="test_end",
-        x_axis_label="Test window end (UTC)",
-        y_axis_label="Persistent state",
+        x_axis_field="persistent_state_id",
+        x_axis_label="Persistent state",
+        y_axis_label="Share of total OOS time (%)",
         legend_entries=state_ids,
-        image_dimensions_inches=WIDE_FIGSIZE,
+        image_dimensions_inches=(7.0, 1.6 + 0.55 * evaluation.state_count),
         dpi=PNG_DPI,
         source_artifact_hash=_canonical_hash(
             {
-                "test_end": [item.isoformat() for item in test_ends],
-                "values_percent": values.tolist(),
+                "state_ids": state_ids,
+                "percentages": percentages.tolist(),
+                "retained_oos_observations": valid_weight,
             }
         ),
         scale_bounds=(0.0, 100.0),
@@ -366,12 +379,14 @@ def render_state_transition_history(
     state_ids, test_ends, values = _state_persistence_history(evaluation, plan)
     fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
     x_plot = _date_axis(ax, test_ends)
+    exit_probabilities = np.maximum(1.0 - values, 1e-6)
     for index, state_id in enumerate(state_ids):
-        ax.plot(x_plot, values[index], marker="o", label=state_id)
-    ax.set_ylim(0.0, 1.0)
-    ax.set_title(f"State transition history — {evaluation.candidate_id}")
+        ax.plot(x_plot, exit_probabilities[index], marker="o", label=state_id)
+    ax.set_yscale("log")
+    ax.set_ylim(1e-6, 1.0)
+    ax.set_title(f"State exit-probability history (log scale) — {evaluation.candidate_id}")
     ax.set_xlabel("Test window end (UTC)")
-    ax.set_ylabel("Self-transition probability")
+    ax.set_ylabel("Probability of leaving state (log scale; floor 1e-6)")
     ax.grid(True, alpha=0.25)
     ax.legend()
     fig.autofmt_xdate()
@@ -385,7 +400,7 @@ def render_state_transition_history(
         source_metric_keys=("fold_self_transition",),
         x_axis_field="test_end",
         x_axis_label="Test window end (UTC)",
-        y_axis_label="Self-transition probability",
+        y_axis_label="Probability of leaving state (log scale; floor 1e-6)",
         legend_entries=state_ids,
         image_dimensions_inches=WIDE_FIGSIZE,
         dpi=PNG_DPI,
