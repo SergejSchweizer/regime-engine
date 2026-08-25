@@ -254,6 +254,8 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     parent_manifest = json.loads(Path(result.parent_manifest_path).read_text(encoding="utf-8"))
     assert parent_manifest[0]["plot_type"] == "candidate_comparison"
     assert parent_manifest[0]["legend_entries"] == ["gaussian_hmm_k2_full"]
+    assert parent_manifest[0]["y_axis_label"] == "Absolute OOS score and gap to best OOS score"
+    assert tuple(parent_manifest[0]["image_dimensions_inches"]) == (11.0, 8.0)
 
 
 def test_invalid_fold_is_kept_in_parquet_and_creates_plot_gaps_without_fold_artifacts(
