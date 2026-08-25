@@ -26,6 +26,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_candidate_comparison,
     render_covariance_heatmap,
     render_fold_history,
+    render_state_feature_influence,
     render_state_persistence_matrix,
     render_state_transition_history,
     render_transition_heatmap,
@@ -407,6 +408,7 @@ def track_walk_forward_evaluations(
                 (
                     render_state_persistence_matrix(evaluation, plan, root),
                     render_state_transition_history(evaluation, plan, root),
+                    render_state_feature_influence(evaluation, root),
                 )
             )
         shared_scale = candidate_covariance_scale(evaluation) if evaluation.valid_folds else None

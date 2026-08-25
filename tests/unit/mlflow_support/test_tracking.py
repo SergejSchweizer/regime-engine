@@ -25,6 +25,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_candidate_comparison,
     render_covariance_heatmap,
     render_fold_history,
+    render_state_feature_influence,
     render_state_persistence_matrix,
     render_state_transition_history,
     render_transition_heatmap,
@@ -228,6 +229,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         "full_covariance_heatmap",
         "state_persistence_matrix",
         "state_transition_history",
+        "state_feature_influence",
     } <= plot_types
     history = next(item for item in manifest if item["plot_type"] == "fold_history")
     assert history["x_axis_field"] == "test_end"
@@ -237,6 +239,14 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         item for item in manifest if item["plot_type"] == "full_covariance_heatmap"
     ]
     assert {tuple(item["scale_bounds"]) for item in covariance_entries} == {(-0.3, 0.3)}
+    influence = next(item for item in manifest if item["plot_type"] == "state_feature_influence")
+    assert influence["x_axis_label"] == "Input feature"
+    assert influence["y_axis_label"] == "Persistent state"
+    assert influence["legend_entries"] == ["state_0", "state_1"]
+    expected_influence_scale = 2.0 / np.sqrt(0.20)
+    assert tuple(influence["scale_bounds"]) == pytest.approx(
+        (-expected_influence_scale, expected_influence_scale)
+    )
     assert all(Path(item["png_path"]).exists() for item in manifest)
     assert all("svg_path" not in item for item in manifest)
     assert not tuple(tmp_path.rglob("*.svg"))
@@ -304,6 +314,8 @@ def test_plot_and_tracking_validation_fail_closed(tmp_path: Path) -> None:
         render_state_persistence_matrix(replace(evaluation, folds=(invalid,)), plan, tmp_path)
     with pytest.raises(ValueError, match="at least one valid aligned fold"):
         render_state_transition_history(replace(evaluation, folds=(invalid,)), plan, tmp_path)
+    with pytest.raises(ValueError, match="at least one valid aligned fold"):
+        render_state_feature_influence(replace(evaluation, folds=(invalid,)), tmp_path)
     with pytest.raises(ValueError, match="valid aligned fold"):
         render_covariance_heatmap(evaluation, invalid, 0, 1.0, tmp_path)
     with pytest.raises(ValueError, match="outside candidate state range"):

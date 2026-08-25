@@ -349,6 +349,104 @@ def render_state_transition_history(
     )
 
 
+def _state_feature_separation(
+    evaluation: WalkForwardEvaluation,
+) -> tuple[tuple[str, ...], np.ndarray]:
+    """Return median aligned emission separation per persistent state and feature.
+
+    A value is the state mean minus the mean of the other state means, divided by
+    that state's marginal emission standard deviation.  The HMM is trained on
+    standardized feature rows, so this is a dimensionless, comparable measure of
+    how strongly an input feature separates a state from the remaining states.
+    """
+
+    first_valid = next((fold for fold in evaluation.folds if fold.valid), None)
+    if first_valid is None or first_valid.alignment is None:
+        raise ValueError("state feature influence requires at least one valid aligned fold")
+
+    state_ids = first_valid.alignment.persistent_state_ids
+    fold_values: list[np.ndarray] = []
+    for fold in evaluation.valid_folds:
+        if fold.model_artifact is None or fold.alignment is None:
+            raise ValueError("valid fold is missing aligned model artifacts")
+        mapping = np.asarray(fold.alignment.persistent_to_fitted, dtype=np.intp)
+        means = np.asarray(fold.model_artifact.means, dtype=np.float64)[mapping]
+        covariances = np.asarray(fold.model_artifact.full_covariances, dtype=np.float64)[mapping]
+        variances = np.diagonal(covariances, axis1=1, axis2=2)
+        if means.shape != (evaluation.state_count, len(evaluation.feature_order)):
+            raise ValueError("aligned mean dimensions do not match the candidate")
+        if not np.all(np.isfinite(means)) or not np.all(np.isfinite(variances)):
+            raise ValueError("emission parameters must be finite")
+        if np.any(variances <= 0.0):
+            raise ValueError("emission variances must be positive")
+        other_means = (np.sum(means, axis=0, keepdims=True) - means) / (evaluation.state_count - 1)
+        fold_values.append((means - other_means) / np.sqrt(variances))
+
+    summary = np.median(np.stack(fold_values), axis=0)
+    if not np.all(np.isfinite(summary)):
+        raise ValueError("state feature influence summary must be finite")
+    return state_ids, summary
+
+
+def render_state_feature_influence(
+    evaluation: WalkForwardEvaluation,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render a candidate's median state-wise standardized emission separation."""
+
+    state_ids, values = _state_feature_separation(evaluation)
+    features = evaluation.feature_order
+    scale = float(np.max(np.abs(values)))
+    if not isfinite(scale):
+        raise ValueError("state feature influence scale must be finite")
+    plot_scale = max(scale, 1.0)
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    image = ax.imshow(values, vmin=-plot_scale, vmax=plot_scale, cmap="coolwarm", aspect="auto")
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("State separation (state standard deviations)")
+    ax.set_title(f"Input-feature influence by persistent state — {evaluation.candidate_id}")
+    ax.set_xlabel("Input feature")
+    ax.set_ylabel("Persistent state")
+    ax.set_xticks(range(len(features)), labels=features, rotation=45, ha="right")
+    ax.set_yticks(range(len(state_ids)), labels=state_ids)
+    if len(features) <= 12:
+        for row in range(values.shape[0]):
+            strongest = int(np.argmax(np.abs(values[row])))
+            for column in range(values.shape[1]):
+                marker = " *" if column == strongest else ""
+                ax.text(
+                    column,
+                    row,
+                    f"{values[row, column]:.2f}{marker}",
+                    ha="center",
+                    va="center",
+                )
+    base = Path(output_dir) / evaluation.candidate_id / "state_feature_influence"
+    png_path = _save_figure(fig, base)
+    payload = {
+        "candidate_id": evaluation.candidate_id,
+        "feature_order": features,
+        "state_ids": state_ids,
+        "values": values.tolist(),
+        "scale": plot_scale,
+    }
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="state_feature_influence",
+        candidate_id=evaluation.candidate_id,
+        fold_id=None,
+        source_metric_keys=("aligned_emission_mean", "aligned_emission_variance"),
+        x_axis_field="feature_order",
+        x_axis_label="Input feature",
+        y_axis_label="Persistent state",
+        legend_entries=state_ids,
+        image_dimensions_inches=WIDE_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+        scale_bounds=(-plot_scale, plot_scale),
+    )
+
+
 def render_covariance_heatmap(
     evaluation: WalkForwardEvaluation,
     fold: WalkForwardFoldResult,
