@@ -107,7 +107,9 @@ def _scalar_fold_metrics(fold: WalkForwardFoldResult) -> dict[str, float | None]
     if train_count < 1:
         raise ValueError("normalized information criteria require positive TRAIN observations")
     return {
-        "fold_train_loglik": fold.train_log_likelihood,
+        "fold_train_loglik": (
+            None if fold.train_log_likelihood is None else fold.train_log_likelihood / train_count
+        ),
         "fold_oos_predictive_loglik": fold.oos_predictive_log_likelihood,
         "fold_oos_predictive_loglik_per_obs": (fold.oos_predictive_log_likelihood_per_observation),
         "fold_aic": fold.aic,

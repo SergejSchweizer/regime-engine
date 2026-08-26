@@ -29,7 +29,10 @@ SQUARE_FIGSIZE = (7.0, 6.5)
 COMPARISON_FIGSIZE = (11.0, 8.0)
 
 _FOLD_METRICS: dict[str, tuple[str, str]] = {
-    "fold_train_loglik": ("train_log_likelihood", "TRAIN log likelihood"),
+    "fold_train_loglik": (
+        "train_log_likelihood",
+        "TRAIN log likelihood per observation",
+    ),
     "fold_oos_predictive_loglik": (
         "oos_predictive_log_likelihood",
         "OOS predictive log likelihood",
@@ -38,8 +41,6 @@ _FOLD_METRICS: dict[str, tuple[str, str]] = {
         "oos_predictive_log_likelihood_per_observation",
         "OOS predictive log likelihood per observation",
     ),
-    "fold_aic": ("aic", "AIC"),
-    "fold_bic": ("bic", "BIC"),
     "fold_aic_per_train_obs": ("aic", "AIC per TRAIN observation"),
     "fold_bic_per_train_obs": ("bic", "BIC per TRAIN observation"),
     "fold_multistart_success_rate": (
@@ -113,7 +114,11 @@ def _metric_value(fold: WalkForwardFoldResult, metric_key: str) -> float | None:
     scalar = cast(float | None, value)
     if scalar is not None and not isfinite(scalar):
         raise ValueError(f"{metric_key} must be finite when present")
-    if metric_key in {"fold_aic_per_train_obs", "fold_bic_per_train_obs"}:
+    if metric_key in {
+        "fold_train_loglik",
+        "fold_aic_per_train_obs",
+        "fold_bic_per_train_obs",
+    }:
         if fold.train_model_observation_count < 1:
             raise ValueError("normalized information criteria require positive TRAIN observations")
         return None if scalar is None else scalar / fold.train_model_observation_count
