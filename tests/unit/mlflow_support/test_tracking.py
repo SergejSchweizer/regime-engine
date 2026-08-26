@@ -270,7 +270,11 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     assert not tuple(tmp_path.rglob("*.svg"))
 
     parent_manifest = json.loads(Path(result.parent_manifest_path).read_text(encoding="utf-8"))
-    assert parent_manifest[0]["plot_type"] == "candidate_comparison"
+    assert {item["plot_type"] for item in parent_manifest} == {
+        "candidate_comparison",
+        "candidate_oos_gap_heatmap",
+        "candidate_oos_summary",
+    }
     valid_scores = [
         fold.oos_predictive_log_likelihood_per_observation
         for fold in evaluation.folds

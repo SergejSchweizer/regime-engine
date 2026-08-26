@@ -833,5 +833,157 @@ def render_candidate_comparison(
     )
 
 
+def _ordered_candidate_oos_values(
+    evaluations: tuple[WalkForwardEvaluation, ...], plan: WalkForwardPlan
+) -> tuple[tuple[WalkForwardEvaluation, np.ndarray, float | None], ...]:
+    """Return candidate fold scores ordered by weighted OOS score, best first."""
+
+    items: list[tuple[WalkForwardEvaluation, np.ndarray, float | None]] = []
+    for evaluation in evaluations:
+        _validate_plan(evaluation, plan)
+        values = np.asarray(
+            [
+                _metric_value(fold, "fold_oos_predictive_loglik_per_obs") if fold.valid else np.nan
+                for fold in evaluation.folds
+            ],
+            dtype=np.float64,
+        )
+        weights = np.asarray(
+            [
+                fold.test_model_observation_count if np.isfinite(value) else 0
+                for fold, value in zip(evaluation.folds, values, strict=True)
+            ],
+            dtype=np.float64,
+        )
+        total_weight = float(np.sum(weights))
+        average = None if total_weight == 0.0 else float(np.nansum(values * weights) / total_weight)
+        items.append((evaluation, values, average))
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                item[2] is None,
+                0.0 if item[2] is None else -item[2],
+                item[0].candidate_id,
+            ),
+        )
+    )
+
+
+def render_candidate_oos_gap_heatmap(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render fold-by-candidate OOS gaps from the best candidate in each fold."""
+
+    ordered = _ordered_candidate_oos_values(evaluations, plan)
+    matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
+    best_by_fold = np.nanmax(matrix, axis=0)
+    gaps = matrix - best_by_fold
+    finite_gaps = gaps[np.isfinite(gaps)]
+    minimum = min(float(np.min(finite_gaps)), -1e-6) if finite_gaps.size else -1.0
+    fig, ax = plt.subplots(figsize=(10.0, max(4.5, 0.22 * len(plan.folds) + 1.8)))
+    image = ax.imshow(gaps.T, aspect="auto", cmap="RdYlGn", vmin=minimum, vmax=0.0)
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("OOS PLL/obs gap to best candidate (0 = best)")
+    ax.set_title("Fold x model OOS score gap to best candidate")
+    ax.set_xlabel("Candidate (ranked by weighted average OOS PLL/obs)")
+    ax.set_ylabel("Walk-forward fold / test window end")
+    ax.set_xticks(
+        range(len(ordered)),
+        labels=[item[0].candidate_id for item in ordered],
+        rotation=25,
+        ha="right",
+    )
+    tick_positions = np.arange(0, len(plan.folds), max(1, len(plan.folds) // 14))
+    ax.set_yticks(
+        tick_positions,
+        labels=[
+            f"{plan.folds[index].fold_id} — {plan.folds[index].test_end:%Y-%m}"
+            for index in tick_positions
+        ],
+    )
+    base = Path(output_dir) / "parent" / "candidate_oos_gap_heatmap"
+    png_path = _save_figure(fig, base)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="candidate_oos_gap_heatmap",
+        candidate_id="all_candidates",
+        fold_id=None,
+        source_metric_keys=("fold_oos_predictive_loglik_per_obs",),
+        x_axis_field="candidate_id",
+        x_axis_label="Candidate (ranked by weighted average OOS PLL/obs)",
+        y_axis_label="Walk-forward fold / test window end",
+        legend_entries=tuple(item[0].candidate_id for item in ordered),
+        image_dimensions_inches=(10.0, max(4.5, 0.22 * len(plan.folds) + 1.8)),
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash({"gaps": gaps.tolist()}),
+        scale_bounds=(minimum, 0.0),
+    )
+
+
+def render_candidate_oos_summary(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render weighted OOS score summaries, uncertainty bands, and fold wins."""
+
+    ordered = _ordered_candidate_oos_values(evaluations, plan)
+    matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
+    leaders = np.argmax(np.where(np.isfinite(matrix), matrix, -np.inf), axis=0)
+    comparable = np.any(np.isfinite(matrix), axis=0)
+    means = np.asarray([average if average is not None else np.nan for _, _, average in ordered])
+    lower = np.asarray([np.nanpercentile(values, 10) for _, values, _ in ordered])
+    upper = np.asarray([np.nanpercentile(values, 90) for _, values, _ in ordered])
+    wins = np.asarray(
+        [int(np.sum((leaders == index) & comparable)) for index in range(len(ordered))]
+    )
+    fig, ax = plt.subplots(figsize=(10.0, max(3.6, 0.75 * len(ordered) + 1.6)))
+    positions = np.arange(len(ordered))
+    ax.barh(positions, means, color="tab:blue", alpha=0.8)
+    ax.errorbar(
+        means,
+        positions,
+        xerr=np.vstack((means - lower, upper - means)),
+        fmt="none",
+        color="black",
+        capsize=4,
+    )
+    ax.set_yticks(positions, labels=[item[0].candidate_id for item in ordered])
+    ax.invert_yaxis()
+    ax.set_title("Weighted OOS predictive log likelihood summary")
+    ax.set_xlabel(
+        "Weighted average OOS predictive log likelihood per observation (10th-90th percentile)"
+    )
+    ax.set_ylabel("Candidate")
+    ax.grid(axis="x", alpha=0.25)
+    for position, mean, win_count in zip(positions, means, wins, strict=True):
+        ax.annotate(
+            f"avg {mean:.4f} | wins {win_count}/{int(np.sum(comparable))}",
+            (float(mean), float(position)),
+            xytext=(6, 0),
+            textcoords="offset points",
+            va="center",
+        )
+    base = Path(output_dir) / "parent" / "candidate_oos_summary"
+    png_path = _save_figure(fig, base)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="candidate_oos_summary",
+        candidate_id="all_candidates",
+        fold_id=None,
+        source_metric_keys=("fold_oos_predictive_loglik_per_obs",),
+        x_axis_field="candidate_id",
+        x_axis_label="Weighted average OOS PLL/obs (10th-90th percentile)",
+        y_axis_label="Candidate",
+        legend_entries=tuple(item[0].candidate_id for item in ordered),
+        image_dimensions_inches=(10.0, max(3.6, 0.75 * len(ordered) + 1.6)),
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash({"means": means.tolist(), "wins": wins.tolist()}),
+    )
+
+
 def fold_history_metric_keys() -> tuple[str, ...]:
     return tuple(_FOLD_METRICS)

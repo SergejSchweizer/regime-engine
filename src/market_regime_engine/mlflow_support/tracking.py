@@ -24,6 +24,8 @@ from market_regime_engine.mlflow_support.plots import (
     candidate_covariance_scale,
     fold_history_metric_keys,
     render_candidate_comparison,
+    render_candidate_oos_gap_heatmap,
+    render_candidate_oos_summary,
     render_covariance_heatmap,
     render_fold_history,
     render_oos_state_timeline,
@@ -479,6 +481,8 @@ def track_walk_forward_evaluations(
 
     comparison = render_candidate_comparison(ordered, plan, root)
     parent_entries.append(comparison)
+    parent_entries.append(render_candidate_oos_gap_heatmap(ordered, plan, root))
+    parent_entries.append(render_candidate_oos_summary(ordered, plan, root))
     port.log_artifact(parent_run_id, comparison.png_path, "plots")
     parent_manifest_path = root / "parent" / "plot_manifest.json"
     _write_json(
