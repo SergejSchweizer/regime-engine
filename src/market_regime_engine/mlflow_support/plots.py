@@ -691,9 +691,38 @@ def render_candidate_comparison(
 
     if not evaluations:
         raise ValueError("candidate comparison requires at least one evaluation")
-    ordered = tuple(sorted(evaluations, key=lambda item: (item.state_count, item.candidate_id)))
-    for evaluation in ordered:
+    for evaluation in evaluations:
         _validate_plan(evaluation, plan)
+    candidate_values: list[tuple[WalkForwardEvaluation, list[float | None], float | None]] = []
+    for evaluation in evaluations:
+        values = [
+            _metric_value(fold, "fold_oos_predictive_loglik_per_obs") if fold.valid else None
+            for fold in evaluation.folds
+        ]
+        weights = [
+            fold.test_model_observation_count
+            for fold, value in zip(evaluation.folds, values, strict=True)
+            if value is not None
+        ]
+        weighted_sum = sum(
+            value * weight
+            for value, weight in zip(
+                (value for value in values if value is not None), weights, strict=True
+            )
+        )
+        weight_total = sum(weights)
+        average = None if weight_total == 0 else weighted_sum / weight_total
+        candidate_values.append((evaluation, values, average))
+    ordered_values = tuple(
+        sorted(
+            candidate_values,
+            key=lambda item: (
+                item[2] is None,
+                0.0 if item[2] is None else -item[2],
+                item[0].candidate_id,
+            ),
+        )
+    )
     x_values = tuple(fold.test_end for fold in plan.folds)
     fig, (score_ax, gap_ax) = plt.subplots(
         nrows=2,
@@ -706,18 +735,21 @@ def render_candidate_comparison(
     source_values: dict[str, list[float | None]] = {}
     plotted_values: list[np.ndarray] = []
     line_colors: list[str] = []
-    for evaluation in ordered:
-        values = [
-            _metric_value(fold, "fold_oos_predictive_loglik_per_obs") if fold.valid else None
-            for fold in evaluation.folds
-        ]
+    legend_entries: list[str] = []
+    for evaluation, values, average in ordered_values:
         source_values[evaluation.candidate_id] = values
         y_values = np.asarray(
             [float("nan") if value is None else value for value in values], dtype=np.float64
         )
-        line = score_ax.plot(x_plot, y_values, marker="o", label=evaluation.candidate_id)[0]
+        legend_label = (
+            f"{evaluation.candidate_id} (avg: n/a)"
+            if average is None
+            else f"{evaluation.candidate_id} (avg: {average:.4f})"
+        )
+        line = score_ax.plot(x_plot, y_values, marker="o", label=legend_label)[0]
         plotted_values.append(y_values)
         line_colors.append(line.get_color())
+        legend_entries.append(legend_label)
     matrix = np.asarray(plotted_values, dtype=np.float64)
     finite_by_fold = np.any(np.isfinite(matrix), axis=0)
     best_values = np.full(len(x_values), np.nan, dtype=np.float64)
@@ -753,12 +785,22 @@ def render_candidate_comparison(
                     zorder=0,
                 )
         segment_start = segment_end
-    for evaluation, values, color in zip(ordered, relative_to_best, line_colors, strict=True):
-        gap_ax.plot(x_plot, values, marker="o", label=evaluation.candidate_id, color=color)
+    for (evaluation, _, average), values, color in zip(
+        ordered_values, relative_to_best, line_colors, strict=True
+    ):
+        label = (
+            f"{evaluation.candidate_id} (avg: n/a)"
+            if average is None
+            else f"{evaluation.candidate_id} (avg: {average:.4f})"
+        )
+        gap_ax.plot(x_plot, values, marker="o", label=label, color=color)
     score_ax.set_title("Walk-forward OOS candidate comparison")
     score_ax.set_ylabel("OOS predictive log likelihood per observation")
     score_ax.grid(True, alpha=0.25)
-    score_ax.legend(title="Candidate / shaded best candidate", loc="lower left")
+    score_ax.legend(
+        title="Candidate / weighted avg OOS PLL/obs / shaded best candidate",
+        loc="lower left",
+    )
     gap_ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
     gap_ax.set_xlabel("Test window end (UTC)")
     gap_ax.set_ylabel("Gap to best OOS score\n(0 = best)")
@@ -771,8 +813,10 @@ def render_candidate_comparison(
     payload = {
         "test_end": [value.isoformat() for value in x_values],
         "values": source_values,
+        "weighted_average_oos_predictive_loglik_per_observation": {
+            evaluation.candidate_id: average for evaluation, _, average in ordered_values
+        },
     }
-    candidate_ids = tuple(evaluation.candidate_id for evaluation in ordered)
     return PlotManifestEntry(
         png_path=str(png_path),
         plot_type="candidate_comparison",
@@ -782,7 +826,7 @@ def render_candidate_comparison(
         x_axis_field="test_end",
         x_axis_label="Test window end (UTC)",
         y_axis_label="Absolute OOS score and gap to best OOS score",
-        legend_entries=candidate_ids,
+        legend_entries=tuple(legend_entries),
         image_dimensions_inches=COMPARISON_FIGSIZE,
         dpi=PNG_DPI,
         source_artifact_hash=_canonical_hash(payload),
