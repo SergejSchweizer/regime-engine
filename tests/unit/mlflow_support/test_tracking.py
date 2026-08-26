@@ -271,7 +271,20 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
 
     parent_manifest = json.loads(Path(result.parent_manifest_path).read_text(encoding="utf-8"))
     assert parent_manifest[0]["plot_type"] == "candidate_comparison"
-    assert parent_manifest[0]["legend_entries"] == ["gaussian_hmm_k2_full"]
+    valid_scores = [
+        fold.oos_predictive_log_likelihood_per_observation
+        for fold in evaluation.folds
+        if fold.valid
+    ]
+    weights = [fold.test_model_observation_count for fold in evaluation.folds if fold.valid]
+    expected_average = sum(
+        score * weight
+        for score, weight in zip(valid_scores, weights, strict=True)
+        if score is not None
+    ) / sum(weights)
+    assert parent_manifest[0]["legend_entries"] == [
+        f"gaussian_hmm_k2_full (avg: {expected_average:.4f})"
+    ]
     assert parent_manifest[0]["y_axis_label"] == "Absolute OOS score and gap to best OOS score"
     assert tuple(parent_manifest[0]["image_dimensions_inches"]) == (11.0, 8.0)
 
