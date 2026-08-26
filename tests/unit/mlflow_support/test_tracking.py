@@ -209,6 +209,12 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         for point in candidate_points
         if point.key.startswith("fold_")
     )
+    train_loglik = next(
+        point.value for point in candidate_points if point.key == "fold_train_loglik"
+    )
+    assert train_loglik == pytest.approx(
+        evaluation.folds[0].train_log_likelihood / evaluation.folds[0].train_model_observation_count
+    )
 
     timeline = pq.read_table(tmp_path / "gaussian_hmm_k2_full" / "fold_timeline.parquet")
     assert timeline.num_rows == 1
@@ -237,6 +243,8 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     assert history["x_axis_field"] == "test_end"
     assert history["x_axis_label"] == "Test window end (UTC)"
     assert history["dpi"] == 180
+    history_paths = {item["png_path"] for item in manifest if item["plot_type"] == "fold_history"}
+    assert not any("fold_aic.png" in path or "fold_bic.png" in path for path in history_paths)
     covariance_entries = [
         item for item in manifest if item["plot_type"] == "full_covariance_heatmap"
     ]
