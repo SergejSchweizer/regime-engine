@@ -236,6 +236,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         "transition_heatmap",
         "full_covariance_heatmap",
         "state_occupancy_table",
+        "oos_state_timeline",
         "state_transition_history",
         "state_feature_influence",
     } <= plot_types
@@ -260,6 +261,10 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     occupancy = next(item for item in manifest if item["plot_type"] == "state_occupancy_table")
     assert occupancy["source_metric_keys"] == ["fold_oos_soft_occupancy"]
     assert tuple(occupancy["scale_bounds"]) == (0.0, 100.0)
+    timeline = next(item for item in manifest if item["plot_type"] == "oos_state_timeline")
+    assert timeline["x_axis_label"] == "OOS timestamp (UTC)"
+    assert timeline["y_axis_label"] == "Selected persistent state"
+    assert timeline["source_metric_keys"] == ["oos_filtered_probabilities"]
     assert all(Path(item["png_path"]).exists() for item in manifest)
     assert all("svg_path" not in item for item in manifest)
     assert not tuple(tmp_path.rglob("*.svg"))

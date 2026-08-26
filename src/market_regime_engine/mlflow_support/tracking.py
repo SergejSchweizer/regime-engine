@@ -26,6 +26,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_candidate_comparison,
     render_covariance_heatmap,
     render_fold_history,
+    render_oos_state_timeline,
     render_state_feature_influence,
     render_state_occupancy_table,
     render_state_transition_history,
@@ -414,6 +415,7 @@ def track_walk_forward_evaluations(
             entries.extend(
                 (
                     render_state_occupancy_table(evaluation, plan, root),
+                    render_oos_state_timeline(evaluation, plan, root),
                     render_state_transition_history(evaluation, plan, root),
                     render_state_feature_influence(evaluation, root),
                 )
