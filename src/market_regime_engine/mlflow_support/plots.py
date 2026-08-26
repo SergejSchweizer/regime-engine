@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from hashlib import sha256
+from itertools import pairwise
 from math import isfinite
 from pathlib import Path
 from typing import cast
@@ -13,6 +14,7 @@ from typing import cast
 import matplotlib
 import matplotlib.dates as mdates
 import numpy as np
+from matplotlib.patches import Patch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -371,6 +373,113 @@ def render_state_occupancy_table(
             }
         ),
         scale_bounds=(0.0, 100.0),
+    )
+
+
+def render_oos_state_timeline(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render the selected filtered OOS state as a categorical time band."""
+
+    _validate_plan(evaluation, plan)
+    first_valid = next((fold for fold in evaluation.folds if fold.valid), None)
+    if first_valid is None or first_valid.alignment is None:
+        raise ValueError("OOS state timeline requires at least one valid aligned fold")
+    state_ids = first_valid.alignment.persistent_state_ids
+    timestamps: list[datetime] = []
+    selected_states: list[int] = []
+    fold_starts: list[datetime] = []
+    for fold in evaluation.folds:
+        if not fold.valid:
+            continue
+        probabilities = np.asarray(fold.oos_filtered_probabilities, dtype=np.float64)
+        if probabilities.shape != (fold.test_model_observation_count, evaluation.state_count):
+            raise ValueError("OOS state timeline probabilities have unexpected dimensions")
+        if not np.all(np.isfinite(probabilities)) or np.any(probabilities < 0.0):
+            raise ValueError("OOS state timeline probabilities must be finite and nonnegative")
+        if not np.allclose(np.sum(probabilities, axis=1), 1.0, rtol=0.0, atol=1e-10):
+            raise ValueError("OOS state timeline probabilities must sum to one per observation")
+        if not fold.oos_timestamps:
+            raise ValueError("valid fold is missing OOS timestamps")
+        fold_starts.append(fold.oos_timestamps[0])
+        timestamps.extend(fold.oos_timestamps)
+        selected_states.extend(np.argmax(probabilities, axis=1).astype(int).tolist())
+    if not timestamps:
+        raise ValueError("OOS state timeline requires retained OOS observations")
+    if any(right <= left for left, right in pairwise(timestamps)):
+        raise ValueError("OOS state timeline timestamps must be strictly increasing")
+
+    x_values = mdates.date2num(timestamps)  # type: ignore[no-untyped-call]
+    if len(x_values) == 1:
+        half_width = 0.5
+        boundaries = np.asarray([x_values[0] - half_width, x_values[0] + half_width])
+    else:
+        midpoints = (x_values[:-1] + x_values[1:]) / 2.0
+        boundaries = np.concatenate(
+            (
+                [x_values[0] - (midpoints[0] - x_values[0])],
+                midpoints,
+                [x_values[-1] + (x_values[-1] - midpoints[-1])],
+            )
+        )
+    colors = plt.get_cmap("tab10")(np.arange(evaluation.state_count))
+    fig, ax = plt.subplots(figsize=(12.0, 3.8))
+    for index, state_index in enumerate(selected_states):
+        ax.fill_between(
+            (boundaries[index], boundaries[index + 1]),
+            state_index - 0.45,
+            state_index + 0.45,
+            color=colors[state_index],
+            linewidth=0.0,
+        )
+    for fold_start in fold_starts[1:]:
+        ax.axvline(
+            mdates.date2num(fold_start),  # type: ignore[no-untyped-call]
+            color="black",
+            linestyle="--",
+            linewidth=0.8,
+            alpha=0.55,
+        )
+    _date_axis(ax, tuple(timestamps))
+    ax.set_title(f"Selected filtered OOS state timeline — {evaluation.candidate_id}")
+    ax.set_xlabel("OOS timestamp (UTC)")
+    ax.set_ylabel("Selected persistent state")
+    ax.set_yticks(range(evaluation.state_count), labels=state_ids)
+    ax.set_ylim(-0.6, evaluation.state_count - 0.4)
+    ax.grid(axis="x", alpha=0.25)
+    ax.legend(
+        handles=[
+            Patch(color=colors[index], label=state_id) for index, state_id in enumerate(state_ids)
+        ],
+        title="Selected state",
+        ncol=min(evaluation.state_count, 5),
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.26),
+    )
+    base = Path(output_dir) / evaluation.candidate_id / "oos_state_timeline"
+    png_path = _save_figure(fig, base)
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="oos_state_timeline",
+        candidate_id=evaluation.candidate_id,
+        fold_id=None,
+        source_metric_keys=("oos_filtered_probabilities",),
+        x_axis_field="oos_timestamp",
+        x_axis_label="OOS timestamp (UTC)",
+        y_axis_label="Selected persistent state",
+        legend_entries=state_ids,
+        image_dimensions_inches=(12.0, 3.8),
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(
+            {
+                "timestamps": [timestamp.isoformat() for timestamp in timestamps],
+                "selected_state_indices": selected_states,
+                "fold_starts": [timestamp.isoformat() for timestamp in fold_starts],
+            }
+        ),
+        scale_bounds=(0.0, float(evaluation.state_count - 1)),
     )
 
 
