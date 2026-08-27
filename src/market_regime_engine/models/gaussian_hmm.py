@@ -82,10 +82,32 @@ def _validate_positive_definite(artifact: GaussianHMMArtifact) -> None:
             raise ValueError("full covariance must pass Cholesky without jitter") from exc
 
 
+def _validate_mixture_covariances(artifact: GaussianHMMArtifact) -> None:
+    if artifact.model_family != "gmm_hmm":
+        return
+    assert artifact.mixture_full_covariances is not None
+    for state_covariances in artifact.mixture_full_covariances:
+        for covariance in state_covariances:
+            matrix = np.asarray(covariance, dtype=np.float64)
+            if matrix.shape != (artifact.feature_dimension, artifact.feature_dimension):
+                raise ValueError("mixture covariance must have exact d x d shape")
+            if not np.all(np.isfinite(matrix)):
+                raise ValueError("mixture covariance values must be finite")
+            if float(np.max(np.abs(matrix - matrix.T))) > _PROB_TOL:
+                raise ValueError("mixture covariance asymmetry exceeds 1e-10")
+            if np.any(np.diag(matrix) < 1e-12):
+                raise ValueError("mixture covariance diagonal variance is below 1e-12")
+            try:
+                np.linalg.cholesky((matrix + matrix.T) / 2.0)
+            except np.linalg.LinAlgError as exc:
+                raise ValueError("mixture covariance must pass Cholesky without jitter") from exc
+
+
 def gaussian_log_emissions(rows: npt.ArrayLike, artifact: GaussianHMMArtifact) -> ArrayF64:
     """Return exact Gaussian, GMM, or multivariate Student-t log densities by state."""
     values = _rows(rows, artifact.feature_dimension)
     _validate_positive_definite(artifact)
+    _validate_mixture_covariances(artifact)
     output = np.empty((values.shape[0], artifact.state_count), dtype=np.float64)
     constant = artifact.feature_dimension * np.log(2.0 * np.pi)
     for state in range(artifact.state_count):
@@ -399,6 +421,7 @@ class HmmlearnGMMHMMAdapter(HmmlearnGaussianHMMAdapter):
         assert artifact.mixture_weights is not None
         assert artifact.mixture_means is not None
         assert artifact.mixture_full_covariances is not None
+        _validate_mixture_covariances(artifact)
         model = self._new_model(artifact.state_count, seed=0)
         model.startprob_ = np.asarray(artifact.start_probabilities, dtype=np.float64)
         model.transmat_ = np.asarray(artifact.transition_matrix, dtype=np.float64)

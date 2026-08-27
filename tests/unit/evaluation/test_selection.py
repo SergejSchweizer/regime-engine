@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from itertools import permutations
 
 import pytest
 
 from market_regime_engine.evaluation.selection import (
     CandidateSelectionEvidence,
     StatisticalChampionSelection,
-    _compare,
-    _numeric_compare,
+    _rank,
     _required,
     select_statistical_champion,
 )
@@ -251,12 +251,7 @@ def test_selection_result_contract_guards_tolerance_order_and_identity() -> None
         )
 
 
-def test_numeric_compare_and_required_cover_all_directions() -> None:
-    assert _numeric_compare(1.0, 2.0, higher_is_better=True) == 1
-    assert _numeric_compare(2.0, 1.0, higher_is_better=True) == -1
-    assert _numeric_compare(1.0, 2.0, higher_is_better=False) == -1
-    assert _numeric_compare(2.0, 1.0, higher_is_better=False) == 1
-    assert _numeric_compare(1.0, 1.0 + 5e-13, higher_is_better=True) == 0
+def test_required_rejects_invalid_values() -> None:
     assert _required(1.0, "metric") == 1.0
     with pytest.raises(ValueError, match="invalid metric"):
         _required(None, "metric")
@@ -264,12 +259,28 @@ def test_numeric_compare_and_required_cover_all_directions() -> None:
         _required(float("inf"), "metric")
 
 
-def test_compare_final_lexicographic_and_equality_paths() -> None:
-    left = aggregate(2)
-    assert _compare(left, left) == 0
-    better_mean = replace(left, oos_predictive_loglik_mean=-0.5)
-    assert _compare(better_mean, left) == -1
-    assert _compare(left, better_mean) == 1
+@pytest.mark.parametrize(
+    ("field_name", "values", "expected_state_counts"),
+    (
+        ("oos_predictive_loglik_mean", (0.0, 0.75e-12, 1.5e-12), (3, 4, 2)),
+        ("oos_predictive_loglik_std", (0.0, 0.75e-12, 1.5e-12), (2, 3, 4)),
+        ("oos_predictive_loglik_worst_fold", (0.0, 0.75e-12, 1.5e-12), (3, 4, 2)),
+        ("bic_mean", (0.0, 0.75e-12, 1.5e-12), (2, 3, 4)),
+        ("aic_mean", (0.0, 0.75e-12, 1.5e-12), (2, 3, 4)),
+    ),
+)
+def test_anchored_rank_rejects_pairwise_tolerance_chains_in_every_direction(
+    field_name: str,
+    values: tuple[float, float, float],
+    expected_state_counts: tuple[int, int, int],
+) -> None:
+    items = tuple(
+        replace(aggregate(state_count), **{field_name: value})
+        for state_count, value in zip((2, 3, 4), values, strict=True)
+    )
+    for ordered_items in permutations(items):
+        ranked = _rank(ordered_items)
+        assert tuple(item.state_count for item in ranked) == expected_state_counts
 
 
 def _candidate_kwargs() -> dict[str, object]:

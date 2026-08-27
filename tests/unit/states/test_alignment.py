@@ -6,6 +6,7 @@ from math import log, nan
 import pytest
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
+from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.states.alignment import (
     ALIGNMENT_AMBIGUITY_ABS_TOLERANCE,
     StateAlignment,
@@ -17,6 +18,8 @@ from market_regime_engine.states.signatures import (
     rms_distance,
     signature_sort_key,
     state_signatures,
+    state_signatures_in_alignment_coordinate,
+    transform_emission_to_alignment_coordinate,
 )
 
 
@@ -61,6 +64,40 @@ def test_signature_exact_components_and_rms() -> None:
     assert signatures[1] == pytest.approx((3.0, 4.0, 0.0, 0.0, 0.0))
     assert rms_distance(signatures[0], signatures[0]) == 0.0
     assert signature_sort_key((1.00000000004, -2.0)) == (1.0, -2.0)
+
+
+def scaler(means: tuple[float, ...], scales: tuple[float, ...]) -> StandardScalerArtifact:
+    return StandardScalerArtifact(
+        feature_order=tuple(f"f{index}" for index in range(len(means))),
+        means=means,
+        variances=tuple(scale**2 for scale in scales),
+        scales=scales,
+    )
+
+
+def test_alignment_coordinate_transform_preserves_identity_and_raw_space_emissions() -> None:
+    reference_scaler = scaler((10.0, -5.0), (2.0, 4.0))
+    same_mean, same_covariance = transform_emission_to_alignment_coordinate(
+        (1.0, -2.0), ((4.0, 3.0), (3.0, 9.0)), reference_scaler, reference_scaler
+    )
+    assert same_mean == pytest.approx((1.0, -2.0))
+    assert same_covariance == ((4.0, 3.0), (3.0, 9.0))
+
+    fold_scaler = scaler((6.0, -13.0), (1.0, 8.0))
+    reference_model = artifact(
+        means=((3.0, 1.0), (3.0, 1.0)),
+        covariances=(((9.0, 1.0), (1.0, 4.0)), ((9.0, 1.0), (1.0, 4.0))),
+    )
+    fold_model = artifact(
+        means=((10.0, 1.5), (10.0, 1.5)),
+        covariances=(((36.0, 1.0), (1.0, 1.0)), ((36.0, 1.0), (1.0, 1.0))),
+    )
+    expected = state_signatures_in_alignment_coordinate(
+        reference_model, reference_scaler, reference_scaler
+    )
+    actual = state_signatures_in_alignment_coordinate(fold_model, fold_scaler, reference_scaler)
+    for actual_signature, expected_signature in zip(actual, expected, strict=True):
+        assert actual_signature == pytest.approx(expected_signature)
 
 
 def test_first_fold_uses_rounded_lexicographic_sort_and_canonical_ids() -> None:

@@ -17,6 +17,7 @@ from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forwar
 from market_regime_engine.feature_selection.contracts import FeatureBlock, FeatureSelectionPolicy
 from market_regime_engine.feature_selection.freeze import freeze_first_train_features
 from market_regime_engine.features.ports import FeatureRequest, FeatureRow, FeatureSnapshot
+from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.mlflow_app.app import create_app
 from market_regime_engine.mlflow_app.dependencies import ReadinessSnapshot, ServiceDependencies
 from market_regime_engine.mlflow_support.model_package import save_production_package
@@ -126,7 +127,7 @@ class _DeterministicAdapter:
         self._current = _artifact(state_count, self._features)
         return FitResult(
             artifact=self._current,
-            train_log_likelihood=-float(np.sum(matrix * matrix)) + seed * 1e-6,
+            train_log_likelihood=causal_filter(matrix, self._current).log_likelihood,
             converged=True,
             iterations=5,
             seed=seed,
