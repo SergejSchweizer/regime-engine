@@ -91,9 +91,7 @@ def _winner_evidence(
 ) -> dict[str, tuple[float, float, int]]:
     block_count = len(blocks)
     if block_count != expected_block_count:
-        raise ValueError(
-            "diagnostic Stage 2 requires exactly eight Stage-1 blocks for v1, or seven for v2"
-        )
+        raise ValueError("diagnostic Stage 2 requires exactly eight Stage-1 blocks")
     winners: dict[str, tuple[float, float, int]] = {}
     for block_position, block in enumerate(blocks):
         score = next(

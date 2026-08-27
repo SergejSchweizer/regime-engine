@@ -28,9 +28,7 @@ def stage2_abs_spearman_matrix(
 
     block_count = len(policy.blocks)
     if len(preliminary_medoids) != block_count or len(set(preliminary_medoids)) != block_count:
-        raise ValueError(
-            "Stage 2 requires exactly eight unique preliminary medoids for v1, or seven for v2"
-        )
+        raise ValueError("Stage 2 requires exactly eight unique preliminary medoids")
     missing = tuple(
         feature for feature in preliminary_medoids if feature not in first_train_rows.columns
     )
@@ -48,9 +46,7 @@ def stage2_abs_spearman_matrix(
         raise ValueError("Stage-2 complete-case values must be finite")
     matrix = np.abs(average_rank_spearman(complete))
     if matrix.shape != (block_count, block_count) or not np.all(np.isfinite(matrix)):
-        raise ValueError(
-            "Stage-2 absolute Spearman matrix must be finite 8x8 for v1, or 7x7 for v2"
-        )
+        raise ValueError("Stage-2 absolute Spearman matrix must be finite 8x8")
     return complete_count, tuple(tuple(float(value) for value in row) for row in matrix)
 
 
@@ -116,16 +112,12 @@ def prune_stage2(
 
     block_count = len(policy.blocks)
     if len(preliminary_medoids) != block_count or len(set(preliminary_medoids)) != block_count:
-        raise ValueError(
-            "Stage-2 pruning requires exactly eight unique medoids for v1, or seven for v2"
-        )
+        raise ValueError("Stage-2 pruning requires exactly eight unique medoids")
     if len(block_evidence) != block_count:
-        raise ValueError(
-            "Stage-2 pruning requires exactly eight block evidence records for v1, or seven for v2"
-        )
+        raise ValueError("Stage-2 pruning requires exactly eight block evidence records")
     matrix = np.asarray(stage2_abs_spearman_matrix, dtype=np.float64)
     if matrix.shape != (block_count, block_count) or not np.all(np.isfinite(matrix)):
-        raise ValueError("Stage-2 pruning matrix must be finite 8x8 for v1, or 7x7 for v2")
+        raise ValueError("Stage-2 pruning matrix must be finite 8x8")
     if np.any(matrix < 0.0) or np.any(matrix > 1.0):
         raise ValueError("Stage-2 absolute Spearman values must be in [0,1]")
 

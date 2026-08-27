@@ -34,7 +34,7 @@ EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION = {
     1: _V1_CANDIDATE_IDS,
     2: _V2_CANDIDATE_IDS,
 }
-_PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
+_PROFILE_CONTRACTS = {1: (48, 8), 2: (48, 8)}
 
 
 def expected_candidate_ids(profile_config_version: int) -> tuple[str, ...]:
