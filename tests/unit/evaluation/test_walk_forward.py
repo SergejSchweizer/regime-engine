@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -118,6 +119,12 @@ def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment()
     assert all(sum(row) == pytest.approx(1.0) for row in first.oos_filtered_probabilities)
     assert min(first.train_hard_occupancy or ()) >= 0.03
     assert min(first.train_soft_occupancy or ()) >= 0.05
+
+
+def test_walk_forward_evaluation_accepts_xetra_v2() -> None:
+    result = evaluate(source_rows(1323))
+    v2 = replace(result, profile_config_version=2)
+    assert v2.profile_config_version == 2
 
 
 def test_source_windowing_precedes_complete_case_filtering_and_records_gaps() -> None:

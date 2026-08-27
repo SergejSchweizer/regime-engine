@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import isfinite
 from statistics import fmean, pstdev
@@ -219,8 +221,9 @@ def evaluate_candidate_grid(
     resolved_profile: ResolvedSelectedFeatureProfile,
     adapter_factory_builder: AdapterFactoryBuilder = _default_adapter_builder,
     runner: CandidateRunner = _default_runner,
+    max_workers: int | None = None,
 ) -> CandidateGridEvaluation:
-    """Evaluate exactly K2/K3/K4/K5 against one identical frozen source/fold/feature contract."""
+    """Evaluate K2/K3/K4/K5 concurrently against one frozen source/fold/feature contract."""
 
     if profile.profile_id != resolved_profile.profile_id:
         raise ValueError("model and resolved profile IDs differ")
@@ -230,16 +233,38 @@ def evaluate_candidate_grid(
     if plan.plan_hash == "" or not plan.folds:
         raise ValueError("candidate grid requires a non-empty complete walk-forward plan")
 
-    evaluations = tuple(
-        runner(
-            source_rows,
-            plan,
-            profile,
-            candidate,
-            adapter_factory_builder(candidate),
-        )
-        for candidate in resolved_profile.candidates
+    worker_limit = (
+        min(len(resolved_profile.candidates), os.cpu_count() or 1)
+        if max_workers is None
+        else max_workers
     )
+    if worker_limit < 1:
+        raise ValueError("max_workers must be at least 1")
+    if worker_limit == 1:
+        evaluations = tuple(
+            runner(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                adapter_factory_builder(candidate),
+            )
+            for candidate in resolved_profile.candidates
+        )
+    else:
+        with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+            futures = [
+                executor.submit(
+                    runner,
+                    source_rows,
+                    plan,
+                    profile,
+                    candidate,
+                    adapter_factory_builder(candidate),
+                )
+                for candidate in resolved_profile.candidates
+            ]
+            evaluations = tuple(future.result() for future in futures)
     if tuple(item.candidate_id for item in evaluations) != EXPECTED_CANDIDATE_IDS:
         raise ValueError("candidate runner returned unexpected candidate identities/order")
     expected_fold_ids = tuple(fold.fold_id for fold in plan.folds)

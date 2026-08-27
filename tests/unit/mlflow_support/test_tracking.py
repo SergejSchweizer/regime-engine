@@ -180,6 +180,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         evaluations=(evaluation,),
         statistical_selection_result="pending_candidate_grid",
         artifact_root=tmp_path,
+        max_workers=2,
     )
 
     assert result.parent_run_id == "run-1"
