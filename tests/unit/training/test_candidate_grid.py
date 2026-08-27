@@ -14,6 +14,7 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.profiles.loader import load_profile
@@ -87,7 +88,7 @@ class DeterministicAdapter:
         values = np.asarray(train_rows, dtype=np.float64)
         return FitResult(
             artifact=self._artifact,
-            train_log_likelihood=-float(np.sum(values * values)) + seed * 1e-6,
+            train_log_likelihood=causal_filter(values, self._artifact).log_likelihood,
             converged=True,
             iterations=5,
             seed=seed,

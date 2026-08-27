@@ -21,7 +21,7 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
 )
-from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -200,10 +200,25 @@ def aggregate_candidate(evaluation: WalkForwardEvaluation) -> CandidateAggregate
     )
 
 
-def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
+def _default_adapter_builder(
+    profile: ModelProfile, candidate: ResolvedCandidateProfile
+) -> AdapterFactory:
     def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
         if candidate.model_family == "student_t_hmm":
-            return StudentTHMMAdapter(candidate.feature_order)
+            settings = profile.student_t_hmm
+            if settings is None:
+                raise ValueError("Student-t candidate requires Student-t profile settings")
+            return StudentTHMMAdapter(
+                candidate.feature_order,
+                StudentTHMMSettings(
+                    minimum_nu=settings.minimum_nu,
+                    maximum_nu=settings.maximum_nu,
+                    initial_nu=settings.initial_nu,
+                    n_iter=settings.n_iter,
+                    tol=settings.tol,
+                    min_covar=settings.min_covar,
+                ),
+            )
         if candidate.model_family == "gmm_hmm":
             return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)
@@ -233,7 +248,7 @@ def evaluate_candidate_grid(
     plan: WalkForwardPlan,
     profile: ModelProfile,
     resolved_profile: ResolvedSelectedFeatureProfile,
-    adapter_factory_builder: AdapterFactoryBuilder = _default_adapter_builder,
+    adapter_factory_builder: AdapterFactoryBuilder | None = None,
     runner: CandidateRunner = _default_runner,
     max_workers: int | None = None,
 ) -> CandidateGridEvaluation:
@@ -264,7 +279,11 @@ def evaluate_candidate_grid(
                 plan,
                 profile,
                 candidate,
-                adapter_factory_builder(candidate),
+                (
+                    _default_adapter_builder(profile, candidate)
+                    if adapter_factory_builder is None
+                    else adapter_factory_builder(candidate)
+                ),
             )
             for candidate in resolved_profile.candidates
         )
@@ -277,7 +296,11 @@ def evaluate_candidate_grid(
                     plan,
                     profile,
                     candidate,
-                    adapter_factory_builder(candidate),
+                    (
+                        _default_adapter_builder(profile, candidate)
+                        if adapter_factory_builder is None
+                        else adapter_factory_builder(candidate)
+                    ),
                 )
                 for candidate in resolved_profile.candidates
             ]

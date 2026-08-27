@@ -11,6 +11,7 @@ import pytest
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.profiles.loader import load_profile
@@ -95,7 +96,7 @@ class DeterministicAdapter:
         values = np.asarray(train_rows, dtype=np.float64)
         return FitResult(
             artifact=self._artifact,
-            train_log_likelihood=-float(np.sum(values * values)) + seed * 1e-6,
+            train_log_likelihood=causal_filter(values, self._artifact).log_likelihood,
             converged=True,
             iterations=5,
             seed=seed,
@@ -177,7 +178,7 @@ def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> N
     assert result.trained_through_timestamp == rows["timestamp_m1"].iloc[-2]
     assert result.trained_through_timestamp < result.evaluation_cutoff
     assert sum(result.terminal_filtered_probabilities) == pytest.approx(1.0)
-    assert result.winning_seed == 131
+    assert result.winning_seed == 11
     assert result.hmm.feature_order == result.scaler.feature_order == FEATURES
 
 
