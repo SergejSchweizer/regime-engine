@@ -1,0 +1,36 @@
+name: Temporary apply canonical delta backlog
+
+on:
+  push:
+    branches:
+      - planning/canonical-delta1-feature-selection
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply section 18 replacement
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('BACKLOG.md')
+          text = path.read_text(encoding='utf-8')
+          marker = '\n---\n\n# 18. Xetra univariate shadow-model analysis — 2026-08-27\n'
+          if marker not in text:
+              raise SystemExit('section 18 marker missing')
+          prefix, _ = text.split(marker, 1)
+          section = Path('.tmp_section18.md').read_text(encoding='utf-8')
+          path.write_text(prefix.rstrip() + '\n\n' + section, encoding='utf-8')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BACKLOG.md
+          git diff --cached --check
+          git commit -m "docs: make delta1 features canonical in Xetra v3 backlog"
+          git push origin HEAD:planning/canonical-delta1-feature-selection
