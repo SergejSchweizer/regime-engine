@@ -117,8 +117,8 @@ class GMMHMMConfig:
     implementation: str
 
     def __post_init__(self) -> None:
-        if self.state_count != 2 or self.mixture_count != 2:
-            raise ValueError("GMM-HMM comparison candidate must be K=2 with two mixtures")
+        if self.state_count not in (2, 5) or self.mixture_count != 2:
+            raise ValueError("GMM-HMM comparison candidate must be K=2 or K=5 with two mixtures")
         if self.backend != "hmmlearn==0.3.3":
             raise ValueError("unsupported GMM-HMM backend")
         if self.covariance_type != "full" or self.implementation != "log":
@@ -166,7 +166,7 @@ class ModelProfile:
     walk_forward: WalkForwardConfig
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
-    gmm_hmm: GMMHMMConfig | None = None
+    gmm_hmms: tuple[GMMHMMConfig, ...] = ()
 
     def __post_init__(self) -> None:
         identity_fields = (
@@ -183,6 +183,11 @@ class ModelProfile:
             raise ValueError("profile_config_version must be positive")
         if self.production_alias != "champion" or self.challenger_alias != "challenger":
             raise ValueError("registry aliases must be champion/challenger")
+        gmm_identities = tuple(
+            (candidate.state_count, candidate.mixture_count) for candidate in self.gmm_hmms
+        )
+        if len(set(gmm_identities)) != len(gmm_identities):
+            raise ValueError("GMM-HMM candidates must be unique by state and mixture count")
 
     def canonical_dict(self) -> dict[str, Any]:
         return asdict(self)

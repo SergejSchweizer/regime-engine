@@ -17,6 +17,7 @@ EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k4_full",
     "gaussian_hmm_k5_full",
     "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k5_m2_full",
 )
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
 
@@ -49,14 +50,16 @@ class ResolvedCandidateProfile:
         expected_id = (
             f"gaussian_hmm_k{self.state_count}_full"
             if self.model_family == "gaussian_hmm"
-            else "gmm_hmm_k2_m2_full"
+            else f"gmm_hmm_k{self.state_count}_m{self.mixture_count}_full"
         )
         if self.candidate_id != expected_id:
             raise ValueError(f"candidate_id must be exactly {expected_id}")
         if self.model_family == "gaussian_hmm" and self.mixture_count != 1:
             raise ValueError("Gaussian HMM candidate must have exactly one mixture")
-        if self.model_family == "gmm_hmm" and (self.state_count, self.mixture_count) != (2, 2):
-            raise ValueError("GMM-HMM candidate must be K=2 with two mixtures")
+        if self.model_family == "gmm_hmm" and (
+            self.state_count not in (2, 5) or self.mixture_count != 2
+        ):
+            raise ValueError("GMM-HMM candidate must be K=2 or K=5 with two mixtures")
         if self.model_family not in {"gaussian_hmm", "gmm_hmm"}:
             raise ValueError("candidate model_family is unsupported")
         if self.covariance_type != "full":
@@ -247,25 +250,24 @@ def resolve_selected_feature_profile(
         )
         for state_count in profile.gaussian_hmm.candidate_states
     )
-    gmm_candidate: tuple[ResolvedCandidateProfile, ...] = ()
-    if profile.gmm_hmm is not None:
-        gmm_candidate = (
-            ResolvedCandidateProfile(
-                candidate_id="gmm_hmm_k2_m2_full",
-                state_count=profile.gmm_hmm.state_count,
-                covariance_type=profile.gmm_hmm.covariance_type,
-                feature_order=selection.final_features,
-                feature_dimension=len(selection.final_features),
-                source_build_id=source_build_id,
-                feature_selection_definition_hash=selection.feature_selection_definition_hash,
-                feature_selection_execution_hash=selection.feature_selection_execution_hash,
-                original_feature_universe=policy.feature_universe,
-                preliminary_medoids=selection.evidence.preliminary_medoids,
-                model_family="gmm_hmm",
-                mixture_count=profile.gmm_hmm.mixture_count,
-            ),
+    gmm_candidates = tuple(
+        ResolvedCandidateProfile(
+            candidate_id=f"gmm_hmm_k{gmm_hmm.state_count}_m{gmm_hmm.mixture_count}_full",
+            state_count=gmm_hmm.state_count,
+            covariance_type=gmm_hmm.covariance_type,
+            feature_order=selection.final_features,
+            feature_dimension=len(selection.final_features),
+            source_build_id=source_build_id,
+            feature_selection_definition_hash=selection.feature_selection_definition_hash,
+            feature_selection_execution_hash=selection.feature_selection_execution_hash,
+            original_feature_universe=policy.feature_universe,
+            preliminary_medoids=selection.evidence.preliminary_medoids,
+            model_family="gmm_hmm",
+            mixture_count=gmm_hmm.mixture_count,
         )
-    candidates = (*gaussian_candidates, *gmm_candidate)
+        for gmm_hmm in profile.gmm_hmms
+    )
+    candidates = (*gaussian_candidates, *gmm_candidates)
     validate_candidate_comparison_inputs(candidates)
     return ResolvedSelectedFeatureProfile(
         profile_id=profile.profile_id,

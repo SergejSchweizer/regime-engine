@@ -181,6 +181,7 @@ class WalkForwardEvaluation:
         expected_candidates = {
             f"gaussian_hmm_k{self.state_count}_full",
             "gmm_hmm_k2_m2_full",
+            "gmm_hmm_k5_m2_full",
         }
         if self.candidate_id not in expected_candidates:
             raise ValueError("candidate identity is unsupported")
@@ -388,11 +389,9 @@ def run_walk_forward_candidate(
     if candidate.model_family == "gaussian_hmm":
         if candidate.state_count not in profile.gaussian_hmm.candidate_states:
             raise ValueError("resolved Gaussian candidate state count is absent from model profile")
-    elif (
-        profile.gmm_hmm is None
-        or candidate.state_count != profile.gmm_hmm.state_count
-        or candidate.mixture_count != profile.gmm_hmm.mixture_count
-    ):
+    elif (candidate.state_count, candidate.mixture_count) not in {
+        (item.state_count, item.mixture_count) for item in profile.gmm_hmms
+    }:
         raise ValueError("resolved GMM-HMM candidate differs from the model profile")
     if candidate.feature_order == ():
         raise ValueError("resolved candidate feature order cannot be empty")

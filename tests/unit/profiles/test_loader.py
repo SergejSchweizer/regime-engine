@@ -239,8 +239,41 @@ def test_xetra_pin_audit_rejects_agent_selected_constant() -> None:
         assert_xetra_v1_pins(profile)
 
 
-def test_xetra_v2_enables_exact_gmm_hmm_k2_with_two_mixtures() -> None:
+def test_xetra_v2_enables_gmm_hmm_k2_and_k5_with_two_mixtures() -> None:
     profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
-    assert profile.gmm_hmm is not None
-    assert (profile.gmm_hmm.state_count, profile.gmm_hmm.mixture_count) == (2, 2)
-    assert profile.gmm_hmm.covariance_type == "full"
+    assert tuple(
+        (candidate.state_count, candidate.mixture_count) for candidate in profile.gmm_hmms
+    ) == ((2, 2), (5, 2))
+    assert all(candidate.covariance_type == "full" for candidate in profile.gmm_hmms)
+
+
+def test_gmm_hmm_candidates_require_a_unique_sequence_of_k2_or_k5_models() -> None:
+    raw = xetra_mapping()
+    raw["gmm_hmms"] = {"state_count": 2}
+    with pytest.raises(ValueError, match="sequence"):
+        load_profile_mapping(raw)
+
+    raw = xetra_mapping()
+    raw["gmm_hmms"] = [
+        {
+            "state_count": 3,
+            "mixture_count": 2,
+            "backend": "hmmlearn==0.3.3",
+            "covariance_type": "full",
+            "implementation": "log",
+        }
+    ]
+    with pytest.raises(ValueError, match="K=2 or K=5"):
+        load_profile_mapping(raw)
+
+    valid_candidate = {
+        "state_count": 2,
+        "mixture_count": 2,
+        "backend": "hmmlearn==0.3.3",
+        "covariance_type": "full",
+        "implementation": "log",
+    }
+    raw = xetra_mapping()
+    raw["gmm_hmms"] = [valid_candidate, deepcopy(valid_candidate)]
+    with pytest.raises(ValueError, match="must be unique"):
+        load_profile_mapping(raw)
