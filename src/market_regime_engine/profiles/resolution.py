@@ -17,6 +17,7 @@ EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k4_full",
     "gaussian_hmm_k5_full",
     "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k3_m2_full",
     "gmm_hmm_k5_m2_full",
 )
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
@@ -57,9 +58,9 @@ class ResolvedCandidateProfile:
         if self.model_family == "gaussian_hmm" and self.mixture_count != 1:
             raise ValueError("Gaussian HMM candidate must have exactly one mixture")
         if self.model_family == "gmm_hmm" and (
-            self.state_count not in (2, 5) or self.mixture_count != 2
+            self.state_count not in (2, 3, 5) or self.mixture_count != 2
         ):
-            raise ValueError("GMM-HMM candidate must be K=2 or K=5 with two mixtures")
+            raise ValueError("GMM-HMM candidate must be K=2, K=3, or K=5 with two mixtures")
         if self.model_family not in {"gaussian_hmm", "gmm_hmm"}:
             raise ValueError("candidate model_family is unsupported")
         if self.covariance_type != "full":
