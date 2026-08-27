@@ -9,6 +9,7 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.gaussian_hmm import (
     GaussianHMMSettings,
     HmmlearnGaussianHMMAdapter,
+    HmmlearnGMMHMMAdapter,
     forward_filter,
     gaussian_log_emissions,
 )
@@ -107,3 +108,29 @@ def test_bad_rows_and_state_count_fail_closed() -> None:
         adapter.fit([[1.0]], state_count=2, seed=11)
     with pytest.raises(ValueError, match="2, 3, 4, or 5"):
         adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=6, seed=11)
+
+
+def test_gmm_hmm_k2_with_two_mixtures_extracts_and_filters_exact_mixtures() -> None:
+    rng = np.random.default_rng(109)
+    values = np.vstack(
+        (
+            rng.normal(loc=(-3.0, -3.0), scale=0.2, size=(80, 2)),
+            rng.normal(loc=(-1.0, -1.0), scale=0.2, size=(80, 2)),
+            rng.normal(loc=(1.0, 1.0), scale=0.2, size=(80, 2)),
+            rng.normal(loc=(3.0, 3.0), scale=0.2, size=(80, 2)),
+        )
+    )
+    adapter = HmmlearnGMMHMMAdapter(("a", "b"))
+    result = adapter.fit(values, state_count=2, seed=11)
+
+    assert result.artifact.model_family == "gmm_hmm"
+    assert result.artifact.mixture_weights is not None
+    assert all(len(weights) == 2 for weights in result.artifact.mixture_weights)
+    assert np.isfinite(result.train_log_likelihood)
+    filtered = adapter.causal_filter(values[:5])
+    assert np.allclose(filtered.filtered_probabilities.sum(axis=1), 1.0)
+    restored = HmmlearnGMMHMMAdapter(("a", "b"))
+    restored.reconstruct(result.artifact)
+    assert restored.extract() == result.artifact
+    with pytest.raises(ValueError, match="exactly K=2"):
+        adapter.fit(values, state_count=3, seed=11)

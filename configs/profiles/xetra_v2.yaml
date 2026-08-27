@@ -40,6 +40,12 @@ gaussian_hmm:
   covars_weight: 1.0
   params: stmc
   init_params: stmc
+gmm_hmm:
+  state_count: 2
+  mixture_count: 2
+  backend: hmmlearn==0.3.3
+  covariance_type: full
+  implementation: log
 gates:
   minimum_train_hard_occupancy: 0.03
   minimum_train_soft_occupancy: 0.05

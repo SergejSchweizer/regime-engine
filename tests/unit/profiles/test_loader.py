@@ -237,3 +237,10 @@ def test_xetra_pin_audit_rejects_agent_selected_constant() -> None:
     profile = load_profile_mapping(raw)
     with pytest.raises(ValueError, match="pinned evaluation contract"):
         assert_xetra_v1_pins(profile)
+
+
+def test_xetra_v2_enables_exact_gmm_hmm_k2_with_two_mixtures() -> None:
+    profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    assert profile.gmm_hmm is not None
+    assert (profile.gmm_hmm.state_count, profile.gmm_hmm.mixture_count) == (2, 2)
+    assert profile.gmm_hmm.covariance_type == "full"

@@ -109,6 +109,23 @@ class GaussianHMMConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class GMMHMMConfig:
+    state_count: int
+    mixture_count: int
+    backend: str
+    covariance_type: str
+    implementation: str
+
+    def __post_init__(self) -> None:
+        if self.state_count != 2 or self.mixture_count != 2:
+            raise ValueError("GMM-HMM comparison candidate must be K=2 with two mixtures")
+        if self.backend != "hmmlearn==0.3.3":
+            raise ValueError("unsupported GMM-HMM backend")
+        if self.covariance_type != "full" or self.implementation != "log":
+            raise ValueError("GMM-HMM requires full covariance and log implementation")
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationGates:
     minimum_train_hard_occupancy: float
     minimum_train_soft_occupancy: float
@@ -149,6 +166,7 @@ class ModelProfile:
     walk_forward: WalkForwardConfig
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
+    gmm_hmm: GMMHMMConfig | None = None
 
     def __post_init__(self) -> None:
         identity_fields = (

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
@@ -72,3 +74,11 @@ def test_asymmetric_or_near_zero_covariance_fails() -> None:
             means=((0.0,), (1.0,)),
             full_covariances=(((1e-13,),), ((1.0,),)),
         )
+
+
+def test_artifact_rejects_partial_or_unexpected_mixture_emissions() -> None:
+    base = artifact()
+    with pytest.raises(ValueError, match="cannot contain mixture"):
+        replace(base, mixture_weights=((0.5, 0.5), (0.5, 0.5)))
+    with pytest.raises(ValueError, match="requires complete mixture"):
+        replace(base, model_family="gmm_hmm")

@@ -491,10 +491,11 @@ def track_walk_forward_evaluations(
         port.log_params(
             candidate_run_id,
             {
-                "model_family": "gaussian_hmm",
+                "model_family": evaluation.candidate_id.split("_k", maxsplit=1)[0],
                 "candidate_id": evaluation.candidate_id,
                 "state_count": str(evaluation.state_count),
                 "covariance_type": "full",
+                "mixture_count": "2" if evaluation.candidate_id.startswith("gmm_hmm_") else "1",
                 "feature_order": json.dumps(
                     evaluation.feature_order,
                     separators=(",", ":"),

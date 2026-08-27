@@ -11,6 +11,13 @@ from market_regime_engine.feature_selection.contracts import (
 from market_regime_engine.profiles.config import ModelProfile
 
 EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4, 5)
+EXPECTED_CANDIDATE_IDS = (
+    "gaussian_hmm_k2_full",
+    "gaussian_hmm_k3_full",
+    "gaussian_hmm_k4_full",
+    "gaussian_hmm_k5_full",
+    "gmm_hmm_k2_m2_full",
+)
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
 
 
@@ -33,13 +40,25 @@ class ResolvedCandidateProfile:
     feature_selection_execution_hash: str
     original_feature_universe: tuple[str, ...]
     preliminary_medoids: tuple[str, ...]
+    model_family: str = "gaussian_hmm"
+    mixture_count: int = 1
 
     def __post_init__(self) -> None:
         if self.state_count not in EXPECTED_XETRA_CANDIDATE_STATES:
             raise ValueError("resolved Xetra candidate state count must be one of 2, 3, 4, 5")
-        expected_id = f"gaussian_hmm_k{self.state_count}_full"
+        expected_id = (
+            f"gaussian_hmm_k{self.state_count}_full"
+            if self.model_family == "gaussian_hmm"
+            else "gmm_hmm_k2_m2_full"
+        )
         if self.candidate_id != expected_id:
             raise ValueError(f"candidate_id must be exactly {expected_id}")
+        if self.model_family == "gaussian_hmm" and self.mixture_count != 1:
+            raise ValueError("Gaussian HMM candidate must have exactly one mixture")
+        if self.model_family == "gmm_hmm" and (self.state_count, self.mixture_count) != (2, 2):
+            raise ValueError("GMM-HMM candidate must be K=2 with two mixtures")
+        if self.model_family not in {"gaussian_hmm", "gmm_hmm"}:
+            raise ValueError("candidate model_family is unsupported")
         if self.covariance_type != "full":
             raise ValueError("resolved Gaussian candidate covariance_type must be full")
         if not self.feature_order or len(set(self.feature_order)) != len(self.feature_order):
@@ -153,16 +172,12 @@ def _candidate_shared_contract(candidate: ResolvedCandidateProfile) -> tuple[obj
 def validate_candidate_comparison_inputs(
     candidates: tuple[ResolvedCandidateProfile, ...],
 ) -> None:
-    """Fail before candidate comparison unless K2/K3/K4/K5 share one feature contract."""
+    """Fail before comparison unless all configured candidates share one feature contract."""
 
-    if len(candidates) != 4:
-        raise ValueError("candidate comparison requires exactly K2, K3, K4, and K5")
-    states = tuple(candidate.state_count for candidate in candidates)
-    if states != EXPECTED_XETRA_CANDIDATE_STATES:
-        raise ValueError("candidate comparison order must be exactly K2, K3, K4, K5")
-    expected_ids = tuple(f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4, 5))
-    if tuple(candidate.candidate_id for candidate in candidates) != expected_ids:
-        raise ValueError("candidate comparison IDs must be exact full-covariance K2/K3/K4/K5 IDs")
+    candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
+    allowed_ids = EXPECTED_CANDIDATE_IDS[: len(candidates)]
+    if candidate_ids != allowed_ids:
+        raise ValueError("candidate comparison IDs/order do not match the configured Xetra grid")
     shared = _candidate_shared_contract(candidates[0])
     if any(_candidate_shared_contract(candidate) != shared for candidate in candidates[1:]):
         raise ValueError(
@@ -217,7 +232,7 @@ def resolve_selected_feature_profile(
         raise ValueError("source_build_id must be a non-empty trimmed string")
 
     _validate_selection_against_policy(policy, selection)
-    candidates = tuple(
+    gaussian_candidates = tuple(
         ResolvedCandidateProfile(
             candidate_id=f"gaussian_hmm_k{state_count}_full",
             state_count=state_count,
@@ -232,6 +247,25 @@ def resolve_selected_feature_profile(
         )
         for state_count in profile.gaussian_hmm.candidate_states
     )
+    gmm_candidate: tuple[ResolvedCandidateProfile, ...] = ()
+    if profile.gmm_hmm is not None:
+        gmm_candidate = (
+            ResolvedCandidateProfile(
+                candidate_id="gmm_hmm_k2_m2_full",
+                state_count=profile.gmm_hmm.state_count,
+                covariance_type=profile.gmm_hmm.covariance_type,
+                feature_order=selection.final_features,
+                feature_dimension=len(selection.final_features),
+                source_build_id=source_build_id,
+                feature_selection_definition_hash=selection.feature_selection_definition_hash,
+                feature_selection_execution_hash=selection.feature_selection_execution_hash,
+                original_feature_universe=policy.feature_universe,
+                preliminary_medoids=selection.evidence.preliminary_medoids,
+                model_family="gmm_hmm",
+                mixture_count=profile.gmm_hmm.mixture_count,
+            ),
+        )
+    candidates = (*gaussian_candidates, *gmm_candidate)
     validate_candidate_comparison_inputs(candidates)
     return ResolvedSelectedFeatureProfile(
         profile_id=profile.profile_id,

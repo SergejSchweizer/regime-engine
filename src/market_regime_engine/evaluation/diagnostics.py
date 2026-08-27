@@ -56,17 +56,38 @@ def gaussian_hmm_parameter_count(state_count: int, feature_dimension: int) -> in
     )
 
 
+def gmm_hmm_parameter_count(
+    state_count: int,
+    feature_dimension: int,
+    mixture_count: int,
+) -> int:
+    if state_count < 1 or feature_dimension < 1 or mixture_count < 1:
+        raise ValueError("state count, feature dimension, and mixture count must be positive")
+    return (
+        (state_count - 1)
+        + state_count * (state_count - 1)
+        + state_count * (mixture_count - 1)
+        + state_count * mixture_count * feature_dimension
+        + state_count * mixture_count * feature_dimension * (feature_dimension + 1) // 2
+    )
+
+
 def information_criteria(
     train_log_likelihood: float,
     train_observation_count: int,
     state_count: int,
     feature_dimension: int,
+    mixture_count: int = 1,
 ) -> InformationCriteria:
     if not isfinite(train_log_likelihood):
         raise ValueError("TRAIN log likelihood must be finite")
     if train_observation_count < 1:
         raise ValueError("TRAIN observation count must be positive")
-    parameter_count = gaussian_hmm_parameter_count(state_count, feature_dimension)
+    parameter_count = (
+        gaussian_hmm_parameter_count(state_count, feature_dimension)
+        if mixture_count == 1
+        else gmm_hmm_parameter_count(state_count, feature_dimension, mixture_count)
+    )
     aic = 2.0 * parameter_count - 2.0 * train_log_likelihood
     bic = parameter_count * log(train_observation_count) - 2.0 * train_log_likelihood
     return InformationCriteria(parameter_count, aic, bic)

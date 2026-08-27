@@ -17,7 +17,10 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
-from market_regime_engine.models.gaussian_hmm import HmmlearnGaussianHMMAdapter
+from market_regime_engine.models.gaussian_hmm import (
+    HmmlearnGaussianHMMAdapter,
+    HmmlearnGMMHMMAdapter,
+)
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -30,6 +33,7 @@ EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k3_full",
     "gaussian_hmm_k4_full",
     "gaussian_hmm_k5_full",
+    "gmm_hmm_k2_m2_full",
 )
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
 RANKING_ABS_TOLERANCE = 1e-12
@@ -58,10 +62,10 @@ class CandidateAggregate:
     aic_mean: float | None
 
     def __post_init__(self) -> None:
-        if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
-            raise ValueError("aggregate candidate identity must match full-covariance state count")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("candidate aggregate supports exactly K2/K3/K4/K5")
+        if self.candidate_id not in EXPECTED_CANDIDATE_IDS:
+            raise ValueError("aggregate candidate identity is unsupported")
         if self.planned_fold_count < 1:
             raise ValueError("candidate aggregate requires at least one planned fold")
         if self.valid_fold_count < 0 or self.invalid_fold_count < 0:
@@ -107,10 +111,13 @@ class CandidateGridEvaluation:
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
             raise ValueError("candidate grid requires a supported xetra profile configuration")
-        if tuple(item.candidate_id for item in self.evaluations) != EXPECTED_CANDIDATE_IDS:
-            raise ValueError("candidate grid evaluations must be ordered exactly K2/K3/K4/K5")
-        if tuple(item.candidate_id for item in self.aggregates) != EXPECTED_CANDIDATE_IDS:
-            raise ValueError("candidate grid aggregates must be ordered exactly K2/K3/K4/K5")
+        expected_ids = EXPECTED_CANDIDATE_IDS[: len(self.evaluations)]
+        if tuple(item.candidate_id for item in self.evaluations) != expected_ids:
+            raise ValueError(
+                "candidate grid evaluations must be ordered by configured candidate ID"
+            )
+        if tuple(item.candidate_id for item in self.aggregates) != expected_ids:
+            raise ValueError("candidate grid aggregates must be ordered by configured candidate ID")
         for evaluation, aggregate in zip(self.evaluations, self.aggregates, strict=True):
             if evaluation.candidate_id != aggregate.candidate_id:
                 raise ValueError("candidate evaluation and aggregate identities differ")
@@ -191,7 +198,9 @@ def aggregate_candidate(evaluation: WalkForwardEvaluation) -> CandidateAggregate
 
 
 def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter:
+    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter:
+        if candidate.model_family == "gmm_hmm":
+            return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)
 
     return factory
@@ -265,7 +274,8 @@ def evaluate_candidate_grid(
                 for candidate in resolved_profile.candidates
             ]
             evaluations = tuple(future.result() for future in futures)
-    if tuple(item.candidate_id for item in evaluations) != EXPECTED_CANDIDATE_IDS:
+    expected_ids = EXPECTED_CANDIDATE_IDS[: len(resolved_profile.candidates)]
+    if tuple(item.candidate_id for item in evaluations) != expected_ids:
         raise ValueError("candidate runner returned unexpected candidate identities/order")
     expected_fold_ids = tuple(fold.fold_id for fold in plan.folds)
     for evaluation in evaluations:

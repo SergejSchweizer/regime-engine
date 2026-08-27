@@ -18,10 +18,12 @@ from market_regime_engine.profiles.resolution import (
 
 FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v1.yaml")
 PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
+V2_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v2.yaml")
+V2_PROFILE_CONFIG = Path("configs/profiles/xetra_v2.yaml")
 
 
-def load_policy() -> FeatureSelectionPolicy:
-    raw = yaml.safe_load(FEATURE_POLICY_CONFIG.read_text(encoding="utf-8"))
+def load_policy(path: Path = FEATURE_POLICY_CONFIG) -> FeatureSelectionPolicy:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     raw_blocks = raw["blocks"]
     assert isinstance(raw_blocks, list)
@@ -111,6 +113,21 @@ def test_resolution_retains_original_universe_and_preliminary_medoids_separately
     assert len(resolved.preliminary_medoids) == 8
     assert resolved.final_features == selection.final_features
     assert set(resolved.final_features) <= set(resolved.preliminary_medoids)
+
+
+def test_xetra_v2_resolution_adds_gmm_hmm_k2_with_two_mixtures() -> None:
+    policy = load_policy(V2_FEATURE_POLICY_CONFIG)
+    selection = make_selection(policy)
+    resolved = resolve_selected_feature_profile(
+        load_profile(V2_PROFILE_CONFIG),
+        policy,
+        selection,
+        source_build_id="build-1",
+    )
+    gmm_candidate = resolved.candidates[-1]
+    assert gmm_candidate.candidate_id == "gmm_hmm_k2_m2_full"
+    assert (gmm_candidate.state_count, gmm_candidate.mixture_count) == (2, 2)
+    assert gmm_candidate.feature_order == selection.final_features
 
 
 def test_candidate_comparison_validation_fails_before_mismatched_feature_contract() -> None:

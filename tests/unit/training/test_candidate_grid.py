@@ -232,6 +232,33 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
     assert result.evaluation_plan_hash == plan.plan_hash
 
 
+def test_grid_includes_configured_gmm_hmm_k2_candidate() -> None:
+    base, profile, plan = base_evaluation()
+    resolved = resolved_profile()
+    gmm_candidate = replace(
+        candidate(2),
+        candidate_id="gmm_hmm_k2_m2_full",
+        model_family="gmm_hmm",
+        mixture_count=2,
+    )
+    with_gmm = replace(resolved, candidates=(*resolved.candidates, gmm_candidate))
+
+    def runner(rows, shared_plan, shared_profile, item, adapter_factory):
+        del rows, shared_plan, shared_profile, adapter_factory
+        return replace(base, candidate_id=item.candidate_id, state_count=item.state_count)
+
+    result = evaluate_candidate_grid(
+        source_rows(),
+        plan=plan,
+        profile=profile,
+        resolved_profile=with_gmm,
+        adapter_factory_builder=lambda item: DeterministicAdapter,
+        runner=runner,
+        max_workers=1,
+    )
+    assert result.evaluations[-1].candidate_id == "gmm_hmm_k2_m2_full"
+
+
 def test_grid_fails_closed_on_runner_contract_drift() -> None:
     base, profile, plan = base_evaluation()
 

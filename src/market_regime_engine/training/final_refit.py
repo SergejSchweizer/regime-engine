@@ -17,7 +17,10 @@ from market_regime_engine.evaluation.diagnostics import (
 from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
-from market_regime_engine.models.gaussian_hmm import HmmlearnGaussianHMMAdapter
+from market_regime_engine.models.gaussian_hmm import (
+    HmmlearnGaussianHMMAdapter,
+    HmmlearnGMMHMMAdapter,
+)
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import fit_standard_scaler
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
@@ -36,7 +39,9 @@ def _require_utc(value: datetime, field_name: str) -> datetime:
 
 
 def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter:
+    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter:
+        if candidate.model_family == "gmm_hmm":
+            return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)
 
     return factory
@@ -99,6 +104,16 @@ def _aligned_artifact(
     alignment: StateAlignment,
 ) -> GaussianHMMArtifact:
     mapping = alignment.persistent_to_fitted
+    mixture_weights = None
+    mixture_means = None
+    mixture_covariances = None
+    if artifact.model_family == "gmm_hmm":
+        assert artifact.mixture_weights is not None
+        assert artifact.mixture_means is not None
+        assert artifact.mixture_full_covariances is not None
+        mixture_weights = tuple(artifact.mixture_weights[index] for index in mapping)
+        mixture_means = tuple(artifact.mixture_means[index] for index in mapping)
+        mixture_covariances = tuple(artifact.mixture_full_covariances[index] for index in mapping)
     return GaussianHMMArtifact(
         state_count=artifact.state_count,
         feature_order=artifact.feature_order,
@@ -108,6 +123,10 @@ def _aligned_artifact(
         ),
         means=tuple(artifact.means[index] for index in mapping),
         full_covariances=tuple(artifact.full_covariances[index] for index in mapping),
+        model_family=artifact.model_family,
+        mixture_weights=mixture_weights,
+        mixture_means=mixture_means,
+        mixture_full_covariances=mixture_covariances,
     )
 
 

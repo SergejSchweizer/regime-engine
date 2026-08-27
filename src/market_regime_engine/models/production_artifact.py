@@ -52,10 +52,14 @@ class ProductionModelArtifact:
             raise ValueError("production artifact registered model must be exactly regime-xetra")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("production artifact supports exactly K2/K3/K4/K5")
-        if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
-            raise ValueError(
-                "production candidate identity must match state count and full covariance"
-            )
+        expected_candidates = {
+            f"gaussian_hmm_k{self.state_count}_full",
+            "gmm_hmm_k2_m2_full",
+        }
+        if self.candidate_id not in expected_candidates:
+            raise ValueError("production candidate identity is unsupported")
+        if self.candidate_id == "gmm_hmm_k2_m2_full" and self.hmm.model_family != "gmm_hmm":
+            raise ValueError("GMM-HMM production candidate requires a GMM-HMM artifact")
         if not self.source_build_id or not self.source_data_sha256:
             raise ValueError("production source identity cannot be empty")
         if len(self.source_data_sha256) != 64:
