@@ -86,6 +86,12 @@ def object_payload(value: dict[str, Any]) -> JsonObject:
     return frozen
 
 
+def thaw_json(value: FrozenJson) -> Any:
+    """Return ordinary JSON-compatible containers from frozen report evidence."""
+
+    return _thaw(value)
+
+
 def _is_object(value: FrozenJson) -> bool:
     return isinstance(value, tuple) and all(
         isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in value
