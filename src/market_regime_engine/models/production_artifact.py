@@ -56,6 +56,7 @@ class ProductionModelArtifact:
             f"gaussian_hmm_k{self.state_count}_full",
             "gmm_hmm_k2_m2_full",
             "gmm_hmm_k3_m2_full",
+            "gmm_hmm_k4_m2_full",
             "gmm_hmm_k5_m2_full",
         }
         if self.candidate_id not in expected_candidates:

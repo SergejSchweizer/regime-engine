@@ -239,11 +239,11 @@ def test_xetra_pin_audit_rejects_agent_selected_constant() -> None:
         assert_xetra_v1_pins(profile)
 
 
-def test_xetra_v2_enables_gmm_hmm_k2_k3_and_k5_with_two_mixtures() -> None:
+def test_xetra_v2_enables_gmm_hmm_k2_through_k5_with_two_mixtures() -> None:
     profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
     assert tuple(
         (candidate.state_count, candidate.mixture_count) for candidate in profile.gmm_hmms
-    ) == ((2, 2), (3, 2), (5, 2))
+    ) == ((2, 2), (3, 2), (4, 2), (5, 2))
     assert all(candidate.covariance_type == "full" for candidate in profile.gmm_hmms)
 
 
@@ -256,14 +256,14 @@ def test_gmm_hmm_candidates_require_a_unique_sequence_of_supported_models() -> N
     raw = xetra_mapping()
     raw["gmm_hmms"] = [
         {
-            "state_count": 4,
+            "state_count": 6,
             "mixture_count": 2,
             "backend": "hmmlearn==0.3.3",
             "covariance_type": "full",
             "implementation": "log",
         }
     ]
-    with pytest.raises(ValueError, match="K=2, K=3, or K=5"):
+    with pytest.raises(ValueError, match="K=2, K=3, K=4, or K=5"):
         load_profile_mapping(raw)
 
     valid_candidate = {
