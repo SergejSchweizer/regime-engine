@@ -99,6 +99,23 @@ def test_gmm_hmm_json_roundtrip_preserves_two_mixture_emissions() -> None:
     assert json.loads(payload)["hmm"]["model_family"] == "gmm_hmm"
 
 
+def test_student_t_hmm_json_roundtrip_preserves_state_degrees_of_freedom() -> None:
+    base = artifact()
+    student = replace(
+        base.hmm,
+        model_family="student_t_hmm",
+        degrees_of_freedom=(4.25, 11.5),
+    )
+    original = replace(base, candidate_id="student_t_hmm_k2_full", hmm=student)
+    payload = production_artifact_json(original)
+    restored = production_artifact_from_json(payload)
+    assert restored == original
+    assert json.loads(payload)["hmm"]["degrees_of_freedom_hex"] == [
+        (4.25).hex(),
+        (11.5).hex(),
+    ]
+
+
 def test_save_load_package_roundtrip_and_immutability(tmp_path) -> None:
     original = artifact()
     package = save_production_package(original, tmp_path / "model")

@@ -82,3 +82,13 @@ def test_artifact_rejects_partial_or_unexpected_mixture_emissions() -> None:
         replace(base, mixture_weights=((0.5, 0.5), (0.5, 0.5)))
     with pytest.raises(ValueError, match="requires complete mixture"):
         replace(base, model_family="gmm_hmm")
+
+
+def test_student_t_artifact_requires_one_valid_degree_of_freedom_per_state() -> None:
+    base = artifact()
+    student = replace(base, model_family="student_t_hmm", degrees_of_freedom=(4.5, 9.0))
+    assert student.degrees_of_freedom == (4.5, 9.0)
+    with pytest.raises(ValueError, match="one degree"):
+        replace(base, model_family="student_t_hmm")
+    with pytest.raises(ValueError, match="greater than two"):
+        replace(base, model_family="student_t_hmm", degrees_of_freedom=(2.0, 5.0))

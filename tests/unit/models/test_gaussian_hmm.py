@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from scipy.stats import multivariate_t
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.gaussian_hmm import (
@@ -53,6 +54,24 @@ def test_off_diagonal_artifact_round_trip_and_forward_primitives() -> None:
     assert filtered.filtered_probabilities.shape == (2, 2)
     assert np.allclose(filtered.filtered_probabilities.sum(axis=1), 1.0)
     assert np.isfinite(filtered.log_likelihood)
+
+
+def test_student_t_log_emissions_match_scipy_reference_per_state() -> None:
+    source = replace(
+        artifact_2d(),
+        model_family="student_t_hmm",
+        degrees_of_freedom=(4.5, 12.0),
+    )
+    rows = np.asarray([[0.0, 0.0], [2.0, -1.0]])
+    actual = gaussian_log_emissions(rows, source)
+    for state in range(source.state_count):
+        expected = multivariate_t.logpdf(
+            rows,
+            loc=source.means[state],
+            shape=source.full_covariances[state],
+            df=source.degrees_of_freedom[state],
+        )
+        assert actual[:, state] == pytest.approx(expected)
 
 
 def test_train_continuation_is_distinct_from_backend_reset_test_score() -> None:

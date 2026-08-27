@@ -68,6 +68,9 @@ def _hmm_payload(hmm: GaussianHMMArtifact) -> dict[str, Any]:
             [[[_hex(value) for value in row] for row in mixture] for mixture in state]
             for state in hmm.mixture_full_covariances
         ]
+    if hmm.model_family == "student_t_hmm":
+        assert hmm.degrees_of_freedom is not None
+        payload["degrees_of_freedom_hex"] = [_hex(value) for value in hmm.degrees_of_freedom]
     return payload
 
 
@@ -163,14 +166,14 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     model_family = str(hmm_payload.get("model_family", "gaussian_hmm"))
     mixture_weights = (
         None
-        if model_family == "gaussian_hmm"
+        if model_family != "gmm_hmm"
         else tuple(
             tuple(_from_hex(value) for value in row) for row in hmm_payload["mixture_weights_hex"]
         )
     )
     mixture_means = (
         None
-        if model_family == "gaussian_hmm"
+        if model_family != "gmm_hmm"
         else tuple(
             tuple(tuple(_from_hex(value) for value in mixture) for mixture in state)
             for state in hmm_payload["mixture_means_hex"]
@@ -178,7 +181,7 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     )
     mixture_covariances = (
         None
-        if model_family == "gaussian_hmm"
+        if model_family != "gmm_hmm"
         else tuple(
             tuple(
                 tuple(tuple(_from_hex(value) for value in row) for row in mixture)
@@ -206,6 +209,11 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         mixture_weights=mixture_weights,
         mixture_means=mixture_means,
         mixture_full_covariances=mixture_covariances,
+        degrees_of_freedom=(
+            tuple(_from_hex(value) for value in hmm_payload["degrees_of_freedom_hex"])
+            if model_family == "student_t_hmm"
+            else None
+        ),
     )
     return ProductionModelArtifact(
         profile_id=str(payload["profile_id"]),
