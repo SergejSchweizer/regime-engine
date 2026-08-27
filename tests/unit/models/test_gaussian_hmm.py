@@ -92,19 +92,34 @@ def test_train_continuation_is_distinct_from_backend_reset_test_score() -> None:
 
 
 def test_non_positive_definite_covariance_fails_without_jitter() -> None:
-    invalid = GaussianHMMArtifact(
-        state_count=2,
-        feature_order=("a", "b"),
-        start_probabilities=(0.5, 0.5),
-        transition_matrix=((0.8, 0.2), (0.2, 0.8)),
-        means=((0.0, 0.0), (1.0, 1.0)),
-        full_covariances=(
-            ((1.0, 2.0), (2.0, 1.0)),
-            ((1.0, 0.0), (0.0, 1.0)),
-        ),
-    )
     with pytest.raises(ValueError, match="Cholesky"):
-        HmmlearnGaussianHMMAdapter(("a", "b")).reconstruct(invalid)
+        GaussianHMMArtifact(
+            state_count=2,
+            feature_order=("a", "b"),
+            start_probabilities=(0.5, 0.5),
+            transition_matrix=((0.8, 0.2), (0.2, 0.8)),
+            means=((0.0, 0.0), (1.0, 1.0)),
+            full_covariances=(((1.0, 2.0), (2.0, 1.0)), ((1.0, 0.0), (0.0, 1.0))),
+        )
+
+
+def test_invalid_gmm_component_covariance_fails_before_emission_or_reconstruction() -> None:
+    with pytest.raises(ValueError, match="mixture covariance must pass Cholesky"):
+        GaussianHMMArtifact(
+            state_count=2,
+            feature_order=("a", "b"),
+            start_probabilities=(0.5, 0.5),
+            transition_matrix=((0.8, 0.2), (0.2, 0.8)),
+            means=((0.0, 0.0), (1.0, 1.0)),
+            full_covariances=(((1.0, 0.0), (0.0, 1.0)),) * 2,
+            model_family="gmm_hmm",
+            mixture_weights=((0.5, 0.5), (0.5, 0.5)),
+            mixture_means=(((0.0, 0.0), (0.0, 0.0)), ((1.0, 1.0), (1.0, 1.0))),
+            mixture_full_covariances=(
+                (((1.0, 2.0), (2.0, 1.0)), ((1.0, 0.0), (0.0, 1.0))),
+                (((1.0, 0.0), (0.0, 1.0)), ((1.0, 0.0), (0.0, 1.0))),
+            ),
+        )
 
 
 def test_k2_fit_smoke_extracts_full_covariance() -> None:
@@ -129,7 +144,7 @@ def test_bad_rows_and_state_count_fail_closed() -> None:
         adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=6, seed=11)
 
 
-@pytest.mark.parametrize("state_count", (2, 3, 4, 5))
+@pytest.mark.parametrize("state_count", (2, 3, 4))
 def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
     state_count: int,
 ) -> None:

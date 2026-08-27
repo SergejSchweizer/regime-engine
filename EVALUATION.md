@@ -256,11 +256,19 @@ oos_predictive_loglik_best_fold = maximum valid-fold value
 
 A separately named pooled observation-weighted diagnostic is permitted but is not a ranking substitute.
 
+After each candidate's independent valid-fold-rate gate passes, statistical ranking
+uses only the intersection of valid fold IDs across all accepted candidates. The
+common-valid-fold rate is the intersection count divided by planned fold count and
+must be at least `0.80`, otherwise selection fails closed. OOS mean, population
+standard deviation, worst fold, BIC mean, and AIC mean are recomputed from exactly
+that common support. Per-candidate valid-fold aggregates remain diagnostics and
+cannot improve a candidate's statistical rank by omitting difficult folds.
+
 ## 9. State signatures and persistent alignment
 
 Persistent IDs are `state_0 ... state_(K-1)`.
 
-For a fitted state k in standardized feature space:
+For a fitted state k in the fixed alignment coordinate system:
 
 ```text
 signature_k = concat(
@@ -271,6 +279,21 @@ signature_k = concat(
 ```
 
 All components finite.
+
+The fixed alignment coordinate system is the scaler fitted only on retained TRAIN
+observations of the first planned fold for the frozen final feature set. It is
+evaluation evidence only: each fold still fits and filters with its own TRAIN-only
+scaler. Direct RMS comparison of parameters standardized by different fold scalers
+is forbidden. For a fold-local mean $\mu_f$, covariance $\Sigma_f$, scaler mean
+$m_f$, scale $s_f$, and fixed reference scaler mean $m_r$, scale $s_r$:
+
+```text
+mu_r = (m_f + s_f * mu_f - m_r) / s_r
+D = diag(s_f / s_r)
+Sigma_r = D Sigma_f D
+```
+
+No diagonal-only covariance approximation is permitted.
 
 Distance:
 
@@ -311,6 +334,12 @@ For every full covariance state matrix:
 Initial probabilities and every transition row must be finite, nonnegative and normalized within absolute tolerance `1e-10`; values outside that tolerance fail rather than being silently renormalized.
 
 For a Gaussian HMM with K states and d features:
+
+Before AIC/BIC use, the winning-start TRAIN likelihood is recomputed by the
+causal forward/emission implementation. The fit-returned and causal values must
+satisfy $|L_{fit}-L_{filter}| \le 1e-10 \cdot max(1, |L_{fit}|, |L_{filter}|)$.
+A parity failure invalidates that fold; after a passing check, $L_{filter}$ is
+the canonical stored TRAIN likelihood and the value used for AIC/BIC.
 
 ```text
 p=(K-1)+K(K-1)+Kd+K*d*(d+1)/2

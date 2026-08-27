@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isclose, isfinite
 
+import numpy as np
+
 _PROB_TOL = 1e-10
 _ASYMMETRY_TOL = 1e-10
 _MIN_VARIANCE = 1e-12
@@ -21,6 +23,27 @@ def _probability_vector(values: tuple[float, ...], name: str) -> None:
         raise ValueError(f"{name} cannot contain negative probabilities")
     if not isclose(sum(values), 1.0, rel_tol=0.0, abs_tol=_PROB_TOL):
         raise ValueError(f"{name} must sum to one within 1e-10")
+
+
+def _full_covariance(covariance: tuple[tuple[float, ...], ...], dimension: int, name: str) -> None:
+    if len(covariance) != dimension or any(len(row) != dimension for row in covariance):
+        raise ValueError(f"{name} must have exact d x d shape")
+    flattened = tuple(value for row in covariance for value in row)
+    if any(not isfinite(value) for value in flattened):
+        raise ValueError(f"{name} values must be finite")
+    max_asymmetry = max(
+        abs(covariance[i][j] - covariance[j][i])
+        for i in range(dimension)
+        for j in range(dimension)
+    )
+    if max_asymmetry > _ASYMMETRY_TOL:
+        raise ValueError(f"{name} asymmetry exceeds 1e-10")
+    if any(covariance[i][i] < _MIN_VARIANCE for i in range(dimension)):
+        raise ValueError(f"{name} diagonal variance is below 1e-12")
+    try:
+        np.linalg.cholesky((np.asarray(covariance, dtype=np.float64) + np.asarray(covariance, dtype=np.float64).T) / 2.0)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"{name} must pass Cholesky without jitter") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,20 +89,7 @@ class GaussianHMMArtifact:
         if len(self.full_covariances) != self.state_count:
             raise ValueError("covariance state dimension mismatch")
         for covariance in self.full_covariances:
-            if len(covariance) != dimension or any(len(row) != dimension for row in covariance):
-                raise ValueError("each covariance must have exact d x d shape")
-            flattened = tuple(value for row in covariance for value in row)
-            if any(not isfinite(value) for value in flattened):
-                raise ValueError("covariance values must be finite")
-            max_asymmetry = max(
-                abs(covariance[i][j] - covariance[j][i])
-                for i in range(dimension)
-                for j in range(dimension)
-            )
-            if max_asymmetry > _ASYMMETRY_TOL:
-                raise ValueError("full covariance asymmetry exceeds 1e-10")
-            if any(covariance[i][i] < _MIN_VARIANCE for i in range(dimension)):
-                raise ValueError("full covariance diagonal variance is below 1e-12")
+            _full_covariance(covariance, dimension, "full covariance")
         mixture_fields = (
             self.mixture_weights,
             self.mixture_means,
@@ -113,15 +123,7 @@ class GaussianHMMArtifact:
                     if len(mean) != dimension:
                         raise ValueError("mixture mean feature dimension mismatch")
                     _finite_vector(mean, "mixture mean")
-                    if len(covariance) != dimension or any(
-                        len(row) != dimension for row in covariance
-                    ):
-                        raise ValueError("mixture covariance must have exact d x d shape")
-                    flattened = tuple(value for row in covariance for value in row)
-                    if any(not isfinite(value) for value in flattened):
-                        raise ValueError("mixture covariance values must be finite")
-                    if any(covariance[i][i] < _MIN_VARIANCE for i in range(dimension)):
-                        raise ValueError("mixture covariance diagonal variance is below 1e-12")
+                    _full_covariance(covariance, dimension, "mixture covariance")
         if self.model_family == "student_t_hmm":
             if self.degrees_of_freedom is None or len(self.degrees_of_freedom) != self.state_count:
                 raise ValueError("Student-t HMM requires one degree of freedom per state")
@@ -133,3 +135,19 @@ class GaussianHMMArtifact:
     @property
     def feature_dimension(self) -> int:
         return len(self.feature_order)
+
+    def distribution_covariances(self) -> tuple[tuple[tuple[float, ...], ...], ...]:
+        """Return covariance matrices for diagnostics without reinterpreting stored emissions."""
+
+        if self.model_family != "student_t_hmm":
+            return self.full_covariances
+        assert self.degrees_of_freedom is not None
+        return tuple(
+            tuple(
+                tuple(value * degree / (degree - 2.0) for value in row)
+                for row in covariance
+            )
+            for covariance, degree in zip(
+                self.full_covariances, self.degrees_of_freedom, strict=True
+            )
+        )

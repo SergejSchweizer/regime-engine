@@ -126,7 +126,11 @@ def main() -> None:
         artifact_root=artifact_root / "evaluations" / snapshot.lineage.source_build_id,
     )
     production = final_production_refit(
-        rows, lineage=snapshot.lineage, candidate=candidate, winning_evaluation=winner
+        rows,
+        lineage=snapshot.lineage,
+        candidate=candidate,
+        winning_evaluation=winner,
+        profile=profile,
     )
     package = save_production_package(
         production,
@@ -176,24 +180,17 @@ def main() -> None:
         reason="real Xetra v2 full evaluation completed",
     ):
         raise RuntimeError("challenger alias mutation failed")
-    if not registry.compare_and_swap_alias(
-        model_name="regime-xetra",
-        alias="champion",
-        expected_current_version=previous_champion,
-        new_version=registered.exact_version,
-        reason="statistical champion promoted after real Xetra v2 evaluation",
-    ):
-        raise RuntimeError("champion alias mutation failed")
     print(
         json.dumps(
             {
                 "candidate_ids": [item.candidate_id for item in grid.evaluations],
-                "champion_candidate_id": champion.champion_candidate_id,
-                "champion_version": registered.exact_version,
+                "current_production_champion_version": previous_champion,
                 "evaluation_run_id": evidence.parent_run_id,
                 "oos_build_id": oos.build_id,
                 "profile_config_version": 2,
+                "registered_challenger_version": registered.exact_version,
                 "source_build_id": snapshot.lineage.source_build_id,
+                "statistical_champion_candidate_id": champion.champion_candidate_id,
             },
             sort_keys=True,
         )

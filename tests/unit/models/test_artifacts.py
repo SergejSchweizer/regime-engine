@@ -88,6 +88,8 @@ def test_student_t_artifact_requires_one_valid_degree_of_freedom_per_state() -> 
     base = artifact()
     student = replace(base, model_family="student_t_hmm", degrees_of_freedom=(4.5, 9.0))
     assert student.degrees_of_freedom == (4.5, 9.0)
+    assert student.distribution_covariances()[0][0][0] == pytest.approx(1.8)
+    assert student.full_covariances[0][0][0] == 1.0
     with pytest.raises(ValueError, match="one degree"):
         replace(base, model_family="student_t_hmm")
     with pytest.raises(ValueError, match="greater than two"):
