@@ -169,11 +169,12 @@ REGIME_MODEL_STALE_FAIL_DAYS=35
 
 Startup validation requires:
 
-```text
-MLFLOW_WORKERS * REGIME_PG_POOL_MAX_SIZE <= REGIME_FEATURE_PG_CONNECTION_BUDGET
-```
+$$
+	ext{MLFLOW\_WORKERS} \cdot \text{REGIME\_PG\_POOL\_MAX\_SIZE}
+\le \text{REGIME\_FEATURE\_PG\_CONNECTION\_BUDGET}.
+$$
 
-With defaults this is exactly `4 * 4 <= 16`.
+With defaults, $4 \cdot 4 \le 16$ holds exactly.
 
 ---
 
@@ -1296,7 +1297,7 @@ Acceptance:
 Acceptance:
 
 - [ ] After fitting the winning start, TRAIN likelihood is recomputed by the same causal forward/emission implementation used for OOS filtering.
-- [ ] Fit-returned and causal-filter TRAIN log likelihoods must satisfy `abs(delta) <= 1e-10 * max(1, abs(fit_ll), abs(filter_ll))`; the exact rule is documented.
+- [ ] Fit-returned and causal-filter TRAIN log likelihoods must satisfy $|\Delta \mathcal{L}| \le 10^{-10} \max(1, |\mathcal{L}_{\mathrm{fit}}|, |\mathcal{L}_{\mathrm{filter}}|)$; the exact rule is documented.
 - [ ] A parity failure invalidates the fold with an explicit reason; it is never silently averaged.
 - [ ] After parity passes, the causal-filter TRAIN log likelihood is the canonical value supplied to AIC/BIC and stored as fold TRAIN likelihood.
 - [ ] TEST continuation logic and TEST-only likelihood sum are unchanged.

@@ -64,34 +64,32 @@ For every relevant complete-case matrix:
 2. compute ordinary Pearson correlation among rank columns;
 3. all required correlations must be finite.
 
-Greek symbol:
-
-- **rho (ρ)** — pronounced *ROH*; Spearman rank correlation.
+Greek symbol: $\rho$ (Spearman rank correlation).
 
 ### Stage 1
 
 For each block:
 
-- coverage = non-null count / first-fold TRAIN source-row count;
-- eligible iff coverage >=0.90, all non-null values finite, and population variance (`ddof=0`) > `1e-12`;
+- $c = n_{\mathrm{non\text{-}null}} / n_{\mathrm{TRAIN}}$;
+- eligible iff $c \ge 0.90$, all non-null values are finite, and population variance $\sigma^2$ (`ddof=0`) is $> 10^{-12}$;
 - block complete cases use all eligible candidates;
-- require >=504 complete rows;
-- distance `d(i,j)=1-abs(ρ(i,j))`;
-- medoid score = arithmetic mean distance to the other eligible candidates; singleton score=0;
-- rank lower score, higher coverage, earlier configured position; differences <=`1e-12` are ties;
+- require $n \ge 504$ complete rows;
+- distance $d(i,j) = 1 - |\rho(i,j)|$;
+- medoid score $\overline{d}_i$ is the arithmetic mean distance to the other eligible candidates; for a singleton, $\overline{d}_i = 0$;
+- rank lower $\overline{d}_i$, higher $c$, then earlier configured position; differences $\le 10^{-12}$ are ties;
 - exactly one winner per block, yielding exactly eight preliminary medoids.
 
 ### Stage 2
 
-- form one fixed complete-case 8x8 Spearman matrix over preliminary medoids;
-- require >=504 rows;
-- conflict iff `abs(ρ)>0.85`; exactly 0.85 is allowed;
+- form one fixed complete-case $8 \times 8$ Spearman matrix over preliminary medoids;
+- require $n \ge 504$ rows;
+- conflict iff $|\rho| > 0.85$; exactly $0.85$ is allowed;
 - process highest absolute correlation first, then canonical pair order on ties;
 - remove higher Stage-1 medoid score, then lower coverage, then later block;
 - never recompute correlations;
 - never search for replacement features;
 - survivors stay in canonical block order;
-- legal final dimension is `1<=d<=8`.
+- legal final dimension is $1 \le d \le 8$.
 
 The cross-block comparison of Stage-1 medoid scores from blocks of different size is an intentional policy-v1 simplification and is not silently normalized.
 
@@ -99,20 +97,20 @@ No fitted-HMM metric, ETF return, portfolio statistic or trading target may affe
 
 ### Anchored numeric-tolerance semantics
 
-The absolute numeric tolerance is exactly `1e-12`. It defines an anchored equivalence
+The absolute numeric tolerance is exactly $\varepsilon = 10^{-12}$. It defines an anchored equivalence
 set, never a pairwise comparator relation: pairwise tolerance chaining is forbidden.
 For a maximize stage, compute the exact maximum of the current candidate set as the
-anchor and retain every value `>= anchor - 1e-12`. For a minimize stage, compute the
-exact minimum as the anchor and retain every value `<= anchor + 1e-12`.
+anchor $a$ and retain every value $x \ge a - \varepsilon$. For a minimize stage, compute the
+exact minimum as the anchor $a$ and retain every value $x \le a + \varepsilon$.
 
 Every secondary feature-selection stage is evaluated only inside the anchored tied set
 from the preceding stage. For example, Stage 1 first anchors the global minimum medoid
 score, then anchors the global maximum coverage among only those tied features, then
 uses configured position as the exact final tie-breaker.
 
-The adversarial chain `a=0`, `b=0.75e-12`, `c=1.5e-12` demonstrates why pairwise
-comparison is invalid: `a` and `b` may share an anchor tie, and `b` and `c` may share
-another, but `a` and `c` must not be joined transitively.
+The adversarial chain $a = 0$, $b = 0.75\varepsilon$, $c = 1.5\varepsilon$ demonstrates why pairwise
+comparison is invalid: $a$ and $b$ may share an anchor tie, and $b$ and $c$ may share
+another, but $a$ and $c$ must not be joined transitively.
 
 ### Selection hashes
 
@@ -140,15 +138,16 @@ These diagnostics may not change any fold input, definition hash, champion ranki
 
 ## 5. Walk-forward plan
 
-```text
-minimum_train_source_observations=1260
-test_source_observations=63
-step_source_observations=63
-allow_partial_final_test=false
-minimum_model_train_observations=504
-minimum_model_test_observations=42
-ranking_abs_tolerance=1e-12
-```
+$$
+n_{\mathrm{TRAIN,source}} \ge 1260, \qquad
+n_{\mathrm{TEST,source}} = 63, \qquad
+\Delta n_{\mathrm{source}} = 63, \qquad
+n_{\mathrm{TRAIN,model}} \ge 504, \qquad
+n_{\mathrm{TEST,model}} \ge 42, \qquad
+\varepsilon_{\mathrm{rank}} = 10^{-12}.
+$$
+
+Partial final TEST folds are forbidden.
 
 Windows expand. TEST starts strictly after TRAIN. No synthetic dates. Every fold has stable one-based `fold_index`, deterministic `fold_id`, and UTC train/test bounds.
 
@@ -201,32 +200,30 @@ init_params=stmc
 
 Reduced covariance modes `diag`, `spherical`, `tied`, or any other non-`full` mode are unsupported and fail closed.
 
-Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. All valid converged starts are collected before winner selection. The exact global maximum TRAIN log likelihood is the anchor; starts within `1e-12` of it form the tied set and the lowest seed in that set wins. Fewer than 6 valid starts or success rate <0.75 invalidates the fold.
+Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. All valid converged starts are collected before winner selection. The exact global maximum TRAIN log likelihood is the anchor; starts within $\varepsilon = 10^{-12}$ of it form the tied set and the lowest seed in that set wins. Fewer than $6$ valid starts or success rate $< 0.75$ invalidates the fold.
 
 ## 7. Causal forward filter
 
-Greek symbol:
+Greek symbol: $\alpha$ (filtered state probability).
 
-- **alpha (α)** — pronounced *AL-fa*; filtered state probability.
+For the first retained observation $x_0$:
 
-For the first retained observation `x_0`:
-
-```text
-u_0(k) = pi(k) * b_0(k)
-c_0 = sum_k u_0(k)
-alpha_0(k) = u_0(k) / c_0
-loglik = ln(c_0)
-```
+$$
+u_0(k) = \pi(k) b_0(k), \qquad
+c_0 = \sum_k u_0(k), \qquad
+\alpha_0(k) = \frac{u_0(k)}{c_0}, \qquad
+\log \mathcal{L} = \ln(c_0).
+$$
 
 For each later retained observation:
 
-```text
-prior_t = alpha_(t-1) @ A
-u_t(k) = prior_t(k) * b_t(k)
-c_t = sum_k u_t(k)
-alpha_t(k) = u_t(k) / c_t
-loglik += ln(c_t)
-```
+$$
+\boldsymbol{\pi}_t = \boldsymbol{\alpha}_{t-1} A, \qquad
+u_t(k) = \pi_t(k) b_t(k), \qquad
+c_t = \sum_k u_t(k), \qquad
+\alpha_t(k) = \frac{u_t(k)}{c_t}, \qquad
+\log \mathcal{L} \mathrel{+}= \ln(c_t).
+$$
 
 Implementation must be numerically stabilized/log-domain equivalent. Filtered values at time t depend only on retained observations through t.
 
@@ -234,25 +231,25 @@ Viterbi/smoothing are retrospective diagnostics only and cannot be used for OOS/
 
 ## 8. OOS predictive likelihood — TRAIN continuation is mandatory
 
-A fold TEST sequence does not restart from `pi`.
+A fold TEST sequence does not restart from $\boldsymbol{\pi}$.
 
 1. filter retained TRAIN observations;
-2. keep `alpha_train_end`;
-3. first retained TEST prior is `alpha_train_end @ A`;
+2. keep $\boldsymbol{\alpha}_{\mathrm{TRAIN,end}}$;
+3. first retained TEST prior is $\boldsymbol{\alpha}_{\mathrm{TRAIN,end}} A$;
 4. process TEST sequentially;
-5. sum only TEST `ln(c_t)` terms;
+5. sum only TEST $\ln(c_t)$ terms;
 6. divide by retained TEST observation count for fold per-observation OOS PLL.
 
 A backend `score(X_test)` call that independently initializes TEST from `startprob_` is not this metric and may not be used.
 
 Candidate aggregates:
 
-```text
-oos_predictive_loglik_mean = arithmetic mean of valid-fold per-observation values
-oos_predictive_loglik_std = population std, ddof=0
-oos_predictive_loglik_worst_fold = minimum valid-fold value
-oos_predictive_loglik_best_fold = maximum valid-fold value
-```
+$$
+\bar{\ell}_{\mathrm{OOS}} = \operatorname{mean}(\ell_f), \qquad
+\sigma_{\mathrm{OOS}} = \operatorname{std}_{\mathrm{population}}(\ell_f), \qquad
+\ell_{\mathrm{worst}} = \min_f \ell_f, \qquad
+\ell_{\mathrm{best}} = \max_f \ell_f.
+$$
 
 A separately named pooled observation-weighted diagnostic is permitted but is not a ranking substitute.
 
@@ -270,13 +267,13 @@ Persistent IDs are `state_0 ... state_(K-1)`.
 
 For a fitted state k in the fixed alignment coordinate system:
 
-```text
-signature_k = concat(
-    mean vector in exact feature order,
-    log(sqrt(diag(full covariance))),
-    upper off-diagonal triangle of the covariance-derived correlation matrix
-)
-```
+$$
+\mathbf{s}_k = \operatorname{concat}\!\left(
+\boldsymbol{\mu}_k,
+\log\!\sqrt{\operatorname{diag}(\Sigma_k)},
+\operatorname{upper}\!\left(\operatorname{corr}(\Sigma_k)\right)
+\right).
+$$
 
 All components finite.
 
@@ -287,19 +284,19 @@ scaler. Direct RMS comparison of parameters standardized by different fold scale
 is forbidden. For a fold-local mean $\mu_f$, covariance $\Sigma_f$, scaler mean
 $m_f$, scale $s_f$, and fixed reference scaler mean $m_r$, scale $s_r$:
 
-```text
-mu_r = (m_f + s_f * mu_f - m_r) / s_r
-D = diag(s_f / s_r)
-Sigma_r = D Sigma_f D
-```
+$$
+\boldsymbol{\mu}_r = \frac{\mathbf{m}_f + \mathbf{s}_f \odot \boldsymbol{\mu}_f - \mathbf{m}_r}{\mathbf{s}_r},
+\qquad D = \operatorname{diag}\!\left(\frac{\mathbf{s}_f}{\mathbf{s}_r}\right),
+\qquad \Sigma_r = D \Sigma_f D.
+$$
 
 No diagonal-only covariance approximation is permitted.
 
 Distance:
 
-```text
-RMS(s1,s2)=sqrt(mean((s1-s2)^2))
-```
+$$
+\operatorname{RMS}(\mathbf{s}_1, \mathbf{s}_2) = \sqrt{\operatorname{mean}\!\left((\mathbf{s}_1 - \mathbf{s}_2)^2\right)}.
+$$
 
 First valid fold:
 
@@ -310,10 +307,10 @@ First valid fold:
 Later folds:
 
 - reference is previous valid fold's persistent signatures for same K;
-- enumerate all K! one-to-one mappings (`K<=4`);
+- enumerate all $K!$ one-to-one mappings for $K \le 4$;
 - total cost is sum of matched RMS distances;
 - choose unique minimum;
-- if best and second-best total costs differ by <=`1e-10`, mapping is ambiguous and fold invalid;
+- if best and second-best total costs differ by $\le 10^{-10}$, mapping is ambiguous and the fold is invalid;
 - record matched per-state and maximum drift.
 
 Drift is diagnostic in profile v1. There is no maximum-drift hard threshold and no agent may invent one.
@@ -324,38 +321,38 @@ Final production refit aligns to the last valid evaluation fold of the winning K
 
 For every full covariance state matrix:
 
-- shape `d x d`;
+- shape $d \times d$;
 - finite;
-- maximum absolute asymmetry <=`1e-10`;
-- after that check only, `(S+S.T)/2` may be used for validation;
-- minimum diagonal variance >=`1e-12`;
+- maximum absolute asymmetry $\le 10^{-10}$;
+- after that check only, $(\Sigma + \Sigma^\mathsf{T}) / 2$ may be used for validation;
+- minimum diagonal variance $\ge 10^{-12}$;
 - Cholesky succeeds without unrecorded jitter.
 
-Initial probabilities and every transition row must be finite, nonnegative and normalized within absolute tolerance `1e-10`; values outside that tolerance fail rather than being silently renormalized.
+Initial probabilities and every transition row must be finite, nonnegative and normalized within absolute tolerance $\varepsilon = 10^{-10}$; values outside that tolerance fail rather than being silently renormalized.
 
 For a Gaussian HMM with K states and d features:
 
 Before AIC/BIC use, the winning-start TRAIN likelihood is recomputed by the
 causal forward/emission implementation. The fit-returned and causal values must
-satisfy $|L_{fit}-L_{filter}| \le 1e-10 \cdot max(1, |L_{fit}|, |L_{filter}|)$.
-A parity failure invalidates that fold; after a passing check, $L_{filter}$ is
+satisfy $|\mathcal{L}_{\mathrm{fit}} - \mathcal{L}_{\mathrm{filter}}| \le 10^{-10} \max(1, |\mathcal{L}_{\mathrm{fit}}|, |\mathcal{L}_{\mathrm{filter}}|)$.
+A parity failure invalidates that fold; after a passing check, $\mathcal{L}_{\mathrm{filter}}$ is
 the canonical stored TRAIN likelihood and the value used for AIC/BIC.
 
-```text
-p=(K-1)+K(K-1)+Kd+K*d*(d+1)/2
-AIC=2p-2*TRAIN_loglik
-BIC=p*ln(n_train)-2*TRAIN_loglik
-```
+$$
+p = (K - 1) + K(K - 1) + Kd + \frac{Kd(d + 1)}{2}, \qquad
+\operatorname{AIC} = 2p - 2\mathcal{L}_{\mathrm{TRAIN}}, \qquad
+\operatorname{BIC} = p \ln(n_{\mathrm{TRAIN}}) - 2\mathcal{L}_{\mathrm{TRAIN}}.
+$$
 
 ## 11. Occupancy, persistence and uncertainty
 
-TRAIN hard occupancy = fraction of retained TRAIN observations whose largest filtered probability is that state.
+TRAIN hard occupancy is the fraction of retained TRAIN observations whose largest filtered probability is that state.
 
 TRAIN soft occupancy for state k:
 
-```text
-mean_t alpha_t(k)
-```
+$$
+\bar{\alpha}(k) = \operatorname{mean}_t \alpha_t(k).
+$$
 
 Fold hard gates:
 
@@ -370,23 +367,23 @@ Dominant-state durations are counts of consecutive retained model observations, 
 
 `switches_per_year` uses actual UTC timestamp span:
 
-```text
-switch_count / elapsed_calendar_days * 365.2425
-```
+$$
+\lambda_{\mathrm{switch}} = \frac{N_{\mathrm{switch}}}{D_{\mathrm{calendar}}} \cdot 365.2425.
+$$
 
 Undefined for zero elapsed span; never fabricated.
 
 Confidence:
 
-```text
-confidence_t=max_k alpha_t(k)
-```
+$$
+\gamma_t = \max_k \alpha_t(k).
+$$
 
 Entropy uses natural logarithm:
 
-```text
-H_t=-sum_k alpha_t(k)*ln(alpha_t(k))
-```
+$$
+H_t = -\sum_k \alpha_t(k) \ln\!\left(\alpha_t(k)\right).
+$$
 
 Low-confidence diagnostic threshold is exactly 0.60.
 
@@ -421,7 +418,7 @@ After hard gates, deterministic order is:
 7. lexicographically earlier canonical candidate ID.
 
 At every numeric ranking stage, recursively partition the current group from the exact
-best anchor using the anchored `1e-12` rule. The tied partition proceeds to the next
+best anchor using the anchored $\varepsilon = 10^{-12}$ rule. The tied partition proceeds to the next
 numeric stage; later partitions remain after it. This makes ranking deterministic and
 transitive. K and candidate ID are exact tie-breaks.
 
@@ -522,3 +519,65 @@ The engine selects statistically robust regime models only.
 Portfell or future consumers may evaluate immutable `walk_forward_oos` predictions using asset returns/portfolio metrics, but this cannot change engine feature selection or statistical champion rules.
 
 Because source timestamps lack historical release/vintage semantics, downstream research must preserve the same current-vintage limitation unless/until the upstream source contract is versioned to provide availability/vintage information.
+
+## 18. Non-normative MLflow evaluation snapshot
+
+This section records an operational snapshot queried from the deployed MLflow backend on
+2026-08-27. It is empirical evidence, not part of the selection contract above, and must be
+updated or removed when the referenced source build or candidate universe changes.
+
+### Comparable runs
+
+MLflow contained 14 finished parent evaluation runs for source build
+`20260823T063926Z`. All used evaluation-plan hash prefix `33e8f85db7e9` and
+feature-selection-definition hash prefix `237a8b1fe699`. Five three-candidate runs repeated
+one exact aggregate result signature, as did five four-candidate runs. This confirms
+deterministic aggregate reproduction for those repeated inputs; repeated runs are not
+independent statistical evidence.
+
+The newest finished comparison was parent run `cd5a3e05e2824f4ba9c481de2e66e6df`.
+It contained eight candidates and 62 planned folds. Its aggregate scorecard, ordered by the
+primary ranking metric, was:
+
+| Candidate | Valid folds | OOS loglik mean | OOS std | Worst fold | BIC mean | AIC mean |
+|---|---:|---:|---:|---:|---:|---:|
+| `gaussian_hmm_k5_full` | 62/62 | -7.2689 | 3.5307 | -20.4292 | 29150.45 | 28212.43 |
+| `gaussian_hmm_k4_full` | 62/62 | -7.3444 | 3.7793 | -26.2415 | 30975.34 | 30249.70 |
+| `gaussian_hmm_k3_full` | 62/62 | -7.4670 | 3.1924 | -21.6244 | 34067.79 | 33542.73 |
+| `gmm_hmm_k3_m2_full` | 62/62 | -7.5851 | 3.5805 | -19.4449 | 30682.79 | 29662.17 |
+| `gaussian_hmm_k2_full` | 62/62 | -8.0874 | 3.7954 | -30.4469 | 38850.01 | 38513.74 |
+| `gmm_hmm_k4_m2_full` | 62/62 | -8.0922 | 4.3984 | -21.4038 | 28288.97 | 26902.59 |
+| `gmm_hmm_k2_m2_full` | 62/62 | -8.0958 | 3.2797 | -19.4792 | 34889.95 | 34223.31 |
+| `gmm_hmm_k5_m2_full` | 60/62 | -8.1638 | 5.2439 | -30.2428 | 26855.29 | 25088.71 |
+
+### Interpretation
+
+- `gaussian_hmm_k5_full` was the statistical selection result. Its mean OOS advantage was
+    0.0755 over Gaussian K=4 and 0.3162 over the best GMM candidate, GMM K=3.
+- Gaussian K=3 had the lowest OOS standard deviation among Gaussian candidates, and GMM K=3
+    had the best worst-fold result overall. Neither can override the primary mean-OOS ranking
+    stage defined in section 13.
+- GMM K=4 and K=5 had lower mean AIC/BIC than Gaussian K=5, but their OOS means were worse.
+    This is expected under the ranking contract, where information criteria are later
+    tie-breakers rather than weighted objectives.
+- GMM K=5 was the only candidate with invalid folds (two of 62), had the lowest valid-fold
+    rate, and had the highest OOS dispersion. It still passed the 0.80 valid-fold-rate gate,
+    but its stability evidence was weakest in this comparison.
+
+### Operational limitations
+
+The completed eight-candidate run predates the full 12-candidate universe. It contains all
+Gaussian candidates and all two-mixture GMM candidates, but no Student-t candidates.
+Therefore it cannot establish the champion of the complete v2 universe. A 12-candidate run
+started from image revision `18edfebfacd12c91f942d203aff8d0695bd22cc2` was still running
+at snapshot time and is deliberately excluded until MLflow records a finished parent run.
+
+Three older parent runs remained marked `RUNNING` despite having no active evaluation
+process. They use different plan/selection hashes and are excluded from every comparison;
+their stale lifecycle status should be repaired operationally. Registered model versions
+2 through 17 were `READY` but exposed no MLflow `run_id`, so direct registry-version to
+evaluation-run linkage could not be verified from registry metadata alone.
+
+The observed parent-run durations measure evidence rendering and MLflow persistence after
+candidate evaluation, not total model-fitting time. The eight-candidate parent took 509.0
+seconds; this value must not be used to estimate end-to-end evaluation runtime.
