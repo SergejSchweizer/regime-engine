@@ -11,7 +11,12 @@ from market_regime_engine.feature_selection.contracts import (
 from market_regime_engine.profiles.config import ModelProfile
 
 EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4, 5)
-EXPECTED_CANDIDATE_IDS = (
+_V1_CANDIDATE_IDS = (
+    "gaussian_hmm_k2_full",
+    "gaussian_hmm_k3_full",
+    "gaussian_hmm_k4_full",
+)
+_V2_CANDIDATE_IDS = (
     "gaussian_hmm_k2_full",
     "gaussian_hmm_k3_full",
     "gaussian_hmm_k4_full",
@@ -25,7 +30,20 @@ EXPECTED_CANDIDATE_IDS = (
     "student_t_hmm_k4_full",
     "student_t_hmm_k5_full",
 )
+EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION = {
+    1: _V1_CANDIDATE_IDS,
+    2: _V2_CANDIDATE_IDS,
+}
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
+
+
+def expected_candidate_ids(profile_config_version: int) -> tuple[str, ...]:
+    """Return the immutable ordered candidate universe for one public profile version."""
+
+    try:
+        return EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[profile_config_version]
+    except KeyError as error:
+        raise ValueError("unsupported Xetra profile configuration") from error
 
 
 def _require_lower_sha256(value: str, field_name: str) -> None:
@@ -146,7 +164,10 @@ class ResolvedSelectedFeatureProfile:
             self.feature_selection_execution_hash,
             "feature_selection_execution_hash",
         )
-        validate_candidate_comparison_inputs(self.candidates)
+        validate_candidate_comparison_inputs(
+            self.candidates,
+            profile_config_version=self.profile_config_version,
+        )
         first = self.candidates[0]
         expected_shared = (
             first.source_build_id,
@@ -182,12 +203,14 @@ def _candidate_shared_contract(candidate: ResolvedCandidateProfile) -> tuple[obj
 
 def validate_candidate_comparison_inputs(
     candidates: tuple[ResolvedCandidateProfile, ...],
+    *,
+    profile_config_version: int,
 ) -> None:
     """Fail before comparison unless all configured candidates share one feature contract."""
 
     candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
-    allowed_ids = EXPECTED_CANDIDATE_IDS[: len(candidates)]
-    if candidate_ids != allowed_ids:
+    expected_ids = expected_candidate_ids(profile_config_version)
+    if candidate_ids != expected_ids:
         raise ValueError("candidate comparison IDs/order do not match the configured Xetra grid")
     shared = _candidate_shared_contract(candidates[0])
     if any(_candidate_shared_contract(candidate) != shared for candidate in candidates[1:]):
@@ -298,7 +321,10 @@ def resolve_selected_feature_profile(
             for state_count in profile.student_t_hmm.candidate_states
         )
     candidates = (*gaussian_candidates, *gmm_candidates, *student_candidates)
-    validate_candidate_comparison_inputs(candidates)
+    validate_candidate_comparison_inputs(
+        candidates,
+        profile_config_version=profile.profile_config_version,
+    )
     return ResolvedSelectedFeatureProfile(
         profile_id=profile.profile_id,
         profile_config_version=profile.profile_config_version,

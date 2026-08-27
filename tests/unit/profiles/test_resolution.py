@@ -12,6 +12,7 @@ from market_regime_engine.feature_selection.contracts import FeatureBlock, Featu
 from market_regime_engine.feature_selection.freeze import freeze_first_train_features
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import (
+    EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION,
     resolve_selected_feature_profile,
     validate_candidate_comparison_inputs,
 )
@@ -166,7 +167,8 @@ def test_candidate_comparison_validation_fails_before_mismatched_feature_contrac
                 resolved.candidates[0],
                 mismatched,
                 resolved.candidates[2],
-            )
+            ),
+            profile_config_version=1,
         )
 
 
@@ -190,3 +192,37 @@ def test_resolution_rejects_policy_and_source_identity_mismatches() -> None:
             selection,
             source_build_id="build-1",
         )
+
+
+def test_candidate_identities_are_exact_and_version_specific() -> None:
+    v1_policy = load_policy()
+    v1 = resolve_selected_feature_profile(
+        load_profile(PROFILE_CONFIG),
+        v1_policy,
+        make_selection(v1_policy),
+        source_build_id="build-1",
+    )
+    v2_policy = load_policy(V2_FEATURE_POLICY_CONFIG)
+    v2 = resolve_selected_feature_profile(
+        load_profile(V2_PROFILE_CONFIG),
+        v2_policy,
+        make_selection(v2_policy),
+        source_build_id="build-1",
+    )
+    assert (
+        tuple(candidate.candidate_id for candidate in v1.candidates)
+        == (EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[1])
+    )
+    assert (
+        tuple(candidate.candidate_id for candidate in v2.candidates)
+        == (EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[2])
+    )
+
+    wrong_order = (v1.candidates[1], v1.candidates[0], v1.candidates[2])
+    with pytest.raises(ValueError, match="IDs/order"):
+        validate_candidate_comparison_inputs(wrong_order, profile_config_version=1)
+    with pytest.raises(ValueError, match="IDs/order"):
+        validate_candidate_comparison_inputs(v1.candidates[:2], profile_config_version=1)
+    unexpected_extra = (*v1.candidates, v2.candidates[3])
+    with pytest.raises(ValueError, match="IDs/order"):
+        validate_candidate_comparison_inputs(unexpected_extra, profile_config_version=1)

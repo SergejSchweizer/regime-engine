@@ -26,22 +26,17 @@ from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
     ResolvedSelectedFeatureProfile,
+    expected_candidate_ids,
     validate_candidate_comparison_inputs,
 )
 
-EXPECTED_CANDIDATE_IDS = (
-    "gaussian_hmm_k2_full",
-    "gaussian_hmm_k3_full",
-    "gaussian_hmm_k4_full",
-    "gaussian_hmm_k5_full",
-    "gmm_hmm_k2_m2_full",
-    "gmm_hmm_k3_m2_full",
-    "gmm_hmm_k4_m2_full",
-    "gmm_hmm_k5_m2_full",
-    "student_t_hmm_k2_full",
-    "student_t_hmm_k3_full",
-    "student_t_hmm_k4_full",
-    "student_t_hmm_k5_full",
+SUPPORTED_CANDIDATE_IDS = frozenset(
+    candidate_id
+    for candidate_ids in (
+        expected_candidate_ids(1),
+        expected_candidate_ids(2),
+    )
+    for candidate_id in candidate_ids
 )
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
 RANKING_ABS_TOLERANCE = 1e-12
@@ -72,7 +67,7 @@ class CandidateAggregate:
     def __post_init__(self) -> None:
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("candidate aggregate supports exactly K2/K3/K4/K5")
-        if self.candidate_id not in EXPECTED_CANDIDATE_IDS:
+        if self.candidate_id not in SUPPORTED_CANDIDATE_IDS:
             raise ValueError("aggregate candidate identity is unsupported")
         if self.planned_fold_count < 1:
             raise ValueError("candidate aggregate requires at least one planned fold")
@@ -119,7 +114,7 @@ class CandidateGridEvaluation:
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
             raise ValueError("candidate grid requires a supported xetra profile configuration")
-        expected_ids = EXPECTED_CANDIDATE_IDS[: len(self.evaluations)]
+        expected_ids = expected_candidate_ids(self.profile_config_version)
         if tuple(item.candidate_id for item in self.evaluations) != expected_ids:
             raise ValueError(
                 "candidate grid evaluations must be ordered by configured candidate ID"
@@ -248,7 +243,10 @@ def evaluate_candidate_grid(
         raise ValueError("model and resolved profile IDs differ")
     if profile.profile_config_version != resolved_profile.profile_config_version:
         raise ValueError("model and resolved profile config versions differ")
-    validate_candidate_comparison_inputs(resolved_profile.candidates)
+    validate_candidate_comparison_inputs(
+        resolved_profile.candidates,
+        profile_config_version=profile.profile_config_version,
+    )
     if plan.plan_hash == "" or not plan.folds:
         raise ValueError("candidate grid requires a non-empty complete walk-forward plan")
 
@@ -284,7 +282,7 @@ def evaluate_candidate_grid(
                 for candidate in resolved_profile.candidates
             ]
             evaluations = tuple(future.result() for future in futures)
-    expected_ids = EXPECTED_CANDIDATE_IDS[: len(resolved_profile.candidates)]
+    expected_ids = expected_candidate_ids(profile.profile_config_version)
     if tuple(item.candidate_id for item in evaluations) != expected_ids:
         raise ValueError("candidate runner returned unexpected candidate identities/order")
     expected_fold_ids = tuple(fold.fold_id for fold in plan.folds)
