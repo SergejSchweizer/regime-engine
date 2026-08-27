@@ -1084,3 +1084,269 @@ Deployment-ready additionally requires operator evidence that:
 12. no `:5001`, reverse proxy, Prometheus exposure or second serving process exists.
 
 Only after both states are satisfied is the unified-serving MVP operationally complete.
+
+---
+
+# 17. Evaluation correctness audit — 2026-08-27
+
+This corrective backlog was created after a source-level audit of the current evaluation, model-family, alignment, ranking, MLflow-plot and Xetra-v2 lifecycle paths. These PRs are corrective work on top of the already-merged implementation. They do not authorize economic metrics to enter model selection.
+
+Execution rule: PRs below follow the same clean-main, allowed-file and full-test rules from section 12. Dependencies are explicit; agents must not combine PRs.
+
+### PR-117 — Restore immutable Xetra v1 Gaussian candidate set
+
+- **Branch:** `pr/PR-117-restore-xetra-v1-candidates`
+- **Depends on:** none
+- **Allowed:** `configs/profiles/xetra_v1.yaml`, `src/market_regime_engine/profiles/config.py`, `tests/unit/profiles/test_loader.py`, `tests/unit/profiles/test_xetra_profile.py`
+
+Acceptance:
+
+- [ ] `xetra_v1.yaml` contains exactly Gaussian `candidate_states: [2, 3, 4]`; K5 is not silently added to profile version 1.
+- [ ] Generic Gaussian config validation no longer globally forces `(2,3,4,5)` before the enclosing profile version is known.
+- [ ] `ModelProfile`/pinned-profile validation enforces v1 Gaussian candidate states exactly `(2,3,4)` and rejects any v1 K5.
+- [ ] Existing v1 backend, covariance, seeds, fitting parameters, walk-forward values, gates and ranking tolerance remain unchanged.
+- [ ] v2 remains loadable with Gaussian K2/K3/K4/K5.
+- [ ] Tests prove v1 and v2 candidate-state contracts are distinct and immutable.
+
+### PR-118 — Make candidate identities explicitly profile-version aware
+
+- **Branch:** `pr/PR-118-versioned-candidate-universe`
+- **Depends on:** PR-117
+- **Allowed:** `EVALUATION.md`, `src/market_regime_engine/profiles/resolution.py`, `src/market_regime_engine/training/candidate_grid.py`, `tests/unit/profiles/test_resolution.py`, `tests/unit/training/test_candidate_grid.py`
+
+Acceptance:
+
+- [ ] `EVALUATION.md` defines candidate universes separately: v1 = Gaussian K2/K3/K4; v2 = Gaussian K2–K5 + two-mixture full-covariance GMM K2–K5 + Student-t K2–K5.
+- [ ] Resolution selects the exact expected candidate-ID tuple from `profile_config_version`; it never infers a universe from list length.
+- [ ] Candidate-grid validation compares against the exact version-specific tuple; `EXPECTED_CANDIDATE_IDS[:len(...)]` prefix semantics are removed.
+- [ ] A candidate set with correct length but wrong identity/order fails closed.
+- [ ] All candidates in one grid still share source build, fold plan, frozen feature order and both feature-selection hashes.
+- [ ] Tests cover exact v1 and v2 identities plus wrong-order, missing-middle and unexpected-extra cases.
+
+### PR-119 — Define transitive anchored numeric-tolerance semantics
+
+- **Branch:** `pr/PR-119-anchored-tolerance-contract`
+- **Depends on:** PR-118
+- **Allowed:** `EVALUATION.md`
+
+Acceptance:
+
+- [ ] The `1e-12` tolerance is specified as an anchored equivalence rule, not a pairwise comparator relation.
+- [ ] For a maximize stage, the anchor is the exact maximum in the current candidate set and the tied set is every value `>= anchor - 1e-12`; for a minimize stage it is the exact minimum and every value `<= anchor + 1e-12`.
+- [ ] Feature-selection secondary tie stages are evaluated only inside the anchored tie set from the preceding stage.
+- [ ] Multistart winner semantics are explicit: compute global maximum TRAIN log likelihood first, retain starts within `1e-12` of that maximum, then choose the lowest seed.
+- [ ] Champion ranking is defined by recursively partitioning each current group from its exact best anchor at each numeric stage, so results are deterministic and transitive.
+- [ ] The contract includes the adversarial chain example `a=0`, `b=0.75e-12`, `c=1.5e-12` and states that pairwise tolerance chaining is forbidden.
+- [ ] No ranking stage, tolerance value or economic input is otherwise changed.
+
+### PR-120 — Fix Stage-1 medoid tie resolution
+
+- **Branch:** `pr/PR-120-stage1-anchored-ties`
+- **Depends on:** PR-119
+- **Allowed:** `src/market_regime_engine/feature_selection/selector.py`, `tests/unit/feature_selection/test_selector.py`
+
+Acceptance:
+
+- [ ] Stage-1 minimum medoid score is computed globally within the block before any tie-break.
+- [ ] Only features within `1e-12` of that global minimum advance to coverage comparison.
+- [ ] Coverage uses the global maximum among that tied subset and the same anchored `1e-12` rule.
+- [ ] Earliest configured block position is used only after both numeric anchored tie stages.
+- [ ] Result is invariant to internal iteration/order changes that do not change configured feature order.
+- [ ] Regression test covers a three-value non-transitive tolerance chain and proves the globally anchored winner.
+- [ ] Spearman definition, coverage formula, variance gate and Stage-2 behavior are untouched.
+
+### PR-121 — Fix multistart global-best tie resolution
+
+- **Branch:** `pr/PR-121-multistart-anchored-winner`
+- **Depends on:** PR-119
+- **Allowed:** `src/market_regime_engine/training/multistart.py`, `tests/unit/training/test_multistart.py`
+
+Acceptance:
+
+- [ ] All successful/converged starts are collected before winner selection.
+- [ ] Winner selection first computes the exact global maximum TRAIN log likelihood.
+- [ ] Eligible tied starts satisfy `global_max - start_loglik <= 1e-12`.
+- [ ] Lowest seed among the eligible tied starts wins.
+- [ ] The sequential pairwise `_better` behavior is removed from winner determination.
+- [ ] Regression test covers log likelihoods separated by chained sub-tolerance gaps where pairwise iteration would choose a different seed.
+- [ ] Eight seeds, 6/8 minimum, 0.75 success-rate gate and diagnostic retention remain unchanged.
+
+### PR-122 — Make statistical champion ranking transitive
+
+- **Branch:** `pr/PR-122-transitive-champion-ranking`
+- **Depends on:** PR-119
+- **Allowed:** `src/market_regime_engine/evaluation/selection.py`, `tests/unit/evaluation/test_selection.py`
+
+Acceptance:
+
+- [ ] `cmp_to_key` pairwise tolerance ranking is removed.
+- [ ] Accepted candidates are recursively ranked using the anchored-group semantics in `EVALUATION.md` for all five numeric stages.
+- [ ] Stage order remains exactly: OOS mean desc, OOS std asc, OOS worst desc, BIC mean asc, AIC mean asc, K asc, candidate ID asc.
+- [ ] K and candidate ID remain exact tie-breakers and do not use numeric tolerance.
+- [ ] Ranking is invariant to the input order of `grid.aggregates`.
+- [ ] Tests cover the `0 / 0.75e-12 / 1.5e-12` non-transitive chain at every numeric direction and randomized aggregate permutations.
+- [ ] Hard gates and rejection reasons remain unchanged.
+
+### PR-123 — Build state signatures in a fixed alignment coordinate system
+
+- **Branch:** `pr/PR-123-state-signature-coordinate-transform`
+- **Depends on:** PR-118
+- **Allowed:** `EVALUATION.md`, `src/market_regime_engine/states/signatures.py`, `tests/unit/states/test_alignment.py`, `tests/unit/preprocessing/test_scaling.py`
+
+Acceptance:
+
+- [ ] `EVALUATION.md` states that persistent-state signatures from different folds must be expressed in one fixed feature coordinate system; direct RMS comparison of parameters standardized by different fold scalers is forbidden.
+- [ ] The fixed alignment coordinate system is the scaler fitted on retained TRAIN observations of the first planned fold for the frozen final feature set; it is evaluation evidence only and does not replace fold-local TRAIN scaling for model fitting.
+- [ ] A pure helper converts a fitted emission mean/covariance from a fold-local standardized system into the fixed alignment system.
+- [ ] For fold scaler mean `m_f`, scale `s_f`, reference mean `m_r`, scale `s_r`, transformed mean is `(m_f + s_f ⊙ μ_f - m_r) / s_r`.
+- [ ] With `D = diag(s_f / s_r)`, transformed covariance is `D Σ_f D`; no diagonal-only approximation is allowed.
+- [ ] Identity-scaler and same-scaler cases reproduce the original signature exactly within numerical tolerance.
+- [ ] Tests prove that two mathematically identical raw-space emissions fitted under different scalers yield identical transformed signatures.
+- [ ] No OOS observation is used to fit the fixed alignment scaler.
+
+### PR-124 — Use the fixed signature coordinate for fold and final-refit alignment
+
+- **Branch:** `pr/PR-124-wire-fixed-alignment-coordinate`
+- **Depends on:** PR-123
+- **Allowed:** `src/market_regime_engine/states/alignment.py`, `src/market_regime_engine/evaluation/walk_forward.py`, `src/market_regime_engine/training/final_refit.py`, `tests/unit/evaluation/test_walk_forward.py`, `tests/unit/evaluation/test_walk_forward_validation.py`, `tests/unit/training/test_final_refit.py`, `tests/unit/states/test_alignment.py`
+
+Acceptance:
+
+- [ ] Walk-forward constructs the fixed alignment scaler exactly once from first-planned-fold retained TRAIN rows and never refits it on later folds.
+- [ ] First valid model fold, every later valid fold and final production refit are transformed into that same coordinate system before first-sort/RMS alignment.
+- [ ] `StateAlignment.aligned_signatures`, `matched_rms`, `total_cost` and `max_drift` refer only to fixed-coordinate signatures.
+- [ ] Fold-local scaler continues to be fit on that fold TRAIN only and remains the scaler used for HMM training/OOS filtering.
+- [ ] Final-refit model inference continues to use its final-refit scaler; only its alignment signature is transformed.
+- [ ] Future TEST mutations cannot change the fixed alignment scaler or any earlier state mapping.
+- [ ] Regression fixture with materially different fold scalers preserves the same persistent mapping for unchanged raw-space regimes.
+- [ ] Ambiguity tolerance and exhaustive permutation logic remain unchanged.
+
+### PR-125 — Compare accepted candidates on common valid folds
+
+- **Branch:** `pr/PR-125-common-valid-fold-ranking`
+- **Depends on:** PR-122
+- **Allowed:** `EVALUATION.md`, `src/market_regime_engine/training/candidate_grid.py`, `src/market_regime_engine/evaluation/selection.py`, `tests/unit/training/test_candidate_grid.py`, `tests/unit/evaluation/test_selection.py`
+
+Acceptance:
+
+- [ ] Existing per-candidate valid-fold-rate gate `>=0.80` is applied first and unchanged.
+- [ ] After hard-gate rejection, the ranking support is the intersection of valid fold IDs across all remaining accepted candidates.
+- [ ] `common_valid_fold_rate = len(common_valid_fold_ids) / planned_fold_count` is recorded and must also be `>=0.80`; otherwise champion selection fails closed because candidates are not sufficiently comparable.
+- [ ] OOS mean, population std (`ddof=0`), OOS worst, BIC mean and AIC mean used by champion ranking are recomputed from exactly the common fold IDs.
+- [ ] Candidate-specific valid-fold aggregates remain available only as diagnostics and are named distinctly from common-support ranking metrics.
+- [ ] No invalid fold is imputed, interpolated or assigned a fabricated penalty.
+- [ ] Evidence records the exact common fold IDs and count.
+- [ ] Adversarial test proves that a candidate cannot improve its rank merely by being invalid on the hardest otherwise-comparable folds.
+
+### PR-126 — Validate every GMM component covariance fail-closed
+
+- **Branch:** `pr/PR-126-gmm-component-covariance-validation`
+- **Depends on:** PR-118
+- **Allowed:** `src/market_regime_engine/models/artifacts.py`, `src/market_regime_engine/models/gaussian_hmm.py`, `src/market_regime_engine/evaluation/diagnostics.py`, `tests/unit/models/test_artifacts.py`, `tests/unit/models/test_gaussian_hmm.py`, `tests/unit/evaluation/test_diagnostics.py`
+
+Acceptance:
+
+- [ ] Every `mixture_full_covariances[state][mixture]` receives the same finite shape, maximum asymmetry `<=1e-10`, minimum diagonal variance `>=1e-12` and Cholesky-without-jitter validation as a full state covariance.
+- [ ] Validation occurs before any emission-density calculation or backend reconstruction.
+- [ ] GMM emission evaluation may symmetrize only after the explicit asymmetry gate has passed.
+- [ ] A malformed component covariance cannot pass merely because the moment-matched aggregate state covariance is positive definite.
+- [ ] Regression test constructs an invalid component covariance with an otherwise valid aggregate state covariance and requires failure.
+- [ ] Gaussian and Student-t validation behavior is not weakened.
+- [ ] GMM parameter-count/AIC/BIC formulas are unchanged.
+
+### PR-127 — Separate Student-t scale matrices from distribution covariance
+
+- **Branch:** `pr/PR-127-student-t-scale-covariance-semantics`
+- **Depends on:** PR-126
+- **Allowed:** `EVALUATION.md`, `src/market_regime_engine/models/artifacts.py`, `src/market_regime_engine/models/gaussian_hmm.py`, `src/market_regime_engine/models/student_t_hmm.py`, `src/market_regime_engine/states/signatures.py`, `src/market_regime_engine/mlflow_support/plots.py`, `tests/unit/models/test_artifacts.py`, `tests/unit/models/test_student_t_hmm.py`, `tests/unit/states/test_alignment.py`, plot unit tests
+
+Acceptance:
+
+- [ ] `EVALUATION.md` explicitly distinguishes multivariate Student-t scale matrix `S` from covariance `C`.
+- [ ] For state degrees of freedom `ν>2`, the canonical distribution covariance is exactly `C = ν/(ν-2) * S`.
+- [ ] Persisted Student-t emission matrices remain scale matrices for density evaluation; no silent artifact-format reinterpretation is introduced.
+- [ ] One backend-neutral helper exposes distribution covariance to code that semantically needs covariance/standard deviation.
+- [ ] State-signature standard deviations and any plot/diagnostic labelled covariance or standard deviation use `C`, not `S`.
+- [ ] Student-t log-density/quadratic-form calculations continue to use `S`.
+- [ ] Exact unit test verifies the covariance factor and verifies signature log-standard-deviation shift `0.5*ln(ν/(ν-2))`.
+- [ ] Gaussian and GMM covariance semantics remain unchanged.
+
+### PR-128 — Wire Student-t profile settings into evaluation and final refit
+
+- **Branch:** `pr/PR-128-wire-student-t-profile-settings`
+- **Depends on:** PR-118
+- **Allowed:** `src/market_regime_engine/training/candidate_grid.py`, `src/market_regime_engine/training/final_refit.py`, `src/market_regime_engine/models/student_t_hmm.py`, `tests/unit/training/test_candidate_grid.py`, `tests/unit/training/test_final_refit.py`, `tests/unit/models/test_student_t_hmm.py`
+
+Acceptance:
+
+- [ ] Student-t adapter settings are built from the active `ModelProfile.student_t_hmm` contract rather than silently relying on `StudentTHMMSettings()` defaults.
+- [ ] `minimum_nu`, `maximum_nu`, `initial_nu`, `n_iter`, `tol` and `min_covar` are passed explicitly in walk-forward evaluation.
+- [ ] Final production refit uses exactly the same Student-t settings as the winning evaluation profile.
+- [ ] No mutable/global settings object is shared between parallel candidate workers.
+- [ ] A test changes one legal profile setting and proves the constructed evaluation and final-refit adapters receive that exact value.
+- [ ] Missing Student-t config for a Student-t candidate fails before fitting.
+- [ ] Gaussian/GMM adapter construction is unchanged.
+
+### PR-129 — Enforce TRAIN likelihood parity before AIC/BIC
+
+- **Branch:** `pr/PR-129-train-likelihood-parity`
+- **Depends on:** PR-126, PR-127, PR-128
+- **Allowed:** `EVALUATION.md`, `src/market_regime_engine/evaluation/walk_forward.py`, `tests/unit/evaluation/test_walk_forward.py`, `tests/unit/evaluation/test_walk_forward_validation.py`
+
+Acceptance:
+
+- [ ] After fitting the winning start, TRAIN likelihood is recomputed by the same causal forward/emission implementation used for OOS filtering.
+- [ ] Fit-returned and causal-filter TRAIN log likelihoods must satisfy `abs(delta) <= 1e-10 * max(1, abs(fit_ll), abs(filter_ll))`; the exact rule is documented.
+- [ ] A parity failure invalidates the fold with an explicit reason; it is never silently averaged.
+- [ ] After parity passes, the causal-filter TRAIN log likelihood is the canonical value supplied to AIC/BIC and stored as fold TRAIN likelihood.
+- [ ] TEST continuation logic and TEST-only likelihood sum are unchanged.
+- [ ] Tests inject a deliberately inconsistent adapter and require fold failure.
+- [ ] Gaussian, GMM and Student-t happy-path fixtures all pass the parity check.
+
+### PR-130 — Make weighted OOS plots explicitly diagnostic-only
+
+- **Branch:** `pr/PR-130-weighted-oos-plot-semantics`
+- **Depends on:** PR-125
+- **Allowed:** `src/market_regime_engine/mlflow_support/plots.py`, `src/market_regime_engine/mlflow_support/tracking.py`, `tests/unit/mlflow_support/test_tracking.py`, plot unit tests, `PLOT_STYLE.md`
+
+Acceptance:
+
+- [ ] Observation-weighted pooled OOS likelihood may remain as a diagnostic value but is never called the statistical rank, score, winner or best candidate.
+- [ ] Candidate plot order/highlight uses canonical statistical champion rank when selection evidence is available; deterministic candidate ID order is the fallback for diagnostics without selection evidence.
+- [ ] Plot titles/legends explicitly label weighted pooled OOS likelihood as `diagnostic only`.
+- [ ] No plot is ordered by weighted OOS likelihood in a way that can visually imply champion selection.
+- [ ] A regression fixture where the weighted diagnostic winner differs from the canonical statistical champion still highlights/orders the canonical champion correctly.
+- [ ] The canonical unweighted valid/common-fold ranking metrics remain unchanged.
+- [ ] No weighted value is fed back into candidate selection or registry logic.
+
+### PR-131 — Remove automatic champion promotion from the Xetra v2 cycle
+
+- **Branch:** `pr/PR-131-explicit-champion-promotion`
+- **Depends on:** PR-118
+- **Allowed:** `scripts/run_xetra_v2_cycle.py`, `src/market_regime_engine/commands/lifecycle.py`, `tests/unit/commands/test_lifecycle.py`, script contract tests
+
+Acceptance:
+
+- [ ] A successful Xetra v2 evaluation/refit registers the new model and may CAS-update only the `challenger` alias.
+- [ ] The cycle never mutates the `champion` alias automatically.
+- [ ] Promotion to `champion` remains a separate explicit operator action with `expected_current_version` and a non-empty reason.
+- [ ] If challenger registration/alias update fails, champion remains untouched.
+- [ ] Script output clearly distinguishes `statistical_champion_candidate_id`, registered challenger version and current production champion version.
+- [ ] Test starts with an existing champion, runs a successful cycle with a different challenger and proves champion is unchanged.
+- [ ] OOS publication and final-refit behavior are unchanged.
+
+## Corrective execution graph
+
+```text
+E1: PR-117
+E2 parallel after 117: PR-118
+E3 parallel after 118: PR-119 PR-123 PR-126 PR-128 PR-131
+E4 parallel after 119: PR-120 PR-121 PR-122
+E5: PR-124 after 123
+E6: PR-125 after 122
+E7: PR-127 after 126
+E8: PR-129 after 126+127+128
+E9: PR-130 after 125
+```
+
+PR-120, PR-121, PR-124, PR-126, PR-128 and PR-131 have disjoint primary implementation files and can be assigned to weak agents in parallel once their dependencies are merged. PR-129 is intentionally late because it validates a single canonical TRAIN likelihood across all supported emission families.
