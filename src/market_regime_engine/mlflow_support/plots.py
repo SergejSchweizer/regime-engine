@@ -883,9 +883,7 @@ def render_candidate_oos_gap_heatmap(
 ) -> PlotManifestEntry:
     """Render fold-by-candidate OOS gaps from the best candidate in each fold."""
 
-    ordered = _ordered_candidate_oos_values(
-        evaluations, plan, statistical_champion_candidate_id
-    )
+    ordered = _ordered_candidate_oos_values(evaluations, plan, statistical_champion_candidate_id)
     matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
     best_by_fold = np.nanmax(matrix, axis=0)
     gaps = matrix - best_by_fold
@@ -939,9 +937,7 @@ def render_candidate_oos_summary(
 ) -> PlotManifestEntry:
     """Render weighted OOS score summaries, uncertainty bands, and fold wins."""
 
-    ordered = _ordered_candidate_oos_values(
-        evaluations, plan, statistical_champion_candidate_id
-    )
+    ordered = _ordered_candidate_oos_values(evaluations, plan, statistical_champion_candidate_id)
     matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
     leaders = np.argmax(np.where(np.isfinite(matrix), matrix, -np.inf), axis=0)
     comparable = np.any(np.isfinite(matrix), axis=0)
@@ -965,9 +961,7 @@ def render_candidate_oos_summary(
     ax.set_yticks(positions, labels=[item[0].candidate_id for item in ordered])
     ax.invert_yaxis()
     ax.set_title("Weighted OOS predictive log likelihood summary (diagnostic only)")
-    ax.set_xlabel(
-        "Weighted OOS predictive log likelihood per observation (diagnostic only)"
-    )
+    ax.set_xlabel("Weighted OOS predictive log likelihood per observation (diagnostic only)")
     ax.set_ylabel("Candidate")
     ax.grid(axis="x", alpha=0.25)
     for position, mean, win_count in zip(positions, means, wins, strict=True):

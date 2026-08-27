@@ -343,17 +343,13 @@ def _render_parent_plot(
     """Render one independent parent comparison plot in a worker process."""
 
     if plot_type == "candidate_comparison":
-        return render_candidate_comparison(
-            evaluations, plan, root, statistical_selection_result
-        )
+        return render_candidate_comparison(evaluations, plan, root, statistical_selection_result)
     if plot_type == "candidate_oos_gap_heatmap":
         return render_candidate_oos_gap_heatmap(
             evaluations, plan, root, statistical_selection_result
         )
     if plot_type == "candidate_oos_summary":
-        return render_candidate_oos_summary(
-            evaluations, plan, root, statistical_selection_result
-        )
+        return render_candidate_oos_summary(evaluations, plan, root, statistical_selection_result)
     raise ValueError(f"unsupported parent plot type: {plot_type}")
 
 
@@ -494,7 +490,7 @@ def track_walk_forward_evaluations(
         ordered,
         plan,
         root,
-            statistical_selection_result,
+        statistical_selection_result,
         max_workers,
     )
     candidate_run_ids: list[tuple[str, str]] = []

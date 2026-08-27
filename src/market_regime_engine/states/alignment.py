@@ -156,9 +156,7 @@ def align_to_reference(
     )
 
 
-def _require_scaler(
-    scaler: StandardScalerArtifact | None, name: str
-) -> StandardScalerArtifact:
+def _require_scaler(scaler: StandardScalerArtifact | None, name: str) -> StandardScalerArtifact:
     if scaler is None:
         raise ValueError(f"{name} scaler is required for fixed-coordinate alignment")
     return scaler
