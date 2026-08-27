@@ -130,7 +130,11 @@ def _rank(accepted: tuple[CandidateAggregate, ...]) -> tuple[CandidateAggregate,
             for group in groups
             for subgroup in _anchored_partition(group, field_name, higher_is_better)
         )
-    return tuple(item for group in groups for item in sorted(group, key=lambda item: (item.state_count, item.candidate_id)))
+    return tuple(
+        item
+        for group in groups
+        for item in sorted(group, key=lambda item: (item.state_count, item.candidate_id))
+    )
 
 
 def _common_support_ranked_aggregates(
@@ -142,7 +146,10 @@ def _common_support_ranked_aggregates(
         for evaluation in grid.evaluations
         if evaluation.candidate_id in {candidate.candidate_id for candidate in accepted}
     }
-    if any(len(evaluations[candidate.candidate_id].folds) != candidate.planned_fold_count for candidate in accepted):
+    if any(
+        len(evaluations[candidate.candidate_id].folds) != candidate.planned_fold_count
+        for candidate in accepted
+    ):
         return accepted, (), 1.0
     common_ids = set(fold.fold_id for fold in evaluations[accepted[0].candidate_id].valid_folds)
     for candidate in accepted[1:]:
@@ -195,8 +202,8 @@ def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalCha
     )
     if not accepted:
         raise ValueError("no candidate passes statistical hard gates")
-    ranking_inputs, common_valid_fold_ids, common_valid_fold_rate = _common_support_ranked_aggregates(
-        grid, accepted
+    ranking_inputs, common_valid_fold_ids, common_valid_fold_rate = (
+        _common_support_ranked_aggregates(grid, accepted)
     )
     ranked = _rank(ranking_inputs)
     rank_map = {candidate.candidate_id: index for index, candidate in enumerate(ranked, start=1)}

@@ -25,7 +25,8 @@ def transform_emission_to_alignment_coordinate(
         len(row) != dimension for row in covariance
     ) or len(covariance) != dimension:
         raise ValueError("emission dimensions must match the scaler feature order")
-    if any(not isfinite(value) for value in (*mean, *(value for row in covariance for value in row))):
+    values = (*mean, *(value for row in covariance for value in row))
+    if any(not isfinite(value) for value in values):
         raise ValueError("emission mean and covariance must be finite")
     scale_ratios = tuple(
         fold_scale / reference_scale
@@ -45,7 +46,10 @@ def transform_emission_to_alignment_coordinate(
         )
     )
     transformed_covariance = tuple(
-        tuple(scale_ratios[row] * covariance[row][column] * scale_ratios[column] for column in range(dimension))
+        tuple(
+            scale_ratios[row] * covariance[row][column] * scale_ratios[column]
+            for column in range(dimension)
+        )
         for row in range(dimension)
     )
     return transformed_mean, transformed_covariance

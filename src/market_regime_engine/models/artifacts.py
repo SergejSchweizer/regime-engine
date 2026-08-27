@@ -41,7 +41,8 @@ def _full_covariance(covariance: tuple[tuple[float, ...], ...], dimension: int, 
     if any(covariance[i][i] < _MIN_VARIANCE for i in range(dimension)):
         raise ValueError(f"{name} diagonal variance is below 1e-12")
     try:
-        np.linalg.cholesky((np.asarray(covariance, dtype=np.float64) + np.asarray(covariance, dtype=np.float64).T) / 2.0)
+        matrix = np.asarray(covariance, dtype=np.float64)
+        np.linalg.cholesky((matrix + matrix.T) / 2.0)
     except np.linalg.LinAlgError as exc:
         raise ValueError(f"{name} must pass Cholesky without jitter") from exc
 

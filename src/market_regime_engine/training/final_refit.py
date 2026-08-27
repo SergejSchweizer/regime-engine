@@ -23,7 +23,7 @@ from market_regime_engine.models.gaussian_hmm import (
 )
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
-from market_regime_engine.preprocessing.scaling import fit_standard_scaler
+from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_to_reference
