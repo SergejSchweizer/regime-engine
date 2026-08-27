@@ -13,6 +13,7 @@ from market_regime_engine.training.multistart import (
     MINIMUM_VALID_STARTS,
     MULTISTART_SEEDS,
     TRAIN_LOGLIK_TIE_ABS_TOLERANCE,
+    _anchored_winner,
     run_multistart,
 )
 
@@ -105,6 +106,24 @@ def test_difference_above_tolerance_selects_higher_loglik() -> None:
     outcomes[23] = fit_result(23, 10.0 + 2e-12)
     result = run_multistart([[0.0]], state_count=2, adapter_factory=factory(outcomes))
     assert result.winner.seed == 23
+
+
+def test_global_anchor_rejects_pairwise_likelihood_tolerance_chain() -> None:
+    outcomes: dict[int, FitResult | Exception] = {
+        seed: fit_result(seed, -100.0) for seed in MULTISTART_SEEDS
+    }
+    outcomes[11] = fit_result(11, 10.0)
+    outcomes[23] = fit_result(23, 10.0 + 0.75e-12)
+    outcomes[37] = fit_result(37, 10.0 + 1.5e-12)
+
+    result = run_multistart([[0.0]], state_count=2, adapter_factory=factory(outcomes))
+
+    assert result.winner.seed == 23
+
+
+def test_anchored_winner_requires_successful_starts() -> None:
+    with pytest.raises(ValueError, match="requires successful starts"):
+        _anchored_winner([])
 
 
 def test_fewer_than_six_valid_starts_fails_with_failure_evidence() -> None:
