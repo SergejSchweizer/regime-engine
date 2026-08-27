@@ -170,7 +170,7 @@ REGIME_MODEL_STALE_FAIL_DAYS=35
 Startup validation requires:
 
 $$
-\text{MLFLOW\_WORKERS} \cdot \text{REGIME\_PG\_POOL\_MAX\_SIZE}
+	ext{MLFLOW\_WORKERS} \cdot \text{REGIME\_PG\_POOL\_MAX\_SIZE}
 \le \text{REGIME\_FEATURE\_PG\_CONNECTION\_BUDGET}.
 $$
 
@@ -1351,7 +1351,6 @@ E9: PR-130 after 125
 ```
 
 PR-120, PR-121, PR-124, PR-126, PR-128 and PR-131 have disjoint primary implementation files and can be assigned to weak agents in parallel once their dependencies are merged. PR-129 is intentionally late because it validates a single canonical TRAIN likelihood across all supported emission families.
-
 ---
 
 # 18. Xetra univariate shadow-model analysis — 2026-08-27
@@ -1433,9 +1432,9 @@ State-signature RMS distances are not used to compare a VIX-only state with a CI
 
 Execution rule: all PRs below inherit section-12 clean-main/status/branch/allowed-file/full-test requirements. Agents must not combine PRs, broaden production selection, or add economic metrics.
 
-### PR-132 — Pin the univariate shadow-analysis contract
+### PR-144 — Pin the univariate shadow-analysis contract
 
-- **Branch:** `pr/PR-132-univariate-shadow-contract`
+- **Branch:** `pr/PR-144-univariate-shadow-contract`
 - **Depends on:** PR-125, PR-129
 - **Allowed:** `EVALUATION.md`
 
@@ -1452,10 +1451,10 @@ Acceptance:
 - [ ] Exact shared-fold agreement support, NMI formula, same-K permutation agreement and unavailable-agreement behavior are specified.
 - [ ] No ETF return, portfolio metric, final refit, model registration, alias mutation or OOS publication is introduced by the shadow analysis.
 
-### PR-133 — Add exact shadow feature and lineage contracts
+### PR-145 — Add exact shadow feature and lineage contracts
 
-- **Branch:** `pr/PR-133-shadow-feature-contracts`
-- **Depends on:** PR-132
+- **Branch:** `pr/PR-145-shadow-feature-contracts`
+- **Depends on:** PR-144
 - **Allowed:** `src/market_regime_engine/analysis/__init__.py`, `src/market_regime_engine/analysis/contracts.py`, `tests/unit/analysis/test_shadow_contracts.py`
 
 Acceptance:
@@ -1471,10 +1470,10 @@ Acceptance:
 - [ ] Define deterministic SHA-256 `shadow_analysis_definition_hash` from pinned analysis semantics and deterministic `shadow_analysis_execution_hash` from definition hash + source build/data hash + evaluation-plan hash + canonical selection hashes.
 - [ ] Hash tests prove later source rows can change execution lineage without silently changing the pinned analysis definition.
 
-### PR-134 — Extract a reusable v2 model-adapter factory
+### PR-146 — Extract a reusable v2 model-adapter factory
 
-- **Branch:** `pr/PR-134-reusable-model-adapter-factory`
-- **Depends on:** PR-132, PR-128
+- **Branch:** `pr/PR-146-reusable-model-adapter-factory`
+- **Depends on:** PR-144, PR-128
 - **Allowed:** `src/market_regime_engine/training/adapter_factory.py`, `src/market_regime_engine/training/candidate_grid.py`, `tests/unit/training/test_adapter_factory.py`, `tests/unit/training/test_candidate_grid.py`
 
 Acceptance:
@@ -1488,10 +1487,10 @@ Acceptance:
 - [ ] A one-feature structural candidate spec can obtain the same family-specific adapter factory without being a `ResolvedSelectedFeatureProfile`.
 - [ ] Invalid family/K/mixture/profile combinations fail before fitting; no defaults/fallback family are invented.
 
-### PR-135 — Generalize the walk-forward runner to a structural candidate spec
+### PR-147 — Generalize the walk-forward runner to a structural candidate spec
 
-- **Branch:** `pr/PR-135-walk-forward-candidate-protocol`
-- **Depends on:** PR-132, PR-124, PR-129
+- **Branch:** `pr/PR-147-walk-forward-candidate-protocol`
+- **Depends on:** PR-144, PR-124, PR-129
 - **Allowed:** `src/market_regime_engine/evaluation/walk_forward.py`, `tests/unit/evaluation/test_walk_forward.py`, `tests/unit/evaluation/test_walk_forward_validation.py`
 
 Acceptance:
@@ -1505,10 +1504,10 @@ Acceptance:
 - [ ] Existing production fixtures produce identical fold validity, metrics, state mappings and probabilities after the refactor.
 - [ ] Unsupported profile version, model family/K mismatch, empty feature order and inconsistent dimension still fail closed.
 
-### PR-136 — Build the exact 21-feature common diagnostic clock
+### PR-148 — Build the exact 21-feature common diagnostic clock
 
-- **Branch:** `pr/PR-136-shadow-common-observation-clock`
-- **Depends on:** PR-133
+- **Branch:** `pr/PR-148-shadow-common-observation-clock`
+- **Depends on:** PR-145
 - **Allowed:** `src/market_regime_engine/analysis/common_clock.py`, `tests/unit/analysis/test_common_clock.py`
 
 Acceptance:
@@ -1522,32 +1521,32 @@ Acceptance:
 - [ ] A nonfinite non-null shadow value fails closed rather than being converted to missing.
 - [ ] Tests cover asymmetric missingness where per-feature clocks would differ and prove the pinned common-clock result.
 
-### PR-137 — Evaluate one univariate 12-candidate shadow grid
+### PR-149 — Evaluate one univariate 12-candidate shadow grid
 
-- **Branch:** `pr/PR-137-single-feature-shadow-grid`
-- **Depends on:** PR-133, PR-134, PR-135, PR-136
+- **Branch:** `pr/PR-149-single-feature-shadow-grid`
+- **Depends on:** PR-145, PR-146, PR-147, PR-148
 - **Allowed:** `src/market_regime_engine/analysis/feature_grid.py`, `tests/unit/analysis/test_feature_grid.py`
 
 Acceptance:
 
 - [ ] Input is one validated shadow feature spec, the common-mask diagnostic frame, the canonical v2 profile, canonical plan/source lineage/selection hashes and shadow analysis hashes.
-- [ ] Construct exactly the ordered 12 candidate specs from PR-133 for the one feature; no candidate can be omitted or added dynamically.
-- [ ] Every candidate is evaluated by the shared PR-135 walk-forward runner and PR-134 adapter factory; no duplicate HMM/EM/filter implementation is introduced.
+- [ ] Construct exactly the ordered 12 candidate specs from PR-145 for the one feature; no candidate can be omitted or added dynamically.
+- [ ] Every candidate is evaluated by the shared PR-147 walk-forward runner and PR-146 adapter factory; no duplicate HMM/EM/filter implementation is introduced.
 - [ ] Candidate feature order is exactly `(feature_name,)` and feature dimension exactly `1` for all 12 candidates.
 - [ ] Every candidate preserves the same source build, plan hash, common observation clock and canonical selection-lineage hashes.
 - [ ] Candidate aggregates use the existing `aggregate_candidate` definitions and retain all invalid folds/failure reasons.
 - [ ] Return a diagnostic wrapper containing the canonical `CandidateGridEvaluation` plus feature identity/kind/group and shadow definition/execution hashes.
 - [ ] This PR does not select a winner, track MLflow, final-refit, publish predictions or touch registry aliases.
 
-### PR-138 — Execute the complete 21-feature shadow suite and select within-feature winners
+### PR-150 — Execute the complete 21-feature shadow suite and select within-feature winners
 
-- **Branch:** `pr/PR-138-univariate-shadow-suite`
-- **Depends on:** PR-137, PR-125
+- **Branch:** `pr/PR-150-univariate-shadow-suite`
+- **Depends on:** PR-149, PR-125
 - **Allowed:** `src/market_regime_engine/analysis/suite.py`, `tests/unit/analysis/test_shadow_suite.py`
 
 Acceptance:
 
-- [ ] Evaluate exactly the 21 PR-133 feature specs in deterministic order and exactly 12 candidates per feature, for exactly 252 candidate evaluations.
+- [ ] Evaluate exactly the 21 PR-145 feature specs in deterministic order and exactly 12 candidates per feature, for exactly 252 candidate evaluations.
 - [ ] Bounded parallel execution is allowed across feature grids, but output ordering is independent of task completion order and nested unbounded pools are forbidden.
 - [ ] Each feature grid is passed to the existing `select_statistical_champion` logic solely to obtain `diagnostic_feature_model_winner` with the existing v2 hard gates/common-valid-fold ranking.
 - [ ] A feature for which no candidate passes statistical gates records an explicit feature-level diagnostic failure and does not abort or remove the other 20 feature analyses.
@@ -1557,10 +1556,10 @@ Acceptance:
 - [ ] Reordering worker completion cannot change any feature winner, metric, hash or summary row order.
 - [ ] No production selection/refit/registry/OOS-publication code is imported or invoked.
 
-### PR-139 — Add label-invariant agreement with the multivariate reference champion
+### PR-151 — Add label-invariant agreement with the multivariate reference champion
 
-- **Branch:** `pr/PR-139-shadow-champion-agreement`
-- **Depends on:** PR-132, PR-138
+- **Branch:** `pr/PR-151-shadow-champion-agreement`
+- **Depends on:** PR-144, PR-150
 - **Allowed:** `src/market_regime_engine/analysis/agreement.py`, `tests/unit/analysis/test_agreement.py`
 
 Acceptance:
@@ -1575,10 +1574,10 @@ Acceptance:
 - [ ] For unequal K, permutation agreement/mapping is null; no many-to-one mapping or signature-space comparison is invented.
 - [ ] Tests cover perfect relabeling, independent sequences, unequal K, degenerate constant sequences and insufficient shared-fold support.
 
-### PR-140 — Track and visualize shadow analysis in MLflow
+### PR-152 — Track and visualize shadow analysis in MLflow
 
-- **Branch:** `pr/PR-140-mlflow-shadow-analysis-evidence`
-- **Depends on:** PR-138, PR-139, PR-130
+- **Branch:** `pr/PR-152-mlflow-shadow-analysis-evidence`
+- **Depends on:** PR-150, PR-151, PR-130
 - **Allowed:** `src/market_regime_engine/mlflow_support/shadow_tracking.py`, `src/market_regime_engine/analysis/shadow_plots.py`, `tests/unit/mlflow_support/test_shadow_tracking.py`, `tests/unit/analysis/test_shadow_plots.py`, `PLOT_STYLE.md`
 
 Acceptance:
@@ -1594,10 +1593,10 @@ Acceptance:
 - [ ] All plots satisfy `PLOT_STYLE.md`, include deterministic manifest lineage and show invalid/unavailable values explicitly rather than interpolating.
 - [ ] No raw source feature values, credentials, model registration, final-refit artifact, OOS build or alias mutation are logged/performed.
 
-### PR-141 — Add a standalone Xetra v2 shadow-analysis runner
+### PR-153 — Add a standalone Xetra v2 shadow-analysis runner
 
-- **Branch:** `pr/PR-141-run-xetra-shadow-analysis`
-- **Depends on:** PR-138, PR-139, PR-140
+- **Branch:** `pr/PR-153-run-xetra-shadow-analysis`
+- **Depends on:** PR-150, PR-151, PR-152
 - **Allowed:** `scripts/run_xetra_v2_shadow_analysis.py`, `tests/unit/commands/test_shadow_analysis_script.py`
 
 Acceptance:
@@ -1608,16 +1607,16 @@ Acceptance:
 - [ ] From one source snapshot, construct the same canonical aligned source-row window and walk-forward plan semantics as the v2 production cycle; regression fixture proves equal origin/fold IDs/bounds for identical source rows.
 - [ ] Run canonical first-fold feature selection on only the canonical 48 columns, preserving exact production definition/execution hashes and obtaining the eight `preliminary_medoids`.
 - [ ] Evaluate one canonical multivariate v2 reference grid on the frozen canonical final features and select its statistical champion solely as the in-run reference for agreement.
-- [ ] Build the exact 21-feature common clock, execute the exact 252 shadow evaluations, compute within-feature winners/agreement and track PR-140 evidence.
+- [ ] Build the exact 21-feature common clock, execute the exact 252 shadow evaluations, compute within-feature winners/agreement and track PR-152 evidence.
 - [ ] The 12 multivariate reference candidates are reported separately and are not counted as shadow candidates.
 - [ ] The script never calls final production refit, `PredictionStore`, OOS publication, model package save/register, `RegistryPort`, `MlflowModelRegistry`, `set_registered_model_alias`, CAS alias mutation or any equivalent lifecycle operation.
 - [ ] A statistically invalid shadow feature is recorded in evidence and does not abort remaining feature evaluations; source/contract/hash/tracking failures fail the script explicitly.
 - [ ] Final stdout JSON reports source build, shadow parent run ID, canonical reference candidate ID, common-clock retained counts, `shadow_feature_count=21`, `shadow_candidate_count=252`, valid-winner count and failed-feature count.
 
-### PR-142 — Prove the 252-candidate shadow workflow hermetically
+### PR-154 — Prove the 252-candidate shadow workflow hermetically
 
-- **Branch:** `pr/PR-142-shadow-analysis-e2e-proof`
-- **Depends on:** PR-141
+- **Branch:** `pr/PR-154-shadow-analysis-e2e-proof`
+- **Depends on:** PR-153
 - **Allowed:** `tests/e2e/test_xetra_univariate_shadow_analysis.py`, shadow-analysis E2E fixtures only
 
 Acceptance:
@@ -1634,10 +1633,10 @@ Acceptance:
 - [ ] Prove no final refit, OOS publication, registry registration or alias mutation occurs by injecting fail-on-call lifecycle doubles.
 - [ ] All required tests remain hermetic and count toward the repository 90% unit+integration coverage gate as applicable.
 
-### PR-143 — Document execution and interpretation of the shadow analysis
+### PR-155 — Document execution and interpretation of the shadow analysis
 
-- **Branch:** `pr/PR-143-shadow-analysis-documentation`
-- **Depends on:** PR-142
+- **Branch:** `pr/PR-155-shadow-analysis-documentation`
+- **Depends on:** PR-154
 - **Allowed:** `docs/univariate_shadow_analysis.md`, `README.md`
 
 Acceptance:
@@ -1654,20 +1653,20 @@ Acceptance:
 
 ## Shadow-analysis execution graph
 
-Only merged dependencies unlock work. PR-132 intentionally waits for the common-valid-fold and all-family TRAIN-likelihood corrections because the shadow analysis must not encode superseded ranking/model semantics.
+Only merged dependencies unlock work. PR-144 intentionally waits for the common-valid-fold and all-family TRAIN-likelihood corrections because the shadow analysis must not encode superseded ranking/model semantics.
 
 ```text
 F0 prerequisites: PR-125 PR-129
-F1: PR-132 after PR-125+PR-129
-F2 parallel after PR-132: PR-133 PR-134 PR-135
-F3 parallel: PR-136 after PR-133; PR-139 may begin after PR-132 with synthetic contracts but merges after PR-138
-F4: PR-137 after PR-133+PR-134+PR-135+PR-136
-F5: PR-138 after PR-137+PR-125
-F6: PR-139 after PR-138
-F7: PR-140 after PR-138+PR-139+PR-130
-F8: PR-141 after PR-140
-F9: PR-142 after PR-141
-F10: PR-143 after PR-142
+F1: PR-144 after PR-125+PR-129
+F2 parallel after PR-144: PR-145 PR-146 PR-147
+F3 parallel: PR-148 after PR-145; PR-151 may begin after PR-144 with synthetic contracts but merges after PR-150
+F4: PR-149 after PR-145+PR-146+PR-147+PR-148
+F5: PR-150 after PR-149+PR-125
+F6: PR-151 after PR-150
+F7: PR-152 after PR-150+PR-151+PR-130
+F8: PR-153 after PR-152
+F9: PR-154 after PR-153
+F10: PR-155 after PR-154
 ```
 
-PR-133, PR-134 and PR-135 have disjoint primary implementation files and are deliberately parallelizable. PR-136 can proceed as soon as the immutable feature contracts merge. PR-139's pure agreement mathematics can be developed against synthetic fixtures in parallel, but its final integration must rebase on the PR-138 result contract. PR-140 is intentionally after PR-130 so no shadow visualization can reintroduce ambiguous weighted-OOS winner semantics.
+PR-145, PR-146 and PR-147 have disjoint primary implementation files and are deliberately parallelizable. PR-148 can proceed as soon as the immutable feature contracts merge. PR-151's pure agreement mathematics can be developed against synthetic fixtures in parallel, but its final integration must rebase on the PR-150 result contract. PR-152 is intentionally after PR-130 so no shadow visualization can reintroduce ambiguous weighted-OOS winner semantics.
