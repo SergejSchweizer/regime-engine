@@ -36,14 +36,15 @@ class GaussianHMMArtifact:
     mixture_weights: tuple[tuple[float, ...], ...] | None = None
     mixture_means: tuple[tuple[tuple[float, ...], ...], ...] | None = None
     mixture_full_covariances: tuple[tuple[tuple[tuple[float, ...], ...], ...], ...] | None = None
+    degrees_of_freedom: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("Gaussian MVP state_count must be 2, 3, 4, or 5")
         if self.covariance_type != "full":
             raise ValueError("covariance_type must be exactly full")
-        if self.model_family not in {"gaussian_hmm", "gmm_hmm"}:
-            raise ValueError("model_family must be gaussian_hmm or gmm_hmm")
+        if self.model_family not in {"gaussian_hmm", "gmm_hmm", "student_t_hmm"}:
+            raise ValueError("model_family must be gaussian_hmm, gmm_hmm, or student_t_hmm")
         dimension = len(self.feature_order)
         if dimension < 1 or len(set(self.feature_order)) != dimension:
             raise ValueError("feature_order must be non-empty and duplicate-free")
@@ -84,9 +85,9 @@ class GaussianHMMArtifact:
             self.mixture_means,
             self.mixture_full_covariances,
         )
-        if self.model_family == "gaussian_hmm":
+        if self.model_family != "gmm_hmm":
             if any(value is not None for value in mixture_fields):
-                raise ValueError("Gaussian HMM artifact cannot contain mixture emissions")
+                raise ValueError("non-mixture HMM artifact cannot contain mixture emissions")
         else:
             if any(value is None for value in mixture_fields):
                 raise ValueError("GMM-HMM artifact requires complete mixture emissions")
@@ -121,6 +122,13 @@ class GaussianHMMArtifact:
                         raise ValueError("mixture covariance values must be finite")
                     if any(covariance[i][i] < _MIN_VARIANCE for i in range(dimension)):
                         raise ValueError("mixture covariance diagonal variance is below 1e-12")
+        if self.model_family == "student_t_hmm":
+            if self.degrees_of_freedom is None or len(self.degrees_of_freedom) != self.state_count:
+                raise ValueError("Student-t HMM requires one degree of freedom per state")
+            if any(not isfinite(value) or value <= 2.0 for value in self.degrees_of_freedom):
+                raise ValueError("Student-t degrees of freedom must be finite and greater than two")
+        elif self.degrees_of_freedom is not None:
+            raise ValueError("only Student-t HMM artifacts can contain degrees of freedom")
 
     @property
     def feature_dimension(self) -> int:

@@ -8,6 +8,7 @@ from math import isfinite
 import numpy as np
 import numpy.typing as npt
 from hmmlearn.hmm import GMMHMM, GaussianHMM  # type: ignore[import-untyped]
+from scipy.special import gammaln  # type: ignore[import-untyped]
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import ArrayF64, FilterResult, FitResult
@@ -82,7 +83,7 @@ def _validate_positive_definite(artifact: GaussianHMMArtifact) -> None:
 
 
 def gaussian_log_emissions(rows: npt.ArrayLike, artifact: GaussianHMMArtifact) -> ArrayF64:
-    """Return exact Gaussian or two-component GMM emission densities by state."""
+    """Return exact Gaussian, GMM, or multivariate Student-t log densities by state."""
     values = _rows(rows, artifact.feature_dimension)
     _validate_positive_definite(artifact)
     output = np.empty((values.shape[0], artifact.state_count), dtype=np.float64)
@@ -122,7 +123,18 @@ def gaussian_log_emissions(rows: npt.ArrayLike, artifact: GaussianHMMArtifact) -
         centered = values - mean
         solved = np.linalg.solve(covariance, centered.T).T
         quadratic = np.einsum("ij,ij->i", centered, solved)
-        output[:, state] = -0.5 * (constant + logdet + quadratic)
+        if artifact.model_family == "student_t_hmm":
+            assert artifact.degrees_of_freedom is not None
+            nu = artifact.degrees_of_freedom[state]
+            dimension = artifact.feature_dimension
+            output[:, state] = (
+                gammaln((nu + dimension) / 2.0)
+                - gammaln(nu / 2.0)
+                - 0.5 * (dimension * np.log(nu * np.pi) + logdet)
+                - 0.5 * (nu + dimension) * np.log1p(quadratic / nu)
+            )
+        else:
+            output[:, state] = -0.5 * (constant + logdet + quadratic)
     if not np.all(np.isfinite(output)):
         raise ValueError("Gaussian emission log densities must be finite")
     return output

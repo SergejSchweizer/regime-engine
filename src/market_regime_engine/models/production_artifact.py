@@ -58,11 +58,17 @@ class ProductionModelArtifact:
             "gmm_hmm_k3_m2_full",
             "gmm_hmm_k4_m2_full",
             "gmm_hmm_k5_m2_full",
+            f"student_t_hmm_k{self.state_count}_full",
         }
         if self.candidate_id not in expected_candidates:
             raise ValueError("production candidate identity is unsupported")
         if self.candidate_id.startswith("gmm_hmm_") and self.hmm.model_family != "gmm_hmm":
             raise ValueError("GMM-HMM production candidate requires a GMM-HMM artifact")
+        if (
+            self.candidate_id.startswith("student_t_hmm_")
+            and self.hmm.model_family != "student_t_hmm"
+        ):
+            raise ValueError("Student-t production candidate requires a Student-t HMM artifact")
         if not self.source_build_id or not self.source_data_sha256:
             raise ValueError("production source identity cannot be empty")
         if len(self.source_data_sha256) != 64:
