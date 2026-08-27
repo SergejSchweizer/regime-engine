@@ -22,8 +22,9 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGMMHMMAdapter,
 )
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
-from market_regime_engine.preprocessing.scaling import fit_standard_scaler
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
+from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
+from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_to_reference
 from market_regime_engine.training.multistart import AdapterFactory, run_multistart
@@ -39,10 +40,27 @@ def _require_utc(value: datetime, field_name: str) -> datetime:
     return value
 
 
-def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
+def _default_adapter_builder(
+    profile: ModelProfile | None, candidate: ResolvedCandidateProfile
+) -> AdapterFactory:
     def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
         if candidate.model_family == "student_t_hmm":
-            return StudentTHMMAdapter(candidate.feature_order)
+            if profile is None:
+                raise ValueError("Student-t candidate requires an active model profile")
+            settings = profile.student_t_hmm
+            if settings is None:
+                raise ValueError("Student-t candidate requires Student-t profile settings")
+            return StudentTHMMAdapter(
+                candidate.feature_order,
+                StudentTHMMSettings(
+                    minimum_nu=settings.minimum_nu,
+                    maximum_nu=settings.maximum_nu,
+                    initial_nu=settings.initial_nu,
+                    n_iter=settings.n_iter,
+                    tol=settings.tol,
+                    min_covar=settings.min_covar,
+                ),
+            )
         if candidate.model_family == "gmm_hmm":
             return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)
@@ -92,14 +110,18 @@ def _refit_matrix(
     return matrix, retained_timestamps, skipped
 
 
-def _last_valid_reference(evaluation: WalkForwardEvaluation) -> tuple[tuple[float, ...], ...]:
+def _last_valid_reference(
+    evaluation: WalkForwardEvaluation,
+) -> tuple[tuple[tuple[float, ...], ...], StandardScalerArtifact]:
     valid = evaluation.valid_folds
     if not valid:
         raise ValueError("winning candidate has no valid evaluation fold for final alignment")
     alignment = valid[-1].alignment
     if alignment is None:
         raise ValueError("last valid winning-K fold is missing persistent alignment evidence")
-    return alignment.aligned_signatures
+    if evaluation.alignment_reference_scaler is None:
+        raise ValueError("winning evaluation is missing fixed alignment reference scaler")
+    return alignment.aligned_signatures, evaluation.alignment_reference_scaler
 
 
 def _aligned_artifact(
@@ -144,7 +166,8 @@ def final_production_refit(
     lineage: SourceLineage,
     candidate: ResolvedCandidateProfile,
     winning_evaluation: WalkForwardEvaluation,
-    adapter_factory_builder: AdapterFactoryBuilder = _default_adapter_builder,
+    profile: ModelProfile | None = None,
+    adapter_factory_builder: AdapterFactoryBuilder | None = None,
 ) -> ProductionModelArtifact:
     """Fit one fresh production artifact without rerunning selection or candidate ranking."""
 
@@ -177,13 +200,18 @@ def final_production_refit(
     multistart = run_multistart(
         scaled,
         state_count=candidate.state_count,
-        adapter_factory=adapter_factory_builder(candidate),
+        adapter_factory=(
+            _default_adapter_builder(profile, candidate)
+            if adapter_factory_builder is None
+            else adapter_factory_builder(candidate)
+        ),
     )
     raw_artifact = multistart.winner.artifact
     validate_full_covariances(raw_artifact)
     filtered = causal_filter(scaled, raw_artifact)
     validate_train_occupancy(filtered.filtered_probabilities)
-    alignment = align_to_reference(raw_artifact, _last_valid_reference(winning_evaluation))
+    reference_signatures, reference_scaler = _last_valid_reference(winning_evaluation)
+    alignment = align_to_reference(raw_artifact, reference_signatures, scaler, reference_scaler)
     production_hmm = _aligned_artifact(raw_artifact, alignment)
     terminal = tuple(
         filtered.terminal_probabilities[index] for index in alignment.persistent_to_fitted

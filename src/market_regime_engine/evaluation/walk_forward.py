@@ -172,6 +172,7 @@ class WalkForwardEvaluation:
     evaluation_plan_hash: str
     evaluation_cutoff: datetime
     folds: tuple[WalkForwardFoldResult, ...]
+    alignment_reference_scaler: StandardScalerArtifact | None = None
 
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
@@ -416,6 +417,9 @@ def run_walk_forward_candidate(
 
     results: list[WalkForwardFoldResult] = []
     reference_signatures: tuple[StateSignature, ...] | None = None
+    first_train_source, _ = _fold_source_frames(source_rows, plan.folds[0])
+    first_train_rows, _, _ = _complete_case(first_train_source, candidate.feature_order)
+    reference_scaler = fit_standard_scaler(first_train_rows, candidate.feature_order)
     for fold in plan.folds:
         train_model_count = 0
         test_model_count = 0
@@ -453,6 +457,20 @@ def run_walk_forward_candidate(
             validate_full_covariances(artifact)
 
             train_filter = causal_filter(scaled_train, artifact)
+            fit_train_log_likelihood = multistart.winner.train_log_likelihood
+            filter_train_log_likelihood = train_filter.log_likelihood
+            parity_tolerance = 1e-10 * max(
+                1.0,
+                abs(fit_train_log_likelihood),
+                abs(filter_train_log_likelihood),
+            )
+            if abs(fit_train_log_likelihood - filter_train_log_likelihood) > parity_tolerance:
+                raise ValueError(
+                    "TRAIN likelihood parity failed: "
+                    f"fit={fit_train_log_likelihood:.17g}, "
+                    f"filter={filter_train_log_likelihood:.17g}, "
+                    f"tolerance={parity_tolerance:.17g}"
+                )
             train_occupancy_raw = validate_train_occupancy(train_filter.filtered_probabilities)
             continued = continued_test_predictive_likelihood(
                 scaled_train,
@@ -468,9 +486,14 @@ def run_walk_forward_candidate(
                 raise ValueError("continued TEST likelihood/filter evidence disagree")
 
             if reference_signatures is None:
-                alignment = align_first_fold(artifact)
+                alignment = align_first_fold(artifact, scaler, reference_scaler)
             else:
-                alignment = align_to_reference(artifact, reference_signatures)
+                alignment = align_to_reference(
+                    artifact,
+                    reference_signatures,
+                    scaler,
+                    reference_scaler,
+                )
             aligned_train_occupancy = _aligned_occupancy(train_occupancy_raw, alignment)
             aligned_oos_probabilities = _aligned_probabilities(
                 test_filter.filtered_probabilities,
@@ -481,7 +504,7 @@ def run_walk_forward_candidate(
                 alignment,
             )
             criteria = information_criteria(
-                multistart.winner.train_log_likelihood,
+                filter_train_log_likelihood,
                 train_model_count,
                 candidate.state_count,
                 candidate.feature_dimension,
@@ -501,7 +524,7 @@ def run_walk_forward_candidate(
                 criteria=criteria,
                 train_occupancy=aligned_train_occupancy,
                 oos_occupancy=aligned_oos_occupancy,
-                train_log_likelihood=multistart.winner.train_log_likelihood,
+                train_log_likelihood=filter_train_log_likelihood,
                 oos_log_likelihood=continued.test_log_likelihood,
                 oos_per_observation=continued.test_log_likelihood_per_observation,
                 oos_timestamps=test_timestamps,
@@ -533,4 +556,5 @@ def run_walk_forward_candidate(
         evaluation_plan_hash=plan.plan_hash,
         evaluation_cutoff=plan.evaluation_cutoff,
         folds=tuple(results),
+        alignment_reference_scaler=reference_scaler,
     )

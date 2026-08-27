@@ -21,6 +21,7 @@ from market_regime_engine.evaluation.walk_forward_splits import (
     WalkForwardPlan,
     plan_walk_forward,
 )
+from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.mlflow_support import tracking
 from market_regime_engine.mlflow_support.plots import (
     candidate_covariance_scale,
@@ -131,7 +132,7 @@ class DeterministicAdapter:
         values = np.asarray(train_rows, dtype=np.float64)
         return FitResult(
             artifact=self._artifact,
-            train_log_likelihood=-float(np.sum(values * values)) + seed * 1e-6,
+            train_log_likelihood=causal_filter(values, self._artifact).log_likelihood,
             converged=True,
             iterations=5,
             seed=seed,
@@ -315,7 +316,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         if score is not None
     ) / sum(weights)
     assert parent_manifest[0]["legend_entries"] == [
-        f"gaussian_hmm_k2_full (avg: {expected_average:.4f})"
+        f"gaussian_hmm_k2_full (weighted diagnostic: {expected_average:.4f})"
     ]
     assert parent_manifest[0]["y_axis_label"] == "Absolute OOS score and gap to best OOS score"
     assert tuple(parent_manifest[0]["image_dimensions_inches"]) == (11.0, 8.0)

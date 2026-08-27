@@ -7,11 +7,13 @@ from itertools import permutations
 from math import isfinite
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
+from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.states.signatures import (
     StateSignature,
     rms_distance,
     signature_sort_key,
     state_signatures,
+    state_signatures_in_alignment_coordinate,
 )
 
 ALIGNMENT_AMBIGUITY_ABS_TOLERANCE = 1e-10
@@ -59,10 +61,22 @@ def _state_ids(state_count: int) -> tuple[str, ...]:
     return tuple(f"state_{index}" for index in range(state_count))
 
 
-def align_first_fold(artifact: GaussianHMMArtifact) -> StateAlignment:
+def align_first_fold(
+    artifact: GaussianHMMArtifact,
+    fold_scaler: StandardScalerArtifact | None = None,
+    reference_scaler: StandardScalerArtifact | None = None,
+) -> StateAlignment:
     """Assign persistent IDs by the exact rounded-10-decimal lexicographic rule."""
 
-    signatures = state_signatures(artifact)
+    signatures = (
+        state_signatures(artifact)
+        if fold_scaler is None and reference_scaler is None
+        else state_signatures_in_alignment_coordinate(
+            artifact,
+            _require_scaler(fold_scaler, "fold"),
+            _require_scaler(reference_scaler, "reference"),
+        )
+    )
     _state_ids(artifact.state_count)
     keyed = [(signature_sort_key(signature), index) for index, signature in enumerate(signatures)]
     keys = [key for key, _ in keyed]
@@ -88,10 +102,20 @@ def align_first_fold(artifact: GaussianHMMArtifact) -> StateAlignment:
 def align_to_reference(
     artifact: GaussianHMMArtifact,
     reference_signatures: tuple[StateSignature, ...],
+    fold_scaler: StandardScalerArtifact | None = None,
+    reference_scaler: StandardScalerArtifact | None = None,
 ) -> StateAlignment:
     """Align a later fold or final refit to prior persistent signatures by exhaustive K!."""
 
-    current = state_signatures(artifact)
+    current = (
+        state_signatures(artifact)
+        if fold_scaler is None and reference_scaler is None
+        else state_signatures_in_alignment_coordinate(
+            artifact,
+            _require_scaler(fold_scaler, "fold"),
+            _require_scaler(reference_scaler, "reference"),
+        )
+    )
     state_count = artifact.state_count
     _state_ids(state_count)
     if len(reference_signatures) != state_count:
@@ -130,3 +154,9 @@ def align_to_reference(
         max_drift=max(matched),
         initial_alignment=False,
     )
+
+
+def _require_scaler(scaler: StandardScalerArtifact | None, name: str) -> StandardScalerArtifact:
+    if scaler is None:
+        raise ValueError(f"{name} scaler is required for fixed-coordinate alignment")
+    return scaler

@@ -338,15 +338,18 @@ def _render_parent_plot(
     evaluations: tuple[WalkForwardEvaluation, ...],
     plan: WalkForwardPlan,
     root: Path,
+    statistical_selection_result: str,
 ) -> PlotManifestEntry:
     """Render one independent parent comparison plot in a worker process."""
 
     if plot_type == "candidate_comparison":
-        return render_candidate_comparison(evaluations, plan, root)
+        return render_candidate_comparison(evaluations, plan, root, statistical_selection_result)
     if plot_type == "candidate_oos_gap_heatmap":
-        return render_candidate_oos_gap_heatmap(evaluations, plan, root)
+        return render_candidate_oos_gap_heatmap(
+            evaluations, plan, root, statistical_selection_result
+        )
     if plot_type == "candidate_oos_summary":
-        return render_candidate_oos_summary(evaluations, plan, root)
+        return render_candidate_oos_summary(evaluations, plan, root, statistical_selection_result)
     raise ValueError(f"unsupported parent plot type: {plot_type}")
 
 
@@ -354,6 +357,7 @@ def _prepare_plot_entries(
     evaluations: tuple[WalkForwardEvaluation, ...],
     plan: WalkForwardPlan,
     root: Path,
+    statistical_selection_result: str,
     max_workers: int | None,
 ) -> tuple[dict[str, tuple[PlotManifestEntry, ...]], tuple[PlotManifestEntry, ...]]:
     """Render independent plot work concurrently while preserving artifact order."""
@@ -373,7 +377,7 @@ def _prepare_plot_entries(
             _render_candidate_artifacts(evaluation, plan, root) for evaluation in evaluations
         ]
         parent_entries = [
-            _render_parent_plot(plot_type, evaluations, plan, root)
+            _render_parent_plot(plot_type, evaluations, plan, root, statistical_selection_result)
             for plot_type in parent_plot_types
         ]
     else:
@@ -383,7 +387,14 @@ def _prepare_plot_entries(
                 for evaluation in evaluations
             ]
             parent_futures = [
-                executor.submit(_render_parent_plot, plot_type, evaluations, plan, root)
+                executor.submit(
+                    _render_parent_plot,
+                    plot_type,
+                    evaluations,
+                    plan,
+                    root,
+                    statistical_selection_result,
+                )
                 for plot_type in parent_plot_types
             ]
             candidate_entries = [future.result() for future in candidate_futures]
@@ -479,6 +490,7 @@ def track_walk_forward_evaluations(
         ordered,
         plan,
         root,
+        statistical_selection_result,
         max_workers,
     )
     candidate_run_ids: list[tuple[str, str]] = []

@@ -203,7 +203,7 @@ def candidate_covariance_scale(evaluation: WalkForwardEvaluation) -> float:
     for fold in evaluation.valid_folds:
         if fold.model_artifact is None:
             raise ValueError("valid fold is missing model artifact")
-        values = np.asarray(fold.model_artifact.full_covariances, dtype=np.float64)
+        values = np.asarray(fold.model_artifact.distribution_covariances(), dtype=np.float64)
         maxima.append(float(np.max(np.abs(values))))
     if not maxima:
         raise ValueError("candidate has no valid covariance artifacts")
@@ -547,7 +547,9 @@ def _state_feature_separation(
             raise ValueError("valid fold is missing aligned model artifacts")
         mapping = np.asarray(fold.alignment.persistent_to_fitted, dtype=np.intp)
         means = np.asarray(fold.model_artifact.means, dtype=np.float64)[mapping]
-        covariances = np.asarray(fold.model_artifact.full_covariances, dtype=np.float64)[mapping]
+        covariances = np.asarray(fold.model_artifact.distribution_covariances(), dtype=np.float64)[
+            mapping
+        ]
         variances = np.diagonal(covariances, axis1=1, axis2=2)
         if means.shape != (evaluation.state_count, len(evaluation.feature_order)):
             raise ValueError("aligned mean dimensions do not match the candidate")
@@ -639,7 +641,9 @@ def render_covariance_heatmap(
     if not isfinite(shared_scale) or shared_scale <= 0.0:
         raise ValueError("shared covariance scale must be finite and positive")
     fitted_index = fold.alignment.persistent_to_fitted[persistent_state_index]
-    matrix = np.asarray(fold.model_artifact.full_covariances[fitted_index], dtype=np.float64)
+    matrix = np.asarray(
+        fold.model_artifact.distribution_covariances()[fitted_index], dtype=np.float64
+    )
     features = evaluation.feature_order
     state_id = fold.alignment.persistent_state_ids[persistent_state_index]
     fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
@@ -686,6 +690,7 @@ def render_candidate_comparison(
     evaluations: tuple[WalkForwardEvaluation, ...],
     plan: WalkForwardPlan,
     output_dir: str | Path,
+    statistical_champion_candidate_id: str | None = None,
 ) -> PlotManifestEntry:
     """Compare valid-fold OOS PLL/observation histories without shifting missing folds."""
 
@@ -717,8 +722,7 @@ def render_candidate_comparison(
         sorted(
             candidate_values,
             key=lambda item: (
-                item[2] is None,
-                0.0 if item[2] is None else -item[2],
+                item[0].candidate_id != statistical_champion_candidate_id,
                 item[0].candidate_id,
             ),
         )
@@ -742,9 +746,9 @@ def render_candidate_comparison(
             [float("nan") if value is None else value for value in values], dtype=np.float64
         )
         legend_label = (
-            f"{evaluation.candidate_id} (avg: n/a)"
+            f"{evaluation.candidate_id} (weighted diagnostic: n/a)"
             if average is None
-            else f"{evaluation.candidate_id} (avg: {average:.4f})"
+            else f"{evaluation.candidate_id} (weighted diagnostic: {average:.4f})"
         )
         line = score_ax.plot(x_plot, y_values, marker="o", label=legend_label)[0]
         plotted_values.append(y_values)
@@ -794,11 +798,11 @@ def render_candidate_comparison(
             else f"{evaluation.candidate_id} (avg: {average:.4f})"
         )
         gap_ax.plot(x_plot, values, marker="o", label=label, color=color)
-    score_ax.set_title("Walk-forward OOS candidate comparison")
+    score_ax.set_title("Walk-forward OOS candidate comparison (weighted diagnostic only)")
     score_ax.set_ylabel("OOS predictive log likelihood per observation")
     score_ax.grid(True, alpha=0.25)
     score_ax.legend(
-        title="Candidate / weighted avg OOS PLL/obs / shaded best candidate",
+        title="Candidate / weighted OOS PLL/obs diagnostic only",
         loc="lower left",
     )
     gap_ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
@@ -834,9 +838,11 @@ def render_candidate_comparison(
 
 
 def _ordered_candidate_oos_values(
-    evaluations: tuple[WalkForwardEvaluation, ...], plan: WalkForwardPlan
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    statistical_champion_candidate_id: str | None = None,
 ) -> tuple[tuple[WalkForwardEvaluation, np.ndarray, float | None], ...]:
-    """Return candidate fold scores ordered by weighted OOS score, best first."""
+    """Return candidate fold scores ordered by statistical champion or candidate ID."""
 
     items: list[tuple[WalkForwardEvaluation, np.ndarray, float | None]] = []
     for evaluation in evaluations:
@@ -862,8 +868,7 @@ def _ordered_candidate_oos_values(
         sorted(
             items,
             key=lambda item: (
-                item[2] is None,
-                0.0 if item[2] is None else -item[2],
+                item[0].candidate_id != statistical_champion_candidate_id,
                 item[0].candidate_id,
             ),
         )
@@ -874,10 +879,11 @@ def render_candidate_oos_gap_heatmap(
     evaluations: tuple[WalkForwardEvaluation, ...],
     plan: WalkForwardPlan,
     output_dir: str | Path,
+    statistical_champion_candidate_id: str | None = None,
 ) -> PlotManifestEntry:
     """Render fold-by-candidate OOS gaps from the best candidate in each fold."""
 
-    ordered = _ordered_candidate_oos_values(evaluations, plan)
+    ordered = _ordered_candidate_oos_values(evaluations, plan, statistical_champion_candidate_id)
     matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
     best_by_fold = np.nanmax(matrix, axis=0)
     gaps = matrix - best_by_fold
@@ -888,7 +894,7 @@ def render_candidate_oos_gap_heatmap(
     colorbar = fig.colorbar(image, ax=ax)
     colorbar.set_label("OOS PLL/obs gap to best candidate (0 = best)")
     ax.set_title("Fold x model OOS score gap to best candidate")
-    ax.set_xlabel("Candidate (ranked by weighted average OOS PLL/obs)")
+    ax.set_xlabel("Candidate (statistical champion first; otherwise candidate ID)")
     ax.set_ylabel("Walk-forward fold / test window end")
     ax.set_xticks(
         range(len(ordered)),
@@ -913,7 +919,7 @@ def render_candidate_oos_gap_heatmap(
         fold_id=None,
         source_metric_keys=("fold_oos_predictive_loglik_per_obs",),
         x_axis_field="candidate_id",
-        x_axis_label="Candidate (ranked by weighted average OOS PLL/obs)",
+        x_axis_label="Candidate (statistical champion first; otherwise candidate ID)",
         y_axis_label="Walk-forward fold / test window end",
         legend_entries=tuple(item[0].candidate_id for item in ordered),
         image_dimensions_inches=(10.0, max(4.5, 0.22 * len(plan.folds) + 1.8)),
@@ -927,10 +933,11 @@ def render_candidate_oos_summary(
     evaluations: tuple[WalkForwardEvaluation, ...],
     plan: WalkForwardPlan,
     output_dir: str | Path,
+    statistical_champion_candidate_id: str | None = None,
 ) -> PlotManifestEntry:
     """Render weighted OOS score summaries, uncertainty bands, and fold wins."""
 
-    ordered = _ordered_candidate_oos_values(evaluations, plan)
+    ordered = _ordered_candidate_oos_values(evaluations, plan, statistical_champion_candidate_id)
     matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
     leaders = np.argmax(np.where(np.isfinite(matrix), matrix, -np.inf), axis=0)
     comparable = np.any(np.isfinite(matrix), axis=0)
@@ -953,10 +960,8 @@ def render_candidate_oos_summary(
     )
     ax.set_yticks(positions, labels=[item[0].candidate_id for item in ordered])
     ax.invert_yaxis()
-    ax.set_title("Weighted OOS predictive log likelihood summary")
-    ax.set_xlabel(
-        "Weighted average OOS predictive log likelihood per observation (10th-90th percentile)"
-    )
+    ax.set_title("Weighted OOS predictive log likelihood summary (diagnostic only)")
+    ax.set_xlabel("Weighted OOS predictive log likelihood per observation (diagnostic only)")
     ax.set_ylabel("Candidate")
     ax.grid(axis="x", alpha=0.25)
     for position, mean, win_count in zip(positions, means, wins, strict=True):
