@@ -53,6 +53,11 @@ blocks:
       - ciss_level
       - ciss_delta_5obs
       - ciss_delta_20obs
+  - block_id: credit_stress
+    features:
+      - euro_hy_oas_level
+      - euro_hy_oas_delta_5obs
+      - euro_hy_oas_delta_20obs
   - block_id: rates_yield_curve
     features:
       - us_2y_level
