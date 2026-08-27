@@ -115,7 +115,7 @@ def test_resolution_retains_original_universe_and_preliminary_medoids_separately
     assert set(resolved.final_features) <= set(resolved.preliminary_medoids)
 
 
-def test_xetra_v2_resolution_adds_gmm_hmm_k2_and_k5_with_two_mixtures() -> None:
+def test_xetra_v2_resolution_adds_gmm_hmm_k2_k3_and_k5_with_two_mixtures() -> None:
     policy = load_policy(V2_FEATURE_POLICY_CONFIG)
     selection = make_selection(policy)
     resolved = resolve_selected_feature_profile(
@@ -124,14 +124,15 @@ def test_xetra_v2_resolution_adds_gmm_hmm_k2_and_k5_with_two_mixtures() -> None:
         selection,
         source_build_id="build-1",
     )
-    gmm_candidates = resolved.candidates[-2:]
+    gmm_candidates = resolved.candidates[-3:]
     assert tuple(candidate.candidate_id for candidate in gmm_candidates) == (
         "gmm_hmm_k2_m2_full",
+        "gmm_hmm_k3_m2_full",
         "gmm_hmm_k5_m2_full",
     )
     assert tuple(
         (candidate.state_count, candidate.mixture_count) for candidate in gmm_candidates
-    ) == ((2, 2), (5, 2))
+    ) == ((2, 2), (3, 2), (5, 2))
     assert all(candidate.feature_order == selection.final_features for candidate in gmm_candidates)
 
 

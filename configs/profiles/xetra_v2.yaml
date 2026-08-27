@@ -46,6 +46,11 @@ gmm_hmms:
     backend: hmmlearn==0.3.3
     covariance_type: full
     implementation: log
+  - state_count: 3
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
   - state_count: 5
     mixture_count: 2
     backend: hmmlearn==0.3.3

@@ -34,6 +34,7 @@ EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k4_full",
     "gaussian_hmm_k5_full",
     "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k3_m2_full",
     "gmm_hmm_k5_m2_full",
 )
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
