@@ -151,9 +151,7 @@ def test_metadata_validates_text_hash_versions_time_and_features() -> None:
     with pytest.raises(ValueError, match="timezone-aware UTC"):
         replace(
             metadata,
-            source_synced_at_utc=datetime(
-                2026, 8, 27, tzinfo=timezone(timedelta(hours=2))
-            ),
+            source_synced_at_utc=datetime(2026, 8, 27, tzinfo=timezone(timedelta(hours=2))),
         )
     with pytest.raises(ValueError, match="duplicate-free"):
         replace(metadata, feature_order=("vix_level", "vix_level"))
