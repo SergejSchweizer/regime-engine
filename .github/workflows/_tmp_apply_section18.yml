@@ -1,4 +1,4 @@
-name: Temporary apply canonical delta backlog
+name: Temporary fix canonical delta feature typo
 
 on:
   push:
@@ -9,28 +9,27 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  fix:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply section 18 replacement
+      - name: Fix exact Euro HY OAS feature name
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path('BACKLOG.md')
           text = path.read_text(encoding='utf-8')
-          marker = '\n---\n\n# 18. Xetra univariate shadow-model analysis — 2026-08-27\n'
-          if marker not in text:
-              raise SystemExit('section 18 marker missing')
-          prefix, _ = text.split(marker, 1)
-          section = Path('.tmp_section18.md').read_text(encoding='utf-8')
-          path.write_text(prefix.rstrip() + '\n\n' + section, encoding='utf-8')
+          old = 'neuro_hy_oas_delta_1obs'
+          new = 'euro_hy_oas_delta_1obs'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one typo, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add BACKLOG.md
           git diff --cached --check
-          git commit -m "docs: make delta1 features canonical in Xetra v3 backlog"
+          git commit -m "docs: fix Euro HY OAS canonical delta feature name"
           git push origin HEAD:planning/canonical-delta1-feature-selection
