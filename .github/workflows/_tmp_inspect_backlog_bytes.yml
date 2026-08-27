@@ -1,0 +1,17 @@
+name: Temporary inspect backlog feature bytes
+
+on:
+  push:
+    branches:
+      - planning/canonical-delta1-feature-selection
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect HY OAS line
+        shell: bash
+        run: |
+          grep -n 'hy_oas_delta_1obs' BACKLOG.md || true
+          grep 'hy_oas_delta_1obs' BACKLOG.md | od -An -tx1 -c
