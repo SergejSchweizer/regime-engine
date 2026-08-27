@@ -170,8 +170,8 @@ REGIME_MODEL_STALE_FAIL_DAYS=35
 Startup validation requires:
 
 $$
-	ext{MLFLOW\_WORKERS} \cdot \text{REGIME\_PG\_POOL\_MAX\_SIZE}
-\le \text{REGIME\_FEATURE\_PG\_CONNECTION\_BUDGET}.
+\text{MLFLOW_WORKERS} \cdot \text{REGIME_PG_POOL_MAX_SIZE}
+\le \text{REGIME_FEATURE_PG_CONNECTION_BUDGET}.
 $$
 
 With defaults, $4 \cdot 4 \le 16$ holds exactly.
@@ -1351,3 +1351,231 @@ E9: PR-130 after 125
 ```
 
 PR-120, PR-121, PR-124, PR-126, PR-128 and PR-131 have disjoint primary implementation files and can be assigned to weak agents in parallel once their dependencies are merged. PR-129 is intentionally late because it validates a single canonical TRAIN likelihood across all supported emission families.
+
+---
+
+# 18. Canonical full evaluation JSON report archive — 2026-08-27
+
+Every completed full statistical evaluation must leave one self-contained, machine-readable report that explains the complete feature-selection decision, preserves every planned fold and its available evidence, summarizes every candidate across folds, and compares all candidates from that exact run. The report is audit/research evidence only: it must never feed back into feature selection, candidate fitting, champion ranking, alias mutation or downstream economic selection.
+
+A **full evaluation** means one parent evaluation for a pinned profile/version/source snapshot/evaluation plan in which the exact configured candidate universe was attempted and every planned fold identity is represented for every candidate. Individual folds may be invalid and candidates may fail hard gates; those failures are part of the report. A report with missing configured candidates or missing planned fold identities must never be labelled complete.
+
+Canonical report identity and storage:
+
+```text
+schema = EvaluationReport.v1
+MLflow parent artifact = evaluation-report/evaluation_report.v1.json
+repository archive = evaluations/<profile_id>/<source_build_id>/<parent_run_id>.json
+container report directory = /regime-engine/evaluations
+```
+
+The MLflow artifact and repository-archive JSON must be byte-identical canonical JSON for the same parent run. Generated report files are intentionally visible to Git and are not auto-committed or auto-pushed by the model cycle.
+
+Global report rules:
+
+- JSON is UTF-8, deterministic key ordering, no NaN/Infinity, RFC3339 UTC timestamps only.
+- Raw source feature rows, database credentials/DSNs, secret-file contents and model binary payloads are forbidden.
+- All finite numeric evidence already used by the statistical evaluation is preserved at full precision; presentation rounding is forbidden in canonical JSON.
+- Invalid or unavailable metrics are represented explicitly as `null` plus the exact failure/availability reason; they are never replaced by zero, imputed or interpolated.
+- Candidate-specific summaries use that candidate's valid folds and must identify the exact support fold IDs.
+- Canonical champion-ranking summaries separately use the PR-125 common-valid-fold support and must identify the exact common fold IDs.
+- Any extra pairwise/all-model comparison is diagnostic only and cannot alter the selection result.
+- Report generation must validate that the reconstructed feature-selection and aggregate/comparison evidence reproduces the already-frozen selection result and already-computed statistical champion; a mismatch fails report generation rather than changing the run result.
+
+### PR-134 — Define `EvaluationReport.v1` contracts and canonical JSON
+
+- **Branch:** `pr/PR-134-evaluation-report-contracts`
+- **Depends on:** PR-118, PR-125
+- **Allowed:** `src/market_regime_engine/evaluation/report/__init__.py`, `src/market_regime_engine/evaluation/report/contracts.py`, `tests/unit/evaluation/report/test_contracts.py`, `docs/evaluation_report.md`
+
+Acceptance:
+
+- [ ] Define immutable typed contracts for report metadata, feature-selection explanation, fold evidence, candidate summaries, cross-candidate comparisons and report integrity; this PR contains no model fitting, filesystem, MLflow or lifecycle code.
+- [ ] Top-level schema identifier is exactly `EvaluationReport.v1` and contains at least `schema_version`, `parent_run_id`, profile ID/config version, source lineage, repository Git SHA, evaluation-plan hash/cutoff, feature-selection definition/execution hashes, exact configured candidate IDs, feature-selection section, candidate sections, comparison section and integrity section.
+- [ ] `parent_run_id`, `source_build_id`, hashes, candidate IDs, fold IDs and feature order are required and non-empty; duplicate candidate/fold IDs fail validation.
+- [ ] Full-evaluation completeness validation requires the exact versioned candidate-ID tuple and the exact same ordered planned-fold-ID tuple inside every candidate report.
+- [ ] Canonical serialization uses sorted keys, compact separators, UTF-8, `ensure_ascii=True`, `allow_nan=False`; every supported value round-trips without precision-reducing formatting.
+- [ ] All timestamps are timezone-aware UTC and serialize to one normalized RFC3339 representation.
+- [ ] Optional unavailable metric values use JSON `null`; schema contains explicit validity/failure fields so `null` is never ambiguous with zero.
+- [ ] Define `report_payload_sha256` as SHA-256 over the canonical report payload with the integrity field excluded; verify/recompute helper rejects any mismatch.
+- [ ] Contract explicitly forbids raw source rows, secrets/DSNs and opaque model binary bytes.
+- [ ] Unit tests cover canonical byte equality across mapping insertion orders, nonfinite rejection, duplicate/missing identities, hash verification and JSON round-trip.
+
+### PR-135 — Build exact feature-selection decision explanation
+
+- **Branch:** `pr/PR-135-feature-selection-report`
+- **Depends on:** PR-134, PR-120
+- **Allowed:** `src/market_regime_engine/evaluation/report/feature_selection.py`, `tests/unit/evaluation/report/test_feature_selection.py`
+
+Acceptance:
+
+- [ ] Pure builder accepts only first-planned-fold TRAIN source rows, the active `FeatureSelectionPolicy`, the immutable `FeatureSelectionResult` and optional PR-066 diagnostic evidence; it performs no mutation and returns report data only.
+- [ ] Report records the first-TRAIN row count, policy ID and every pinned policy constant: coverage threshold, population-variance threshold, complete-case minimum, Stage-2 absolute-Spearman threshold and numeric tie tolerance.
+- [ ] For every semantic block, preserve canonical block order and every configured feature in configured order with non-null count, source-row denominator, exact coverage, population variance (`ddof=0`), eligible flag, exclusion reason, medoid score and configured position.
+- [ ] For each block, record exact eligible-feature order, complete-case observation count, absolute Spearman matrix and distance matrix `1-|rho|`; singleton blocks are represented deterministically as `[[1.0]]` correlation and `[[0.0]]` distance with an explicit singleton flag.
+- [ ] Stage-1 explanation records the exact global minimum medoid-score anchor, the anchored medoid-tied set, the maximum-coverage anchor inside that set, the anchored coverage-tied set, configured-position tie break and final block winner.
+- [ ] Builder recomputes each medoid score from the recorded distance matrix and requires equality with immutable selection evidence within the existing `1e-12` contract; mismatch fails report construction.
+- [ ] Stage 2 records preliminary medoids in canonical block order, complete-case observation count, the fixed pre-pruning 8x8 absolute-Spearman matrix and strict conflict condition `|rho| > 0.85`.
+- [ ] Stage-2 explanation enumerates every above-threshold pair in exact processing order `(-abs_spearman, left_block_position, right_block_position)` and records survivor set before decision, whether the pair was processed or skipped because a member had already been removed, removed feature when processed, exact removal reason and survivor set after decision.
+- [ ] For each preliminary medoid, report a final disposition of `selected` or `removed`, and for removed medoids reference the exact conflict decision that removed it.
+- [ ] Re-simulated Stage-2 decisions must reproduce the immutable `conflicts` and ordered `final_features` exactly; mismatch fails report generation and never changes feature selection.
+- [ ] Definition/execution hashes and ordered final features are copied from the frozen result and verified; report-only explanation fields do not change either selection hash.
+- [ ] When PR-066 diagnostics are supplied, include threshold-sensitivity and later-fold shadow selections under an explicitly `diagnostic_only` subsection; they must not be presented as selection inputs.
+- [ ] Raw feature values are never emitted into the report.
+
+### PR-136 — Serialize complete per-fold evaluation evidence
+
+- **Branch:** `pr/PR-136-fold-evaluation-report`
+- **Depends on:** PR-134, PR-124, PR-126, PR-127, PR-129
+- **Allowed:** `src/market_regime_engine/evaluation/report/folds.py`, `tests/unit/evaluation/report/test_folds.py`
+
+Acceptance:
+
+- [ ] Pure builder takes a `WalkForwardPlan` plus one `WalkForwardEvaluation`; it does not query MLflow, PostgreSQL or the filesystem and does not refit/re-filter any model.
+- [ ] Every planned fold is emitted exactly once in plan order, including invalid folds; fold identity includes fold ID/index plus exact UTC TRAIN/TEST start/end bounds.
+- [ ] Preserve source/model observation counts, skipped incomplete TRAIN/TEST counts, validity flag and exact failure reason.
+- [ ] For valid folds preserve scaler means/scales, model family, K, feature order, start probabilities, transition matrix, state means and full emission matrices without presentation rounding.
+- [ ] Gaussian folds preserve full covariance matrices; GMM folds additionally preserve mixture count, weights, component means and every component full covariance; Student-t folds preserve state-specific degrees of freedom and emission scale matrices plus the derived distribution covariance semantics from PR-127.
+- [ ] Preserve the complete multistart evidence for every attempted seed: seed, convergence flag, iteration count, TRAIN log likelihood, numerical-validity status/failure reason and winning-start identity; the exact valid-start count and success rate must reconcile.
+- [ ] Preserve persistent-state alignment mapping, fixed-coordinate aligned signatures, matched RMS per state, total assignment cost and maximum drift.
+- [ ] Preserve all scalar fold statistics already available to evaluation: canonical TRAIN log likelihood, OOS predictive log likelihood total and per observation, AIC, BIC, multistart success rate, mean dominant-state duration, switches/year, OOS entropy mean and OOS confidence mean.
+- [ ] Preserve full state-indexed TRAIN hard/soft occupancy and OOS hard/soft occupancy in persistent-state order.
+- [ ] Preserve complete OOS timestamp sequence and aligned filtered probability vector for every retained TEST observation; probability vector dimension must equal K, values must be finite/nonnegative/normalized within existing tolerance, and timestamp count must equal retained TEST count.
+- [ ] Invalid folds keep exact counts/failure reason and use `null` for unavailable nested model/statistic evidence; no fabricated placeholder model or metric is allowed.
+- [ ] Builder validates all report counts against `WalkForwardFoldResult`, the plan and model artifact; any reconciliation mismatch fails.
+- [ ] No raw source feature rows or model binary serialization are included.
+
+### PR-137 — Compute complete per-model fold summary statistics
+
+- **Branch:** `pr/PR-137-candidate-summary-report`
+- **Depends on:** PR-136
+- **Allowed:** `src/market_regime_engine/evaluation/report/candidate_summary.py`, `tests/unit/evaluation/report/test_candidate_summary.py`
+
+Acceptance:
+
+- [ ] One pure summary is built for every configured candidate from its exact ordered fold reports; no cross-candidate ranking occurs in this PR.
+- [ ] Record planned/valid/invalid fold counts, valid-fold rate, exact valid-fold IDs, exact invalid-fold IDs and a frequency table of invalid-fold failure reasons.
+- [ ] Candidate-valid-fold scalar summaries use valid folds only and expose `count`, arithmetic mean, population standard deviation (`ddof=0`), minimum and maximum for every available scalar fold diagnostic: TRAIN log likelihood, OOS predictive log likelihood total, OOS predictive log likelihood per observation, AIC, BIC, multistart success rate, max state-signature drift, mean state duration, switches/year, OOS entropy mean and OOS confidence mean.
+- [ ] For additive likelihood metrics also expose the exact valid-fold sum; no observation weighting is silently substituted for the unweighted fold mean.
+- [ ] State-indexed summaries preserve persistent state IDs and compute the same count/mean/population-std/min/max statistics for TRAIN hard occupancy, TRAIN soft occupancy, OOS hard occupancy and OOS soft occupancy.
+- [ ] Transition matrices are first placed in persistent-state order and then summarized elementwise across valid folds with count/mean/population-std/min/max; each mean transition row must remain finite and reconcile to row sum 1 within numerical tolerance.
+- [ ] Fixed-coordinate state-signature components may be summarized state/component-wise; fold-local covariance, GMM component parameters and any other tensor whose coordinates/mixture labels are not canonically comparable across folds are not averaged and receive an explicit `not_aggregated_reason` instead.
+- [ ] The existing `CandidateAggregate` values for OOS mean/std/worst/best, BIC mean and AIC mean are copied and independently recomputed from the exact support; any mismatch above existing tolerance fails report generation.
+- [ ] A candidate with zero valid folds has counts/reasons but no fabricated numeric summary; all unavailable aggregates are `null`.
+- [ ] Tests hand-check means, population standard deviations, extrema, sums, per-state statistics, transition-matrix summaries and invalid-fold exclusion.
+
+### PR-138 — Compute all-model and pairwise comparison statistics
+
+- **Branch:** `pr/PR-138-cross-candidate-report`
+- **Depends on:** PR-125, PR-137
+- **Allowed:** `src/market_regime_engine/evaluation/report/comparison.py`, `tests/unit/evaluation/report/test_comparison.py`
+
+Acceptance:
+
+- [ ] Cross-candidate report includes every configured candidate exactly once, including candidates rejected by hard gates.
+- [ ] Preserve the canonical `StatisticalChampionSelection` verbatim: champion ID/K, accepted/rejected status, rejection reasons, one-based rank for accepted candidates, ranking tolerance, common-valid-fold IDs/count/rate and ordered ranked candidate IDs.
+- [ ] For each accepted candidate, independently recompute canonical common-support OOS mean, population std, worst fold, BIC mean and AIC mean from exactly PR-125 common fold IDs and require equality with the ranking inputs that produced the frozen selection result.
+- [ ] Produce one deterministic all-candidate overview table containing candidate-specific valid-fold summaries and canonical ranking metrics side by side with clear support labels; candidate-specific and common-support values must never share an ambiguous field name.
+- [ ] Produce one diagnostic pairwise record for every unordered configured-candidate pair in canonical candidate order.
+- [ ] Each pairwise record states the exact intersection of valid fold IDs for that pair, pairwise shared-fold count/rate, and uses only those folds for paired calculations; no invalid fold is imputed.
+- [ ] For OOS predictive log likelihood per observation, compute foldwise delta `candidate_a - candidate_b` and report count, mean, population std, minimum, maximum, plus wins/ties/losses using exact `1e-12` anchored equality around zero.
+- [ ] For BIC and AIC, report paired foldwise deltas with count/mean/population-std/min/max and direction semantics (`lower_is_better`).
+- [ ] Also report direct differences between candidate-level valid-fold summary means, but label them `different_support_diagnostic` whenever the two candidate valid-fold-ID sets differ.
+- [ ] No p-value, independence claim or significance test is invented for overlapping walk-forward folds.
+- [ ] Pairwise diagnostics are explicitly `diagnostic_only` and cannot alter the already-frozen statistical champion.
+- [ ] Tests include rejected candidates, unequal valid-fold sets, zero shared folds, exact ties and a case where pairwise diagnostic leadership differs from canonical common-support rank.
+
+### PR-139 — Assemble, hash and persist the canonical MLflow report artifact
+
+- **Branch:** `pr/PR-139-mlflow-evaluation-report`
+- **Depends on:** PR-135, PR-136, PR-137, PR-138
+- **Allowed:** `src/market_regime_engine/evaluation/report/builder.py`, `src/market_regime_engine/mlflow_support/evaluation_report.py`, `tests/unit/evaluation/report/test_builder.py`, `tests/unit/mlflow_support/test_evaluation_report.py`
+
+Acceptance:
+
+- [ ] One builder assembles `EvaluationReport.v1` only from already-computed source lineage, active profile/policy, frozen feature-selection result, walk-forward plan/grid, statistical selection and MLflow parent-run identity; it does not rerun feature selection or model fitting.
+- [ ] Metadata records parent run ID, parent-run status, profile ID/config version, source dataset/build/data hash/schema/feature version/synced timestamp/time semantics, repository Git SHA/build provenance, plan hash, evaluation cutoff, frozen feature order and both selection hashes.
+- [ ] Report exact configured candidate IDs must equal the profile-version universe; all candidate reports must carry the same source build, plan hash, feature order and selection hashes.
+- [ ] Builder calls PR-135/136/137/138 components and then performs full cross-section reconciliation before serialization; any missing candidate/fold or metric/hash mismatch fails.
+- [ ] `report_payload_sha256` is computed exactly according to PR-134 and verified immediately before persistence.
+- [ ] Canonical JSON bytes are generated once and are the only bytes accepted for downstream persistence; no second serializer with different rounding/order is allowed.
+- [ ] The exact bytes are logged under parent artifact path `evaluation-report/evaluation_report.v1.json`.
+- [ ] MLflow artifact metadata/tagging records schema version and payload SHA-256 without using those tags as a substitute for the JSON artifact.
+- [ ] Artifact read-back in integration tests is byte-identical to builder output and its SHA-256 verifies.
+- [ ] Report persistence failure is explicit; it must not silently mark report evidence complete.
+- [ ] No report field changes candidate ranking or aliases.
+
+### PR-140 — Add atomic repository evaluation archive storage
+
+- **Branch:** `pr/PR-140-repository-evaluation-archive`
+- **Depends on:** PR-134
+- **Allowed:** `src/market_regime_engine/evaluation/report/archive.py`, `tests/unit/evaluation/report/test_archive.py`, `compose.yaml`, `.env.example`, `evaluations/README.md`, `evaluations/.gitkeep`, compose contract tests
+
+Acceptance:
+
+- [ ] Repository archive path is exactly `evaluations/<profile_id>/<source_build_id>/<parent_run_id>.json`; path components are validated identifiers and path traversal is rejected.
+- [ ] `evaluations/` remains Git-visible: generated JSON is not added to `.gitignore`; this PR does not perform `git add`, commit, push or branch mutation.
+- [ ] Archive writer accepts canonical JSON bytes plus validated report identity only; it never reconstructs/reformats the report.
+- [ ] Writer creates parent directories safely and writes a temporary file in the destination directory, flushes and `fsync`s it, atomically replaces/renames to the final path, then `fsync`s the containing directory on supported POSIX systems.
+- [ ] If the final path already exists with byte-identical content, the operation is an idempotent success; if existing bytes differ for the same run ID, fail closed and never overwrite silently.
+- [ ] Written bytes are re-read and checked against `report_payload_sha256`/canonical report verification before success is returned.
+- [ ] Compose mounts only the report directory read-write into the `mlflow` container, never the whole Git repository; target is exactly `/regime-engine/evaluations`.
+- [ ] Host source is configurable as `REGIME_EVALUATIONS_HOST_PATH`; default is repository-relative `./evaluations`, allowing MLflow artifacts/PostgreSQL and the Git checkout to reside on different host partitions.
+- [ ] Container environment exposes `REGIME_EVALUATION_REPORT_DIR=/regime-engine/evaluations`; no MLflow artifact-root path is reused as the repository archive.
+- [ ] Compose still has exactly the existing two services and unchanged public port topology.
+- [ ] Tests cover atomic success, idempotent rewrite, conflicting existing file, interrupted-temp cleanup behavior, traversal rejection and arbitrary absolute host path configuration.
+
+### PR-141 — Wire report creation into every canonical full Xetra evaluation cycle
+
+- **Branch:** `pr/PR-141-wire-evaluation-report-cycle`
+- **Depends on:** PR-139, PR-140
+- **Allowed:** `scripts/run_xetra_v2_cycle.py`, `scripts/model_cycle.sh`, `src/market_regime_engine/commands/lifecycle.py`, `src/market_regime_engine/commands/actions.py`, `src/market_regime_engine/cli.py`, lifecycle/CLI/script contract tests
+
+Acceptance:
+
+- [ ] Every canonical full Xetra evaluation entry point uses one shared report-completion path; no separate report schema/serializer exists in shell versus Python paths.
+- [ ] Report generation occurs only after the exact candidate grid, all planned fold results and frozen statistical champion are available and the MLflow parent-run ID is known.
+- [ ] The MLflow parent artifact from PR-139 is persisted first; the same canonical bytes are then written through PR-140 to the repository archive path.
+- [ ] Successful completion verifies MLflow artifact bytes and repository bytes are byte-identical and both verify against the same payload SHA-256.
+- [ ] Cycle output includes `evaluation_report_schema`, `evaluation_report_path`, `evaluation_report_payload_sha256` and parent run ID.
+- [ ] A run is not reported as a successful full evaluation if the exact configured candidate universe or any planned fold identity is missing.
+- [ ] Invalid folds/candidate rejections do not prevent a report when the full planned evidence set exists; they are represented explicitly inside it.
+- [ ] If report assembly, MLflow artifact persistence or repository archive persistence fails, the model cycle fails closed before final production refit/registration/challenger mutation; no newly registered challenger may exist without its completed report.
+- [ ] Re-running the archive step for the same parent run is idempotent when bytes are identical and does not create duplicate files.
+- [ ] Existing explicit-champion semantics from PR-131 remain unchanged; report generation never promotes `champion`.
+- [ ] No automatic Git commit/push is added.
+
+### PR-142 — Prove full report completeness and reproducibility end to end
+
+- **Branch:** `pr/PR-142-evaluation-report-e2e`
+- **Depends on:** PR-141
+- **Allowed:** `tests/integration/evaluation_report/*`, deterministic report fixtures only
+
+Acceptance:
+
+- [ ] Hermetic fixture represents an exact profile-v2 full candidate universe and multiple planned folds, including at least one invalid fold and at least one rejected candidate; expensive real HMM fitting is not required for this report-only proof.
+- [ ] Generated report contains all configured candidates and every planned fold exactly once per candidate in deterministic order.
+- [ ] Feature-selection section contains every semantic block/configured feature, exact Stage-1 eligibility/score/tie trace, complete matrices, Stage-2 pair processing trace, final dispositions and both frozen hashes.
+- [ ] Per-fold section contains every field required by PR-136, including complete multistart evidence, model parameters/matrices, persistent-state mapping, all scalar diagnostics, occupancies and full OOS probability timeline for valid folds.
+- [ ] Per-model summary values are independently hand-computed in the fixture and match counts, means, `ddof=0` standard deviations, extrema, sums, state summaries and transition summaries exactly.
+- [ ] Cross-model section exactly reproduces frozen champion ranking/common support and independently hand-checks every unordered pair's shared support, OOS deltas, wins/ties/losses and AIC/BIC deltas.
+- [ ] Invalid folds are never averaged or imputed; rejected candidates remain fully visible.
+- [ ] Reordering input mappings/diagnostic containers without changing semantic evidence produces byte-identical canonical JSON.
+- [ ] MLflow artifact bytes and repository archive bytes are exactly identical and verify against the same payload SHA-256.
+- [ ] Report contains no NaN/Infinity, raw source feature rows, credential/DSN text or model binary payload.
+- [ ] A deliberate missing-candidate, missing-fold, aggregate mismatch, feature-selection mismatch and checksum mismatch each fail closed.
+- [ ] Required CI remains hermetic and contributes to the repository-wide >=90% unit+integration coverage gate.
+
+## Evaluation-report execution graph
+
+```text
+R1: PR-134
+R2 parallel after 134: PR-135 PR-136 PR-140
+R3: PR-137 after 136
+R4: PR-138 after 125+137
+R5: PR-139 after 135+136+137+138
+R6: PR-141 after 139+140
+R7: PR-142 after 141
+```
+
+PR-135, PR-136 and PR-140 have disjoint primary implementation files and can be assigned to weak agents in parallel. PR-137 is intentionally isolated from cross-model logic; PR-138 is intentionally isolated from persistence; PR-139 is the only assembly/MLflow-artifact PR; PR-141 is the only lifecycle-wiring PR.
