@@ -97,6 +97,23 @@ The cross-block comparison of Stage-1 medoid scores from blocks of different siz
 
 No fitted-HMM metric, ETF return, portfolio statistic or trading target may affect feature selection.
 
+### Anchored numeric-tolerance semantics
+
+The absolute numeric tolerance is exactly `1e-12`. It defines an anchored equivalence
+set, never a pairwise comparator relation: pairwise tolerance chaining is forbidden.
+For a maximize stage, compute the exact maximum of the current candidate set as the
+anchor and retain every value `>= anchor - 1e-12`. For a minimize stage, compute the
+exact minimum as the anchor and retain every value `<= anchor + 1e-12`.
+
+Every secondary feature-selection stage is evaluated only inside the anchored tied set
+from the preceding stage. For example, Stage 1 first anchors the global minimum medoid
+score, then anchors the global maximum coverage among only those tied features, then
+uses configured position as the exact final tie-breaker.
+
+The adversarial chain `a=0`, `b=0.75e-12`, `c=1.5e-12` demonstrates why pairwise
+comparison is invalid: `a` and `b` may share an anchor tie, and `b` and `c` may share
+another, but `a` and `c` must not be joined transitively.
+
 ### Selection hashes
 
 `feature_selection_definition_hash` covers only first-fold-TRAIN-determined policy/evidence/final features. It deliberately excludes full-build identity and later rows.
@@ -184,7 +201,7 @@ init_params=stmc
 
 Reduced covariance modes `diag`, `spherical`, `tied`, or any other non-`full` mode are unsupported and fail closed.
 
-Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. The valid converged start with greatest TRAIN log likelihood wins that fold; numeric values within absolute tolerance `1e-12` are tied and lower seed wins. Fewer than 6 valid starts or success rate <0.75 invalidates the fold.
+Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. All valid converged starts are collected before winner selection. The exact global maximum TRAIN log likelihood is the anchor; starts within `1e-12` of it form the tied set and the lowest seed in that set wins. Fewer than 6 valid starts or success rate <0.75 invalidates the fold.
 
 ## 7. Causal forward filter
 
@@ -374,7 +391,10 @@ After hard gates, deterministic order is:
 6. fewer states K;
 7. lexicographically earlier canonical candidate ID.
 
-For every numeric ranking stage, candidates whose values differ by <=`1e-12` are tied and comparison proceeds to the next stage. K and candidate ID are exact tie-breaks.
+At every numeric ranking stage, recursively partition the current group from the exact
+best anchor using the anchored `1e-12` rule. The tied partition proceeds to the next
+numeric stage; later partitions remain after it. This makes ranking deterministic and
+transitive. K and candidate ID are exact tie-breaks.
 
 There is no weighted score. TRAIN likelihood alone cannot select the champion. Consumer economics never enter this ranking.
 
