@@ -20,6 +20,10 @@ EXPECTED_CANDIDATE_IDS = (
     "gmm_hmm_k3_m2_full",
     "gmm_hmm_k4_m2_full",
     "gmm_hmm_k5_m2_full",
+    "student_t_hmm_k2_full",
+    "student_t_hmm_k3_full",
+    "student_t_hmm_k4_full",
+    "student_t_hmm_k5_full",
 )
 _PROFILE_CONTRACTS = {1: (48, 8), 2: (45, 7)}
 
@@ -50,9 +54,9 @@ class ResolvedCandidateProfile:
         if self.state_count not in EXPECTED_XETRA_CANDIDATE_STATES:
             raise ValueError("resolved Xetra candidate state count must be one of 2, 3, 4, 5")
         expected_id = (
-            f"gaussian_hmm_k{self.state_count}_full"
-            if self.model_family == "gaussian_hmm"
-            else f"gmm_hmm_k{self.state_count}_m{self.mixture_count}_full"
+            f"gmm_hmm_k{self.state_count}_m{self.mixture_count}_full"
+            if self.model_family == "gmm_hmm"
+            else f"{self.model_family}_k{self.state_count}_full"
         )
         if self.candidate_id != expected_id:
             raise ValueError(f"candidate_id must be exactly {expected_id}")
@@ -62,7 +66,9 @@ class ResolvedCandidateProfile:
             self.state_count not in (2, 3, 4, 5) or self.mixture_count != 2
         ):
             raise ValueError("GMM-HMM candidate must be K=2, K=3, K=4, or K=5 with two mixtures")
-        if self.model_family not in {"gaussian_hmm", "gmm_hmm"}:
+        if self.model_family == "student_t_hmm" and self.mixture_count != 1:
+            raise ValueError("Student-t HMM candidate must have one emission per state")
+        if self.model_family not in {"gaussian_hmm", "gmm_hmm", "student_t_hmm"}:
             raise ValueError("candidate model_family is unsupported")
         if self.covariance_type != "full":
             raise ValueError("resolved Gaussian candidate covariance_type must be full")
@@ -269,7 +275,25 @@ def resolve_selected_feature_profile(
         )
         for gmm_hmm in profile.gmm_hmms
     )
-    candidates = (*gaussian_candidates, *gmm_candidates)
+    student_candidates: tuple[ResolvedCandidateProfile, ...] = ()
+    if profile.student_t_hmm is not None:
+        student_candidates = tuple(
+            ResolvedCandidateProfile(
+                candidate_id=f"student_t_hmm_k{state_count}_full",
+                state_count=state_count,
+                covariance_type="full",
+                feature_order=selection.final_features,
+                feature_dimension=len(selection.final_features),
+                source_build_id=source_build_id,
+                feature_selection_definition_hash=selection.feature_selection_definition_hash,
+                feature_selection_execution_hash=selection.feature_selection_execution_hash,
+                original_feature_universe=policy.feature_universe,
+                preliminary_medoids=selection.evidence.preliminary_medoids,
+                model_family="student_t_hmm",
+            )
+            for state_count in profile.student_t_hmm.candidate_states
+        )
+    candidates = (*gaussian_candidates, *gmm_candidates, *student_candidates)
     validate_candidate_comparison_inputs(candidates)
     return ResolvedSelectedFeatureProfile(
         profile_id=profile.profile_id,

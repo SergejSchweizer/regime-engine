@@ -45,3 +45,28 @@ def test_student_t_adapter_reconstructs_and_rejects_invalid_contracts() -> None:
         )
     with pytest.raises(ValueError, match="K=2,3,4,5"):
         adapter.fit(sample(), state_count=6, seed=11)
+
+
+def test_student_t_settings_rows_and_unfitted_access_fail_closed() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        StudentTHMMSettings(n_iter=0)
+    with pytest.raises(ValueError, match="bounds"):
+        StudentTHMMSettings(minimum_nu=10.0)
+    with pytest.raises(ValueError, match="duplicate-free"):
+        StudentTHMMAdapter(("a", "a"))
+    adapter = StudentTHMMAdapter(("a", "b"), StudentTHMMSettings(n_iter=5))
+    with pytest.raises(ValueError, match="not been fitted"):
+        adapter.extract()
+    with pytest.raises(ValueError, match="shape"):
+        adapter.fit([[1.0, 2.0]], state_count=2, seed=11)
+    with pytest.raises(ValueError, match="finite"):
+        adapter.fit([[1.0, 2.0], [np.nan, 3.0]], state_count=2, seed=11)
+
+
+def test_student_t_continuation_and_feature_contract_are_enforced() -> None:
+    fitted = StudentTHMMAdapter(("a", "b"), StudentTHMMSettings(n_iter=10))
+    result = fitted.fit(sample(), state_count=2, seed=37)
+    score = fitted.score_continuation(sample()[:3], (0.5, 0.5))
+    assert np.isfinite(score)
+    with pytest.raises(ValueError, match="feature order"):
+        StudentTHMMAdapter(("x", "y")).reconstruct(result.artifact)

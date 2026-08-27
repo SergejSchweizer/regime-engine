@@ -78,6 +78,7 @@ def information_criteria(
     state_count: int,
     feature_dimension: int,
     mixture_count: int = 1,
+    model_family: str = "gaussian_hmm",
 ) -> InformationCriteria:
     if not isfinite(train_log_likelihood):
         raise ValueError("TRAIN log likelihood must be finite")
@@ -85,6 +86,7 @@ def information_criteria(
         raise ValueError("TRAIN observation count must be positive")
     parameter_count = (
         gaussian_hmm_parameter_count(state_count, feature_dimension)
+        + (state_count if model_family == "student_t_hmm" else 0)
         if mixture_count == 1
         else gmm_hmm_parameter_count(state_count, feature_dimension, mixture_count)
     )

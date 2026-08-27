@@ -15,6 +15,7 @@ from market_regime_engine.profiles.config import (
     GaussianHMMConfig,
     GMMHMMConfig,
     ModelProfile,
+    StudentTHMMConfig,
     WalkForwardConfig,
 )
 
@@ -24,6 +25,7 @@ type ProfileDataclass = (
     | WalkForwardConfig
     | GaussianHMMConfig
     | GMMHMMConfig
+    | StudentTHMMConfig
     | EvaluationGates
 )
 
@@ -58,6 +60,7 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     gaussian_hmm_raw = _require_mapping(top.pop("gaussian_hmm"), "gaussian_hmm")
     gates_raw = _require_mapping(top.pop("gates"), "gates")
     gmm_hmms_raw = top.pop("gmm_hmms", ())
+    student_t_raw = top.pop("student_t_hmm", None)
 
     fs_kwargs = _strict_kwargs(FeatureSelectionConfig, feature_selection_raw)
     fs_kwargs["static_features"] = tuple(fs_kwargs["static_features"])
@@ -71,6 +74,14 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
         GMMHMMConfig(**_strict_kwargs(GMMHMMConfig, _require_mapping(item, "gmm_hmms item")))
         for item in gmm_hmms_raw
     )
+    student_t_hmm = None
+    if student_t_raw is not None:
+        student_kwargs = _strict_kwargs(
+            StudentTHMMConfig,
+            _require_mapping(student_t_raw, "student_t_hmm"),
+        )
+        student_kwargs["candidate_states"] = tuple(student_kwargs["candidate_states"])
+        student_t_hmm = StudentTHMMConfig(**student_kwargs)
     return ModelProfile(
         **top,
         feature_selection=FeatureSelectionConfig(**fs_kwargs),
@@ -78,6 +89,7 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
         gaussian_hmm=GaussianHMMConfig(**hmm_kwargs),
         gates=EvaluationGates(**_strict_kwargs(EvaluationGates, gates_raw)),
         gmm_hmms=gmm_hmms,
+        student_t_hmm=student_t_hmm,
     )
 
 

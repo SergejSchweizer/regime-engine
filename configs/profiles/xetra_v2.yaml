@@ -61,6 +61,16 @@ gmm_hmms:
     backend: hmmlearn==0.3.3
     covariance_type: full
     implementation: log
+student_t_hmm:
+  candidate_states: [2, 3, 4, 5]
+  backend: native-baum-welch-v1
+  covariance_type: full
+  minimum_nu: 2.05
+  maximum_nu: 200.0
+  initial_nu: 10.0
+  n_iter: 200
+  tol: 1.0e-4
+  min_covar: 1.0e-6
 gates:
   minimum_train_hard_occupancy: 0.03
   minimum_train_soft_occupancy: 0.05

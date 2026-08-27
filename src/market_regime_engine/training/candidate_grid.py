@@ -21,6 +21,7 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
 )
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -37,6 +38,10 @@ EXPECTED_CANDIDATE_IDS = (
     "gmm_hmm_k3_m2_full",
     "gmm_hmm_k4_m2_full",
     "gmm_hmm_k5_m2_full",
+    "student_t_hmm_k2_full",
+    "student_t_hmm_k3_full",
+    "student_t_hmm_k4_full",
+    "student_t_hmm_k5_full",
 )
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
 RANKING_ABS_TOLERANCE = 1e-12
@@ -201,7 +206,9 @@ def aggregate_candidate(evaluation: WalkForwardEvaluation) -> CandidateAggregate
 
 
 def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter:
+    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
+        if candidate.model_family == "student_t_hmm":
+            return StudentTHMMAdapter(candidate.feature_order)
         if candidate.model_family == "gmm_hmm":
             return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)

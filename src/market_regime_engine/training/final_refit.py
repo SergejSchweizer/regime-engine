@@ -22,6 +22,7 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGMMHMMAdapter,
 )
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 from market_regime_engine.preprocessing.scaling import fit_standard_scaler
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_to_reference
@@ -39,7 +40,9 @@ def _require_utc(value: datetime, field_name: str) -> datetime:
 
 
 def _default_adapter_builder(candidate: ResolvedCandidateProfile) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter:
+    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
+        if candidate.model_family == "student_t_hmm":
+            return StudentTHMMAdapter(candidate.feature_order)
         if candidate.model_family == "gmm_hmm":
             return HmmlearnGMMHMMAdapter(candidate.feature_order)
         return HmmlearnGaussianHMMAdapter(candidate.feature_order)
@@ -127,6 +130,11 @@ def _aligned_artifact(
         mixture_weights=mixture_weights,
         mixture_means=mixture_means,
         mixture_full_covariances=mixture_covariances,
+        degrees_of_freedom=(
+            tuple(artifact.degrees_of_freedom[index] for index in mapping)
+            if artifact.degrees_of_freedom is not None
+            else None
+        ),
     )
 
 

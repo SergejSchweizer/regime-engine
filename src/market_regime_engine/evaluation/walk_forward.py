@@ -184,6 +184,7 @@ class WalkForwardEvaluation:
             "gmm_hmm_k3_m2_full",
             "gmm_hmm_k4_m2_full",
             "gmm_hmm_k5_m2_full",
+            f"student_t_hmm_k{self.state_count}_full",
         }
         if self.candidate_id not in expected_candidates:
             raise ValueError("candidate identity is unsupported")
@@ -391,10 +392,16 @@ def run_walk_forward_candidate(
     if candidate.model_family == "gaussian_hmm":
         if candidate.state_count not in profile.gaussian_hmm.candidate_states:
             raise ValueError("resolved Gaussian candidate state count is absent from model profile")
-    elif (candidate.state_count, candidate.mixture_count) not in {
-        (item.state_count, item.mixture_count) for item in profile.gmm_hmms
-    }:
+    elif candidate.model_family == "gmm_hmm" and (
+        candidate.state_count,
+        candidate.mixture_count,
+    ) not in {(item.state_count, item.mixture_count) for item in profile.gmm_hmms}:
         raise ValueError("resolved GMM-HMM candidate differs from the model profile")
+    elif candidate.model_family == "student_t_hmm" and (
+        profile.student_t_hmm is None
+        or candidate.state_count not in profile.student_t_hmm.candidate_states
+    ):
+        raise ValueError("resolved Student-t candidate differs from the model profile")
     if candidate.feature_order == ():
         raise ValueError("resolved candidate feature order cannot be empty")
     if candidate.feature_dimension != len(candidate.feature_order):
@@ -479,6 +486,7 @@ def run_walk_forward_candidate(
                 candidate.state_count,
                 candidate.feature_dimension,
                 candidate.mixture_count,
+                candidate.model_family,
             )
             result = _valid_fold_result(
                 fold=fold,
