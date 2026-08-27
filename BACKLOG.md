@@ -1351,26 +1351,42 @@ E9: PR-130 after 125
 ```
 
 PR-120, PR-121, PR-124, PR-126, PR-128 and PR-131 have disjoint primary implementation files and can be assigned to weak agents in parallel once their dependencies are merged. PR-129 is intentionally late because it validates a single canonical TRAIN likelihood across all supported emission families.
+
 ---
+# 18. Xetra canonical 61-feature selection + univariate shadow-model analysis — 2026-08-27
 
-# 18. Xetra univariate shadow-model analysis — 2026-08-27
+This section supersedes the earlier shadow-only treatment of the 13 one-observation deltas. The `*_delta_1obs` columns already exist in PostgreSQL and must participate in the canonical semantic-block feature selection used by the multivariate model. The historical Xetra v2 definition is not mutated in place; a new Xetra v3 policy/profile is introduced so existing hashes, MLflow runs and registered artifacts remain reproducible.
 
-This section defines a strictly diagnostic analysis requested on top of Xetra profile configuration v2. It must answer how much regime information is carried by each first-TRAIN semantic-block representative and by each one-observation origin shock while keeping the production feature-selection and champion paths unchanged.
-
-Canonical analysis identity:
+Canonical target identity:
 
 ```text
+profile_id=xetra
+profile_config_version=3
+feature_selection_policy=xetra_semantic_medoid_v3
+canonical_feature_universe_size=61
+semantic_block_count=8
 analysis_id=xetra_univariate_shadow_v1
 analysis_role=diagnostic_only
-profile_id=xetra
-profile_config_version=2
 ```
 
-The production v2 contract remains unchanged: the canonical selector still operates on the existing 48-feature/eight-block universe, the production candidate grid still evaluates the frozen multivariate selected-feature set, and only the production statistical champion may proceed to final refit/registry lifecycle. No shadow result may change feature selection, candidate ranking of the production grid, OOS publication, final refit, `challenger`, or `champion`.
+Xetra v3 keeps the same 12 model candidates as v2: Gaussian HMM, two-mixture full-covariance GMM-HMM and Student-t HMM, each for K=2,3,4,5. The intentional production-selection change is the versioned feature universe/policy and the resulting frozen first-TRAIN selected feature set.
 
-The first shadow feature family is exactly the eight Stage-1 winners from the canonical first-fold feature selection, in canonical block order. These are the `preliminary_medoids`, before any Stage-2 cross-block pruning. They are block representatives, not HMM-performance-selected features.
+## Canonical 61-feature policy
 
-The second shadow feature family is exactly these 13 PostgreSQL columns, in this order:
+The existing 48 v2 features remain in their existing order and semantic blocks. Add the 13 existing PostgreSQL columns exactly once:
+
+| Semantic block | Added canonical feature(s) |
+|---|---|
+| US equity volatility spot | `vix_delta_1obs` |
+| US equity volatility term structure | `vix9d_delta_1obs`, `vix3m_delta_1obs`, `vix6m_delta_1obs`, `vix1y_delta_1obs` |
+| Europe equity volatility | `vstoxx_delta_1obs` |
+| Rates volatility | `move_delta_1obs` |
+| Systemic stress | `ciss_delta_1obs` |
+| Credit stress | `euro_hy_oas_delta_1obs` |
+| Rates / yield curve | `us_2y_delta_1obs`, `us_10y_delta_1obs`, `estr_delta_1obs` |
+| USD FX | `usd_broad_delta_1obs` |
+
+Exact ordered delta tuple:
 
 ```text
 vix_delta_1obs
@@ -1388,9 +1404,13 @@ estr_delta_1obs
 usd_broad_delta_1obs
 ```
 
-The 13 one-observation features are shadow-only inputs. They are read from the existing `regime_loader.regime_features_daily` PostgreSQL source but are not added to the canonical 48-feature selection policy by this analysis.
+Stage 1 runs the existing semantic-medoid selector on all 61 canonical features, so a `*_delta_1obs` feature may become its block's `preliminary_medoid`. Stage 2 then applies the existing cross-block pruning to the eight Stage-1 representatives. First-fold TRAIN-only selection, no economic input, no HMM-feedback into feature selection, frozen selection, tie rules and missing-value semantics remain unchanged.
 
-Every one-feature analysis evaluates exactly the v2 12-candidate universe:
+## Univariate shadow analysis after canonical selection
+
+The diagnostic analysis evaluates (a) every first-TRAIN Stage-1 representative and (b) every one of the 13 canonical delta features alone. Because a delta can itself become a Stage-1 representative, executable shadow features are the deterministic ordered unique union of the eight `preliminary_medoids` followed by the ordered 13-delta tuple. If a feature has both roles, it is fitted once and records both roles.
+
+Every unique shadow feature evaluates exactly the v3 12-candidate universe:
 
 ```text
 gaussian_hmm_k2_full
@@ -1407,51 +1427,92 @@ student_t_hmm_k4_full
 student_t_hmm_k5_full
 ```
 
-Therefore the shadow suite contains exactly `8 + 13 = 21` univariate feature specifications and exactly `21 * 12 = 252` shadow candidate evaluations. A canonical multivariate v2 reference grid may be evaluated in the same diagnostic job solely to obtain the canonical reference champion and the eight Stage-1 representatives; those 12 reference candidates are not part of the 252 shadow count.
+Therefore `shadow_candidate_count = shadow_feature_count * 12`; duplicate fits of the same feature/source/plan are forbidden. The canonical multivariate v3 reference grid is evaluated separately on the frozen final selected feature set; its 12 candidates are not shadow candidates.
 
 ## Shadow common observation clock
 
-Cross-feature comparability requires one common diagnostic observation clock. The canonical production source-row walk-forward plan is created first and is never changed by shadow analysis. For shadow analysis, a source row is retained as a model observation if and only if all 21 shadow features are non-null and finite on that timestamp. The resulting boolean mask is applied identically to every one-feature candidate while preserving every original source timestamp and every original TRAIN/TEST source-row boundary. Rows outside the common mask become missing only in the diagnostic view; no value is filled, interpolated, carried, synthesized, or written back to source data.
+Cross-feature comparison uses one common diagnostic observation clock over all unique shadow features. The canonical source-row walk-forward plan is created first and never changed. A row is shadow-eligible only if every unique shadow feature is non-null and finite at that timestamp. The same mask is applied to all one-feature shadow evaluations while original timestamps and TRAIN/TEST source-row boundaries remain unchanged. No fill, interpolation, carry, synthesis or write-back is allowed, and there is no per-feature-clock fallback.
 
-Every shadow candidate therefore sees the same retained TRAIN and TEST timestamps within a fold. If the common mask causes a fold to fall below the existing `minimum_model_train_observations` or `minimum_model_test_observations`, that fold is invalid for the shadow candidate under the existing rules; the implementation must not silently switch to a per-feature observation clock.
+## Shadow model selection and agreement
 
-## Shadow model selection and cross-feature comparison
+Within one feature, the 12 candidates reuse v3 fit settings, multistart, numerical validation, TRAIN occupancy gates, causal TEST continuation, common-valid-fold support and seven-stage ranking. The within-feature result is `diagnostic_feature_model_winner`; it cannot enter final refit, OOS publication, registry or alias logic. There is no global cross-feature champion and OOS PLL must not rank features globally.
 
-Within each single feature, the 12 model candidates use the same v2 fit settings, multistart rules, numerical validation, TRAIN occupancy gates, causal TEST continuation, common-valid-fold support, and seven-stage statistical ranking as the production candidate universe. The resulting within-feature winner is labelled `diagnostic_feature_model_winner`; it is not a production statistical champion and cannot enter registry logic.
+For each valid feature winner, compare its OOS dominant-state sequence with the canonical multivariate v3 reference champion only on shared valid-fold OOS timestamps. Shared valid-fold rate below `0.80` makes agreement unavailable without invalidating the feature winner. Report label-invariant NMI and, only for equal K, maximum one-to-one permutation hard agreement. Do not compare state-signature RMS distances across different feature spaces.
 
-There is deliberately no global cross-feature champion. OOS predictive likelihood is used to choose the model family/K within one feature only; it is not used to declare one feature globally best. Cross-feature output is a descriptive scorecard containing candidate validity, OOS mean/std/worst, BIC/AIC, occupancy, persistence, switches/year, confidence and entropy.
+Execution rule: all PRs below inherit section-12 clean-main/status/branch/allowed-file/full-test rules. Agents must not combine PRs, edit `BACKLOG.md`, add economic metrics or mutate historical Xetra v1/v2 identities.
 
-For each feature with a valid diagnostic winner, similarity to the canonical multivariate v2 reference champion is measured only on OOS timestamps shared by valid folds of both evaluations. Agreement support is the intersection of valid fold IDs; if its rate is below `0.80`, agreement metrics are reported as unavailable with an explicit reason but the feature-model winner itself is not invalidated.
+### PR-156 — Pin canonical Xetra v3 61-feature policy contract
 
-Two label-invariant agreement diagnostics are pinned:
-
-1. `dominant_state_nmi = 2 * I(X;Y) / (H(X) + H(Y))` on the shared dominant-state sequences. Natural logarithms are used. If both entropies are zero, NMI is exactly `1.0`; otherwise the formula applies normally.
-2. `max_permutation_hard_agreement` is reported only when the shadow winner and reference champion have the same K. Enumerate all K! one-to-one label permutations, maximize the fraction of equal dominant-state labels, and use lexicographically smallest permutation only to break an exact agreement tie. If K differs, this metric is null rather than forcing a many-to-one mapping.
-
-State-signature RMS distances are not used to compare a VIX-only state with a CISS-only or multivariate state because those models live in different feature spaces.
-
-Execution rule: all PRs below inherit section-12 clean-main/status/branch/allowed-file/full-test requirements. Agents must not combine PRs, broaden production selection, or add economic metrics.
-
-### PR-144 — Pin the univariate shadow-analysis contract
-
-- **Branch:** `pr/PR-144-univariate-shadow-contract`
+- **Branch:** `pr/PR-156-xetra-v3-61-feature-contract`
 - **Depends on:** PR-125, PR-129
 - **Allowed:** `EVALUATION.md`
 
 Acceptance:
 
-- [ ] `EVALUATION.md` defines `analysis_id=xetra_univariate_shadow_v1` and marks every result `diagnostic_only`.
-- [ ] The first feature family is exactly the eight first-fold Stage-1 `preliminary_medoids` in canonical block order, explicitly before Stage-2 pruning.
-- [ ] The second feature family lists the exact 13 `*_delta_1obs` columns from this section in exact order.
-- [ ] The contract states that the 13 delta columns are shadow inputs only and do not change the canonical 48-feature policy or its hashes.
-- [ ] Every feature uses the exact v2 12-candidate family/K universe, yielding exactly 21 feature specifications and 252 shadow candidate evaluations.
-- [ ] The production source-row walk-forward plan remains unchanged and the exact 21-feature common-mask clock semantics are specified, including no fill/carry/interpolation and no per-feature clock fallback.
-- [ ] Within-feature model selection reuses the production v2 hard gates/common-valid-fold/seven-stage ranking but is named `diagnostic_feature_model_winner` and cannot affect production selection or registry lifecycle.
-- [ ] The contract explicitly forbids a cross-feature champion or a global feature ranking by OOS PLL.
-- [ ] Exact shared-fold agreement support, NMI formula, same-K permutation agreement and unavailable-agreement behavior are specified.
-- [ ] No ETF return, portfolio metric, final refit, model registration, alias mutation or OOS publication is introduced by the shadow analysis.
+- [ ] Define `profile_config_version=3` and `feature_selection_policy=xetra_semantic_medoid_v3`; v1/v2 definitions remain unchanged.
+- [ ] Define exactly 61 unique canonical features: existing ordered v2 48 plus the exact ordered 13 deltas above.
+- [ ] Pin every added delta to the exact semantic block listed above; every canonical feature belongs to exactly one of eight blocks.
+- [ ] Preserve Stage-1/Stage-2 algorithms, first-fold TRAIN-only semantics, thresholds, tie rules, missing-value rules and no-economic/no-HMM-feedback constraints.
+- [ ] State explicitly that deltas are eligible Stage-1 representatives and may therefore enter the frozen multivariate final feature set.
+- [ ] Define v3 candidate universe as exactly the same 12 candidate IDs/family/K settings as v2.
+- [ ] Preserve historical v1/v2 config identities and selection definition hashes.
+- [ ] Make no shadow-analysis implementation change in this PR.
 
-### PR-145 — Add exact shadow feature and lineage contracts
+### PR-157 — Add exact Xetra v3 61-feature/eight-block policy
+
+- **Branch:** `pr/PR-157-xetra-v3-feature-policy`
+- **Depends on:** PR-156
+- **Allowed:** `configs/feature_selection/xetra_semantic_medoid_v3.yaml`, `tests/unit/feature_selection/test_xetra_v3_policy.py`, `docs/profiles/xetra_feature_selection_v3.md`
+
+Acceptance:
+
+- [ ] Create new v3 policy; do not edit v1/v2 policy files.
+- [ ] Preserve exact existing 48 feature order/block membership and add the 13 deltas to the exact blocks pinned by PR-156.
+- [ ] Policy has exactly 61 unique features and exactly eight non-overlapping exhaustive blocks.
+- [ ] Exact delta column names match PostgreSQL names and the ordered tuple above.
+- [ ] Stage-1/Stage-2 constants remain equal to v2 unless PR-156 explicitly states otherwise; no new tuning constant.
+- [ ] Tests assert full ordered 61-feature tuple, exact block membership, cardinality and absence of economic/target fields.
+- [ ] Tests prove v1/v2 policy files remain unchanged.
+- [ ] Documentation states v3 is a versioned extension, not an in-place v2 mutation.
+
+### PR-158 — Add Xetra v3 profile resolution with unchanged 12-model universe
+
+- **Branch:** `pr/PR-158-xetra-v3-profile`
+- **Depends on:** PR-157, PR-118, PR-128
+- **Allowed:** `configs/profiles/xetra_v3.yaml`, `src/market_regime_engine/profiles/config.py`, `src/market_regime_engine/profiles/resolution.py`, `src/market_regime_engine/training/candidate_grid.py`, `tests/unit/profiles/test_xetra_v3_profile.py`, `tests/unit/profiles/test_resolution.py`, `tests/unit/training/test_candidate_grid.py`
+
+Acceptance:
+
+- [ ] Add public `xetra` profile config version 3 referencing exactly `xetra_semantic_medoid_v3`.
+- [ ] v3 candidate IDs/order equal v2: Gaussian K2–K5, GMM M2 K2–K5, Student-t K2–K5.
+- [ ] v3 walk-forward, multistart, fit, gate and ranking settings equal v2 unless PR-156 explicitly changes them.
+- [ ] Version-aware resolution recognizes v3 explicitly and never infers it from list length.
+- [ ] Candidate-grid validation accepts only the exact v3 tuple and rejects wrong order, missing-middle and extra candidates.
+- [ ] Canonical source feature universe comes from v3 61-feature policy; final model features still come only from frozen first-fold selection.
+- [ ] v1/v2 remain loadable and unchanged.
+- [ ] No final refit, registry alias or lifecycle mutation in this PR.
+
+### PR-144 — Pin univariate shadow-analysis contract against Xetra v3
+
+- **Branch:** `pr/PR-144-univariate-shadow-contract`
+- **Depends on:** PR-158
+- **Allowed:** `EVALUATION.md`
+
+Acceptance:
+
+- [ ] Define `analysis_id=xetra_univariate_shadow_v1`, `analysis_role=diagnostic_only`, `profile_config_version=3`.
+- [ ] First shadow role is exactly eight v3 first-fold Stage-1 `preliminary_medoids` in canonical block order before Stage 2.
+- [ ] Second role is the exact ordered 13 canonical delta features.
+- [ ] Executable features are ordered unique union of representatives then deltas; overlap is evaluated once with both roles.
+- [ ] Define exact `shadow_candidate_count = shadow_feature_count * 12`; remove hard-coded 21/252 assumptions.
+- [ ] Every unique feature uses exact v3 12-candidate universe.
+- [ ] Canonical source-row walk-forward plan is unchanged; common shadow clock is constructed after v3 selection from unique shadow features.
+- [ ] Within-feature winner reuses v3 hard gates/common-valid-fold/seven-stage ranking and is named `diagnostic_feature_model_winner`.
+- [ ] Explicitly forbid global feature champion/global feature ranking by OOS PLL.
+- [ ] Pin shared-fold agreement support, NMI, equal-K permutation agreement and unavailable-agreement behavior.
+- [ ] No economic metric, final refit, registration, alias mutation or OOS publication is introduced.
+
+### PR-145 — Add exact shadow feature/role and lineage contracts
 
 - **Branch:** `pr/PR-145-shadow-feature-contracts`
 - **Depends on:** PR-144
@@ -1459,18 +1520,18 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Define immutable `analysis_id`, analysis-role, feature-kind and feature-spec contracts with no MLflow/PostgreSQL/model imports.
-- [ ] Define the exact ordered 13 delta feature tuple from section 18; duplicate, missing, reordered or unexpected delta names fail closed.
-- [ ] Build the eight representative specs only from `FeatureSelectionResult.evidence.preliminary_medoids`, never from `final_features` and never by rerunning HMMs.
-- [ ] Require exactly eight unique representatives, one per canonical semantic block in canonical block order.
-- [ ] Build exactly 21 unique ordered shadow feature specs as eight representatives followed by the 13 delta specs.
-- [ ] Build the exact source-request feature order as canonical 48-policy features followed by the 13 delta columns; require exactly 61 unique names and leave the canonical policy object unchanged.
-- [ ] Build the exact 12 ordered shadow candidate specs for every feature with family/K/mixture settings matching v2 candidate IDs and `feature_dimension=1`.
-- [ ] Shadow candidate specs carry canonical source build plus canonical feature-selection definition/execution hashes only as lineage context and additionally carry a distinct deterministic shadow feature-contract hash.
-- [ ] Define deterministic SHA-256 `shadow_analysis_definition_hash` from pinned analysis semantics and deterministic `shadow_analysis_execution_hash` from definition hash + source build/data hash + evaluation-plan hash + canonical selection hashes.
-- [ ] Hash tests prove later source rows can change execution lineage without silently changing the pinned analysis definition.
+- [ ] Define immutable analysis/feature-role/feature-spec/lineage contracts without MLflow/PostgreSQL/model imports.
+- [ ] Define exact ordered 13-delta tuple; missing/reordered/duplicate/unexpected delta names fail closed.
+- [ ] Build representatives only from `FeatureSelectionResult.evidence.preliminary_medoids`; require exactly eight unique representatives in canonical block order.
+- [ ] Deterministically deduplicate representatives followed by deltas.
+- [ ] If a delta is a representative, one feature spec records both `semantic_block_representative` and `origin_delta_1obs`.
+- [ ] Source-request feature order is exactly canonical v3 61-feature policy order; no separate 48+13 path.
+- [ ] Build exact 12 ordered shadow candidate specs per unique feature with dimension 1 and v3 family/K/mixture settings.
+- [ ] Carry source build, v3 selection definition/execution hashes and distinct deterministic shadow feature-contract hash.
+- [ ] Define deterministic SHA-256 shadow definition/execution hashes using source/data, plan and v3 selection lineage.
+- [ ] Tests cover both no-overlap and representative/delta-overlap cases.
 
-### PR-146 — Extract a reusable v2 model-adapter factory
+### PR-146 — Extract reusable v3-capable model-adapter factory
 
 - **Branch:** `pr/PR-146-reusable-model-adapter-factory`
 - **Depends on:** PR-144, PR-128
@@ -1478,16 +1539,16 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Move candidate-to-adapter construction into one public pure factory accepting the active `ModelProfile` plus a structural candidate specification.
-- [ ] Gaussian construction preserves exact hmmlearn/full-covariance behavior.
-- [ ] GMM construction preserves exactly `mixture_count=2` and full covariance for K2–K5.
-- [ ] Student-t construction passes every active profile setting explicitly: minimum/maximum/initial nu, iterations, tolerance and minimum covariance.
-- [ ] `candidate_grid.py` uses the new factory; no duplicate family dispatch remains there.
-- [ ] Production v1/v2 candidate identities, candidate order, fitting settings and generated evaluations are unchanged.
-- [ ] A one-feature structural candidate spec can obtain the same family-specific adapter factory without being a `ResolvedSelectedFeatureProfile`.
-- [ ] Invalid family/K/mixture/profile combinations fail before fitting; no defaults/fallback family are invented.
+- [ ] Move candidate-to-adapter construction to one pure public factory accepting active profile + structural candidate spec.
+- [ ] Preserve Gaussian hmmlearn/full-covariance construction.
+- [ ] Preserve GMM `mixture_count=2`, full covariance, K2–K5.
+- [ ] Pass all active Student-t profile settings explicitly.
+- [ ] `candidate_grid.py` uses the factory; no duplicate family dispatch remains.
+- [ ] v1/v2/v3 production candidate identities/order/settings remain exact.
+- [ ] One-feature shadow specs use the same factory without pretending to be resolved production profiles.
+- [ ] Invalid family/K/mixture/profile combinations fail before fit; no fallback.
 
-### PR-147 — Generalize the walk-forward runner to a structural candidate spec
+### PR-147 — Generalize walk-forward runner to structural candidate spec
 
 - **Branch:** `pr/PR-147-walk-forward-candidate-protocol`
 - **Depends on:** PR-144, PR-124, PR-129
@@ -1495,16 +1556,16 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Introduce a minimal structural protocol containing only fields actually consumed by `run_walk_forward_candidate`.
-- [ ] `ResolvedCandidateProfile` satisfies the protocol without modification and remains the only production profile-resolution type.
-- [ ] `run_walk_forward_candidate` accepts the protocol instead of requiring the concrete production resolved-candidate class.
-- [ ] No production invariant is weakened in `resolve_selected_feature_profile` or `CandidateGridEvaluation`.
-- [ ] A deterministic one-feature non-production spec with a valid v2 candidate ID can execute through the same scaler, multistart, causal filter, likelihood-parity, occupancy, alignment and diagnostic path.
-- [ ] A non-production feature is not required to belong to the canonical 48-feature universe because production membership is enforced upstream by production resolution, not by the mathematical walk-forward core.
-- [ ] Existing production fixtures produce identical fold validity, metrics, state mappings and probabilities after the refactor.
-- [ ] Unsupported profile version, model family/K mismatch, empty feature order and inconsistent dimension still fail closed.
+- [ ] Introduce minimal structural protocol containing only fields used by `run_walk_forward_candidate`.
+- [ ] `ResolvedCandidateProfile` satisfies it unchanged and remains production resolution type.
+- [ ] Runner accepts protocol instead of concrete production class.
+- [ ] No v1/v2/v3 production invariant is weakened.
+- [ ] One-feature v3 shadow spec executes through same scaler, multistart, causal filter, likelihood-parity, occupancy, alignment and diagnostics path.
+- [ ] Runner need not require a shadow feature to be a final production-selected feature; membership is validated upstream.
+- [ ] Existing production fixtures remain behavior-identical after refactor.
+- [ ] Unsupported version, family/K mismatch, empty order and inconsistent dimension fail closed.
 
-### PR-148 — Build the exact 21-feature common diagnostic clock
+### PR-148 — Build common diagnostic clock for unique shadow features
 
 - **Branch:** `pr/PR-148-shadow-common-observation-clock`
 - **Depends on:** PR-145
@@ -1512,14 +1573,14 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Input requires `timestamp_m1` plus all exact 21 shadow feature columns and strictly increasing unique UTC timestamps.
-- [ ] Common eligibility is exactly row-wise non-null and finite across all 21 shadow features.
-- [ ] The helper returns one immutable common mask plus per-fold retained/skipped evidence; it never changes the `WalkForwardPlan`.
-- [ ] Applying the mask to a one-feature diagnostic view preserves every original source row/timestamp and marks that feature missing outside the common mask.
-- [ ] Original input data are not mutated and no missing value is filled, interpolated, forward-filled, backward-filled or synthesized.
-- [ ] Applying the same mask to every one-feature spec yields identical retained timestamps for all 21 features in every TRAIN and TEST fold.
-- [ ] A nonfinite non-null shadow value fails closed rather than being converted to missing.
-- [ ] Tests cover asymmetric missingness where per-feature clocks would differ and prove the pinned common-clock result.
+- [ ] Input requires `timestamp_m1` plus exact ordered unique shadow features and strictly increasing unique UTC timestamps.
+- [ ] Common eligibility is row-wise non-null and finite across all unique shadow features.
+- [ ] Return one immutable mask plus per-fold retained/skipped evidence; never change `WalkForwardPlan`.
+- [ ] Applying mask preserves source rows/timestamps and makes rows outside mask unavailable in one-feature views.
+- [ ] No mutation, fill, interpolation, carry or synthesis.
+- [ ] Every shadow feature receives identical retained TRAIN/TEST timestamps.
+- [ ] Nonfinite non-null source values fail closed.
+- [ ] Tests cover asymmetric missingness and representative/delta overlap without duplicated columns.
 
 ### PR-149 — Evaluate one univariate 12-candidate shadow grid
 
@@ -1529,16 +1590,16 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Input is one validated shadow feature spec, the common-mask diagnostic frame, the canonical v2 profile, canonical plan/source lineage/selection hashes and shadow analysis hashes.
-- [ ] Construct exactly the ordered 12 candidate specs from PR-145 for the one feature; no candidate can be omitted or added dynamically.
-- [ ] Every candidate is evaluated by the shared PR-147 walk-forward runner and PR-146 adapter factory; no duplicate HMM/EM/filter implementation is introduced.
-- [ ] Candidate feature order is exactly `(feature_name,)` and feature dimension exactly `1` for all 12 candidates.
-- [ ] Every candidate preserves the same source build, plan hash, common observation clock and canonical selection-lineage hashes.
-- [ ] Candidate aggregates use the existing `aggregate_candidate` definitions and retain all invalid folds/failure reasons.
-- [ ] Return a diagnostic wrapper containing the canonical `CandidateGridEvaluation` plus feature identity/kind/group and shadow definition/execution hashes.
-- [ ] This PR does not select a winner, track MLflow, final-refit, publish predictions or touch registry aliases.
+- [ ] Input is one validated unique shadow feature spec, common-mask frame, canonical v3 profile and complete source/plan/selection/shadow lineage.
+- [ ] Construct exactly ordered 12 candidate specs for that feature.
+- [ ] Evaluate through shared PR-147 runner and PR-146 factory; no duplicate HMM/EM/filter implementation.
+- [ ] Feature order exactly `(feature_name,)`; dimension exactly 1.
+- [ ] All candidates share source build, plan hash, common clock and v3 selection lineage.
+- [ ] Reuse canonical candidate aggregate definitions and retain invalid folds/reasons.
+- [ ] Return diagnostic wrapper with canonical `CandidateGridEvaluation`, feature roles/group and shadow hashes.
+- [ ] No winner selection, MLflow tracking, final refit, OOS publication or alias mutation here.
 
-### PR-150 — Execute the complete 21-feature shadow suite and select within-feature winners
+### PR-150 — Execute complete deduplicated shadow suite
 
 - **Branch:** `pr/PR-150-univariate-shadow-suite`
 - **Depends on:** PR-149, PR-125
@@ -1546,17 +1607,17 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Evaluate exactly the 21 PR-145 feature specs in deterministic order and exactly 12 candidates per feature, for exactly 252 candidate evaluations.
-- [ ] Bounded parallel execution is allowed across feature grids, but output ordering is independent of task completion order and nested unbounded pools are forbidden.
-- [ ] Each feature grid is passed to the existing `select_statistical_champion` logic solely to obtain `diagnostic_feature_model_winner` with the existing v2 hard gates/common-valid-fold ranking.
-- [ ] A feature for which no candidate passes statistical gates records an explicit feature-level diagnostic failure and does not abort or remove the other 20 feature analyses.
-- [ ] The suite always records all 252 candidate identities/results, including invalid candidates/folds.
-- [ ] No ranking is performed across different feature names and no `overall_winner`, `best_feature` or equivalent field exists.
-- [ ] Per-feature summary records winner family/K when available plus candidate valid-fold rate, common-valid-fold support, OOS mean/std/worst, BIC/AIC and aggregated occupancy/persistence/switch/confidence/entropy diagnostics.
-- [ ] Reordering worker completion cannot change any feature winner, metric, hash or summary row order.
-- [ ] No production selection/refit/registry/OOS-publication code is imported or invoked.
+- [ ] Evaluate every unique shadow feature in deterministic order and exactly 12 candidates per feature.
+- [ ] Total candidate evaluations equal `shadow_feature_count * 12`; duplicate feature/candidate identities are impossible.
+- [ ] Bounded parallelism across feature grids is allowed; output order is completion-order independent and nested unbounded pools forbidden.
+- [ ] Use existing statistical selection only within each feature to obtain `diagnostic_feature_model_winner` under v3 gates/common support.
+- [ ] Zero accepted candidates for one feature records explicit failure without aborting other features.
+- [ ] Retain all candidate/fold identities and failures.
+- [ ] No cross-feature rank, `overall_winner` or `best_feature` field.
+- [ ] Per-feature summary includes roles, winner family/K if any, validity/common support, OOS mean/std/worst, BIC/AIC, occupancy, persistence, switches, confidence and entropy.
+- [ ] No production refit/registry/OOS-publication invocation.
 
-### PR-151 — Add label-invariant agreement with the multivariate reference champion
+### PR-151 — Add label-invariant agreement with multivariate v3 champion
 
 - **Branch:** `pr/PR-151-shadow-champion-agreement`
 - **Depends on:** PR-144, PR-150
@@ -1564,17 +1625,17 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Agreement input requires the canonical multivariate v2 `WalkForwardEvaluation` and one valid diagnostic feature winner from the same source build and evaluation-plan hash.
-- [ ] Shared support uses only the ordered intersection of valid fold IDs and then the exact intersection of OOS timestamps inside those folds.
-- [ ] Record shared fold IDs/count/rate and shared timestamp count; no missing timestamp is fabricated.
-- [ ] If shared valid-fold rate is below `0.80` or there are no shared OOS timestamps, both agreement metrics are null with an explicit diagnostic reason and the feature winner remains otherwise valid.
-- [ ] Implement exact `dominant_state_nmi = 2*I/(H_x+H_y)` with natural logarithms and exact `1.0` when both entropies are zero.
-- [ ] NMI is invariant to arbitrary relabeling of either state sequence and supports different K values.
-- [ ] For equal K only, enumerate all K! label permutations and report maximum hard agreement plus the deterministic lexicographically smallest maximizing permutation.
-- [ ] For unequal K, permutation agreement/mapping is null; no many-to-one mapping or signature-space comparison is invented.
-- [ ] Tests cover perfect relabeling, independent sequences, unequal K, degenerate constant sequences and insufficient shared-fold support.
+- [ ] Require canonical multivariate v3 `WalkForwardEvaluation` and one valid feature winner from same source build/plan hash.
+- [ ] Shared support is ordered intersection of valid folds and exact OOS timestamps.
+- [ ] Record fold IDs/count/rate and shared timestamp count; fabricate nothing.
+- [ ] Below 0.80 support or zero shared timestamps, agreement is null with explicit reason while feature winner remains valid.
+- [ ] Implement exact `dominant_state_nmi = 2*I/(H_x+H_y)` with natural logs and exact 1.0 when both entropies are zero.
+- [ ] NMI is label-invariant and supports different K.
+- [ ] Equal K: enumerate all K! permutations, report max hard agreement and lexicographically smallest maximizing mapping.
+- [ ] Unequal K: permutation metric/mapping null; no many-to-one or cross-space signature matching.
+- [ ] Tests cover perfect relabeling, independence, unequal K, constant sequences and insufficient support.
 
-### PR-152 — Track and visualize shadow analysis in MLflow
+### PR-152 — Track and visualize Xetra v3 shadow analysis in MLflow
 
 - **Branch:** `pr/PR-152-mlflow-shadow-analysis-evidence`
 - **Depends on:** PR-150, PR-151, PR-130
@@ -1582,38 +1643,38 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Create exactly one shadow-analysis parent run tagged `analysis_id=xetra_univariate_shadow_v1` and `analysis_role=diagnostic_only` with source lineage, plan hash, canonical selection hashes and both shadow hashes.
-- [ ] Create exactly 21 nested feature runs in deterministic feature order and exactly 252 nested candidate runs; feature/candidate run names uniquely include feature identity and canonical candidate ID.
-- [ ] Candidate runs log family/K/mixture, one-feature order, validity, aggregate metrics and complete fold metric histories using actual TEST-end timestamps.
-- [ ] Feature runs log the diagnostic winner when available and explicitly log failure reason when no candidate passes; wording never calls it production champion.
-- [ ] Parent artifacts include machine-readable analysis definition, common-clock evidence, all-candidate scorecard, per-feature winner scorecard and champion-agreement table.
-- [ ] Parent artifacts include the canonical multivariate reference candidate ID/K/feature order and its source/plan/selection lineage, but no production model package or raw feature matrix.
-- [ ] Plots include at least within-feature family/K comparison, per-feature valid-fold support, winner family/K summary, NMI-to-reference and same-K hard-agreement where available.
-- [ ] No plot orders features by OOS PLL or labels one feature globally best; pooled/weighted likelihood is diagnostic-only per PR-130.
-- [ ] All plots satisfy `PLOT_STYLE.md`, include deterministic manifest lineage and show invalid/unavailable values explicitly rather than interpolating.
-- [ ] No raw source feature values, credentials, model registration, final-refit artifact, OOS build or alias mutation are logged/performed.
+- [ ] Create one parent run tagged analysis ID/diagnostic role/profile version 3 plus complete v3 source/plan/selection/shadow lineage.
+- [ ] Create exactly `shadow_feature_count` feature runs and `shadow_feature_count * 12` candidate runs in deterministic order.
+- [ ] A feature with both roles is logged once with both roles.
+- [ ] Candidate runs log family/K/mixture, feature order, validity, aggregates and complete TEST-end fold histories.
+- [ ] Feature runs log diagnostic winner or explicit failure; never call it production champion.
+- [ ] Parent artifacts include v3 selection reference, common-clock evidence, all-candidate scorecard, per-feature winner scorecard and agreement table.
+- [ ] Record multivariate v3 reference candidate ID/K/final feature order/lineage without raw matrix or model package.
+- [ ] Plots cover within-feature family/K, validity support, winner family/K, NMI and equal-K hard agreement where available.
+- [ ] No global feature ranking by OOS PLL; weighted likelihood remains diagnostic-only.
+- [ ] No registration, final refit, OOS build or alias mutation.
 
-### PR-153 — Add a standalone Xetra v2 shadow-analysis runner
+### PR-153 — Add standalone Xetra v3 shadow-analysis runner
 
 - **Branch:** `pr/PR-153-run-xetra-shadow-analysis`
 - **Depends on:** PR-150, PR-151, PR-152
-- **Allowed:** `scripts/run_xetra_v2_shadow_analysis.py`, `tests/unit/commands/test_shadow_analysis_script.py`
+- **Allowed:** `scripts/run_xetra_v3_shadow_analysis.py`, `tests/unit/commands/test_shadow_analysis_script.py`
 
 Acceptance:
 
-- [ ] Add a standalone diagnostic script; `scripts/run_xetra_v2_cycle.py` is not modified and the production cycle does not automatically execute the 252 shadow candidates.
-- [ ] The script loads exactly `xetra_v2.yaml` plus `xetra_semantic_medoid_v2.yaml` and uses the normal feature PostgreSQL settings/readonly source adapter.
-- [ ] PostgreSQL registration/request order is exactly the 48 canonical policy features followed by the 13 delta columns, for exactly 61 unique requested feature columns.
-- [ ] From one source snapshot, construct the same canonical aligned source-row window and walk-forward plan semantics as the v2 production cycle; regression fixture proves equal origin/fold IDs/bounds for identical source rows.
-- [ ] Run canonical first-fold feature selection on only the canonical 48 columns, preserving exact production definition/execution hashes and obtaining the eight `preliminary_medoids`.
-- [ ] Evaluate one canonical multivariate v2 reference grid on the frozen canonical final features and select its statistical champion solely as the in-run reference for agreement.
-- [ ] Build the exact 21-feature common clock, execute the exact 252 shadow evaluations, compute within-feature winners/agreement and track PR-152 evidence.
-- [ ] The 12 multivariate reference candidates are reported separately and are not counted as shadow candidates.
-- [ ] The script never calls final production refit, `PredictionStore`, OOS publication, model package save/register, `RegistryPort`, `MlflowModelRegistry`, `set_registered_model_alias`, CAS alias mutation or any equivalent lifecycle operation.
-- [ ] A statistically invalid shadow feature is recorded in evidence and does not abort remaining feature evaluations; source/contract/hash/tracking failures fail the script explicitly.
-- [ ] Final stdout JSON reports source build, shadow parent run ID, canonical reference candidate ID, common-clock retained counts, `shadow_feature_count=21`, `shadow_candidate_count=252`, valid-winner count and failed-feature count.
+- [ ] Add standalone diagnostic script; production lifecycle scripts are not modified to auto-run shadow analysis.
+- [ ] Load exactly `xetra_v3.yaml` and `xetra_semantic_medoid_v3.yaml`.
+- [ ] PostgreSQL request is exactly canonical ordered 61-feature v3 universe; no 48+13 path.
+- [ ] Use one read-only source snapshot and canonical aligned source-row/window/plan semantics.
+- [ ] Run first-fold feature selection on all 61 canonical columns; obtain eight preliminary medoids with deltas eligible.
+- [ ] Evaluate canonical multivariate v3 12-candidate reference grid on frozen final features solely as analysis reference.
+- [ ] Build ordered-unique shadow specs, common clock, all grids, within-feature winners, agreement and MLflow evidence.
+- [ ] Reference 12 candidates are excluded from shadow candidate count.
+- [ ] Never call final refit, prediction/OOS publication, registration or alias/CAS mutation.
+- [ ] Invalid shadow feature is recorded without aborting others; source/contract/hash/tracking failures fail explicitly.
+- [ ] Final stdout JSON reports source build, parent run ID, v3 reference candidate, common-clock counts, `shadow_feature_count`, `shadow_candidate_count`, valid-winner count and failed-feature count.
 
-### PR-154 — Prove the 252-candidate shadow workflow hermetically
+### PR-154 — Prove 61-feature selection and shadow workflow hermetically
 
 - **Branch:** `pr/PR-154-shadow-analysis-e2e-proof`
 - **Depends on:** PR-153
@@ -1621,19 +1682,19 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Hermetic fixture exposes the canonical 48 features plus the exact 13 delta columns with controlled asymmetric missingness and no NAS dependency.
-- [ ] Prove canonical selection still consumes only 48 features and yields exactly eight preliminary medoids while the shadow source request contains exactly 61 columns.
-- [ ] Prove the shadow contract expands to exactly 21 feature specs and exactly 252 ordered feature/candidate identities.
-- [ ] Use injected deterministic candidate runners where needed so required CI does not need to perform 252 expensive real HMM fits; injection cannot bypass cardinality/hash/common-clock/orchestration assertions.
-- [ ] Include at least one small real Gaussian and one small real Student-t/GMM walk-forward smoke through the shared mathematical path to prove structural shadow specs are accepted.
-- [ ] Prove identical common retained timestamps for representative and delta features despite asymmetric source missingness.
-- [ ] Prove one feature can have zero accepted candidates without removing other feature results.
-- [ ] Prove agreement metrics are label-invariant and use only shared valid OOS support.
-- [ ] Prove MLflow evidence contains exactly one parent, 21 feature runs and 252 candidate runs with diagnostic-only tags/artifacts.
-- [ ] Prove no final refit, OOS publication, registry registration or alias mutation occurs by injecting fail-on-call lifecycle doubles.
-- [ ] All required tests remain hermetic and count toward the repository 90% unit+integration coverage gate as applicable.
+- [ ] Hermetic fixture exposes exactly canonical v3 61 features with controlled asymmetric missingness and no NAS dependency.
+- [ ] Prove selection consumes all 61, preserves eight blocks and can choose a delta as Stage-1 representative.
+- [ ] Prove deterministic deduplication when delta is representative and exact `shadow_feature_count * 12` candidate cardinality.
+- [ ] Inject deterministic runners where needed so CI need not perform all real fits; injection cannot bypass cardinality/hash/common-clock/orchestration assertions.
+- [ ] Include at least one small real Gaussian and one small real Student-t/GMM walk-forward smoke through shared path.
+- [ ] Prove identical common retained timestamps despite asymmetric missingness.
+- [ ] Prove one feature can have zero accepted candidates without removing other results.
+- [ ] Prove agreement is label-invariant and uses only shared valid OOS support.
+- [ ] Prove MLflow run counts: one parent, `shadow_feature_count` feature runs, `shadow_feature_count * 12` candidate runs.
+- [ ] Prove no final refit, OOS publication, registration or alias mutation via fail-on-call doubles.
+- [ ] Required tests remain hermetic and satisfy coverage policy.
 
-### PR-155 — Document execution and interpretation of the shadow analysis
+### PR-155 — Document canonical deltas and shadow interpretation
 
 - **Branch:** `pr/PR-155-shadow-analysis-documentation`
 - **Depends on:** PR-154
@@ -1641,32 +1702,37 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Document the exact scientific questions answered by Stage-1 representative runs versus origin `delta_1obs` runs.
-- [ ] List the exact 13 delta features, explain the dynamic eight preliminary medoids, and state exact 21-feature/252-candidate cardinality.
-- [ ] Document the standalone command/environment prerequisites without embedding any secret or database password.
-- [ ] Explain the common diagnostic observation clock and why per-feature clocks are intentionally forbidden for cross-feature comparison.
-- [ ] Explain that model ranking is only within one feature and that no global `best feature` is selected by OOS likelihood.
-- [ ] Explain every scorecard/agreement field, including NMI, same-K permutation agreement, validity support, occupancy, persistence, switches/year, confidence and entropy.
-- [ ] Explain that the analysis is current-vintage, diagnostic-only and cannot alter canonical feature selection, final refit, OOS publication, registry aliases or production serving.
-- [ ] Document expected runtime scale: 252 shadow candidate evaluations plus a separate 12-candidate multivariate reference grid.
-- [ ] README links to the document without duplicating the normative `EVALUATION.md` contract.
+- [ ] Explain why v3 is a new versioned 61-feature policy rather than an in-place mutation of v2.
+- [ ] List exact 13 deltas and exact block assignments.
+- [ ] Explain that deltas participate in canonical first-fold Stage-1 selection and can enter multivariate final features.
+- [ ] Explain two shadow roles and deduplication when a delta is also representative.
+- [ ] Document `shadow_candidate_count = shadow_feature_count * 12` plus separate 12-candidate multivariate v3 reference grid.
+- [ ] Document standalone command/environment prerequisites without secrets.
+- [ ] Explain common shadow clock and prohibition on per-feature clocks.
+- [ ] Explain within-feature model ranking only and absence of global best-feature ranking.
+- [ ] Explain NMI, equal-K permutation agreement, validity, occupancy, persistence, switches/year, confidence and entropy.
+- [ ] Explain shadow analysis remains diagnostic-only although deltas are canonical production-selection inputs.
+- [ ] README links to document without duplicating normative contract.
 
-## Shadow-analysis execution graph
+## Canonical-v3 + shadow-analysis execution graph
 
-Only merged dependencies unlock work. PR-144 intentionally waits for the common-valid-fold and all-family TRAIN-likelihood corrections because the shadow analysis must not encode superseded ranking/model semantics.
+Only merged dependencies unlock work. Xetra v1/v2 remain immutable historical identities.
 
 ```text
-F0 prerequisites: PR-125 PR-129
-F1: PR-144 after PR-125+PR-129
-F2 parallel after PR-144: PR-145 PR-146 PR-147
-F3 parallel: PR-148 after PR-145; PR-151 may begin after PR-144 with synthetic contracts but merges after PR-150
-F4: PR-149 after PR-145+PR-146+PR-147+PR-148
-F5: PR-150 after PR-149+PR-125
-F6: PR-151 after PR-150
-F7: PR-152 after PR-150+PR-151+PR-130
-F8: PR-153 after PR-152
-F9: PR-154 after PR-153
-F10: PR-155 after PR-154
+G0 prerequisites: PR-125 PR-129
+G1: PR-156 after PR-125+PR-129
+G2: PR-157 after PR-156
+G3: PR-158 after PR-157+PR-118+PR-128
+G4: PR-144 after PR-158
+G5 parallel after PR-144: PR-145 PR-146 PR-147
+G6: PR-148 after PR-145
+G7: PR-149 after PR-145+PR-146+PR-147+PR-148
+G8: PR-150 after PR-149+PR-125
+G9: PR-151 after PR-150
+G10: PR-152 after PR-150+PR-151+PR-130
+G11: PR-153 after PR-152
+G12: PR-154 after PR-153
+G13: PR-155 after PR-154
 ```
 
-PR-145, PR-146 and PR-147 have disjoint primary implementation files and are deliberately parallelizable. PR-148 can proceed as soon as the immutable feature contracts merge. PR-151's pure agreement mathematics can be developed against synthetic fixtures in parallel, but its final integration must rebase on the PR-150 result contract. PR-152 is intentionally after PR-130 so no shadow visualization can reintroduce ambiguous weighted-OOS winner semantics.
+PR-145, PR-146 and PR-147 are deliberately parallelizable after PR-144 and have disjoint primary implementation ownership. The shadow analysis cannot start until canonical v3 exists because both the eight representatives and the multivariate reference champion must be derived from the 61-feature policy.
