@@ -178,8 +178,12 @@ class WalkForwardEvaluation:
             raise ValueError("walk-forward evaluation requires a supported xetra profile version")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("walk-forward evaluation supports exactly K2/K3/K4/K5")
-        if self.candidate_id != f"gaussian_hmm_k{self.state_count}_full":
-            raise ValueError("candidate identity must match state count and full covariance")
+        expected_candidates = {
+            f"gaussian_hmm_k{self.state_count}_full",
+            "gmm_hmm_k2_m2_full",
+        }
+        if self.candidate_id not in expected_candidates:
+            raise ValueError("candidate identity is unsupported")
         if not self.folds:
             raise ValueError("walk-forward evaluation requires at least one planned fold")
         if tuple(result.fold_index for result in self.folds) != tuple(
@@ -381,8 +385,15 @@ def run_walk_forward_candidate(
 
     if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2}:
         raise ValueError("walk-forward runner supports xetra profile configurations 1 and 2")
-    if candidate.state_count not in profile.gaussian_hmm.candidate_states:
-        raise ValueError("resolved candidate state count is absent from model profile")
+    if candidate.model_family == "gaussian_hmm":
+        if candidate.state_count not in profile.gaussian_hmm.candidate_states:
+            raise ValueError("resolved Gaussian candidate state count is absent from model profile")
+    elif (
+        profile.gmm_hmm is None
+        or candidate.state_count != profile.gmm_hmm.state_count
+        or candidate.mixture_count != profile.gmm_hmm.mixture_count
+    ):
+        raise ValueError("resolved GMM-HMM candidate differs from the model profile")
     if candidate.feature_order == ():
         raise ValueError("resolved candidate feature order cannot be empty")
     if candidate.feature_dimension != len(candidate.feature_order):
@@ -466,6 +477,7 @@ def run_walk_forward_candidate(
                 train_model_count,
                 candidate.state_count,
                 candidate.feature_dimension,
+                candidate.mixture_count,
             )
             result = _valid_fold_result(
                 fold=fold,

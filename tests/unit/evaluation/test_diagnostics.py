@@ -12,6 +12,7 @@ from market_regime_engine.evaluation.diagnostics import (
     MINIMUM_TRAIN_SOFT_OCCUPANCY,
     dominant_state_durations,
     gaussian_hmm_parameter_count,
+    gmm_hmm_parameter_count,
     information_criteria,
     occupancy,
     switches_per_year,
@@ -44,6 +45,14 @@ def test_parameter_count_aic_and_bic_match_exact_formula() -> None:
     assert result.parameter_count == expected
     assert result.aic == pytest.approx(2 * expected - 2 * -123.5)
     assert result.bic == pytest.approx(expected * log(600) - 2 * -123.5)
+
+
+def test_gmm_hmm_information_criteria_include_mixture_weights_and_emissions() -> None:
+    count = gmm_hmm_parameter_count(2, 4, 2)
+    expected = (2 - 1) + 2 * (2 - 1) + 2 * (2 - 1) + 2 * 2 * 4 + 2 * 2 * 4 * 5 // 2
+    assert count == expected
+    result = information_criteria(-123.5, 600, 2, 4, mixture_count=2)
+    assert result.parameter_count == expected
 
 
 def test_information_criteria_fail_closed() -> None:

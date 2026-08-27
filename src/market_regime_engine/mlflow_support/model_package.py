@@ -42,17 +42,33 @@ def _scaler_payload(scaler: StandardScalerArtifact) -> dict[str, Any]:
 
 
 def _hmm_payload(hmm: GaussianHMMArtifact) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "covariance_type": hmm.covariance_type,
         "feature_order": list(hmm.feature_order),
         "full_covariances_hex": [
             [[_hex(value) for value in row] for row in matrix] for matrix in hmm.full_covariances
         ],
         "means_hex": [[_hex(value) for value in row] for row in hmm.means],
+        "model_family": hmm.model_family,
         "start_probabilities_hex": [_hex(value) for value in hmm.start_probabilities],
         "state_count": hmm.state_count,
         "transition_matrix_hex": [[_hex(value) for value in row] for row in hmm.transition_matrix],
     }
+    if hmm.model_family == "gmm_hmm":
+        assert hmm.mixture_weights is not None
+        assert hmm.mixture_means is not None
+        assert hmm.mixture_full_covariances is not None
+        payload["mixture_weights_hex"] = [
+            [_hex(value) for value in row] for row in hmm.mixture_weights
+        ]
+        payload["mixture_means_hex"] = [
+            [[_hex(value) for value in mixture] for mixture in state] for state in hmm.mixture_means
+        ]
+        payload["mixture_full_covariances_hex"] = [
+            [[[_hex(value) for value in row] for row in mixture] for mixture in state]
+            for state in hmm.mixture_full_covariances
+        ]
+    return payload
 
 
 def production_artifact_payload(artifact: ProductionModelArtifact) -> dict[str, Any]:
@@ -144,6 +160,33 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         variances=tuple(_from_hex(value) for value in scaler_payload["variances_hex"]),
         scales=tuple(_from_hex(value) for value in scaler_payload["scales_hex"]),
     )
+    model_family = str(hmm_payload.get("model_family", "gaussian_hmm"))
+    mixture_weights = (
+        None
+        if model_family == "gaussian_hmm"
+        else tuple(
+            tuple(_from_hex(value) for value in row) for row in hmm_payload["mixture_weights_hex"]
+        )
+    )
+    mixture_means = (
+        None
+        if model_family == "gaussian_hmm"
+        else tuple(
+            tuple(tuple(_from_hex(value) for value in mixture) for mixture in state)
+            for state in hmm_payload["mixture_means_hex"]
+        )
+    )
+    mixture_covariances = (
+        None
+        if model_family == "gaussian_hmm"
+        else tuple(
+            tuple(
+                tuple(tuple(_from_hex(value) for value in row) for row in mixture)
+                for mixture in state
+            )
+            for state in hmm_payload["mixture_full_covariances_hex"]
+        )
+    )
     hmm = GaussianHMMArtifact(
         state_count=int(hmm_payload["state_count"]),
         feature_order=tuple(hmm_payload["feature_order"]),
@@ -159,6 +202,10 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
             for matrix in hmm_payload["full_covariances_hex"]
         ),
         covariance_type=str(hmm_payload["covariance_type"]),
+        model_family=model_family,
+        mixture_weights=mixture_weights,
+        mixture_means=mixture_means,
+        mixture_full_covariances=mixture_covariances,
     )
     return ProductionModelArtifact(
         profile_id=str(payload["profile_id"]),

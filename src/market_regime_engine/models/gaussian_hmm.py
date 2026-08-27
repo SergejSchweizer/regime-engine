@@ -7,7 +7,7 @@ from math import isfinite
 
 import numpy as np
 import numpy.typing as npt
-from hmmlearn.hmm import GaussianHMM  # type: ignore[import-untyped]
+from hmmlearn.hmm import GMMHMM, GaussianHMM  # type: ignore[import-untyped]
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import ArrayF64, FilterResult, FitResult
@@ -82,12 +82,37 @@ def _validate_positive_definite(artifact: GaussianHMMArtifact) -> None:
 
 
 def gaussian_log_emissions(rows: npt.ArrayLike, artifact: GaussianHMMArtifact) -> ArrayF64:
-    """Return exact log Gaussian emission densities for every retained row/state."""
+    """Return exact Gaussian or two-component GMM emission densities by state."""
     values = _rows(rows, artifact.feature_dimension)
     _validate_positive_definite(artifact)
     output = np.empty((values.shape[0], artifact.state_count), dtype=np.float64)
     constant = artifact.feature_dimension * np.log(2.0 * np.pi)
     for state in range(artifact.state_count):
+        if artifact.model_family == "gmm_hmm":
+            assert artifact.mixture_weights is not None
+            assert artifact.mixture_means is not None
+            assert artifact.mixture_full_covariances is not None
+            mixture_log_density = np.empty((values.shape[0], 2), dtype=np.float64)
+            for mixture in range(2):
+                mean = np.asarray(artifact.mixture_means[state][mixture], dtype=np.float64)
+                covariance = np.asarray(
+                    artifact.mixture_full_covariances[state][mixture], dtype=np.float64
+                )
+                covariance = (covariance + covariance.T) / 2.0
+                sign, logdet = np.linalg.slogdet(covariance)
+                if sign <= 0.0 or not isfinite(float(logdet)):
+                    raise ValueError("mixture covariance determinant must be finite and positive")
+                centered = values - mean
+                solved = np.linalg.solve(covariance, centered.T).T
+                quadratic = np.einsum("ij,ij->i", centered, solved)
+                mixture_log_density[:, mixture] = np.log(
+                    artifact.mixture_weights[state][mixture]
+                ) - 0.5 * (constant + logdet + quadratic)
+            maximum = np.max(mixture_log_density, axis=1, keepdims=True)
+            output[:, state] = maximum[:, 0] + np.log(
+                np.exp(mixture_log_density - maximum).sum(axis=1)
+            )
+            continue
         mean = np.asarray(artifact.means[state], dtype=np.float64)
         covariance = np.asarray(artifact.full_covariances[state], dtype=np.float64)
         covariance = (covariance + covariance.T) / 2.0
@@ -166,10 +191,10 @@ class HmmlearnGaussianHMMAdapter:
             raise ValueError("feature_order must be non-empty and duplicate-free")
         self.feature_order = feature_order
         self.settings = settings or GaussianHMMSettings()
-        self._model: GaussianHMM | None = None
+        self._model: GaussianHMM | GMMHMM | None = None
         self._artifact: GaussianHMMArtifact | None = None
 
-    def _new_model(self, state_count: int, seed: int) -> GaussianHMM:
+    def _new_model(self, state_count: int, seed: int) -> GaussianHMM | GMMHMM:
         if state_count not in (2, 3, 4, 5):
             raise ValueError("Gaussian MVP state_count must be 2, 3, 4, or 5")
         settings = self.settings
@@ -212,7 +237,9 @@ class HmmlearnGaussianHMMAdapter:
             seed=seed,
         )
 
-    def _extract_model(self, model: GaussianHMM) -> GaussianHMMArtifact:
+    def _extract_model(self, model: GaussianHMM | GMMHMM) -> GaussianHMMArtifact:
+        if not isinstance(model, GaussianHMM):
+            raise TypeError("Gaussian adapter requires a GaussianHMM backend model")
         artifact = GaussianHMMArtifact(
             state_count=int(model.n_components),
             feature_order=self.feature_order,
@@ -274,3 +301,98 @@ class HmmlearnGaussianHMMAdapter:
         if not isfinite(score):
             raise ValueError("backend TEST reset score must be finite")
         return score
+
+
+class HmmlearnGMMHMMAdapter(HmmlearnGaussianHMMAdapter):
+    """hmmlearn full-covariance GMM-HMM with exactly two mixtures per state."""
+
+    def _new_model(self, state_count: int, seed: int) -> GMMHMM:
+        if state_count != 2:
+            raise ValueError("GMM-HMM candidate must be exactly K=2")
+        settings = self.settings
+        return GMMHMM(
+            n_components=state_count,
+            n_mix=2,
+            covariance_type=settings.covariance_type,
+            min_covar=settings.min_covar,
+            startprob_prior=settings.startprob_prior,
+            transmat_prior=settings.transmat_prior,
+            weights_prior=1.0,
+            means_prior=settings.means_prior,
+            means_weight=settings.means_weight,
+            covars_prior=settings.covars_prior,
+            covars_weight=settings.covars_weight,
+            algorithm="viterbi",
+            random_state=seed,
+            n_iter=settings.n_iter,
+            tol=settings.tol,
+            params="stmcw",
+            verbose=False,
+            implementation=settings.implementation,
+            init_params="stmcw",
+        )
+
+    def _extract_model(self, model: GaussianHMM | GMMHMM) -> GaussianHMMArtifact:
+        if not isinstance(model, GMMHMM):
+            raise TypeError("GMM adapter requires a GMMHMM backend model")
+        weights = np.asarray(model.weights_, dtype=np.float64)
+        mixture_means = np.asarray(model.means_, dtype=np.float64)
+        mixture_covariances = np.asarray(model.covars_, dtype=np.float64)
+        state_means = np.einsum("km,kmd->kd", weights, mixture_means)
+        state_covariances = np.empty(
+            (model.n_components, len(self.feature_order), len(self.feature_order)), dtype=np.float64
+        )
+        for state in range(model.n_components):
+            covariance = np.zeros_like(state_covariances[state])
+            for mixture in range(2):
+                delta = mixture_means[state, mixture] - state_means[state]
+                covariance += weights[state, mixture] * (
+                    mixture_covariances[state, mixture] + np.outer(delta, delta)
+                )
+            state_covariances[state] = covariance
+        artifact = GaussianHMMArtifact(
+            state_count=int(model.n_components),
+            feature_order=self.feature_order,
+            start_probabilities=tuple(float(value) for value in model.startprob_),
+            transition_matrix=tuple(
+                tuple(float(value) for value in row) for row in model.transmat_
+            ),
+            means=tuple(tuple(float(value) for value in row) for row in state_means),
+            full_covariances=tuple(
+                tuple(tuple(float(value) for value in row) for row in matrix)
+                for matrix in state_covariances
+            ),
+            model_family="gmm_hmm",
+            mixture_weights=tuple(tuple(float(value) for value in row) for row in weights),
+            mixture_means=tuple(
+                tuple(tuple(float(value) for value in mixture) for mixture in state)
+                for state in mixture_means
+            ),
+            mixture_full_covariances=tuple(
+                tuple(
+                    tuple(tuple(float(value) for value in row) for row in mixture)
+                    for mixture in state
+                )
+                for state in mixture_covariances
+            ),
+        )
+        _validate_positive_definite(artifact)
+        return artifact
+
+    def reconstruct(self, artifact: GaussianHMMArtifact) -> None:
+        if artifact.model_family != "gmm_hmm":
+            raise ValueError("GMM adapter requires a GMM-HMM artifact")
+        if artifact.feature_order != self.feature_order:
+            raise ValueError("artifact feature order does not match adapter feature order")
+        assert artifact.mixture_weights is not None
+        assert artifact.mixture_means is not None
+        assert artifact.mixture_full_covariances is not None
+        model = self._new_model(artifact.state_count, seed=0)
+        model.startprob_ = np.asarray(artifact.start_probabilities, dtype=np.float64)
+        model.transmat_ = np.asarray(artifact.transition_matrix, dtype=np.float64)
+        model.weights_ = np.asarray(artifact.mixture_weights, dtype=np.float64)
+        model.means_ = np.asarray(artifact.mixture_means, dtype=np.float64)
+        model.covars_ = np.asarray(artifact.mixture_full_covariances, dtype=np.float64)
+        model.n_features = artifact.feature_dimension
+        self._model = model
+        self._artifact = artifact

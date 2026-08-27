@@ -15,7 +15,9 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.states.alignment import StateAlignment
 from market_regime_engine.training.final_refit import (
+    _aligned_artifact,
     _refit_matrix,
     final_production_refit,
 )
@@ -51,6 +53,37 @@ def artifact() -> GaussianHMMArtifact:
             ((0.20, -0.02), (-0.02, 0.20)),
         ),
     )
+
+
+def test_alignment_preserves_gmm_mixture_emissions_in_persistent_order() -> None:
+    base = artifact()
+    gmm = replace(
+        base,
+        model_family="gmm_hmm",
+        mixture_weights=((0.7, 0.3), (0.4, 0.6)),
+        mixture_means=(
+            ((-1.2, -1.1), (-0.8, -0.9)),
+            ((0.8, 0.9), (1.2, 1.1)),
+        ),
+        mixture_full_covariances=(
+            (base.full_covariances[0], base.full_covariances[0]),
+            (base.full_covariances[1], base.full_covariances[1]),
+        ),
+    )
+    alignment = StateAlignment(
+        persistent_state_ids=("state_0", "state_1"),
+        persistent_to_fitted=(1, 0),
+        aligned_signatures=((1.0,), (-1.0,)),
+        matched_rms=(0.0, 0.0),
+        total_cost=0.0,
+        max_drift=0.0,
+        initial_alignment=False,
+    )
+
+    aligned = _aligned_artifact(gmm, alignment)
+
+    assert aligned.mixture_weights == (gmm.mixture_weights[1], gmm.mixture_weights[0])
+    assert aligned.mixture_means == (gmm.mixture_means[1], gmm.mixture_means[0])
 
 
 class DeterministicAdapter:

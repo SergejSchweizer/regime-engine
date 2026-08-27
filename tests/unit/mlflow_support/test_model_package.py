@@ -74,6 +74,31 @@ def test_json_roundtrip_is_lossless_and_deterministic() -> None:
     assert raw["hmm"]["full_covariances_hex"][0][0][1] == (0.2).hex()
 
 
+def test_gmm_hmm_json_roundtrip_preserves_two_mixture_emissions() -> None:
+    base = artifact()
+    hmm = base.hmm
+    gmm = replace(
+        hmm,
+        model_family="gmm_hmm",
+        mixture_weights=((0.5, 0.5), (0.5, 0.5)),
+        mixture_means=(
+            ((-1.2, 0.4), (-0.8, 0.6)),
+            ((1.3, -0.35), (1.7, -0.15)),
+        ),
+        mixture_full_covariances=(
+            (hmm.full_covariances[0], hmm.full_covariances[0]),
+            (hmm.full_covariances[1], hmm.full_covariances[1]),
+        ),
+    )
+    original = replace(base, candidate_id="gmm_hmm_k2_m2_full", hmm=gmm)
+
+    payload = production_artifact_json(original)
+    restored = production_artifact_from_json(payload)
+
+    assert restored == original
+    assert json.loads(payload)["hmm"]["model_family"] == "gmm_hmm"
+
+
 def test_save_load_package_roundtrip_and_immutability(tmp_path) -> None:
     original = artifact()
     package = save_production_package(original, tmp_path / "model")
