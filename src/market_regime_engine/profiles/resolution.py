@@ -235,8 +235,12 @@ def resolve_selected_feature_profile(
         raise ValueError("model profile feature-selection policy_id mismatch")
     if profile.feature_selection.static_features:
         raise ValueError("selected-feature profile cannot also configure static features")
-    if profile.gaussian_hmm.candidate_states != EXPECTED_XETRA_CANDIDATE_STATES:
-        raise ValueError("Xetra Gaussian candidate states must be exactly K2/K3/K4/K5")
+    expected_gaussian_states = (
+        (2, 3, 4) if profile.profile_config_version == 1 else EXPECTED_XETRA_CANDIDATE_STATES
+    )
+    if profile.gaussian_hmm.candidate_states != expected_gaussian_states:
+        expected_label = "/".join(f"K{state_count}" for state_count in expected_gaussian_states)
+        raise ValueError(f"Xetra Gaussian candidate states must be exactly {expected_label}")
     if profile.gaussian_hmm.covariance_type != "full":
         raise ValueError("Xetra Gaussian candidates must use full covariance")
     if not source_build_id or source_build_id.strip() != source_build_id:

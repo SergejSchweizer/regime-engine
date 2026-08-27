@@ -41,7 +41,7 @@ def xetra_mapping() -> dict[str, object]:
             "ranking_abs_tolerance": 1e-12,
         },
         "gaussian_hmm": {
-            "candidate_states": [2, 3, 4, 5],
+            "candidate_states": [2, 3, 4],
             "backend": "hmmlearn==0.3.3",
             "covariance_type": "full",
             "implementation": "log",
@@ -178,7 +178,7 @@ def test_walk_forward_guards(key: str, value: object, match: str) -> None:
 @pytest.mark.parametrize(
     ("key", "value", "match"),
     [
-        ("candidate_states", [2, 3], "K=2,3,4,5"),
+        ("candidate_states", [2, 2, 3], "unique ascending"),
         ("backend", "other", "backend"),
         ("implementation", "scaling", "implementation"),
         ("seeds", [11, 11], "unique"),
@@ -241,10 +241,23 @@ def test_xetra_pin_audit_rejects_agent_selected_constant() -> None:
 
 def test_xetra_v2_enables_gmm_hmm_k2_through_k5_with_two_mixtures() -> None:
     profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    assert profile.gaussian_hmm.candidate_states == (2, 3, 4, 5)
     assert tuple(
         (candidate.state_count, candidate.mixture_count) for candidate in profile.gmm_hmms
     ) == ((2, 2), (3, 2), (4, 2), (5, 2))
     assert all(candidate.covariance_type == "full" for candidate in profile.gmm_hmms)
+
+
+def test_xetra_v1_candidate_states_are_immutable_and_distinct_from_v2() -> None:
+    v1 = load_profile_mapping(xetra_mapping())
+    v2 = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    assert v1.gaussian_hmm.candidate_states == (2, 3, 4)
+    assert v2.gaussian_hmm.candidate_states == (2, 3, 4, 5)
+
+    raw = xetra_mapping()
+    _section(raw, "gaussian_hmm")["candidate_states"] = [2, 3, 4, 5]
+    with pytest.raises(ValueError, match="xetra v1 Gaussian candidates"):
+        load_profile_mapping(raw)
 
 
 def test_gmm_hmm_candidates_require_a_unique_sequence_of_supported_models() -> None:
