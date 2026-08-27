@@ -149,6 +149,17 @@ Candidates:
 | `gaussian_hmm_k3_full` | 3 | full |
 | `gaussian_hmm_k4_full` | 4 | full |
 
+Candidate identity is profile-versioned and exact. The public candidate universes are:
+
+```text
+v1 = gaussian_hmm_k2_full, gaussian_hmm_k3_full, gaussian_hmm_k4_full
+v2 = gaussian_hmm_k2_full through gaussian_hmm_k5_full,
+     gmm_hmm_k2_m2_full through gmm_hmm_k5_m2_full,
+     student_t_hmm_k2_full through student_t_hmm_k5_full
+```
+
+No candidate universe is inferred from its length. A missing, reordered or unexpected candidate fails closed.
+
 Backend/configuration:
 
 ```text

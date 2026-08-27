@@ -92,13 +92,13 @@ def grid(items: tuple[CandidateAggregate, ...]) -> CandidateGridEvaluation:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluations=tuple(evaluation(k) for k in (2, 3, 4, 5)),
+        evaluations=tuple(evaluation(k) for k in (2, 3, 4)),
         aggregates=items,
     )
 
 
 def base() -> tuple[CandidateAggregate, ...]:
-    return tuple(aggregate(k) for k in (2, 3, 4, 5))
+    return tuple(aggregate(k) for k in (2, 3, 4))
 
 
 def with_candidate(
@@ -186,7 +186,7 @@ def test_zero_eligible_candidates_fails_closed() -> None:
             bic_mean=None,
             aic_mean=None,
         )
-        for k in (2, 3, 4, 5)
+        for k in (2, 3, 4)
     )
     with pytest.raises(ValueError, match="no candidate passes"):
         select_statistical_champion(grid(rejected))

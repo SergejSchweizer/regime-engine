@@ -60,7 +60,7 @@ def resolved_profile() -> ResolvedSelectedFeatureProfile:
         final_features=FEATURES,
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        candidates=tuple(candidate(k) for k in (2, 3, 4, 5)),
+        candidates=tuple(candidate(k) for k in (2, 3, 4)),
     )
 
 
@@ -218,7 +218,6 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
     ]
     assert all(call[1] == FEATURES and call[2] == "build-1" for call in calls)
     aggregate_ids = tuple(item.candidate_id for item in result.aggregates)
@@ -226,14 +225,12 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
     )
     assert all(item.valid_fold_rate == 1.0 for item in result.aggregates)
     assert result.evaluation_plan_hash == plan.plan_hash
 
 
-def test_grid_includes_configured_gmm_hmm_k2_candidate() -> None:
-    base, profile, plan = base_evaluation()
+def test_grid_rejects_an_unexpected_extra_candidate_for_v1() -> None:
     resolved = resolved_profile()
     gmm_candidate = replace(
         candidate(2),
@@ -241,22 +238,8 @@ def test_grid_includes_configured_gmm_hmm_k2_candidate() -> None:
         model_family="gmm_hmm",
         mixture_count=2,
     )
-    with_gmm = replace(resolved, candidates=(*resolved.candidates, gmm_candidate))
-
-    def runner(rows, shared_plan, shared_profile, item, adapter_factory):
-        del rows, shared_plan, shared_profile, adapter_factory
-        return replace(base, candidate_id=item.candidate_id, state_count=item.state_count)
-
-    result = evaluate_candidate_grid(
-        source_rows(),
-        plan=plan,
-        profile=profile,
-        resolved_profile=with_gmm,
-        adapter_factory_builder=lambda item: DeterministicAdapter,
-        runner=runner,
-        max_workers=1,
-    )
-    assert result.evaluations[-1].candidate_id == "gmm_hmm_k2_m2_full"
+    with pytest.raises(ValueError, match="IDs/order"):
+        replace(resolved, candidates=(*resolved.candidates, gmm_candidate))
 
 
 def test_grid_fails_closed_on_runner_contract_drift() -> None:
