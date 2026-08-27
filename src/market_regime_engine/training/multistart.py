@@ -96,13 +96,18 @@ def _failure(seed: int, reason: str, *, converged: bool = False) -> StartDiagnos
     )
 
 
-def _better(candidate: FitResult, current: FitResult) -> bool:
-    difference = candidate.train_log_likelihood - current.train_log_likelihood
-    if difference > TRAIN_LOGLIK_TIE_ABS_TOLERANCE:
-        return True
-    if abs(difference) <= TRAIN_LOGLIK_TIE_ABS_TOLERANCE:
-        return candidate.seed < current.seed
-    return False
+def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
+    """Choose from starts tied to the exact global maximum likelihood."""
+
+    if not valid_results:
+        raise ValueError("winner selection requires successful starts")
+    global_maximum = max(result.train_log_likelihood for result in valid_results)
+    tied_results = tuple(
+        result
+        for result in valid_results
+        if global_maximum - result.train_log_likelihood <= TRAIN_LOGLIK_TIE_ABS_TOLERANCE
+    )
+    return min(tied_results, key=lambda result: result.seed)
 
 
 def run_multistart(
@@ -148,10 +153,7 @@ def run_multistart(
             f"failures={[item.failure_reason for item in diagnostics if not item.success]}"
         )
 
-    winner = valid_results[0]
-    for candidate in valid_results[1:]:
-        if _better(candidate, winner):
-            winner = candidate
+    winner = _anchored_winner(valid_results)
     return MultistartResult(
         state_count=state_count,
         winner=winner,
