@@ -307,8 +307,8 @@ class HmmlearnGMMHMMAdapter(HmmlearnGaussianHMMAdapter):
     """hmmlearn full-covariance GMM-HMM with exactly two mixtures per state."""
 
     def _new_model(self, state_count: int, seed: int) -> GMMHMM:
-        if state_count != 2:
-            raise ValueError("GMM-HMM candidate must be exactly K=2")
+        if state_count not in (2, 5):
+            raise ValueError("GMM-HMM candidate must be K=2 or K=5")
         settings = self.settings
         return GMMHMM(
             n_components=state_count,

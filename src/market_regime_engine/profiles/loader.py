@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any
@@ -57,7 +57,7 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     walk_forward_raw = _require_mapping(top.pop("walk_forward"), "walk_forward")
     gaussian_hmm_raw = _require_mapping(top.pop("gaussian_hmm"), "gaussian_hmm")
     gates_raw = _require_mapping(top.pop("gates"), "gates")
-    gmm_hmm_raw = top.pop("gmm_hmm", None)
+    gmm_hmms_raw = top.pop("gmm_hmms", ())
 
     fs_kwargs = _strict_kwargs(FeatureSelectionConfig, feature_selection_raw)
     fs_kwargs["static_features"] = tuple(fs_kwargs["static_features"])
@@ -65,10 +65,11 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     hmm_kwargs["candidate_states"] = tuple(hmm_kwargs["candidate_states"])
     hmm_kwargs["seeds"] = tuple(hmm_kwargs["seeds"])
 
-    gmm_hmm = (
-        None
-        if gmm_hmm_raw is None
-        else GMMHMMConfig(**_strict_kwargs(GMMHMMConfig, _require_mapping(gmm_hmm_raw, "gmm_hmm")))
+    if not isinstance(gmm_hmms_raw, Sequence) or isinstance(gmm_hmms_raw, (str, bytes)):
+        raise ValueError("gmm_hmms must be a sequence of mappings")
+    gmm_hmms = tuple(
+        GMMHMMConfig(**_strict_kwargs(GMMHMMConfig, _require_mapping(item, "gmm_hmms item")))
+        for item in gmm_hmms_raw
     )
     return ModelProfile(
         **top,
@@ -76,7 +77,7 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
         walk_forward=WalkForwardConfig(**_strict_kwargs(WalkForwardConfig, walk_forward_raw)),
         gaussian_hmm=GaussianHMMConfig(**hmm_kwargs),
         gates=EvaluationGates(**_strict_kwargs(EvaluationGates, gates_raw)),
-        gmm_hmm=gmm_hmm,
+        gmm_hmms=gmm_hmms,
     )
 
 

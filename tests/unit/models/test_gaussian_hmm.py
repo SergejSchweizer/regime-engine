@@ -110,18 +110,19 @@ def test_bad_rows_and_state_count_fail_closed() -> None:
         adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=6, seed=11)
 
 
-def test_gmm_hmm_k2_with_two_mixtures_extracts_and_filters_exact_mixtures() -> None:
+@pytest.mark.parametrize("state_count", (2, 5))
+def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
+    state_count: int,
+) -> None:
     rng = np.random.default_rng(109)
     values = np.vstack(
-        (
-            rng.normal(loc=(-3.0, -3.0), scale=0.2, size=(80, 2)),
-            rng.normal(loc=(-1.0, -1.0), scale=0.2, size=(80, 2)),
-            rng.normal(loc=(1.0, 1.0), scale=0.2, size=(80, 2)),
-            rng.normal(loc=(3.0, 3.0), scale=0.2, size=(80, 2)),
+        tuple(
+            rng.normal(loc=(center, -center), scale=0.2, size=(80, 2))
+            for center in np.linspace(-4.5, 4.5, num=10)
         )
     )
     adapter = HmmlearnGMMHMMAdapter(("a", "b"))
-    result = adapter.fit(values, state_count=2, seed=11)
+    result = adapter.fit(values, state_count=state_count, seed=11)
 
     assert result.artifact.model_family == "gmm_hmm"
     assert result.artifact.mixture_weights is not None
@@ -132,5 +133,5 @@ def test_gmm_hmm_k2_with_two_mixtures_extracts_and_filters_exact_mixtures() -> N
     restored = HmmlearnGMMHMMAdapter(("a", "b"))
     restored.reconstruct(result.artifact)
     assert restored.extract() == result.artifact
-    with pytest.raises(ValueError, match="exactly K=2"):
+    with pytest.raises(ValueError, match="K=2 or K=5"):
         adapter.fit(values, state_count=3, seed=11)

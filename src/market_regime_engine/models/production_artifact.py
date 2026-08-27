@@ -55,10 +55,11 @@ class ProductionModelArtifact:
         expected_candidates = {
             f"gaussian_hmm_k{self.state_count}_full",
             "gmm_hmm_k2_m2_full",
+            "gmm_hmm_k5_m2_full",
         }
         if self.candidate_id not in expected_candidates:
             raise ValueError("production candidate identity is unsupported")
-        if self.candidate_id == "gmm_hmm_k2_m2_full" and self.hmm.model_family != "gmm_hmm":
+        if self.candidate_id.startswith("gmm_hmm_") and self.hmm.model_family != "gmm_hmm":
             raise ValueError("GMM-HMM production candidate requires a GMM-HMM artifact")
         if not self.source_build_id or not self.source_data_sha256:
             raise ValueError("production source identity cannot be empty")
