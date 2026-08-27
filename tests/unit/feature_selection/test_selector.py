@@ -120,6 +120,16 @@ def test_anchored_medoid_tie_resolution_rejects_pairwise_tolerance_chain() -> No
     assert reversed_winner.feature_name == "b"
 
 
+def test_anchored_medoid_winner_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="requires eligible scores"):
+        _anchored_medoid_winner((), tolerance=1e-12)
+    with pytest.raises(ValueError, match="requires medoid scores"):
+        _anchored_medoid_winner(
+            (FeatureScore("a", 0, 1.0, 1.0, None, True),),
+            tolerance=1e-12,
+        )
+
+
 def test_missing_columns_empty_rows_no_eligible_and_complete_row_gate_fail_closed() -> None:
     block = FeatureBlock("semantic", ("a", "b"))
     stage_policy = padded_policy(block)
