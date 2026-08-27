@@ -128,6 +128,29 @@ class GMMHMMConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StudentTHMMConfig:
+    candidate_states: tuple[int, ...]
+    backend: str
+    covariance_type: str
+    minimum_nu: float
+    maximum_nu: float
+    initial_nu: float
+    n_iter: int
+    tol: float
+    min_covar: float
+
+    def __post_init__(self) -> None:
+        if self.candidate_states != (2, 3, 4, 5):
+            raise ValueError("Student-t candidates must be exactly K=2,3,4,5")
+        if self.backend != "native-baum-welch-v1" or self.covariance_type != "full":
+            raise ValueError("unsupported Student-t HMM backend or covariance type")
+        if not 2.0 < self.minimum_nu < self.initial_nu < self.maximum_nu:
+            raise ValueError("Student-t degrees-of-freedom bounds are inconsistent")
+        if self.n_iter < 1 or self.tol <= 0.0 or self.min_covar <= 0.0:
+            raise ValueError("Student-t optimizer settings must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationGates:
     minimum_train_hard_occupancy: float
     minimum_train_soft_occupancy: float
@@ -169,6 +192,7 @@ class ModelProfile:
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
     gmm_hmms: tuple[GMMHMMConfig, ...] = ()
+    student_t_hmm: StudentTHMMConfig | None = None
 
     def __post_init__(self) -> None:
         identity_fields = (

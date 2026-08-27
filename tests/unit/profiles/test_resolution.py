@@ -124,7 +124,7 @@ def test_xetra_v2_resolution_adds_gmm_hmm_k2_through_k5_with_two_mixtures() -> N
         selection,
         source_build_id="build-1",
     )
-    gmm_candidates = resolved.candidates[-4:]
+    gmm_candidates = resolved.candidates[-8:-4]
     assert tuple(candidate.candidate_id for candidate in gmm_candidates) == (
         "gmm_hmm_k2_m2_full",
         "gmm_hmm_k3_m2_full",
@@ -135,6 +135,17 @@ def test_xetra_v2_resolution_adds_gmm_hmm_k2_through_k5_with_two_mixtures() -> N
         (candidate.state_count, candidate.mixture_count) for candidate in gmm_candidates
     ) == ((2, 2), (3, 2), (4, 2), (5, 2))
     assert all(candidate.feature_order == selection.final_features for candidate in gmm_candidates)
+    student_candidates = resolved.candidates[-4:]
+    assert tuple(candidate.candidate_id for candidate in student_candidates) == (
+        "student_t_hmm_k2_full",
+        "student_t_hmm_k3_full",
+        "student_t_hmm_k4_full",
+        "student_t_hmm_k5_full",
+    )
+    assert all(candidate.model_family == "student_t_hmm" for candidate in student_candidates)
+    assert all(
+        candidate.feature_order == selection.final_features for candidate in student_candidates
+    )
 
 
 def test_candidate_comparison_validation_fails_before_mismatched_feature_contract() -> None:
