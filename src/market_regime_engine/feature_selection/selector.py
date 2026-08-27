@@ -86,20 +86,29 @@ def _eligible_score(
     )
 
 
-def _candidate_is_better(
-    candidate: FeatureScore,
-    current: FeatureScore,
+def _anchored_medoid_winner(
+    eligible_scores: tuple[FeatureScore, ...],
     tolerance: float,
-) -> bool:
-    if candidate.medoid_score is None or current.medoid_score is None:
-        raise ValueError("eligible candidate comparison requires medoid scores")
-    score_difference = candidate.medoid_score - current.medoid_score
-    if abs(score_difference) > tolerance:
-        return score_difference < 0.0
-    coverage_difference = candidate.coverage - current.coverage
-    if abs(coverage_difference) > tolerance:
-        return coverage_difference > 0.0
-    return candidate.configured_position < current.configured_position
+) -> FeatureScore:
+    """Resolve Stage-1 ties against global score and coverage anchors."""
+
+    if not eligible_scores:
+        raise ValueError("Stage-1 winner selection requires eligible scores")
+
+    def medoid_score(score: FeatureScore) -> float:
+        if score.medoid_score is None:
+            raise ValueError("eligible candidate comparison requires medoid scores")
+        return score.medoid_score
+
+    minimum_medoid = min(medoid_score(score) for score in eligible_scores)
+    medoid_tied = tuple(
+        score for score in eligible_scores if medoid_score(score) <= minimum_medoid + tolerance
+    )
+    maximum_coverage = max(score.coverage for score in medoid_tied)
+    coverage_tied = tuple(
+        score for score in medoid_tied if score.coverage >= maximum_coverage - tolerance
+    )
+    return min(coverage_tied, key=lambda score: score.configured_position)
 
 
 def select_stage1_block(
@@ -163,10 +172,7 @@ def select_stage1_block(
         for score in initial_scores
     )
     eligible_final = tuple(score for score in final_scores if score.eligible)
-    winner = eligible_final[0]
-    for candidate in eligible_final[1:]:
-        if _candidate_is_better(candidate, winner, policy.numeric_tie_abs_tolerance):
-            winner = candidate
+    winner = _anchored_medoid_winner(eligible_final, policy.numeric_tie_abs_tolerance)
     return BlockSelectionEvidence(
         block_id=block.block_id,
         complete_observation_count=complete_count,

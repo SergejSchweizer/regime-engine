@@ -4,8 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from market_regime_engine.feature_selection import FeatureBlock, FeatureSelectionPolicy
+from market_regime_engine.feature_selection import (
+    FeatureBlock,
+    FeatureScore,
+    FeatureSelectionPolicy,
+)
 from market_regime_engine.feature_selection.selector import (
+    _anchored_medoid_winner,
     average_rank_spearman,
     select_stage1,
     select_stage1_block,
@@ -99,6 +104,20 @@ def test_tie_break_uses_coverage_then_configured_position() -> None:
     equal = pd.DataFrame({"a": base, "b": base})
     equal_evidence = select_stage1_block(equal, block, padded_policy(block))
     assert equal_evidence.winner == "a"
+
+
+def test_anchored_medoid_tie_resolution_rejects_pairwise_tolerance_chain() -> None:
+    scores = (
+        FeatureScore("a", 0, 0.90, 1.0, 0.0, True),
+        FeatureScore("b", 1, 0.95, 1.0, 0.75e-12, True),
+        FeatureScore("c", 2, 0.99, 1.0, 1.5e-12, True),
+    )
+
+    winner = _anchored_medoid_winner(scores, tolerance=1e-12)
+    reversed_winner = _anchored_medoid_winner(tuple(reversed(scores)), tolerance=1e-12)
+
+    assert winner.feature_name == "b"
+    assert reversed_winner.feature_name == "b"
 
 
 def test_missing_columns_empty_rows_no_eligible_and_complete_row_gate_fail_closed() -> None:
