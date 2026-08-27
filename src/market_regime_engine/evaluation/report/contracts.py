@@ -8,13 +8,13 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from math import isfinite
 from string import hexdigits
-from typing import Any, TypeAlias
+from typing import Any
 
 EVALUATION_REPORT_SCHEMA_VERSION = "EvaluationReport.v1"
 
-JsonScalar: TypeAlias = str | int | float | bool | None
-FrozenJson: TypeAlias = JsonScalar | tuple["FrozenJson", ...] | tuple[tuple[str, "FrozenJson"], ...]
-JsonObject: TypeAlias = tuple[tuple[str, FrozenJson], ...]
+type JsonScalar = str | int | float | bool | None
+type FrozenJson = JsonScalar | tuple["FrozenJson", ...] | tuple[tuple[str, "FrozenJson"], ...]
+type JsonObject = tuple[tuple[str, FrozenJson], ...]
 
 _FORBIDDEN_KEYS = {
     "raw_source_rows",
@@ -35,7 +35,11 @@ def _text(value: str, field_name: str) -> None:
 
 
 def _sha(value: str, field_name: str) -> None:
-    if len(value) != 64 or value != value.lower() or any(character not in hexdigits for character in value):
+    if (
+        len(value) != 64
+        or value != value.lower()
+        or any(character not in hexdigits for character in value)
+    ):
         raise ValueError(f"{field_name} must be a lowercase SHA-256 digest")
 
 
@@ -299,7 +303,9 @@ class EvaluationReport:
             ):
                 raise ValueError("candidate feature-selection hashes differ from report metadata")
         if self.feature_selection.final_features != self.metadata.feature_order:
-            raise ValueError("feature-selection final features differ from frozen report feature order")
+            raise ValueError(
+                "feature-selection final features differ from frozen report feature order"
+            )
         if (
             self.feature_selection.feature_selection_definition_hash
             != self.metadata.feature_selection_definition_hash
@@ -309,9 +315,15 @@ class EvaluationReport:
             raise ValueError("feature-selection hashes differ from report metadata")
         if self.comparison.champion_candidate_id not in self.configured_candidate_ids:
             raise ValueError("comparison champion is outside configured candidates")
-        if any(value not in self.configured_candidate_ids for value in self.comparison.ranked_candidate_ids):
+        if any(
+            value not in self.configured_candidate_ids
+            for value in self.comparison.ranked_candidate_ids
+        ):
             raise ValueError("comparison ranking contains an unknown candidate")
-        if any(value not in self.planned_fold_ids for value in self.comparison.common_valid_fold_ids):
+        if any(
+            value not in self.planned_fold_ids
+            for value in self.comparison.common_valid_fold_ids
+        ):
             raise ValueError("comparison common support contains an unknown fold")
 
 
