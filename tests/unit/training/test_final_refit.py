@@ -13,12 +13,18 @@ from market_regime_engine.evaluation.walk_forward import run_walk_forward_candid
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
+from market_regime_engine.models.gaussian_hmm import (
+    HmmlearnGaussianHMMAdapter,
+    HmmlearnGMMHMMAdapter,
+)
 from market_regime_engine.models.protocols import FilterResult, FitResult
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment
 from market_regime_engine.training.final_refit import (
     _aligned_artifact,
+    _default_adapter_builder,
     _refit_matrix,
     final_production_refit,
 )
@@ -85,6 +91,33 @@ def test_alignment_preserves_gmm_mixture_emissions_in_persistent_order() -> None
 
     assert aligned.mixture_weights == (gmm.mixture_weights[1], gmm.mixture_weights[0])
     assert aligned.mixture_means == (gmm.mixture_means[1], gmm.mixture_means[0])
+
+
+def test_default_adapter_builder_derives_student_t_settings_and_rejects_missing_profile() -> None:
+    student_candidate = replace(
+        candidate(),
+        candidate_id="student_t_hmm_k2_full",
+        model_family="student_t_hmm",
+    )
+    with pytest.raises(ValueError, match="active model profile"):
+        _default_adapter_builder(None, student_candidate)()
+
+    profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    student = _default_adapter_builder(profile, student_candidate)()
+    assert isinstance(student, StudentTHMMAdapter)
+    assert student.settings.maximum_nu == profile.student_t_hmm.maximum_nu
+
+    gmm = _default_adapter_builder(
+        profile,
+        replace(
+            candidate(),
+            candidate_id="gmm_hmm_k2_m2_full",
+            model_family="gmm_hmm",
+            mixture_count=2,
+        ),
+    )()
+    assert isinstance(gmm, HmmlearnGMMHMMAdapter)
+    assert isinstance(_default_adapter_builder(profile, candidate())(), HmmlearnGaussianHMMAdapter)
 
 
 class DeterministicAdapter:

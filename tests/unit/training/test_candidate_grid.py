@@ -16,7 +16,12 @@ from market_regime_engine.evaluation.walk_forward import (
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
+from market_regime_engine.models.gaussian_hmm import (
+    HmmlearnGaussianHMMAdapter,
+    HmmlearnGMMHMMAdapter,
+)
 from market_regime_engine.models.protocols import FilterResult, FitResult
+from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -25,6 +30,7 @@ from market_regime_engine.profiles.resolution import (
 from market_regime_engine.training.candidate_grid import (
     CANDIDATE_VALID_FOLD_RATE_GATE,
     CandidateAggregate,
+    _default_adapter_builder,
     aggregate_candidate,
     evaluate_candidate_grid,
 )
@@ -229,6 +235,47 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
     )
     assert all(item.valid_fold_rate == 1.0 for item in result.aggregates)
     assert result.evaluation_plan_hash == plan.plan_hash
+
+
+def test_grid_default_adapter_factory_and_profile_derived_model_families() -> None:
+    base, profile, plan = base_evaluation()
+    factories = []
+
+    def runner(rows, shared_plan, shared_profile, item, adapter_factory):
+        del rows, shared_plan, shared_profile
+        factories.append(adapter_factory)
+        return replace(base, candidate_id=item.candidate_id, state_count=item.state_count)
+
+    evaluate_candidate_grid(
+        source_rows(),
+        plan=plan,
+        profile=profile,
+        resolved_profile=resolved_profile(),
+        runner=runner,
+    )
+
+    assert all(isinstance(factory(), HmmlearnGaussianHMMAdapter) for factory in factories)
+    student_profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    student = _default_adapter_builder(
+        student_profile,
+        replace(
+            candidate(2),
+            candidate_id="student_t_hmm_k2_full",
+            model_family="student_t_hmm",
+        ),
+    )()
+    assert isinstance(student, StudentTHMMAdapter)
+    assert student.settings.initial_nu == student_profile.student_t_hmm.initial_nu
+    gmm = _default_adapter_builder(
+        student_profile,
+        replace(
+            candidate(2),
+            candidate_id="gmm_hmm_k2_m2_full",
+            model_family="gmm_hmm",
+            mixture_count=2,
+        ),
+    )()
+    assert isinstance(gmm, HmmlearnGMMHMMAdapter)
 
 
 def test_grid_rejects_an_unexpected_extra_candidate_for_v1() -> None:
