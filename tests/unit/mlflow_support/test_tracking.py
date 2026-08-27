@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from market_regime_engine.evaluation.walk_forward_splits import (
     WalkForwardPlan,
     plan_walk_forward,
 )
+from market_regime_engine.mlflow_support import tracking
 from market_regime_engine.mlflow_support.plots import (
     candidate_covariance_scale,
     render_candidate_comparison,
@@ -64,6 +66,31 @@ class FakeTrackingPort:
 
     def end_run(self, run_id: str) -> None:
         self.ended_runs.append(run_id)
+
+
+class _ImmediateFuture:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def result(self) -> object:
+        return self._value
+
+
+class _ImmediateProcessPoolExecutor:
+    worker_limits: ClassVar[list[int]] = []
+
+    def __init__(self, *, max_workers: int) -> None:
+        self.worker_limits.append(max_workers)
+
+    def __enter__(self) -> _ImmediateProcessPoolExecutor:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def submit(self, function: object, *args: object) -> _ImmediateFuture:
+        assert callable(function)
+        return _ImmediateFuture(function(*args))
 
 
 def candidate() -> ResolvedCandidateProfile:
@@ -180,6 +207,7 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
         evaluations=(evaluation,),
         statistical_selection_result="pending_candidate_grid",
         artifact_root=tmp_path,
+        max_workers=1,
     )
 
     assert result.parent_run_id == "run-1"
@@ -291,6 +319,27 @@ def test_tracking_writes_hierarchy_histories_parameters_heatmaps_and_manifest(
     ]
     assert parent_manifest[0]["y_axis_label"] == "Absolute OOS score and gap to best OOS score"
     assert tuple(parent_manifest[0]["image_dimensions_inches"]) == (11.0, 8.0)
+
+
+def test_tracking_uses_process_workers_for_parallel_artifact_rendering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation, plan = valid_evaluation()
+    _ImmediateProcessPoolExecutor.worker_limits.clear()
+    monkeypatch.setattr(tracking, "ProcessPoolExecutor", _ImmediateProcessPoolExecutor)
+
+    track_walk_forward_evaluations(
+        FakeTrackingPort(),
+        source_lineage=lineage(),
+        plan=plan,
+        evaluations=(evaluation,),
+        statistical_selection_result="pending_candidate_grid",
+        artifact_root=tmp_path,
+        max_workers=2,
+    )
+
+    assert _ImmediateProcessPoolExecutor.worker_limits == [2]
 
 
 def test_invalid_fold_is_kept_in_parquet_and_creates_plot_gaps_without_fold_artifacts(

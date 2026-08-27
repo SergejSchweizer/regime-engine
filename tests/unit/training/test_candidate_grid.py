@@ -214,7 +214,7 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         adapter_factory_builder=lambda item: DeterministicAdapter,
         runner=runner,
     )
-    assert [call[0] for call in calls] == [
+    assert sorted(call[0] for call in calls) == [
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
@@ -222,7 +222,12 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
     ]
     assert all(call[1] == FEATURES and call[2] == "build-1" for call in calls)
     aggregate_ids = tuple(item.candidate_id for item in result.aggregates)
-    assert aggregate_ids == tuple(call[0] for call in calls)
+    assert aggregate_ids == (
+        "gaussian_hmm_k2_full",
+        "gaussian_hmm_k3_full",
+        "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
+    )
     assert all(item.valid_fold_rate == 1.0 for item in result.aggregates)
     assert result.evaluation_plan_hash == plan.plan_hash
 

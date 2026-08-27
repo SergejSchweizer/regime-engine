@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -292,6 +294,107 @@ def _aligned_parameter_payload(
     }
 
 
+def _render_candidate_artifacts(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+    root: Path,
+) -> tuple[PlotManifestEntry, ...]:
+    """Render one candidate's independent plot work in a worker process."""
+
+    entries = [
+        render_fold_history(evaluation, plan, metric_key, root)
+        for metric_key in fold_history_metric_keys()
+    ]
+    if not evaluation.valid_folds:
+        return tuple(entries)
+    entries.extend(
+        (
+            render_state_occupancy_table(evaluation, plan, root),
+            render_oos_state_timeline(evaluation, plan, root),
+            render_state_transition_history(evaluation, plan, root),
+            render_state_feature_influence(evaluation, root),
+        )
+    )
+    shared_scale = candidate_covariance_scale(evaluation)
+    for result in evaluation.folds:
+        if not result.valid:
+            continue
+        entries.append(render_transition_heatmap(evaluation, result, root))
+        for state_index in range(evaluation.state_count):
+            entries.append(
+                render_covariance_heatmap(
+                    evaluation,
+                    result,
+                    state_index,
+                    shared_scale,
+                    root,
+                )
+            )
+    return tuple(entries)
+
+
+def _render_parent_plot(
+    plot_type: str,
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    root: Path,
+) -> PlotManifestEntry:
+    """Render one independent parent comparison plot in a worker process."""
+
+    if plot_type == "candidate_comparison":
+        return render_candidate_comparison(evaluations, plan, root)
+    if plot_type == "candidate_oos_gap_heatmap":
+        return render_candidate_oos_gap_heatmap(evaluations, plan, root)
+    if plot_type == "candidate_oos_summary":
+        return render_candidate_oos_summary(evaluations, plan, root)
+    raise ValueError(f"unsupported parent plot type: {plot_type}")
+
+
+def _prepare_plot_entries(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    root: Path,
+    max_workers: int | None,
+) -> tuple[dict[str, tuple[PlotManifestEntry, ...]], tuple[PlotManifestEntry, ...]]:
+    """Render independent plot work concurrently while preserving artifact order."""
+
+    worker_limit = (
+        min(len(evaluations), os.cpu_count() or 1) if max_workers is None else max_workers
+    )
+    if worker_limit < 1:
+        raise ValueError("max_workers must be at least 1")
+    parent_plot_types = (
+        "candidate_comparison",
+        "candidate_oos_gap_heatmap",
+        "candidate_oos_summary",
+    )
+    if worker_limit == 1:
+        candidate_entries = [
+            _render_candidate_artifacts(evaluation, plan, root) for evaluation in evaluations
+        ]
+        parent_entries = [
+            _render_parent_plot(plot_type, evaluations, plan, root)
+            for plot_type in parent_plot_types
+        ]
+    else:
+        with ProcessPoolExecutor(max_workers=worker_limit) as executor:
+            candidate_futures = [
+                executor.submit(_render_candidate_artifacts, evaluation, plan, root)
+                for evaluation in evaluations
+            ]
+            parent_futures = [
+                executor.submit(_render_parent_plot, plot_type, evaluations, plan, root)
+                for plot_type in parent_plot_types
+            ]
+            candidate_entries = [future.result() for future in candidate_futures]
+            parent_entries = [future.result() for future in parent_futures]
+    by_candidate = {
+        evaluation.candidate_id: entries
+        for evaluation, entries in zip(evaluations, candidate_entries, strict=True)
+    }
+    return by_candidate, tuple(parent_entries)
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n"
@@ -337,8 +440,9 @@ def track_walk_forward_evaluations(
     evaluations: tuple[WalkForwardEvaluation, ...],
     statistical_selection_result: str,
     artifact_root: str | Path,
+    max_workers: int | None = None,
 ) -> EvaluationTrackingResult:
-    """Persist parent/candidate/fold MLflow evidence without changing statistical decisions."""
+    """Persist MLflow evidence with parallel local rendering and ordered MLflow writes."""
 
     invalid_selection_result = (
         not statistical_selection_result
@@ -371,8 +475,13 @@ def track_walk_forward_evaluations(
         },
     )
 
+    candidate_plot_entries, parent_entries = _prepare_plot_entries(
+        ordered,
+        plan,
+        root,
+        max_workers,
+    )
     candidate_run_ids: list[tuple[str, str]] = []
-    parent_entries: list[PlotManifestEntry] = []
     for evaluation in ordered:
         candidate_run_id = port.start_run(
             run_name=evaluation.candidate_id,
@@ -409,20 +518,7 @@ def track_walk_forward_evaluations(
         port.log_artifact(candidate_run_id, str(timeline_path), "evaluation")
         port.log_artifact(candidate_run_id, str(metrics_path), "evaluation")
 
-        entries = [
-            render_fold_history(evaluation, plan, metric_key, root)
-            for metric_key in fold_history_metric_keys()
-        ]
-        if evaluation.valid_folds:
-            entries.extend(
-                (
-                    render_state_occupancy_table(evaluation, plan, root),
-                    render_oos_state_timeline(evaluation, plan, root),
-                    render_state_transition_history(evaluation, plan, root),
-                    render_state_feature_influence(evaluation, root),
-                )
-            )
-        shared_scale = candidate_covariance_scale(evaluation) if evaluation.valid_folds else None
+        entries = list(candidate_plot_entries[evaluation.candidate_id])
         for result, planned in zip(evaluation.folds, plan.folds, strict=True):
             fold_run_id = port.start_run(
                 run_name=result.fold_id,
@@ -447,20 +543,23 @@ def track_walk_forward_evaluations(
             parameter_path = candidate_dir / result.fold_id / "aligned_parameters.json"
             _write_json(parameter_path, _aligned_parameter_payload(evaluation, result))
             port.log_artifact(fold_run_id, str(parameter_path), "model_evidence")
-            transition_entry = render_transition_heatmap(evaluation, result, root)
-            entries.append(transition_entry)
+            transition_entry = next(
+                entry
+                for entry in entries
+                if entry.plot_type == "transition_heatmap" and entry.fold_id == result.fold_id
+            )
             port.log_artifact(fold_run_id, transition_entry.png_path, "plots")
-            if shared_scale is None:
-                raise ValueError("valid fold requires a candidate covariance scale")
             for state_index in range(evaluation.state_count):
-                covariance_entry = render_covariance_heatmap(
-                    evaluation,
-                    result,
-                    state_index,
-                    shared_scale,
-                    root,
+                if result.alignment is None:
+                    raise ValueError("valid fold requires state alignment")
+                covariance_entry = next(
+                    entry
+                    for entry in entries
+                    if entry.plot_type == "full_covariance_heatmap"
+                    and entry.fold_id == result.fold_id
+                    and entry.legend_entries
+                    == (result.alignment.persistent_state_ids[state_index],)
                 )
-                entries.append(covariance_entry)
                 port.log_artifact(fold_run_id, covariance_entry.png_path, "plots")
             port.end_run(fold_run_id)
 
@@ -479,11 +578,8 @@ def track_walk_forward_evaluations(
         port.log_artifact(candidate_run_id, str(manifest_path), "evaluation")
         port.end_run(candidate_run_id)
 
-    comparison = render_candidate_comparison(ordered, plan, root)
-    parent_entries.append(comparison)
-    parent_entries.append(render_candidate_oos_gap_heatmap(ordered, plan, root))
-    parent_entries.append(render_candidate_oos_summary(ordered, plan, root))
-    port.log_artifact(parent_run_id, comparison.png_path, "plots")
+    for entry in parent_entries:
+        port.log_artifact(parent_run_id, entry.png_path, "plots")
     parent_manifest_path = root / "parent" / "plot_manifest.json"
     _write_json(
         parent_manifest_path,
