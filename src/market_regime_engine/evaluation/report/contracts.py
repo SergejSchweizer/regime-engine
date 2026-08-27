@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from math import isfinite
 from string import hexdigits
-from typing import Any
+from typing import Any, cast
 
 EVALUATION_REPORT_SCHEMA_VERSION = "EvaluationReport.v1"
 
@@ -87,7 +87,7 @@ def object_payload(value: dict[str, Any]) -> JsonObject:
     frozen = freeze_json(value)
     if not _is_object(frozen):
         raise TypeError("report section payload must be an object")
-    return frozen
+    return cast(JsonObject, frozen)
 
 
 def thaw_json(value: FrozenJson) -> Any:
@@ -321,8 +321,7 @@ class EvaluationReport:
         ):
             raise ValueError("comparison ranking contains an unknown candidate")
         if any(
-            value not in self.planned_fold_ids
-            for value in self.comparison.common_valid_fold_ids
+            value not in self.planned_fold_ids for value in self.comparison.common_valid_fold_ids
         ):
             raise ValueError("comparison common support contains an unknown fold")
 
