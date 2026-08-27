@@ -20,7 +20,7 @@ def test_xetra_v1_loads_and_matches_every_pinned_contract_value() -> None:
     assert profile.challenger_alias == "challenger"
     assert profile.feature_selection.policy_id == "xetra_semantic_medoid_v1"
     assert profile.feature_selection.static_features == ()
-    assert profile.gaussian_hmm.candidate_states == (2, 3, 4, 5)
+    assert profile.gaussian_hmm.candidate_states == (2, 3, 4)
     assert profile.gaussian_hmm.covariance_type == "full"
     assert profile.walk_forward.ranking_abs_tolerance == 1e-12
     assert len(profile.profile_hash) == 64

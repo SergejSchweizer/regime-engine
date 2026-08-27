@@ -88,8 +88,15 @@ class GaussianHMMConfig:
     init_params: str
 
     def __post_init__(self) -> None:
-        if self.candidate_states != (2, 3, 4, 5):
-            raise ValueError("Gaussian MVP candidates must be exactly K=2,3,4,5")
+        if (
+            not self.candidate_states
+            or any(state_count < 2 for state_count in self.candidate_states)
+            or tuple(sorted(self.candidate_states)) != self.candidate_states
+            or len(set(self.candidate_states)) != len(self.candidate_states)
+        ):
+            raise ValueError(
+                "Gaussian candidate_states must be unique ascending integers with K >= 2"
+            )
         if self.backend != "hmmlearn==0.3.3":
             raise ValueError("unsupported Gaussian HMM backend")
         if self.covariance_type != "full":
@@ -214,6 +221,11 @@ class ModelProfile:
         )
         if len(set(gmm_identities)) != len(gmm_identities):
             raise ValueError("GMM-HMM candidates must be unique by state and mixture count")
+        if self.profile_config_version == 1:
+            if self.gaussian_hmm.candidate_states != (2, 3, 4):
+                raise ValueError("xetra v1 Gaussian candidates must be exactly K=2,3,4")
+            if self.gmm_hmms or self.student_t_hmm is not None:
+                raise ValueError("xetra v1 supports only its immutable Gaussian candidate set")
 
     def canonical_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -249,6 +261,7 @@ def assert_xetra_v1_pins(profile: ModelProfile) -> None:
         "model_train": wf.minimum_model_train_observations == 504,
         "model_test": wf.minimum_model_test_observations == 42,
         "ranking_tie": wf.ranking_abs_tolerance == 1e-12,
+        "gaussian_candidates": hmm.candidate_states == (2, 3, 4),
         "seeds": hmm.seeds == (11, 23, 37, 53, 71, 89, 107, 131),
         "valid_starts": hmm.minimum_valid_starts == 6,
         "success_rate": hmm.minimum_multistart_success_rate == 0.75,

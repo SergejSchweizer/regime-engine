@@ -208,10 +208,8 @@ def test_hermetic_xetra_training_registry_and_serving_e2e(
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
     )
-    assert all(item.valid_fold_rate == 1.0 for item in grid.evaluations[:3])
-    assert 0.0 <= grid.evaluations[3].valid_fold_rate <= 1.0
+    assert all(item.valid_fold_rate == 1.0 for item in grid.evaluations)
     assert all(item.feature_order == selection.final_features for item in grid.evaluations)
     assert all(
         item.feature_selection_execution_hash == selection.feature_selection_execution_hash

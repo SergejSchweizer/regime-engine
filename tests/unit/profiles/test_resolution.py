@@ -64,7 +64,7 @@ def make_selection(policy: FeatureSelectionPolicy):
     )
 
 
-def test_resolution_shares_exact_frozen_contract_across_k2_k3_k4_k5() -> None:
+def test_resolution_shares_exact_frozen_contract_across_v1_k2_k3_k4() -> None:
     policy = load_policy()
     selection = make_selection(policy)
     resolved = resolve_selected_feature_profile(
@@ -73,12 +73,11 @@ def test_resolution_shares_exact_frozen_contract_across_k2_k3_k4_k5() -> None:
         selection,
         source_build_id="build-1",
     )
-    assert tuple(candidate.state_count for candidate in resolved.candidates) == (2, 3, 4, 5)
+    assert tuple(candidate.state_count for candidate in resolved.candidates) == (2, 3, 4)
     assert tuple(candidate.candidate_id for candidate in resolved.candidates) == (
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
         "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
     )
     assert all(
         candidate.feature_order == selection.final_features for candidate in resolved.candidates
@@ -167,7 +166,6 @@ def test_candidate_comparison_validation_fails_before_mismatched_feature_contrac
                 resolved.candidates[0],
                 mismatched,
                 resolved.candidates[2],
-                resolved.candidates[3],
             )
         )
 
