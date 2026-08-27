@@ -110,7 +110,7 @@ def test_bad_rows_and_state_count_fail_closed() -> None:
         adapter.fit([[1.0, 2.0], [2.0, 3.0]], state_count=6, seed=11)
 
 
-@pytest.mark.parametrize("state_count", (2, 3, 5))
+@pytest.mark.parametrize("state_count", (2, 3, 4, 5))
 def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
     state_count: int,
 ) -> None:
@@ -133,5 +133,5 @@ def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
     restored = HmmlearnGMMHMMAdapter(("a", "b"))
     restored.reconstruct(result.artifact)
     assert restored.extract() == result.artifact
-    with pytest.raises(ValueError, match="K=2, K=3, or K=5"):
-        adapter.fit(values, state_count=4, seed=11)
+    with pytest.raises(ValueError, match="K=2, K=3, K=4, or K=5"):
+        adapter.fit(values, state_count=6, seed=11)

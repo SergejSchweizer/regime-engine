@@ -117,9 +117,9 @@ class GMMHMMConfig:
     implementation: str
 
     def __post_init__(self) -> None:
-        if self.state_count not in (2, 3, 5) or self.mixture_count != 2:
+        if self.state_count not in (2, 3, 4, 5) or self.mixture_count != 2:
             raise ValueError(
-                "GMM-HMM comparison candidate must be K=2, K=3, or K=5 with two mixtures"
+                "GMM-HMM comparison candidate must be K=2, K=3, K=4, or K=5 with two mixtures"
             )
         if self.backend != "hmmlearn==0.3.3":
             raise ValueError("unsupported GMM-HMM backend")
