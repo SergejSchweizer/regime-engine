@@ -3,7 +3,7 @@ name: Push Gate
 on:
   push:
     branches:
-      - "**"
+      - main
 
 concurrency:
   group: push-gate-${{ github.ref }}
