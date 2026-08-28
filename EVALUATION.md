@@ -687,4 +687,20 @@ A combined 21-feature medoid+delta diagnostic clock is forbidden. A feature may 
 
 ### Statistical and production boundaries
 
-Within a single univariate feature, the 12 family/K candidates use the same hard gates, common-valid-fold comparison and seven-stage statistical ranking as the canonical Xetra v3 candidate grid. Raw OOS PLL, BIC and AIC are never used to rank different feature names. Both univariate evaluation champions are diagnostic-only and cannot trigger final refit, OOS publication, model registration, challenger/champion alias mutation or economic decisions. Only `medoid_multivariate_statistical_champion` is production-eligible.
+Within a single univariate feature, the 12 family/K candidates use the same hard gates,
+common-valid-fold comparison and seven-stage statistical ranking as the canonical Xetra v3
+candidate grid. This winner is that feature's `diagnostic_feature_model_winner`. A feature
+with shared valid-fold support below $0.80$ is ineligible only for its evaluation-level
+champion selection; its diagnostic grid evidence remains recorded.
+
+The exact cross-feature selection rule for both univariate evaluations is: rank eligible
+feature winners by dominant-state NMI descending using anchored
+$\varepsilon = 10^{-12}$ ties, then shared OOS timestamp count descending, then feature
+name ascending. No eligible feature produces explicit no-champion evidence. No fallback
+metric is allowed. Raw OOS PLL, BIC, AIC and economic metrics are forbidden for ranking
+different feature names.
+
+`medoid_univariate_evaluation_champion` and `delta1_univariate_evaluation_champion` are
+diagnostic-only and cannot trigger final refit, OOS publication, model registration,
+challenger/champion alias mutation or economic decisions. Only
+`medoid_multivariate_statistical_champion` is production-eligible.
