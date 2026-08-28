@@ -50,6 +50,7 @@ class FakeTrackingPort:
         self.metrics: dict[str, list[MetricPoint]] = {}
         self.artifacts: list[tuple[str, str, str]] = []
         self.ended_runs: list[str] = []
+        self.failed_runs: list[str] = []
 
     def start_run(self, *, run_name: str, parent_run_id: str | None = None) -> str:
         run_id = f"run-{len(self.runs) + 1}"
@@ -67,6 +68,9 @@ class FakeTrackingPort:
 
     def end_run(self, run_id: str) -> None:
         self.ended_runs.append(run_id)
+
+    def fail_run(self, run_id: str) -> None:
+        self.failed_runs.append(run_id)
 
 
 class _ImmediateFuture:

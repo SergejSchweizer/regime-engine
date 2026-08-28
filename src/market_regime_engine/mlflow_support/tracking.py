@@ -95,6 +95,9 @@ class FileMlflowTrackingPort:
     def end_run(self, run_id: str) -> None:
         self._client.set_terminated(run_id, status="FINISHED")
 
+    def fail_run(self, run_id: str) -> None:
+        self._client.set_terminated(run_id, status="FAILED")
+
 
 def _feature_order_hash(feature_order: tuple[str, ...]) -> str:
     payload = json.dumps(feature_order, separators=(",", ":")).encode("utf-8")
