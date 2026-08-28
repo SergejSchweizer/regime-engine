@@ -72,6 +72,19 @@ def _lineage(
     )
 
 
+def _common_feature_history(rows: pd.DataFrame, feature_names: tuple[str, ...]) -> pd.DataFrame:
+    """Exclude history before every canonical feature has its first observation."""
+
+    positions: list[int] = []
+    for feature_name in feature_names:
+        available = rows[feature_name].notna().to_numpy()
+        first = next((index for index, value in enumerate(available) if value), None)
+        if first is None:
+            raise ValueError(f"canonical feature has no observations: {feature_name}")
+        positions.append(first)
+    return rows.iloc[max(positions) :].reset_index(drop=True)
+
+
 def main() -> None:
     root = Path(os.environ.get("REGIME_ENGINE_ROOT", Path(__file__).resolve().parents[1]))
     profile = load_profile(root / "configs/profiles/xetra_v3.yaml")
@@ -88,6 +101,7 @@ def main() -> None:
     )
     rows = pd.DataFrame([row.values for row in snapshot.rows], columns=policy.feature_universe)
     rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
+    rows = _common_feature_history(rows, policy.feature_universe)
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     selection = freeze_first_train_features(
         rows.iloc[: plan.folds[0].train_source_observations],
