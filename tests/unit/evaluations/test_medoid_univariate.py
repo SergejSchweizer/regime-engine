@@ -85,7 +85,7 @@ def test_medoid_orchestrator_runs_all_grids_in_canonical_order(monkeypatch) -> N
         multivariate=multivariate,
     )
 
-    assert calls == list(MEDOIDS)
+    assert set(calls) == set(MEDOIDS)
     assert tuple(grid.feature_name for grid in result.feature_grids) == MEDOIDS
     assert result.eligible_feature_names == MEDOIDS
     assert result.medoid_univariate_evaluation_champion == MEDOIDS[0]

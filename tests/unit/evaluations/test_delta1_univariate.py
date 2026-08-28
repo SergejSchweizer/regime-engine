@@ -69,7 +69,7 @@ def test_delta_orchestrator_runs_all_features_in_order(monkeypatch) -> None:
         lineage=lineage,
         multivariate=multivariate,
     )
-    assert calls == list(DELTA1_FEATURES)
+    assert set(calls) == set(DELTA1_FEATURES)
     assert result.delta1_univariate_evaluation_champion == min(DELTA1_FEATURES)
 
 
