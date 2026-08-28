@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 import yaml
@@ -73,17 +74,17 @@ def _lineage(
     )
 
 
-def _common_feature_history(rows: pd.DataFrame, feature_names: tuple[str, ...]) -> pd.DataFrame:
-    """Exclude history before every canonical feature has its first observation."""
+def _common_complete_feature_history(
+    rows: pd.DataFrame, feature_names: tuple[str, ...]
+) -> pd.DataFrame:
+    """Freeze one finite complete-case timeline for every evaluation hierarchy."""
 
-    positions: list[int] = []
-    for feature_name in feature_names:
-        available = rows[feature_name].notna().to_numpy()
-        first = next((index for index, value in enumerate(available) if value), None)
-        if first is None:
-            raise ValueError(f"canonical feature has no observations: {feature_name}")
-        positions.append(first)
-    return rows.iloc[max(positions) :].reset_index(drop=True)
+    values = rows.loc[:, list(feature_names)].to_numpy(dtype=np.float64, copy=True)
+    complete = np.isfinite(values).all(axis=1)
+    result = rows.loc[complete].reset_index(drop=True)
+    if result.empty:
+        raise ValueError("canonical feature set has no common finite observations")
+    return result
 
 
 def main() -> None:
@@ -104,7 +105,13 @@ def main() -> None:
     )
     rows = pd.DataFrame([row.values for row in snapshot.rows], columns=policy.feature_universe)
     rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-    rows = _common_feature_history(rows, policy.feature_universe)
+    rows = _common_complete_feature_history(rows, policy.feature_universe)
+    logger.info(
+        "common_evaluation_timeline start=%s end=%s observations=%s",
+        rows["timestamp_m1"].iloc[0],
+        rows["timestamp_m1"].iloc[-1],
+        len(rows),
+    )
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     selection = freeze_first_train_features(
         rows.iloc[: plan.folds[0].train_source_observations],
