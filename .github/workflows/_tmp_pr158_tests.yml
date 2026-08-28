@@ -1,0 +1,50 @@
+name: Temporary PR158 tests
+on:
+  push:
+    branches:
+      - 'pr/PR-158-xetra-v3-profile'
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - name: Add v3 resolution and grid tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('tests/unit/profiles/test_resolution.py')
+          text = p.read_text(encoding='utf-8')
+          anchor = 'V2_PROFILE_CONFIG = Path("configs/profiles/xetra_v2.yaml")\n'
+          if 'V3_PROFILE_CONFIG' not in text:
+              text = text.replace(
+                  anchor,
+                  anchor + 'V3_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v3.yaml")\nV3_PROFILE_CONFIG = Path("configs/profiles/xetra_v3.yaml")\n',
+              )
+              text += '''\n\ndef test_xetra_v3_resolution_uses_61_features_and_exact_v2_candidate_ids() -> None:\n    policy = load_policy(V3_FEATURE_POLICY_CONFIG)\n    selection = make_selection(policy)\n    resolved = resolve_selected_feature_profile(\n        load_profile(V3_PROFILE_CONFIG),\n        policy,\n        selection,\n        source_build_id="build-1",\n    )\n    assert resolved.profile_config_version == 3\n    assert len(resolved.original_feature_universe) == 61\n    assert resolved.original_feature_universe == policy.feature_universe\n    assert resolved.preliminary_medoids == selection.evidence.preliminary_medoids\n    assert tuple(candidate.candidate_id for candidate in resolved.candidates) == (\n        EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[3]\n    )\n    assert EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[3] == (\n        EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[2]\n    )\n    assert all(candidate.original_feature_universe == policy.feature_universe for candidate in resolved.candidates)\n    assert all(candidate.feature_order == selection.final_features for candidate in resolved.candidates)\n\n\ndef test_xetra_v3_validation_rejects_wrong_candidate_order() -> None:\n    policy = load_policy(V3_FEATURE_POLICY_CONFIG)\n    resolved = resolve_selected_feature_profile(\n        load_profile(V3_PROFILE_CONFIG),\n        policy,\n        make_selection(policy),\n        source_build_id="build-1",\n    )\n    wrong_order = (resolved.candidates[1], resolved.candidates[0], *resolved.candidates[2:])\n    with pytest.raises(ValueError, match="IDs/order"):\n        validate_candidate_comparison_inputs(wrong_order, profile_config_version=3)\n'''
+          p.write_text(text, encoding='utf-8')
+
+          p = Path('tests/unit/training/test_candidate_grid.py')
+          text = p.read_text(encoding='utf-8')
+          if 'test_candidate_grid_contract_accepts_profile_version_3' not in text:
+              text += '''\n\ndef test_candidate_grid_contract_accepts_profile_version_3() -> None:\n    ids = (\n        "gaussian_hmm_k2_full",\n        "gaussian_hmm_k3_full",\n        "gaussian_hmm_k4_full",\n        "gaussian_hmm_k5_full",\n        "gmm_hmm_k2_m2_full",\n        "gmm_hmm_k3_m2_full",\n        "gmm_hmm_k4_m2_full",\n        "gmm_hmm_k5_m2_full",\n        "student_t_hmm_k2_full",\n        "student_t_hmm_k3_full",\n        "student_t_hmm_k4_full",\n        "student_t_hmm_k5_full",\n    )\n    base, _, _ = base_evaluation()\n    evaluations = tuple(\n        replace(\n            base,\n            candidate_id=candidate_id,\n            state_count=int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),\n        )\n        for candidate_id in ids\n    )\n    aggregates = tuple(aggregate_candidate(item) for item in evaluations)\n    grid = CandidateGridEvaluation(\n        profile_id="xetra",\n        profile_config_version=3,\n        source_build_id=base.source_build_id,\n        feature_order=base.feature_order,\n        feature_selection_definition_hash=base.feature_selection_definition_hash,\n        feature_selection_execution_hash=base.feature_selection_execution_hash,\n        evaluation_plan_hash=base.evaluation_plan_hash,\n        evaluations=evaluations,\n        aggregates=aggregates,\n    )\n    assert tuple(item.candidate_id for item in grid.evaluations) == ids\n'''
+              text = text.replace(
+                  '    CandidateAggregate,\n',
+                  '    CandidateAggregate,\n    CandidateGridEvaluation,\n',
+              )
+          p.write_text(text, encoding='utf-8')
+          PY
+          uvx ruff format tests/unit/profiles/test_resolution.py tests/unit/training/test_candidate_grid.py
+          git rm .github/workflows/_tmp_pr158_tests.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tests/unit/profiles/test_resolution.py tests/unit/training/test_candidate_grid.py
+          git commit -m 'test(PR-158-xetra-v3-profile): cover v3 resolution and grid invariants'
+          git push
