@@ -36,7 +36,7 @@ class FeatureSelectionPolicy:
     numeric_tie_abs_tolerance: float = 1e-12
 
     def __post_init__(self) -> None:
-        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2"}:
+        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2", "xetra_semantic_medoid_v3"}:
             raise ValueError("unsupported feature-selection policy_id")
         required_blocks = 8
         if (
@@ -169,7 +169,7 @@ class FeatureSelectionResult:
     evidence: FeatureSelectionEvidence
 
     def __post_init__(self) -> None:
-        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2"}:
+        if self.policy_id not in {"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2", "xetra_semantic_medoid_v3"}:
             raise ValueError("unsupported result policy_id")
         if self.final_features != self.evidence.final_features:
             raise ValueError("result features must match immutable selection evidence")
