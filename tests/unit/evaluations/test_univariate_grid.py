@@ -83,6 +83,39 @@ def test_univariate_grid_constructs_twelve_candidates_on_shared_clock() -> None:
     assert result.no_winner_reason == "no candidate passes statistical hard gates"
 
 
+def test_default_univariate_runner_adapts_keyword_only_shared_runner(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def shared_runner(source_rows, *, plan, profile, candidate, adapter_factory):
+        captured.update(
+            source_rows=source_rows,
+            plan=plan,
+            profile=profile,
+            candidate=candidate,
+            adapter_factory=adapter_factory,
+        )
+        return "evaluation"
+
+    monkeypatch.setattr(grid_module, "run_walk_forward_candidate", shared_runner)
+    rows = source_rows()
+    result = grid_module.run_univariate_candidate(
+        rows,
+        "plan",
+        "profile",
+        "candidate",
+        "adapter",
+    )
+    assert result == "evaluation"
+    assert captured["source_rows"] is rows
+    assert captured | {"source_rows": None} == {
+        "source_rows": None,
+        "plan": "plan",
+        "profile": "profile",
+        "candidate": "candidate",
+        "adapter_factory": "adapter",
+    }
+
+
 def test_univariate_grid_rejects_multivariate_spec() -> None:
     profile = load_profile("configs/profiles/xetra_v3.yaml")
     rows = source_rows()

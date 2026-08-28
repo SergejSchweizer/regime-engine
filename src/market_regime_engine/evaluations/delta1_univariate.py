@@ -7,7 +7,6 @@ from typing import cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
-from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluations.agreement import (
     UnivariateAgreement,
@@ -26,6 +25,7 @@ from market_regime_engine.evaluations.univariate_grid import (
     CandidateRunner,
     UnivariateFeatureGrid,
     evaluate_univariate_feature_grid,
+    run_univariate_candidate,
 )
 from market_regime_engine.profiles.config import ModelProfile
 
@@ -95,7 +95,7 @@ def evaluate_delta1_univariate(
     )
     if multivariate_winner is None:
         raise ValueError("multivariate champion is not present in its candidate grid")
-    active_runner = cast(CandidateRunner, run_walk_forward_candidate) if runner is None else runner
+    active_runner = cast(CandidateRunner, run_univariate_candidate) if runner is None else runner
     grids = tuple(
         evaluate_univariate_feature_grid(
             source_rows,

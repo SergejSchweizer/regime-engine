@@ -12,7 +12,11 @@ from market_regime_engine.evaluation.selection import (
     StatisticalChampionSelection,
     select_statistical_champion,
 )
-from market_regime_engine.evaluation.walk_forward import AdapterFactory, WalkForwardEvaluation
+from market_regime_engine.evaluation.walk_forward import (
+    AdapterFactory,
+    WalkForwardEvaluation,
+    run_walk_forward_candidate,
+)
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluations.clocks import EvaluationClock
 from market_regime_engine.evaluations.contracts import (
@@ -34,6 +38,24 @@ CandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, "_LineagedCandidate", AdapterFactory],
     WalkForwardEvaluation,
 ]
+
+
+def run_univariate_candidate(
+    source_rows: pd.DataFrame,
+    plan: WalkForwardPlan,
+    profile: ModelProfile,
+    candidate: _LineagedCandidate,
+    candidate_adapter_factory: AdapterFactory,
+) -> WalkForwardEvaluation:
+    """Adapt the shared keyword-only runner to the injectable univariate contract."""
+
+    return run_walk_forward_candidate(
+        source_rows,
+        plan=plan,
+        profile=profile,
+        candidate=candidate,
+        adapter_factory=candidate_adapter_factory,
+    )
 
 
 @dataclass(frozen=True, slots=True)
