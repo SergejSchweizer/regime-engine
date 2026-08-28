@@ -1353,11 +1353,11 @@ E9: PR-130 after 125
 PR-120, PR-121, PR-124, PR-126, PR-128 and PR-131 have disjoint primary implementation files and can be assigned to weak agents in parallel once their dependencies are merged. PR-129 is intentionally late because it validates a single canonical TRAIN likelihood across all supported emission families.
 
 ---
-# 18. Xetra canonical 61-feature selection + univariate shadow-model analysis — 2026-08-27
+# 18. Xetra v3 three-regime-evaluation architecture — 2026-08-28
 
-This section supersedes the earlier shadow-only treatment of the 13 one-observation deltas. The `*_delta_1obs` columns already exist in PostgreSQL and must participate in the canonical semantic-block feature selection used by the multivariate model. The historical Xetra v2 definition is not mutated in place; a new Xetra v3 policy/profile is introduced so existing hashes, MLflow runs and registered artifacts remain reproducible.
+This section supersedes the previous combined `xetra_univariate_shadow_v1` design. Xetra v3 keeps one canonical 61-feature selection policy but exposes three first-class, independently auditable regime evaluations. The three evaluations may share low-level HMM/walk-forward code, but they have separate input contracts, observation clocks, champion namespaces, MLflow hierarchies and local statistics evidence.
 
-Canonical target identity:
+Canonical Xetra v3 identity:
 
 ```text
 profile_id=xetra
@@ -1365,17 +1365,23 @@ profile_config_version=3
 feature_selection_policy=xetra_semantic_medoid_v3
 canonical_feature_universe_size=61
 semantic_block_count=8
-analysis_id=xetra_univariate_shadow_v1
-analysis_role=diagnostic_only
 ```
 
-Xetra v3 keeps the same 12 model candidates as v2: Gaussian HMM, two-mixture full-covariance GMM-HMM and Student-t HMM, each for K=2,3,4,5. The intentional production-selection change is the versioned feature universe/policy and the resulting frozen first-TRAIN selected feature set.
+Canonical evaluation IDs are exactly:
+
+```text
+medoid_multivariate
+medoid_univariate
+delta1_univariate
+```
+
+No `shadow` evaluation ID is part of the final v3 runtime contract.
 
 ## Canonical 61-feature policy
 
-The existing 48 v2 features remain in their existing order and semantic blocks. Add the 13 existing PostgreSQL columns exactly once:
+The historical ordered v2 48-feature universe remains unchanged in v1/v2. Xetra v3 adds these exact 13 existing PostgreSQL columns once, inside their economic semantic blocks:
 
-| Semantic block | Added canonical feature(s) |
+| Semantic block | Added v3 feature(s) |
 |---|---|
 | US equity volatility spot | `vix_delta_1obs` |
 | US equity volatility term structure | `vix9d_delta_1obs`, `vix3m_delta_1obs`, `vix6m_delta_1obs`, `vix1y_delta_1obs` |
@@ -1404,13 +1410,9 @@ estr_delta_1obs
 usd_broad_delta_1obs
 ```
 
-Stage 1 runs the existing semantic-medoid selector on all 61 canonical features, so a `*_delta_1obs` feature may become its block's `preliminary_medoid`. Stage 2 then applies the existing cross-block pruning to the eight Stage-1 representatives. First-fold TRAIN-only selection, no economic input, no HMM-feedback into feature selection, frozen selection, tie rules and missing-value semantics remain unchanged.
+Stage 1 runs the existing semantic-medoid selector over all 61 canonical v3 features. A `*_delta_1obs` feature can therefore become its block's `preliminary_medoid`. Stage 2 applies the existing cross-block pruning to the eight Stage-1 representatives and freezes the final ordered multivariate feature set. First-fold TRAIN-only semantics, no economic input, no HMM feedback into feature selection, tie rules and missing-value rules remain unchanged.
 
-## Univariate shadow analysis after canonical selection
-
-The diagnostic analysis evaluates (a) every first-TRAIN Stage-1 representative and (b) every one of the 13 canonical delta features alone. Because a delta can itself become a Stage-1 representative, executable shadow features are the deterministic ordered unique union of the eight `preliminary_medoids` followed by the ordered 13-delta tuple. If a feature has both roles, it is fitted once and records both roles.
-
-Every unique shadow feature evaluates exactly the v3 12-candidate universe:
+Xetra v3 uses exactly the same 12 candidate model identities as v2:
 
 ```text
 gaussian_hmm_k2_full
@@ -1427,73 +1429,104 @@ student_t_hmm_k4_full
 student_t_hmm_k5_full
 ```
 
-Therefore `shadow_candidate_count = shadow_feature_count * 12`; duplicate fits of the same feature/source/plan are forbidden. The canonical multivariate v3 reference grid is evaluated separately on the frozen final selected feature set; its 12 candidates are not shadow candidates.
+## Evaluation A — `medoid_multivariate`
 
-## Shadow common observation clock
+Purpose: choose the canonical production-eligible statistical champion from the frozen Stage-2 multivariate feature set.
 
-Cross-feature comparison uses one common diagnostic observation clock over all unique shadow features. The canonical source-row walk-forward plan is created first and never changed. A row is shadow-eligible only if every unique shadow feature is non-null and finite at that timestamp. The same mask is applied to all one-feature shadow evaluations while original timestamps and TRAIN/TEST source-row boundaries remain unchanged. No fill, interpolation, carry, synthesis or write-back is allowed, and there is no per-feature-clock fallback.
-
-## Shadow model selection and agreement
-
-Within one feature, the 12 candidates reuse v3 fit settings, multistart, numerical validation, TRAIN occupancy gates, causal TEST continuation, common-valid-fold support and seven-stage ranking. The within-feature result is `diagnostic_feature_model_winner`; it cannot enter final refit, OOS publication, registry or alias logic. There is no global cross-feature champion and OOS PLL must not rank features globally.
-
-For each valid feature winner, compare its OOS dominant-state sequence with the canonical multivariate v3 reference champion only on shared valid-fold OOS timestamps. Shared valid-fold rate below `0.80` makes agreement unavailable without invalidating the feature winner. Report label-invariant NMI and, only for equal K, maximum one-to-one permutation hard agreement. Do not compare state-signature RMS distances across different feature spaces.
-
-## Three first-class evaluation types and champion namespaces
-
-The shared Xetra v3 computation is exposed as exactly three evaluation types. Shared mathematical results may be reused without refitting, but MLflow and local evidence are partitioned by evaluation identity so each evaluation has an independent audit trail.
+Input contract:
 
 ```text
-medoid_multivariate_regime_evaluation_v1
-medoid_univariate_regime_evaluation_v1
-delta_1obs_univariate_regime_evaluation_v1
+features = frozen final ordered Stage-2 feature tuple
+models   = exact 12-candidate v3 universe
+clock    = canonical complete-case walk-forward clock for that frozen tuple
 ```
 
-Champion semantics are intentionally different by evaluation type:
+The evaluation runs exactly 12 candidate evaluations. It reuses the canonical candidate hard gates, common-valid-fold support and seven-stage ranking. Its winner is named exactly `medoid_multivariate_statistical_champion`. This is the only evaluation champion that may proceed to final production refit, challenger registration, immutable OOS publication and a later explicit production promotion.
 
-1. `medoid_multivariate_statistical_champion` is the canonical production-selection winner among the 12 multivariate Xetra v3 candidates on the frozen final feature set. Only this champion may proceed to final refit, challenger registration, OOS publication and an explicit later production promotion.
-2. `medoid_univariate_evaluation_champion` is diagnostic-only. First select one `diagnostic_feature_model_winner` within each of the eight Stage-1 medoid features using the canonical within-feature 12-candidate ranking. Across those feature winners, choose the feature/model pair that best reproduces the multivariate champion's OOS regime segmentation: maximize `dominant_state_nmi` using the repository anchored `1e-12` tolerance, then maximize shared OOS timestamp count, then choose lexicographically smallest feature name. Raw OOS PLL is never compared across different feature names.
-3. `delta1_univariate_evaluation_champion` is diagnostic-only and uses the same cross-feature rule across the exact 13 `*_delta_1obs` feature winners: NMI descending, shared OOS timestamp count descending, feature name ascending. Raw OOS PLL is never a cross-feature ranking metric.
+## Evaluation B — `medoid_univariate`
 
-A univariate evaluation has no champion if no feature winner has agreement support `>=0.80`; the evaluation records an explicit failure and does not fall back to cross-feature PLL, BIC, AIC, confidence, entropy or an economic metric. A feature that is both a Stage-1 medoid and a delta may reuse the same mathematical result in both diagnostic evaluations, but its MLflow/local evidence belongs independently to each evaluation namespace.
+Purpose: determine how well each of the eight Stage-1 semantic-block medoids alone can identify stable regimes, and identify the single medoid/model pair whose OOS segmentation best agrees with the multivariate champion.
 
-## Mandatory local statistics mirror for every MLflow run
+Input contract:
 
-Every MLflow run created by any of the three evaluation types must have a repository-checkout-relative local evidence directory:
+```text
+features = exactly eight Stage-1 preliminary_medoids in canonical block order
+models   = exact 12-candidate v3 universe per feature
+clock    = one common complete-case clock built only across these eight medoid features
+```
+
+The evaluation runs exactly 8 x 12 = 96 candidate evaluations. Each feature first selects its own `diagnostic_feature_model_winner` using the canonical within-feature statistical ranking; OOS PLL/BIC/AIC are never compared across different feature names. The evaluation-level diagnostic champion is named exactly `medoid_univariate_evaluation_champion`.
+
+## Evaluation C — `delta1_univariate`
+
+Purpose: determine how well each immediate one-observation origin shock alone can identify stable regimes, and identify the delta/model pair whose OOS segmentation best agrees with the multivariate champion.
+
+Input contract:
+
+```text
+features = exact ordered 13-delta tuple above
+models   = exact 12-candidate v3 universe per feature
+clock    = one common complete-case clock built only across these 13 delta features
+```
+
+The evaluation runs exactly 13 x 12 = 156 candidate evaluations. Each feature selects its own `diagnostic_feature_model_winner` using the canonical within-feature statistical ranking. The evaluation-level diagnostic champion is named exactly `delta1_univariate_evaluation_champion`.
+
+A feature can appear in both `medoid_univariate` and `delta1_univariate`. The two evaluations remain independent: each uses its own evaluation clock, hashes, MLflow runs and local statistics. Cross-evaluation fitted-model reuse is forbidden unless a future versioned contract explicitly introduces it; identical feature names do not imply identical retained observations.
+
+A complete three-evaluation execution therefore contains exactly 12 + 96 + 156 = 264 candidate evaluations before invalid-fold rejection.
+
+## Univariate evaluation-champion rule
+
+For each valid univariate feature winner, compare its OOS dominant-state sequence with `medoid_multivariate_statistical_champion` only on the ordered intersection of valid OOS timestamps.
+
+- shared valid-fold support below `0.80` makes that feature ineligible for the evaluation-level champion but does not invalidate its within-feature winner;
+- primary cross-feature criterion: maximize label-invariant `dominant_state_nmi`;
+- NMI ties use the repository anchored absolute tolerance `1e-12`;
+- first exact tie-break: maximize shared OOS timestamp count;
+- final exact tie-break: lexicographically smallest feature name;
+- raw OOS PLL, BIC, AIC, confidence, entropy and economic metrics are forbidden as cross-feature ranking criteria;
+- if no feature has sufficient agreement support, the evaluation has no champion and records an explicit reason;
+- equal K additionally reports maximum one-to-one permutation hard agreement and the lexicographically smallest maximizing mapping; unequal K reports that metric as unavailable.
+
+Both univariate evaluation champions are diagnostic-only. They never trigger final refit, OOS publication, model registration, challenger/champion alias mutation or an economic decision.
+
+## Mandatory local statistics for every MLflow run
+
+Every MLflow run created by the three evaluations, including parent, feature, candidate and failed runs, must own exactly one immutable local evidence directory:
 
 ```text
 ./evaluations/<evaluation>/<mlflow_run_id>/
 ```
 
-`<evaluation>` is exactly one of the three evaluation IDs above. MLflow run IDs are the directory identity; directories are immutable after successful finalization and are never reused or overwritten. `./evaluations/` is runtime evidence and must be git-ignored.
+`<evaluation>` is exactly `medoid_multivariate`, `medoid_univariate` or `delta1_univariate`. `./evaluations/` is runtime evidence and is git-ignored.
 
-Every MLflow run, including parent, feature and candidate runs and every run ending in failure, must contain at least:
+Every run directory contains at least:
 
 ```text
-statistics.json   # canonical machine-readable exhaustive statistics
-statistics.md     # human-readable rendering of the same statistics
+statistics.json
+statistics.md
 ```
 
-`statistics.json` is the canonical record. It uses UTF-8 canonical JSON, finite JSON numbers only, deterministic key ordering and explicit nulls for unavailable metrics. It contains, when applicable to the run type:
+`statistics.json` is the canonical machine-readable record. `statistics.md` is a deterministic human-readable rendering of the same evidence. The JSON must use UTF-8, deterministic key ordering, finite JSON numbers only and explicit nulls for unavailable values.
 
-- evaluation/run identity: evaluation ID, run ID, parent run ID, run type, run name, lifecycle status, start/end UTC, elapsed seconds, repository Git SHA and profile/config identity;
-- complete lineage: source dataset/build/data hash, source time semantics, evaluation-plan hash, feature-selection definition/execution hashes, shadow definition/execution hashes and statistics schema version;
-- input contract: ordered features, feature roles, semantic block, feature dimension, common-clock identity, source-row count, retained/skipped TRAIN/TEST observations and skip/failure reasons;
-- model contract: candidate ID, family, K, covariance type, GMM mixture count where applicable, Student-t settings where applicable, parameter count, exact multistart seed set and winning seed;
-- every planned fold: fold ID, source/TRAIN/TEST bounds, retained observation counts, validity, explicit invalid reason, per-start convergence/success and TRAIN log likelihood, likelihood-parity evidence, TEST OOS PLL sum and per-observation value, AIC, BIC, hard/soft state occupancy, posterior confidence, entropy, dominant-state duration statistics, switches/year, state mapping and alignment-drift evidence;
-- fitted state statistics: start probabilities, transition matrix, state persistence, expected/observed duration diagnostics, emission means, backend-neutral distribution covariances, Student-t scale matrices/nu where applicable, GMM mixture weights/component means/component covariances where applicable;
-- aggregate candidate evidence: candidate valid-fold rate, exact common-valid-fold IDs/rate, common-support OOS mean/population-std/worst, common-support BIC/AIC means, gate results, rejection reasons, complete rank/tie evidence and champion/winner flags;
-- multivariate feature-selection evidence where applicable: exact 61-feature universe identity, eight Stage-1 medoids, Stage-2 correlation matrix/pruning evidence and frozen final ordered feature set;
-- univariate agreement evidence where applicable: shared valid-fold IDs/rate, shared OOS timestamp count, `dominant_state_nmi`, equal-K maximum permutation hard agreement/mapping, and explicit unavailable reason;
-- evaluation-level champion evidence where applicable: eligible feature/candidate set, exact ranking stages/ties, selected namespaced champion or explicit no-champion reason.
+When applicable to the run type, statistics include all of the following:
 
-The local record must never contain credentials, DSNs, raw source feature vectors or model-binary payloads. Large matrices already defined as model statistics (transition/covariance matrices) are allowed because they are fitted parameters, not raw source rows.
+- evaluation/run identity: evaluation ID, schema version, MLflow run ID, parent run ID, run type, run name, lifecycle status, start/end UTC, elapsed seconds, repository Git SHA, profile/config version;
+- lineage: source dataset/build/data hash, source time semantics, walk-forward plan hash, evaluation definition/execution hashes, feature-selection definition/execution hashes and clock hash;
+- input evidence: exact ordered feature tuple, semantic blocks/roles, feature dimension, source-row count, retained/skipped TRAIN/TEST counts and explicit missing/nonfinite/failure reasons;
+- model contract: candidate ID, family, K, covariance semantics, GMM mixture count where applicable, Student-t settings where applicable, parameter count, complete multistart seed set and winning seed;
+- every planned fold including invalid folds: source/TRAIN/TEST bounds, retained counts, validity/reason, every start's convergence/success/TRAIN likelihood, TRAIN likelihood-parity evidence, TEST OOS PLL sum/per-observation, AIC, BIC, hard/soft occupancy, confidence, entropy, dominant-state durations, switches/year, alignment/state mapping and drift evidence;
+- fitted state statistics: start probabilities, transition matrix, persistence, expected/observed duration diagnostics, emission means, backend-neutral distribution covariances, Student-t scale matrices/nu and GMM mixture weights/component means/component covariances when applicable;
+- candidate aggregate evidence: valid-fold rate, common-valid-fold IDs/rate, common-support OOS mean/population-std/worst, common-support BIC/AIC means, hard-gate results, rejection reasons and complete anchored ranking/tie evidence;
+- multivariate feature-selection evidence when applicable: 61-feature policy identity, all eight preliminary medoids, Stage-2 correlation/pruning evidence and frozen final ordered features;
+- univariate agreement evidence when applicable: shared valid-fold IDs/rate, shared timestamp count, NMI, equal-K permutation hard agreement/mapping and unavailable reason;
+- evaluation champion evidence when applicable: eligible feature/candidate set, exact ranking stages/ties, selected namespaced champion or explicit no-champion reason.
 
-For audit parity, the exact finalized `statistics.json` bytes are also logged to the corresponding MLflow run under `statistics/statistics.json`; SHA-256 of those bytes is recorded in both the local record and MLflow metadata. A byte/hash mismatch is a run failure.
+The local statistics must never contain credentials, DSNs, raw source feature rows or model-binary payloads. Fitted parameter matrices such as transition/covariance matrices are permitted.
 
-Before creating the first MLflow run, the evaluation command fail-closes unless `./evaluations/<evaluation>/` can be created and is writable. Immediately after MLflow returns a run ID, the run directory is created and an initial `RUNNING` statistics record is atomically written. Finalization replaces it atomically with `FINISHED` or `FAILED` statistics. An evaluation implementation may not silently complete an MLflow run without its local statistics mirror.
+The exact finalized `statistics.json` bytes are also logged to the same MLflow run at `statistics/statistics.json`. SHA-256 of those exact bytes is recorded locally and in MLflow metadata; byte/hash mismatch is a run failure. Before any run is created, the evaluation root must be writable. Immediately after MLflow returns a run ID, an atomic `RUNNING` statistics record is written; finalization atomically replaces it with `FINISHED` or `FAILED`. A successful MLflow run without its local statistics mirror is forbidden.
 
-Execution rule: all PRs below inherit section-12 clean-main/status/branch/allowed-file/full-test rules. Agents must not combine PRs, edit `BACKLOG.md`, add economic metrics or mutate historical Xetra v1/v2 identities.
+Execution rule: every PR below inherits section-12 clean-main/status/branch/allowed-file/full-test rules. Agents must not combine PRs, edit `BACKLOG.md`, add economic metrics, mutate v1/v2 identities or change another evaluation's files unless explicitly allowed.
 
 ### PR-156 — Pin canonical Xetra v3 61-feature policy contract
 
@@ -1503,14 +1536,14 @@ Execution rule: all PRs below inherit section-12 clean-main/status/branch/allowe
 
 Acceptance:
 
-- [ ] Define `profile_config_version=3` and `feature_selection_policy=xetra_semantic_medoid_v3`; v1/v2 definitions remain unchanged.
-- [ ] Define exactly 61 unique canonical features: existing ordered v2 48 plus the exact ordered 13 deltas above.
-- [ ] Pin every added delta to the exact semantic block listed above; every canonical feature belongs to exactly one of eight blocks.
-- [ ] Preserve Stage-1/Stage-2 algorithms, first-fold TRAIN-only semantics, thresholds, tie rules, missing-value rules and no-economic/no-HMM-feedback constraints.
-- [ ] State explicitly that deltas are eligible Stage-1 representatives and may therefore enter the frozen multivariate final feature set.
-- [ ] Define v3 candidate universe as exactly the same 12 candidate IDs/family/K settings as v2.
-- [ ] Preserve historical v1/v2 config identities and selection definition hashes.
-- [ ] Make no shadow-analysis implementation change in this PR.
+- [ ] Define `profile_config_version=3` and `feature_selection_policy=xetra_semantic_medoid_v3`; v1/v2 definitions remain immutable.
+- [ ] Define exactly 61 unique canonical features: ordered v2 48 plus the exact ordered 13-delta tuple in this section.
+- [ ] Pin every added delta to the exact semantic block listed above; all 61 features belong to exactly one of eight blocks.
+- [ ] Preserve Stage-1 and Stage-2 algorithms, first-fold TRAIN-only semantics, thresholds, tie rules, missing-value rules and no-economic/no-HMM-feedback constraints.
+- [ ] State that delta1 features are normal Stage-1 candidates and may enter the frozen multivariate final tuple.
+- [ ] Define the v3 candidate universe as exactly the same 12 family/K identities as v2.
+- [ ] Preserve historical v1/v2 configuration and selection hashes.
+- [ ] Do not implement any evaluation orchestration in this PR.
 
 ### PR-157 — Add exact Xetra v3 61-feature/eight-block policy
 
@@ -1521,15 +1554,15 @@ Acceptance:
 Acceptance:
 
 - [ ] Create new v3 policy; do not edit v1/v2 policy files.
-- [ ] Preserve exact existing 48 feature order/block membership and add the 13 deltas to the exact blocks pinned by PR-156.
-- [ ] Policy has exactly 61 unique features and exactly eight non-overlapping exhaustive blocks.
-- [ ] Exact delta column names match PostgreSQL names and the ordered tuple above.
-- [ ] Stage-1/Stage-2 constants remain equal to v2 unless PR-156 explicitly states otherwise; no new tuning constant.
-- [ ] Tests assert full ordered 61-feature tuple, exact block membership, cardinality and absence of economic/target fields.
+- [ ] Preserve exact v2 48 feature order/block membership and add the 13 deltas to the exact blocks pinned by PR-156.
+- [ ] Policy contains exactly 61 unique features and eight non-overlapping exhaustive blocks.
+- [ ] Exact PostgreSQL delta column names match the ordered tuple in this section.
+- [ ] Stage-1/Stage-2 constants equal v2 unless PR-156 explicitly says otherwise.
+- [ ] Tests assert the full ordered 61-feature tuple, exact block membership/cardinality and absence of target/economic fields.
 - [ ] Tests prove v1/v2 policy files remain unchanged.
-- [ ] Documentation states v3 is a versioned extension, not an in-place v2 mutation.
+- [ ] Documentation states v3 is a versioned extension, not an in-place mutation.
 
-### PR-158 — Add Xetra v3 profile resolution with unchanged 12-model universe
+### PR-158 — Add Xetra v3 profile with unchanged 12-model universe
 
 - **Branch:** `pr/PR-158-xetra-v3-profile`
 - **Depends on:** PR-157, PR-118, PR-128
@@ -1538,52 +1571,49 @@ Acceptance:
 Acceptance:
 
 - [ ] Add public `xetra` profile config version 3 referencing exactly `xetra_semantic_medoid_v3`.
-- [ ] v3 candidate IDs/order equal v2: Gaussian K2–K5, GMM M2 K2–K5, Student-t K2–K5.
+- [ ] v3 candidate IDs/order equal v2: Gaussian K2-K5, GMM M2 K2-K5, Student-t K2-K5.
 - [ ] v3 walk-forward, multistart, fit, gate and ranking settings equal v2 unless PR-156 explicitly changes them.
 - [ ] Version-aware resolution recognizes v3 explicitly and never infers it from list length.
 - [ ] Candidate-grid validation accepts only the exact v3 tuple and rejects wrong order, missing-middle and extra candidates.
-- [ ] Canonical source feature universe comes from v3 61-feature policy; final model features still come only from frozen first-fold selection.
-- [ ] v1/v2 remain loadable and unchanged.
-- [ ] No final refit, registry alias or lifecycle mutation in this PR.
+- [ ] Source feature universe comes from the v3 61-feature policy; final model features come only from frozen first-fold selection.
+- [ ] v1/v2 remain loadable and behavior-identical.
+- [ ] No evaluation tracking, final refit or registry mutation occurs here.
 
-### PR-144 — Pin univariate shadow-analysis contract against Xetra v3
+### PR-144 — Pin the three first-class evaluation contracts
 
-- **Branch:** `pr/PR-144-univariate-shadow-contract`
+- **Branch:** `pr/PR-144-three-evaluation-contract`
 - **Depends on:** PR-158
 - **Allowed:** `EVALUATION.md`
 
 Acceptance:
 
-- [ ] Define `analysis_id=xetra_univariate_shadow_v1`, `analysis_role=diagnostic_only`, `profile_config_version=3`.
-- [ ] First shadow role is exactly eight v3 first-fold Stage-1 `preliminary_medoids` in canonical block order before Stage 2.
-- [ ] Second role is the exact ordered 13 canonical delta features.
-- [ ] Executable features are ordered unique union of representatives then deltas; overlap is evaluated once with both roles.
-- [ ] Define exact `shadow_candidate_count = shadow_feature_count * 12`; remove hard-coded 21/252 assumptions.
-- [ ] Every unique feature uses exact v3 12-candidate universe.
-- [ ] Canonical source-row walk-forward plan is unchanged; common shadow clock is constructed after v3 selection from unique shadow features.
-- [ ] Within-feature winner reuses v3 hard gates/common-valid-fold/seven-stage ranking and is named `diagnostic_feature_model_winner`.
-- [ ] Explicitly forbid global feature champion/global feature ranking by OOS PLL.
-- [ ] Pin shared-fold agreement support, NMI, equal-K permutation agreement and unavailable-agreement behavior.
-- [ ] No economic metric, final refit, registration, alias mutation or OOS publication is introduced.
+- [ ] Define exactly `medoid_multivariate`, `medoid_univariate`, `delta1_univariate`; remove `xetra_univariate_shadow_v1` from the v3 target contract.
+- [ ] Pin exact inputs and candidate cardinalities: multivariate 12, medoid-univariate 8x12=96, delta1-univariate 13x12=156.
+- [ ] Pin independent evaluation clocks: multivariate canonical final-feature clock, medoid common clock over exactly eight Stage-1 medoids, delta1 common clock over exactly 13 deltas.
+- [ ] Forbid a combined 21-feature univariate clock.
+- [ ] Forbid cross-evaluation fit reuse because evaluation clock/hash identity may differ even for the same feature name.
+- [ ] Pin production eligibility to `medoid_multivariate_statistical_champion` only.
+- [ ] Pin both univariate evaluations as diagnostic-only.
+- [ ] Preserve canonical v3 HMM gates/ranking inside a single feature/candidate grid.
+- [ ] No implementation code change in this PR.
 
-### PR-145 — Add exact shadow feature/role and lineage contracts
+### PR-145 — Add shared evaluation identities, specs and lineage contracts
 
-- **Branch:** `pr/PR-145-shadow-feature-contracts`
+- **Branch:** `pr/PR-145-evaluation-contracts`
 - **Depends on:** PR-144
-- **Allowed:** `src/market_regime_engine/analysis/__init__.py`, `src/market_regime_engine/analysis/contracts.py`, `tests/unit/analysis/test_shadow_contracts.py`
+- **Allowed:** `src/market_regime_engine/evaluations/__init__.py`, `src/market_regime_engine/evaluations/contracts.py`, `tests/unit/evaluations/test_contracts.py`
 
 Acceptance:
 
-- [ ] Define immutable analysis/feature-role/feature-spec/lineage contracts without MLflow/PostgreSQL/model imports.
-- [ ] Define exact ordered 13-delta tuple; missing/reordered/duplicate/unexpected delta names fail closed.
-- [ ] Build representatives only from `FeatureSelectionResult.evidence.preliminary_medoids`; require exactly eight unique representatives in canonical block order.
-- [ ] Deterministically deduplicate representatives followed by deltas.
-- [ ] If a delta is a representative, one feature spec records both `semantic_block_representative` and `origin_delta_1obs`.
-- [ ] Source-request feature order is exactly canonical v3 61-feature policy order; no separate 48+13 path.
-- [ ] Build exact 12 ordered shadow candidate specs per unique feature with dimension 1 and v3 family/K/mixture settings.
-- [ ] Carry source build, v3 selection definition/execution hashes and distinct deterministic shadow feature-contract hash.
-- [ ] Define deterministic SHA-256 shadow definition/execution hashes using source/data, plan and v3 selection lineage.
-- [ ] Tests cover both no-overlap and representative/delta-overlap cases.
+- [ ] Define immutable enum/value objects for exactly the three evaluation IDs, evaluation lineage, feature spec, candidate spec and result identity.
+- [ ] Contract module imports no MLflow, PostgreSQL or model adapter.
+- [ ] Define the exact ordered 13-delta tuple and reject missing/reordered/duplicate/unexpected delta names.
+- [ ] Build the medoid feature set only from `FeatureSelectionResult.evidence.preliminary_medoids`; require exactly eight unique features in canonical block order.
+- [ ] Build multivariate input only from the frozen final ordered Stage-2 feature tuple; never substitute preliminary medoids.
+- [ ] Build exact 12 structural candidate specs per model input using v3 family/K/mixture settings.
+- [ ] Carry source build, plan hash, selection definition/execution hashes, evaluation definition/execution hashes and evaluation-specific clock hash.
+- [ ] Deterministic hashes use canonical JSON/SHA-256 and distinguish all three evaluations even on the same source build.
+- [ ] Tests cover exact IDs, feature-set cardinalities, ordering, hash separation and fail-closed invalid contracts.
 
 ### PR-146 — Extract reusable v3-capable model-adapter factory
 
@@ -1593,16 +1623,16 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Move candidate-to-adapter construction to one pure public factory accepting active profile + structural candidate spec.
-- [ ] Preserve Gaussian hmmlearn/full-covariance construction.
-- [ ] Preserve GMM `mixture_count=2`, full covariance, K2–K5.
-- [ ] Pass all active Student-t profile settings explicitly.
-- [ ] `candidate_grid.py` uses the factory; no duplicate family dispatch remains.
-- [ ] v1/v2/v3 production candidate identities/order/settings remain exact.
-- [ ] One-feature shadow specs use the same factory without pretending to be resolved production profiles.
+- [ ] Move candidate-to-adapter construction into one pure factory accepting active profile plus structural candidate spec.
+- [ ] Preserve Gaussian full-covariance construction.
+- [ ] Preserve GMM `mixture_count=2`, full covariance and K2-K5.
+- [ ] Pass every active Student-t profile setting explicitly.
+- [ ] Production candidate grid uses the factory; no duplicate family dispatch remains.
+- [ ] All three evaluation types can create adapters from the same structural candidate contract.
+- [ ] v1/v2/v3 production identities/order/settings remain exact.
 - [ ] Invalid family/K/mixture/profile combinations fail before fit; no fallback.
 
-### PR-147 — Generalize walk-forward runner to structural candidate spec
+### PR-147 — Generalize walk-forward runner to structural candidate specs
 
 - **Branch:** `pr/PR-147-walk-forward-candidate-protocol`
 - **Depends on:** PR-144, PR-124, PR-129
@@ -1610,211 +1640,242 @@ Acceptance:
 
 Acceptance:
 
-- [ ] Introduce minimal structural protocol containing only fields used by `run_walk_forward_candidate`.
-- [ ] `ResolvedCandidateProfile` satisfies it unchanged and remains production resolution type.
-- [ ] Runner accepts protocol instead of concrete production class.
-- [ ] No v1/v2/v3 production invariant is weakened.
-- [ ] One-feature v3 shadow spec executes through same scaler, multistart, causal filter, likelihood-parity, occupancy, alignment and diagnostics path.
-- [ ] Runner need not require a shadow feature to be a final production-selected feature; membership is validated upstream.
-- [ ] Existing production fixtures remain behavior-identical after refactor.
-- [ ] Unsupported version, family/K mismatch, empty order and inconsistent dimension fail closed.
+- [ ] Introduce the minimal structural candidate protocol used by `run_walk_forward_candidate`.
+- [ ] Existing production `ResolvedCandidateProfile` satisfies the protocol unchanged.
+- [ ] Runner accepts multivariate and one-feature structural specs without weakening v1/v2/v3 invariants.
+- [ ] Both paths use the identical scaler, multistart, causal-filter, likelihood-parity, occupancy, alignment and diagnostics implementation.
+- [ ] Membership in a specific evaluation is validated upstream; runner does not infer evaluation identity.
+- [ ] Existing production fixtures remain behavior-identical.
+- [ ] Unsupported version, family/K mismatch, empty feature order and inconsistent dimension fail closed.
 
-### PR-148 — Build common diagnostic clock for unique shadow features
+### PR-148 — Implement evaluation-scoped observation clocks
 
-- **Branch:** `pr/PR-148-shadow-common-observation-clock`
+- **Branch:** `pr/PR-148-evaluation-observation-clocks`
 - **Depends on:** PR-145
-- **Allowed:** `src/market_regime_engine/analysis/common_clock.py`, `tests/unit/analysis/test_common_clock.py`
+- **Allowed:** `src/market_regime_engine/evaluations/clocks.py`, `tests/unit/evaluations/test_clocks.py`
 
 Acceptance:
 
-- [ ] Input requires `timestamp_m1` plus exact ordered unique shadow features and strictly increasing unique UTC timestamps.
-- [ ] Common eligibility is row-wise non-null and finite across all unique shadow features.
-- [ ] Return one immutable mask plus per-fold retained/skipped evidence; never change `WalkForwardPlan`.
-- [ ] Applying mask preserves source rows/timestamps and makes rows outside mask unavailable in one-feature views.
-- [ ] No mutation, fill, interpolation, carry or synthesis.
-- [ ] Every shadow feature receives identical retained TRAIN/TEST timestamps.
-- [ ] Nonfinite non-null source values fail closed.
-- [ ] Tests cover asymmetric missingness and representative/delta overlap without duplicated columns.
+- [ ] Implement a pure immutable clock result carrying evaluation ID, ordered features, retained-mask hash and per-fold retained/skipped evidence.
+- [ ] `medoid_univariate` eligibility is row-wise finite/non-null across exactly the eight preliminary medoids and no other features.
+- [ ] `delta1_univariate` eligibility is row-wise finite/non-null across exactly the 13 canonical deltas and no other features.
+- [ ] A combined medoid+delta common clock is impossible through the public API.
+- [ ] Multivariate evaluation continues to use the canonical complete-case clock for the frozen final tuple; this module does not replace production walk-forward planning.
+- [ ] Original source-row boundaries/timestamps and `WalkForwardPlan` are never changed.
+- [ ] No fill, interpolation, carry, synthesis or write-back.
+- [ ] Tests prove asymmetric missingness can produce different medoid and delta clock hashes while each evaluation gives every one of its features identical retained timestamps.
 
-### PR-149 — Evaluate one univariate 12-candidate shadow grid
+### PR-149 — Implement reusable single-feature 12-candidate evaluator
 
-- **Branch:** `pr/PR-149-single-feature-shadow-grid`
+- **Branch:** `pr/PR-149-univariate-feature-grid`
 - **Depends on:** PR-145, PR-146, PR-147, PR-148
-- **Allowed:** `src/market_regime_engine/analysis/feature_grid.py`, `tests/unit/analysis/test_feature_grid.py`
+- **Allowed:** `src/market_regime_engine/evaluations/univariate_grid.py`, `tests/unit/evaluations/test_univariate_grid.py`
 
 Acceptance:
 
-- [ ] Input is one validated unique shadow feature spec, common-mask frame, canonical v3 profile and complete source/plan/selection/shadow lineage.
-- [ ] Construct exactly ordered 12 candidate specs for that feature.
-- [ ] Evaluate through shared PR-147 runner and PR-146 factory; no duplicate HMM/EM/filter implementation.
-- [ ] Feature order exactly `(feature_name,)`; dimension exactly 1.
-- [ ] All candidates share source build, plan hash, common clock and v3 selection lineage.
-- [ ] Reuse canonical candidate aggregate definitions and retain invalid folds/reasons.
-- [ ] Return diagnostic wrapper with canonical `CandidateGridEvaluation`, feature roles/group and shadow hashes.
-- [ ] No winner selection, MLflow tracking, final refit, OOS publication or alias mutation here.
+- [ ] Input requires exactly one validated feature spec, one evaluation-scoped clock, canonical v3 profile and complete lineage.
+- [ ] Evaluation ID must be either `medoid_univariate` or `delta1_univariate`; multivariate use is rejected.
+- [ ] Construct exactly 12 ordered candidate specs with feature order `(feature_name,)` and dimension 1.
+- [ ] Evaluate through PR-147 runner and PR-146 factory; no duplicate HMM/EM/filter implementation.
+- [ ] Preserve all planned folds, invalid folds/reasons, per-start evidence and aggregate diagnostics.
+- [ ] Within-feature statistical selection uses canonical hard gates/common-valid-fold/seven-stage ranking and produces `diagnostic_feature_model_winner` or an explicit no-winner reason.
+- [ ] No cross-feature ranking, MLflow tracking, local statistics writing, final refit or registry mutation here.
 
-### PR-150 — Execute complete deduplicated shadow suite
+### PR-150 — Implement `medoid_multivariate` evaluation orchestrator
 
-- **Branch:** `pr/PR-150-univariate-shadow-suite`
-- **Depends on:** PR-149, PR-125
-- **Allowed:** `src/market_regime_engine/analysis/suite.py`, `tests/unit/analysis/test_shadow_suite.py`
-
-Acceptance:
-
-- [ ] Evaluate every unique shadow feature in deterministic order and exactly 12 candidates per feature.
-- [ ] Total candidate evaluations equal `shadow_feature_count * 12`; duplicate feature/candidate identities are impossible.
-- [ ] Bounded parallelism across feature grids is allowed; output order is completion-order independent and nested unbounded pools forbidden.
-- [ ] Use existing statistical selection only within each feature to obtain `diagnostic_feature_model_winner` under v3 gates/common support.
-- [ ] Zero accepted candidates for one feature records explicit failure without aborting other features.
-- [ ] Retain all candidate/fold identities and failures.
-- [ ] No cross-feature rank, `overall_winner` or `best_feature` field.
-- [ ] Per-feature summary includes roles, winner family/K if any, validity/common support, OOS mean/std/worst, BIC/AIC, occupancy, persistence, switches, confidence and entropy.
-- [ ] No production refit/registry/OOS-publication invocation.
-
-### PR-151 — Add label-invariant agreement with multivariate v3 champion
-
-- **Branch:** `pr/PR-151-shadow-champion-agreement`
-- **Depends on:** PR-144, PR-150
-- **Allowed:** `src/market_regime_engine/analysis/agreement.py`, `tests/unit/analysis/test_agreement.py`
+- **Branch:** `pr/PR-150-medoid-multivariate-evaluation`
+- **Depends on:** PR-145, PR-146, PR-147, PR-125, PR-158
+- **Allowed:** `src/market_regime_engine/evaluations/medoid_multivariate.py`, `tests/unit/evaluations/test_medoid_multivariate.py`
 
 Acceptance:
 
-- [ ] Require canonical multivariate v3 `WalkForwardEvaluation` and one valid feature winner from same source build/plan hash.
-- [ ] Shared support is ordered intersection of valid folds and exact OOS timestamps.
-- [ ] Record fold IDs/count/rate and shared timestamp count; fabricate nothing.
-- [ ] Below 0.80 support or zero shared timestamps, agreement is null with explicit reason while feature winner remains valid.
-- [ ] Implement exact `dominant_state_nmi = 2*I/(H_x+H_y)` with natural logs and exact 1.0 when both entropies are zero.
-- [ ] NMI is label-invariant and supports different K.
-- [ ] Equal K: enumerate all K! permutations, report max hard agreement and lexicographically smallest maximizing mapping.
-- [ ] Unequal K: permutation metric/mapping null; no many-to-one or cross-space signature matching.
+- [ ] Require canonical v3 source/plan/selection lineage and the frozen Stage-2 final ordered feature tuple.
+- [ ] Evaluate exactly the 12 canonical v3 candidates once on the canonical multivariate complete-case clock.
+- [ ] Reuse the existing candidate-grid/statistical-selection implementation; no second ranking algorithm is introduced.
+- [ ] Return exactly one immutable `medoid_multivariate` result containing all 12 candidate evaluations and `medoid_multivariate_statistical_champion` or explicit failure.
+- [ ] Champion identity equals the canonical statistical champion returned by existing selection for the same grid.
+- [ ] Preserve complete common-valid-fold/ranking/rejection evidence.
+- [ ] Do not final-refit, publish OOS, register models, mutate aliases, track MLflow or write local statistics in this PR.
+
+### PR-151 — Implement label-invariant univariate-to-multivariate agreement
+
+- **Branch:** `pr/PR-151-univariate-multivariate-agreement`
+- **Depends on:** PR-149, PR-150
+- **Allowed:** `src/market_regime_engine/evaluations/agreement.py`, `tests/unit/evaluations/test_agreement.py`
+
+Acceptance:
+
+- [ ] Require one valid univariate feature winner and the `medoid_multivariate_statistical_champion` from the same source build and walk-forward plan.
+- [ ] Shared support is the ordered intersection of valid fold IDs and exact OOS timestamps; no fabricated rows.
+- [ ] Record shared fold IDs/count/rate and shared timestamp count.
+- [ ] Shared valid-fold rate below `0.80` or zero timestamps returns unavailable agreement with an explicit reason without invalidating the feature winner.
+- [ ] Implement exact label-invariant `dominant_state_nmi = 2*I/(H_x+H_y)` with natural logs and exact 1.0 when both entropies are zero.
+- [ ] Equal K enumerates all K! permutations and reports maximum hard agreement plus lexicographically smallest maximizing mapping.
+- [ ] Unequal K reports permutation metric/mapping null; no many-to-one state match or cross-space signature RMS.
 - [ ] Tests cover perfect relabeling, independence, unequal K, constant sequences and insufficient support.
 
-### PR-159 — Pin the three evaluation identities and champion rules
+### PR-159 — Pin namespaced champion selection rules
 
 - **Branch:** `pr/PR-159-three-evaluation-champion-contract`
-- **Depends on:** PR-144, PR-151
+- **Depends on:** PR-144
 - **Allowed:** `EVALUATION.md`
 
 Acceptance:
 
-- [ ] Define exactly the three evaluation IDs from section 18; no fourth Xetra v3 evaluation namespace is introduced by this wave.
-- [ ] Define `medoid_multivariate_statistical_champion` as the existing canonical multivariate 12-candidate statistical winner and the only production-eligible champion.
-- [ ] Define `medoid_univariate_evaluation_champion` and `delta1_univariate_evaluation_champion` as diagnostic-only namespaced champions.
-- [ ] Within each univariate feature, family/K selection remains the canonical 12-candidate statistical ranking on common valid folds.
-- [ ] Across different univariate feature names, OOS PLL/BIC/AIC are forbidden as comparison/ranking metrics.
-- [ ] Cross-feature champion ranking is exactly NMI descending with anchored `1e-12` ties, shared OOS timestamp count descending, then feature name ascending.
-- [ ] Agreement support below `0.80` excludes that feature from cross-feature champion eligibility without changing its within-feature winner.
-- [ ] If no feature is eligible, the univariate evaluation has no champion with an explicit reason; no fallback metric is invented.
-- [ ] Diagnostic champions cannot trigger final refit, OOS publication, registration, challenger/champion alias changes or economic decisions.
+- [ ] Define exact champion names: `medoid_multivariate_statistical_champion`, `medoid_univariate_evaluation_champion`, `delta1_univariate_evaluation_champion`.
+- [ ] Only the multivariate champion is production-eligible.
+- [ ] Within each univariate feature, model selection remains the canonical 12-candidate statistical ranking.
+- [ ] Across feature winners, forbid OOS PLL/BIC/AIC/economic ranking.
+- [ ] Define cross-feature rule exactly: NMI descending using anchored `1e-12` ties, shared OOS timestamp count descending, feature name ascending.
+- [ ] Support below `0.80` makes a feature ineligible only for evaluation-level champion selection.
+- [ ] No eligible feature produces explicit no-champion evidence; no fallback metric is allowed.
+- [ ] No code change in this PR.
 
-### PR-160 — Add the mandatory per-MLflow-run local statistics writer
+### PR-161 — Implement `medoid_univariate` evaluation orchestrator
+
+- **Branch:** `pr/PR-161-medoid-univariate-evaluation`
+- **Depends on:** PR-149, PR-150, PR-151, PR-159
+- **Allowed:** `src/market_regime_engine/evaluations/medoid_univariate.py`, `tests/unit/evaluations/test_medoid_univariate.py`
+
+Acceptance:
+
+- [ ] Require exactly eight Stage-1 preliminary medoids in canonical block order and the PR-148 `medoid_univariate` clock.
+- [ ] Execute exactly eight one-feature grids with 12 candidates each = 96 candidate evaluations.
+- [ ] Bounded parallelism across the eight feature grids is allowed; output order is canonical block order and completion-order independent.
+- [ ] Every feature records its `diagnostic_feature_model_winner` or explicit no-winner reason without aborting other features.
+- [ ] Compute agreement for every valid feature winner using PR-151 and select `medoid_univariate_evaluation_champion` using exactly PR-159 rules.
+- [ ] Raw OOS PLL/BIC/AIC are never used to rank different medoid features.
+- [ ] Return complete feature-grid, agreement, eligibility and champion/tie evidence.
+- [ ] No MLflow tracking, statistics writer, final refit, OOS publication, registration or alias mutation.
+
+### PR-162 — Implement `delta1_univariate` evaluation orchestrator
+
+- **Branch:** `pr/PR-162-delta1-univariate-evaluation`
+- **Depends on:** PR-149, PR-150, PR-151, PR-159
+- **Allowed:** `src/market_regime_engine/evaluations/delta1_univariate.py`, `tests/unit/evaluations/test_delta1_univariate.py`
+
+Acceptance:
+
+- [ ] Require exactly the ordered 13-delta tuple and the PR-148 `delta1_univariate` clock.
+- [ ] Execute exactly 13 one-feature grids with 12 candidates each = 156 candidate evaluations.
+- [ ] Bounded parallelism across 13 feature grids is allowed; output order is exact delta tuple order and completion-order independent.
+- [ ] Every delta records its `diagnostic_feature_model_winner` or explicit no-winner reason without aborting other deltas.
+- [ ] Compute agreement for every valid feature winner using PR-151 and select `delta1_univariate_evaluation_champion` using exactly PR-159 rules.
+- [ ] Raw OOS PLL/BIC/AIC are never used to rank different delta features.
+- [ ] Return complete feature-grid, agreement, eligibility and champion/tie evidence.
+- [ ] Even if a delta is also a Stage-1 medoid, this evaluation performs its own fit on the delta evaluation clock; no cross-evaluation fit reuse.
+- [ ] No MLflow tracking, statistics writer, final refit, OOS publication, registration or alias mutation.
+
+### PR-160 — Add mandatory per-MLflow-run local statistics writer
 
 - **Branch:** `pr/PR-160-evaluation-run-statistics-writer`
-- **Depends on:** PR-159
+- **Depends on:** PR-145, PR-159
 - **Allowed:** `.gitignore`, `src/market_regime_engine/evaluation_statistics/__init__.py`, `src/market_regime_engine/evaluation_statistics/contracts.py`, `src/market_regime_engine/evaluation_statistics/writer.py`, `src/market_regime_engine/evaluation_statistics/render.py`, `tests/unit/evaluation_statistics/*`
 
 Acceptance:
 
-- [ ] Define one versioned statistics schema capable of representing every mandatory field group listed in section 18 without importing MLflow/model/source adapters into the contract module.
-- [ ] Resolve evidence roots exactly as repository-checkout-relative `./evaluations/<evaluation>/<mlflow_run_id>/`; evaluation ID must be one of the three PR-159 IDs and run ID must be non-empty.
-- [ ] Add `evaluations/` to `.gitignore`; no generated evaluation evidence is committed.
-- [ ] Preflight creates/verifies the evaluation directory and fails before MLflow-run creation if the root is not writable.
-- [ ] Writer creates a run directory exactly once, atomically writes initial `RUNNING` `statistics.json` + `statistics.md`, then atomically finalizes to `FINISHED` or `FAILED`.
-- [ ] Canonical JSON is UTF-8, deterministic, finite-only and rejects NaN/Inf, unknown schema fields, raw-feature payload fields and secret/DSN fields.
-- [ ] SHA-256 is computed from the exact finalized `statistics.json` bytes and exposed for MLflow parity verification.
-- [ ] Existing finalized run directories are immutable; overwrite/reuse attempts fail closed.
-- [ ] Failed evaluations still finalize a safe FAILED statistics record with error code/reason and all evidence available before failure.
-- [ ] Unit tests cover all three evaluation IDs, parent/feature/candidate run types, atomic replacement, crash-safe temp cleanup, unwritable root, immutable-finalized behavior, deterministic hash and forbidden-data rejection.
+- [ ] Define one versioned statistics schema capable of representing every mandatory field group in this section.
+- [ ] Accept only the exact evaluation IDs `medoid_multivariate`, `medoid_univariate`, `delta1_univariate`.
+- [ ] Resolve paths exactly as repository-checkout-relative `./evaluations/<evaluation>/<mlflow_run_id>/`.
+- [ ] Add `evaluations/` to `.gitignore`; generated evidence is never committed.
+- [ ] Preflight creates/verifies the evaluation root and fails before MLflow-run creation if not writable.
+- [ ] Create each run directory once; atomically write initial `RUNNING` JSON/Markdown then atomically finalize to `FINISHED` or `FAILED`.
+- [ ] Canonical JSON is deterministic UTF-8, finite-only and rejects NaN/Inf, unknown schema fields, raw feature payloads, DSNs and secret fields.
+- [ ] SHA-256 is computed from exact finalized `statistics.json` bytes and exposed for MLflow parity verification.
+- [ ] Finalized run directories are immutable; overwrite/reuse attempts fail closed.
+- [ ] Failed runs retain a safe FAILED dossier with error code/reason and all evidence available before failure.
+- [ ] Tests cover all three evaluation IDs, parent/feature/candidate run types, atomicity, crash-temp cleanup, unwritable roots, immutability, deterministic hashing and forbidden-data rejection.
 
-### PR-152 — Track the three Xetra v3 evaluations in MLflow with local statistics parity
+### PR-152 — Track all three evaluations in MLflow with statistics parity
 
-- **Branch:** `pr/PR-152-mlflow-shadow-analysis-evidence`
-- **Depends on:** PR-150, PR-151, PR-130, PR-159, PR-160
-- **Allowed:** `src/market_regime_engine/mlflow_support/shadow_tracking.py`, `src/market_regime_engine/analysis/shadow_plots.py`, `tests/unit/mlflow_support/test_shadow_tracking.py`, `tests/unit/analysis/test_shadow_plots.py`, `PLOT_STYLE.md`
-
-Acceptance:
-
-- [ ] Create exactly one top-level parent run for each of the three section-18 evaluation IDs for one evaluation execution/source snapshot.
-- [ ] Multivariate evaluation logs exactly the 12 canonical v3 candidates and its namespaced statistical champion; medoid-univariate logs exactly eight feature groups x 12 candidate records; delta1-univariate logs exactly 13 feature groups x 12 candidate records, reusing computed mathematical results rather than refitting when a feature belongs to both roles.
-- [ ] Every MLflow parent/feature/candidate run is preflighted and mirrored by PR-160 under `./evaluations/<evaluation>/<mlflow_run_id>/`.
-- [ ] Every corresponding local `statistics.json` contains the complete applicable section-18 statistics, not only the subset exposed as MLflow scalar metrics.
-- [ ] Exact finalized local `statistics.json` bytes are uploaded to that same run as `statistics/statistics.json`; the same SHA-256 is recorded locally and in MLflow and is verified after logging.
-- [ ] Candidate runs log family/K/mixture, feature order, validity, aggregates and complete TEST-end fold histories; local statistics additionally retain every fold/start/state/ranking detail required by section 18.
-- [ ] Medoid and delta evaluation parents log their namespaced diagnostic champion or explicit no-champion reason using PR-159 ranking; raw OOS PLL never ranks different feature names.
-- [ ] Multivariate parent logs exact v3 feature-selection lineage, eight preliminary medoids, frozen final feature order and canonical statistical champion evidence.
-- [ ] Plots cover within-feature family/K, validity support, winner family/K, NMI and equal-K hard agreement where available; multivariate plots retain canonical candidate/ranking diagnostics.
-- [ ] A run that cannot create/finalize/verify its local statistics mirror is marked FAILED and the evaluation command fails; there is no best-effort statistics mode.
-- [ ] No raw source values, credentials, registration, final refit, OOS build or alias mutation are performed by diagnostic tracking.
-
-### PR-153 — Add standalone Xetra v3 three-evaluation runner
-
-- **Branch:** `pr/PR-153-run-xetra-shadow-analysis`
-- **Depends on:** PR-150, PR-151, PR-152
-- **Allowed:** `scripts/run_xetra_v3_evaluations.py`, `tests/unit/commands/test_shadow_analysis_script.py`
+- **Branch:** `pr/PR-152-three-evaluation-mlflow-tracking`
+- **Depends on:** PR-150, PR-161, PR-162, PR-160, PR-130
+- **Allowed:** `src/market_regime_engine/mlflow_support/evaluation_tracking.py`, `src/market_regime_engine/evaluations/plots.py`, `tests/unit/mlflow_support/test_evaluation_tracking.py`, `tests/unit/evaluations/test_plots.py`, `PLOT_STYLE.md`
 
 Acceptance:
 
-- [ ] Add one standalone evaluation script; production lifecycle scripts do not automatically run the diagnostic evaluations.
-- [ ] Load exactly `xetra_v3.yaml` and `xetra_semantic_medoid_v3.yaml` and use one read-only source snapshot with canonical source-row/window/plan semantics.
-- [ ] Preflight all three exact `./evaluations/<evaluation>/` roots before starting any MLflow evaluation parent; failure starts no evaluation run.
-- [ ] Run first-fold feature selection on all 61 canonical columns and obtain eight preliminary medoids with deltas eligible.
-- [ ] Evaluate the canonical multivariate v3 12-candidate grid once and select its production-eligible namespaced statistical champion.
-- [ ] Execute/reuse the univariate mathematical grids needed for the eight medoid features and exact 13 delta features without duplicate refits for identical feature/source/plan/candidate identity.
-- [ ] Emit the three distinct MLflow evaluation hierarchies and PR-160 local run statistics mirrors, including medoid and delta diagnostic evaluation champions.
+- [ ] Create one independent top-level parent run per evaluation ID for one source snapshot/execution.
+- [ ] `medoid_multivariate` parent logs exactly 12 candidate child runs and its production-eligible namespaced champion.
+- [ ] `medoid_univariate` parent logs exactly eight feature runs and 96 candidate runs under those features.
+- [ ] `delta1_univariate` parent logs exactly 13 feature runs and 156 candidate runs under those features.
+- [ ] The same feature name occurring in two evaluations creates independent MLflow/local run identities; no result is silently shared across evaluation namespaces.
+- [ ] Every MLflow parent/feature/candidate run has exactly one PR-160 local mirror under the matching evaluation directory.
+- [ ] Every local `statistics.json` contains the complete applicable evidence from this section, not only MLflow scalar metrics.
+- [ ] Exact finalized local JSON bytes are logged to that same run as `statistics/statistics.json`; SHA-256 matches local and MLflow metadata and is verified.
+- [ ] Candidate runs log family/K/mixture, exact feature order, validity, aggregates and complete TEST-end fold histories.
+- [ ] Evaluation parents log exact namespaced champion/no-champion evidence and all tie stages.
+- [ ] Multivariate parent logs the complete v3 feature-selection lineage/evidence; univariate parents log evaluation-specific common-clock evidence and agreement tables.
+- [ ] Plots are evaluation-specific and never visually rank different univariate features by raw/weighted OOS likelihood.
+- [ ] Any local statistics creation/finalization/hash failure marks the MLflow run FAILED and fails the evaluation; no best-effort mode.
+- [ ] No final refit, OOS publication, registration or alias mutation occurs in tracking.
+
+### PR-153 — Add one standalone Xetra v3 three-evaluation runner
+
+- **Branch:** `pr/PR-153-run-xetra-v3-evaluations`
+- **Depends on:** PR-152
+- **Allowed:** `scripts/run_xetra_v3_evaluations.py`, `tests/unit/commands/test_xetra_v3_evaluations_script.py`
+
+Acceptance:
+
+- [ ] Load exactly `xetra_v3.yaml` and `xetra_semantic_medoid_v3.yaml`.
+- [ ] Open one read-only PostgreSQL source snapshot containing the canonical 61-feature universe and build one canonical source-row walk-forward plan.
+- [ ] Run first-fold feature selection once on all 61 features and freeze eight preliminary medoids plus final Stage-2 tuple.
+- [ ] Preflight all three local evaluation roots before creating any evaluation parent run.
+- [ ] Execute `medoid_multivariate` first because both univariate evaluation champions require its statistical champion as agreement reference.
+- [ ] Then execute `medoid_univariate` and `delta1_univariate` independently with their own PR-148 clocks; they may run in parallel after the multivariate champion exists.
+- [ ] Full successful execution attempts exactly 264 candidate evaluations: 12 multivariate + 96 medoid-univariate + 156 delta1-univariate.
+- [ ] Emit three independent MLflow parent hierarchies and local statistics mirrors.
 - [ ] Never call final refit, prediction/OOS publication, registration or alias/CAS mutation.
-- [ ] Invalid feature/candidate results are preserved; contract/source/hash/MLflow/local-statistics failures fail explicitly.
-- [ ] Final stdout JSON reports source build, all three parent run IDs, all three namespaced champion identities/statuses, common-clock counts, unique mathematical fit count, MLflow run counts and local statistics directories.
+- [ ] Candidate/feature invalidity is retained in its evaluation; source/contract/hash/tracking/statistics failures fail explicitly.
+- [ ] Final stdout JSON reports source build, three parent run IDs, three namespaced champion statuses/identities, each evaluation clock/count/hash, candidate counts, failed-feature counts and local evidence roots.
 
-### PR-154 — Prove 61-feature selection and shadow workflow hermetically
+### PR-154 — Prove the three-evaluation workflow hermetically
 
-- **Branch:** `pr/PR-154-shadow-analysis-e2e-proof`
+- **Branch:** `pr/PR-154-three-evaluation-e2e-proof`
 - **Depends on:** PR-153
-- **Allowed:** `tests/e2e/test_xetra_univariate_shadow_analysis.py`, shadow-analysis E2E fixtures only
+- **Allowed:** `tests/e2e/test_xetra_v3_three_evaluations.py`, three-evaluation E2E fixtures only
 
 Acceptance:
 
-- [ ] Hermetic fixture exposes exactly canonical v3 61 features with controlled asymmetric missingness and no NAS dependency.
-- [ ] Prove selection consumes all 61, preserves eight blocks and can choose a delta as Stage-1 representative.
-- [ ] Prove deterministic deduplication when delta is representative and exact `shadow_feature_count * 12` candidate cardinality.
-- [ ] Inject deterministic runners where needed so CI need not perform all real fits; injection cannot bypass cardinality/hash/common-clock/orchestration assertions.
-- [ ] Include at least one small real Gaussian and one small real Student-t/GMM walk-forward smoke through shared path.
-- [ ] Prove identical common retained timestamps despite asymmetric missingness.
-- [ ] Prove one feature can have zero accepted candidates without removing other results.
-- [ ] Prove agreement is label-invariant and uses only shared valid OOS support.
-- [ ] Prove MLflow is partitioned into exactly three evaluation parents with the exact evaluation IDs and expected multivariate/medoid/delta candidate memberships; shared mathematical results may be reused without duplicate fitting.
-- [ ] Prove the multivariate namespaced champion equals canonical statistical selection and both univariate namespaced champions obey PR-159 NMI/support/tie rules with no cross-feature PLL ranking.
-- [ ] Prove every MLflow parent/feature/candidate run has exactly one matching `./evaluations/<evaluation>/<mlflow_run_id>/statistics.json` and `statistics.md`, including FAILED runs.
-- [ ] Prove each MLflow `statistics/statistics.json` artifact is byte-identical to the local file and SHA-256 metadata matches.
-- [ ] Prove local statistics contain complete fold/start/state/ranking/lineage evidence and reject NaN/Inf, raw feature rows and secrets.
-- [ ] Prove no final refit, OOS publication, registration or alias mutation via fail-on-call doubles.
-- [ ] Required tests remain hermetic and satisfy coverage policy.
+- [ ] Hermetic fixture exposes exactly the canonical 61 features with controlled asymmetric missingness and no NAS dependency.
+- [ ] Prove Stage-1 consumes all 61, yields exactly eight medoids and can select a delta as a medoid; Stage-2 freezes the multivariate tuple.
+- [ ] Prove candidate counts exactly 12, 96 and 156 for the three evaluations and total 264.
+- [ ] Prove medoid/delta common clocks are independent and can differ under asymmetric missingness; no combined 21-feature clock is constructed.
+- [ ] Prove a delta that is also a medoid is independently evaluated in both univariate evaluations and receives distinct evaluation/clock lineage.
+- [ ] Inject deterministic runners where necessary so CI need not execute all real fits; injection cannot bypass count/hash/clock/orchestration assertions.
+- [ ] Include at least one small real Gaussian and one small real Student-t/GMM walk-forward smoke through the shared runner path.
+- [ ] Prove one feature can have zero accepted candidates without removing other feature results.
+- [ ] Prove NMI/permutation agreement is label-invariant and uses only shared valid OOS support.
+- [ ] Prove multivariate champion equals canonical statistical selection; univariate champions obey NMI/support/tie rules and never use cross-feature PLL.
+- [ ] Prove MLflow hierarchy exactly: three parents; multivariate 12 candidates; medoid 8 feature + 96 candidate runs; delta 13 feature + 156 candidate runs.
+- [ ] Prove every MLflow run has exactly one matching local `statistics.json`/`statistics.md`, including FAILED runs, and MLflow JSON artifact bytes/hash match local.
+- [ ] Prove statistics completeness for fold/start/state/ranking/lineage evidence and rejection of NaN/Inf, raw source rows and secrets.
+- [ ] Prove diagnostic evaluations never call final refit, OOS publication, registration or alias mutation via fail-on-call doubles.
+- [ ] Required tests remain hermetic and satisfy repository coverage policy.
 
-### PR-155 — Document canonical deltas and shadow interpretation
+### PR-155 — Document Xetra v3 three-evaluation architecture
 
-- **Branch:** `pr/PR-155-shadow-analysis-documentation`
+- **Branch:** `pr/PR-155-three-evaluation-documentation`
 - **Depends on:** PR-154
-- **Allowed:** `docs/univariate_shadow_analysis.md`, `README.md`
+- **Allowed:** `docs/regime_evaluations.md`, `README.md`
 
 Acceptance:
 
-- [ ] Explain why v3 is a new versioned 61-feature policy rather than an in-place mutation of v2.
-- [ ] List exact 13 deltas and exact block assignments.
-- [ ] Explain that deltas participate in canonical first-fold Stage-1 selection and can enter multivariate final features.
-- [ ] Explain two shadow roles and deduplication when a delta is also representative.
-- [ ] Document `shadow_candidate_count = shadow_feature_count * 12` plus separate 12-candidate multivariate v3 reference grid.
-- [ ] Document standalone command/environment prerequisites without secrets.
-- [ ] Explain common shadow clock and prohibition on per-feature clocks.
-- [ ] Explain within-feature model ranking only and absence of global best-feature ranking.
-- [ ] Explain NMI, equal-K permutation agreement, validity, occupancy, persistence, switches/year, confidence and entropy.
-- [ ] Explain the three exact evaluation IDs, why only the multivariate namespaced champion is production-eligible, and how each univariate diagnostic champion is selected without cross-feature PLL comparison.
-- [ ] Document the exact `./evaluations/<evaluation>/<mlflow_run_id>/` layout, immutable run directories, mandatory `statistics.json`/`statistics.md`, MLflow byte/hash parity and FAILED-run evidence behavior.
-- [ ] Document every statistics field group from section 18 and explicitly state that raw source rows, credentials and model binaries are excluded.
-- [ ] Explain shadow/univariate analysis remains diagnostic-only although deltas are canonical production-selection inputs.
-- [ ] README links to document without duplicating normative contract.
+- [ ] Document why v3 extends the canonical universe to 61 features without mutating v1/v2.
+- [ ] List exact 13 delta features and semantic-block assignments.
+- [ ] Explain the exact roles and inputs of `medoid_multivariate`, `medoid_univariate`, `delta1_univariate`.
+- [ ] Explain exact candidate counts 12/96/156 and total 264.
+- [ ] Explain separate univariate clocks and why a feature appearing in both univariate evaluations is fitted independently.
+- [ ] Explain all three champion names and why only the multivariate champion is production-eligible.
+- [ ] Explain within-feature model ranking versus cross-feature NMI agreement ranking and prohibition on cross-feature PLL/BIC/AIC comparison.
+- [ ] Document exact `./evaluations/<evaluation>/<mlflow_run_id>/` layout, immutable run directories, `statistics.json`/`statistics.md`, FAILED evidence and MLflow byte/hash parity.
+- [ ] Document every mandatory statistics field group from this section and the no-secrets/no-raw-source-row rule.
+- [ ] Document standalone runner prerequisites without credentials.
+- [ ] README links to the document without duplicating normative contract text.
 
-## Canonical-v3 + shadow-analysis execution graph
+## Three-evaluation execution graph
 
-Only merged dependencies unlock work. Xetra v1/v2 remain immutable historical identities.
+Only merged dependencies unlock work. PRs with disjoint allowed files are intentionally parallelizable for weak agents.
 
 ```text
 G0 prerequisites: PR-125 PR-129
@@ -1822,17 +1883,15 @@ G1: PR-156 after PR-125+PR-129
 G2: PR-157 after PR-156
 G3: PR-158 after PR-157+PR-118+PR-128
 G4: PR-144 after PR-158
-G5 parallel after PR-144: PR-145 PR-146 PR-147
-G6: PR-148 after PR-145
+G5 parallel after PR-144: PR-145 PR-146 PR-147 PR-159
+G6 parallel: PR-148 after PR-145; PR-160 after PR-145+PR-159; PR-150 after PR-145+PR-146+PR-147+PR-125+PR-158
 G7: PR-149 after PR-145+PR-146+PR-147+PR-148
-G8: PR-150 after PR-149+PR-125
-G9: PR-151 after PR-150
-G10: PR-159 after PR-144+PR-151
-G11: PR-160 after PR-159
-G12: PR-152 after PR-150+PR-151+PR-130+PR-159+PR-160
-G13: PR-153 after PR-152
-G14: PR-154 after PR-153
-G15: PR-155 after PR-154
+G8: PR-151 after PR-149+PR-150
+G9 parallel: PR-161 after PR-149+PR-150+PR-151+PR-159; PR-162 after PR-149+PR-150+PR-151+PR-159
+G10: PR-152 after PR-150+PR-161+PR-162+PR-160+PR-130
+G11: PR-153 after PR-152
+G12: PR-154 after PR-153
+G13: PR-155 after PR-154
 ```
 
-PR-145, PR-146 and PR-147 are deliberately parallelizable after PR-144 and have disjoint primary implementation ownership. The shadow analysis cannot start until canonical v3 exists because both the eight representatives and the multivariate reference champion must be derived from the 61-feature policy. PR-159 formalizes the three evaluation/champion namespaces after agreement mathematics exists; PR-160 is an isolated filesystem-evidence component; PR-152 is the first PR allowed to bind those contracts to MLflow.
+Parallel ownership is explicit: after PR-144, PR-145/146/147/159 are disjoint; later PR-161 and PR-162 are deliberately independent sibling orchestrators. The architecture has no combined shadow-suite orchestrator and no combined 21-feature univariate clock.
