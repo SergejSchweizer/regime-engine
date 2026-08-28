@@ -28,6 +28,7 @@ WORKDIR /opt/regime-engine
 COPY uv.lock pyproject.toml README.md ./
 COPY src ./src
 COPY configs ./configs
+COPY scripts ./scripts
 COPY scripts/mlflow_entrypoint.sh /usr/local/bin/regime-engine-mlflow-entrypoint
 COPY scripts/mlflow_db_upgrade.sh /usr/local/bin/regime-engine-mlflow-db-upgrade
 

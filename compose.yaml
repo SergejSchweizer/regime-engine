@@ -26,6 +26,7 @@ services:
       MLFLOW_BACKEND_DB_USER: ${MLFLOW_BACKEND_DB_USER:?MLFLOW_BACKEND_DB_USER is required}
       MLFLOW_BACKEND_DB_PASSWORD_FILE: /run/secrets/mlflow_backend_password
       MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+      REGIME_LOG_DIR: /opt/regime-engine/.logs
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       MLFLOW_RUNTIME_UID: ${MLFLOW_RUNTIME_UID:-10001}
       MLFLOW_RUNTIME_GID: ${MLFLOW_RUNTIME_GID:-10001}
@@ -68,6 +69,23 @@ services:
       - type: bind
         source: ${MLFLOW_ARTIFACTS_HOST_PATH:-/volume2/docker/mlflow/artifacts}
         target: /mlflow/artifacts
+      - type: bind
+        source: ${REGIME_LOGS_HOST_PATH:-/volume2/docker/mlflow/.logs}
+        target: /opt/regime-engine/.logs
+
+  log-retention:
+    container_name: mlflow-log-retention
+    image: regime-engine-mlflow:local
+    pull_policy: never
+    user: "10001:10001"
+    restart: always
+    environment:
+      REGIME_LOG_DIR: /opt/regime-engine/.logs
+    entrypoint: ["python", "/opt/regime-engine/scripts/log_retention.py"]
+    volumes:
+      - type: bind
+        source: ${REGIME_LOGS_HOST_PATH:-/volume2/docker/mlflow/.logs}
+        target: /opt/regime-engine/.logs
 
   mlflow-postgres:
     container_name: mlflow-postgres

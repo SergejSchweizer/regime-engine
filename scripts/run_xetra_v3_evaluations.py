@@ -31,6 +31,7 @@ from market_regime_engine.features.postgres_settings import FeaturePostgresSetti
 from market_regime_engine.features.postgres_source import PostgresFeatureSource
 from market_regime_engine.mlflow_support.evaluation_tracking import track_evaluation_result
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
+from market_regime_engine.observability import configure_debug_logging
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import resolve_selected_feature_profile
 
@@ -86,7 +87,9 @@ def _common_feature_history(rows: pd.DataFrame, feature_names: tuple[str, ...]) 
 
 
 def main() -> None:
+    logger = configure_debug_logging("xetra-v3-evaluation")
     root = Path(os.environ.get("REGIME_ENGINE_ROOT", Path(__file__).resolve().parents[1]))
+    logger.info("evaluation_started profile=xetra_v3")
     profile = load_profile(root / "configs/profiles/xetra_v3.yaml")
     policy = _policy(root)
     settings = FeaturePostgresSettings.from_env(os.environ)
@@ -110,6 +113,7 @@ def main() -> None:
         data_sha256=snapshot.lineage.data_sha256,
         evaluation_plan_hash=plan.plan_hash,
     )
+    logger.info("feature_selection_completed final_features=%s", selection.final_features)
     resolved = resolve_selected_feature_profile(
         profile, policy, selection, source_build_id=snapshot.lineage.source_build_id
     )
@@ -123,6 +127,7 @@ def main() -> None:
     delta_clock = build_evaluation_clock(rows, plan, delta_spec)
     definition_hash = selection.feature_selection_definition_hash
     execution_hash = selection.feature_selection_execution_hash
+    logger.info("evaluation_phase_started phase=medoid_multivariate")
     multivariate = evaluate_medoid_multivariate(
         rows,
         plan=plan,
@@ -138,6 +143,8 @@ def main() -> None:
             multi_clock.clock_hash,
         ),
     )
+    logger.info("evaluation_phase_completed phase=medoid_multivariate")
+    logger.info("evaluation_phase_started phase=medoid_univariate")
     medoid = evaluate_medoid_univariate(
         rows,
         plan=plan,
@@ -154,6 +161,8 @@ def main() -> None:
         ),
         multivariate=multivariate,
     )
+    logger.info("evaluation_phase_completed phase=medoid_univariate")
+    logger.info("evaluation_phase_started phase=delta1_univariate")
     delta = evaluate_delta1_univariate(
         rows,
         plan=plan,
@@ -169,6 +178,7 @@ def main() -> None:
         ),
         multivariate=multivariate,
     )
+    logger.info("evaluation_phase_completed phase=delta1_univariate")
     writer = StatisticsWriter(root)
     writer.preflight()
     port = FileMlflowTrackingPort(os.environ["MLFLOW_TRACKING_URI"])
@@ -196,6 +206,7 @@ def main() -> None:
             sort_keys=True,
         )
     )
+    logger.info("evaluation_completed parent_runs=%s", [item.parent_run_id for item in tracked])
 
 
 if __name__ == "__main__":
