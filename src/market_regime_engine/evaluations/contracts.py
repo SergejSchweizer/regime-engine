@@ -95,6 +95,10 @@ class CandidateSpec:
         if self.mixture_count != (2 if self.model_family == "gmm_hmm" else 1):
             raise ValueError("candidate mixture count is inconsistent with family")
 
+    @property
+    def feature_dimension(self) -> int:
+        return len(self.feature_order)
+
 
 @dataclass(frozen=True, slots=True)
 class EvaluationLineage:

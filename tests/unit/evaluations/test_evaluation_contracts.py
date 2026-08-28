@@ -21,6 +21,7 @@ def test_canonical_evaluation_ids_and_candidate_specs_are_exact() -> None:
         EvaluationId.DELTA1_UNIVARIATE,
     )
     assert len(DELTA1_FEATURES) == 13
+    assert candidate_specs(("feature",))[0].feature_dimension == 1
     assert tuple(item.candidate_id for item in candidate_specs(("feature",))) == (
         "gaussian_hmm_k2_full",
         "gaussian_hmm_k3_full",
