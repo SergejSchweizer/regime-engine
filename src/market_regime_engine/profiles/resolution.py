@@ -30,11 +30,13 @@ _V2_CANDIDATE_IDS = (
     "student_t_hmm_k4_full",
     "student_t_hmm_k5_full",
 )
+_V3_CANDIDATE_IDS = _V2_CANDIDATE_IDS
 EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION = {
     1: _V1_CANDIDATE_IDS,
     2: _V2_CANDIDATE_IDS,
+    3: _V3_CANDIDATE_IDS,
 }
-_PROFILE_CONTRACTS = {1: (48, 8), 2: (48, 8)}
+_PROFILE_CONTRACTS = {1: (48, 8), 2: (48, 8), 3: (61, 8)}
 
 
 def expected_candidate_ids(profile_config_version: int) -> tuple[str, ...]:
@@ -104,15 +106,14 @@ class ResolvedCandidateProfile:
             self.feature_selection_execution_hash,
             "feature_selection_execution_hash",
         )
-        expected_universe, expected_medoids = _PROFILE_CONTRACTS[
-            1 if len(self.original_feature_universe) == 48 else 2
-        ]
+        expected_universe = len(self.original_feature_universe)
+        expected_medoids = 8
         if (
-            len(self.original_feature_universe) != expected_universe
+            expected_universe not in {48, 61}
             or len(set(self.original_feature_universe)) != expected_universe
         ):
             raise ValueError(
-                "original Xetra feature universe must contain exactly 48 unique features"
+                "original Xetra feature universe must contain exactly 48 or 61 unique features"
             )
         if (
             len(self.preliminary_medoids) != expected_medoids
@@ -226,7 +227,16 @@ def _validate_selection_against_policy(
 ) -> None:
     if policy.policy_id != selection.policy_id:
         raise ValueError("feature-selection policy/result policy_id mismatch")
-    expected_universe, _ = _PROFILE_CONTRACTS[1 if policy.policy_id.endswith("v1") else 2]
+    policy_versions = {
+        "xetra_semantic_medoid_v1": 1,
+        "xetra_semantic_medoid_v2": 2,
+        "xetra_semantic_medoid_v3": 3,
+    }
+    try:
+        policy_version = policy_versions[policy.policy_id]
+    except KeyError as error:
+        raise ValueError("unsupported Xetra feature-selection policy") from error
+    expected_universe, _ = _PROFILE_CONTRACTS[policy_version]
     if len(policy.feature_universe) != expected_universe:
         raise ValueError("Xetra feature-selection policy has an invalid feature-universe size")
     evidence = selection.evidence

@@ -35,6 +35,7 @@ SUPPORTED_CANDIDATE_IDS = frozenset(
     for candidate_ids in (
         expected_candidate_ids(1),
         expected_candidate_ids(2),
+        expected_candidate_ids(3),
     )
     for candidate_id in candidate_ids
 )
@@ -112,7 +113,7 @@ class CandidateGridEvaluation:
     aggregates: tuple[CandidateAggregate, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3}:
             raise ValueError("candidate grid requires a supported xetra profile configuration")
         expected_ids = expected_candidate_ids(self.profile_config_version)
         if tuple(item.candidate_id for item in self.evaluations) != expected_ids:
