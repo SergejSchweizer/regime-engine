@@ -21,6 +21,8 @@ FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v1
 PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
 V2_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v2.yaml")
 V2_PROFILE_CONFIG = Path("configs/profiles/xetra_v2.yaml")
+V3_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v3.yaml")
+V3_PROFILE_CONFIG = Path("configs/profiles/xetra_v3.yaml")
 
 
 def load_policy(path: Path = FEATURE_POLICY_CONFIG) -> FeatureSelectionPolicy:
@@ -226,3 +228,46 @@ def test_candidate_identities_are_exact_and_version_specific() -> None:
     unexpected_extra = (*v1.candidates, v2.candidates[3])
     with pytest.raises(ValueError, match="IDs/order"):
         validate_candidate_comparison_inputs(unexpected_extra, profile_config_version=1)
+
+
+def test_xetra_v3_resolution_uses_61_features_and_exact_v2_candidate_ids() -> None:
+    policy = load_policy(V3_FEATURE_POLICY_CONFIG)
+    selection = make_selection(policy)
+    resolved = resolve_selected_feature_profile(
+        load_profile(V3_PROFILE_CONFIG),
+        policy,
+        selection,
+        source_build_id="build-1",
+    )
+    assert resolved.profile_config_version == 3
+    assert len(resolved.original_feature_universe) == 61
+    assert resolved.original_feature_universe == policy.feature_universe
+    assert resolved.preliminary_medoids == selection.evidence.preliminary_medoids
+    assert (
+        tuple(candidate.candidate_id for candidate in resolved.candidates)
+        == (EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[3])
+    )
+    assert (
+        EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[3]
+        == (EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[2])
+    )
+    assert all(
+        candidate.original_feature_universe == policy.feature_universe
+        for candidate in resolved.candidates
+    )
+    assert all(
+        candidate.feature_order == selection.final_features for candidate in resolved.candidates
+    )
+
+
+def test_xetra_v3_validation_rejects_wrong_candidate_order() -> None:
+    policy = load_policy(V3_FEATURE_POLICY_CONFIG)
+    resolved = resolve_selected_feature_profile(
+        load_profile(V3_PROFILE_CONFIG),
+        policy,
+        make_selection(policy),
+        source_build_id="build-1",
+    )
+    wrong_order = (resolved.candidates[1], resolved.candidates[0], *resolved.candidates[2:])
+    with pytest.raises(ValueError, match="IDs/order"):
+        validate_candidate_comparison_inputs(wrong_order, profile_config_version=3)

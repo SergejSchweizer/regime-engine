@@ -226,6 +226,19 @@ class ModelProfile:
                 raise ValueError("xetra v1 Gaussian candidates must be exactly K=2,3,4")
             if self.gmm_hmms or self.student_t_hmm is not None:
                 raise ValueError("xetra v1 supports only its immutable Gaussian candidate set")
+        elif self.profile_config_version in (2, 3):
+            expected_policy = f"xetra_semantic_medoid_v{self.profile_config_version}"
+            if self.feature_selection.policy_id != expected_policy:
+                raise ValueError("Xetra profile version and feature-selection policy differ")
+            if self.gaussian_hmm.candidate_states != (2, 3, 4, 5):
+                raise ValueError("Xetra v2/v3 Gaussian candidates must be exactly K=2,3,4,5")
+            expected_gmm = ((2, 2), (3, 2), (4, 2), (5, 2))
+            if gmm_identities != expected_gmm:
+                raise ValueError("Xetra v2/v3 GMM candidates must be exactly K2-K5 with M=2")
+            if self.student_t_hmm is None:
+                raise ValueError("Xetra v2/v3 requires the Student-t K2-K5 candidate family")
+        else:
+            raise ValueError("unsupported Xetra profile configuration version")
 
     def canonical_dict(self) -> dict[str, Any]:
         return asdict(self)

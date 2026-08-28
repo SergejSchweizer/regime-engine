@@ -30,6 +30,7 @@ from market_regime_engine.profiles.resolution import (
 from market_regime_engine.training.candidate_grid import (
     CANDIDATE_VALID_FOLD_RATE_GATE,
     CandidateAggregate,
+    CandidateGridEvaluation,
     _default_adapter_builder,
     aggregate_candidate,
     evaluate_candidate_grid,
@@ -348,3 +349,42 @@ def test_aggregate_contract_validates_counts_gate_and_finite_metrics() -> None:
             aic_mean=1.0,
         )
     assert CANDIDATE_VALID_FOLD_RATE_GATE == 0.80
+
+
+def test_candidate_grid_contract_accepts_profile_version_3() -> None:
+    ids = (
+        "gaussian_hmm_k2_full",
+        "gaussian_hmm_k3_full",
+        "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
+        "gmm_hmm_k2_m2_full",
+        "gmm_hmm_k3_m2_full",
+        "gmm_hmm_k4_m2_full",
+        "gmm_hmm_k5_m2_full",
+        "student_t_hmm_k2_full",
+        "student_t_hmm_k3_full",
+        "student_t_hmm_k4_full",
+        "student_t_hmm_k5_full",
+    )
+    base, _, _ = base_evaluation()
+    evaluations = tuple(
+        replace(
+            base,
+            candidate_id=candidate_id,
+            state_count=int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),
+        )
+        for candidate_id in ids
+    )
+    aggregates = tuple(aggregate_candidate(item) for item in evaluations)
+    grid = CandidateGridEvaluation(
+        profile_id="xetra",
+        profile_config_version=3,
+        source_build_id=base.source_build_id,
+        feature_order=base.feature_order,
+        feature_selection_definition_hash=base.feature_selection_definition_hash,
+        feature_selection_execution_hash=base.feature_selection_execution_hash,
+        evaluation_plan_hash=base.evaluation_plan_hash,
+        evaluations=evaluations,
+        aggregates=aggregates,
+    )
+    assert tuple(item.candidate_id for item in grid.evaluations) == ids
