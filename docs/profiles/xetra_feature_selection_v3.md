@@ -1,6 +1,6 @@
 # Xetra feature selection v3
 
-`xetra_semantic_medoid_v3` is a versioned extension of the historical v1/v2 policy. It does not mutate either older policy or their reproducibility hashes.
+`xetra_semantic_medoid_v3` is a versioned extension of the historical v1/v2 policy. It does not mutate either older policy or their reproducibility hashes. The immutable feature-selection domain contracts explicitly recognize v3 as a supported policy/result identity.
 
 The policy retains the same eight semantic blocks, Stage-1 absolute-Spearman medoid selection, Stage-2 absolute-Spearman pruning, first-fold TRAIN-only semantics, and all v2 thresholds. Its canonical universe contains 61 unique features: the 48 v2 features plus 13 existing one-observation delta columns from PostgreSQL.
 
