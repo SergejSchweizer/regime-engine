@@ -581,3 +581,70 @@ evaluation-run linkage could not be verified from registry metadata alone.
 The observed parent-run durations measure evidence rendering and MLflow persistence after
 candidate evaluation, not total model-fitting time. The eight-candidate parent took 509.0
 seconds; this value must not be used to estimate end-to-end evaluation runtime.
+
+
+## Xetra v3 canonical 61-feature policy
+
+Xetra profile configuration version 3 is a versioned extension of v2. Historical v1/v2 profile and feature-selection identities, hashes and behavior remain immutable.
+
+Canonical identity:
+
+ ```text
+profile_id=xetra
+profile_config_version=3
+feature_selection_policy=xetra_semantic_medoid_v3
+canonical_feature_universe_size=61
+semantic_block_count=8
+```
+
+The ordered v3 feature universe is the ordered v2 48-feature universe plus these exact existing PostgreSQL columns, assigned to their economic blocks:
+
+| Semantic block | Added v3 feature(s) |
+|---|---|
+| US equity volatility spot | `vix_delta_1obs` |
+| US equity volatility term structure | `vix9d_delta_1obs`, `vix3m_delta_1obs`, `vix6m_delta_1obs`, `vix1y_delta_1obs` |
+| Europe equity volatility | `vstoxx_delta_1obs` |
+| Rates volatility | `move_delta_1obs` |
+| Systemic stress | `ciss_delta_1obs` |
+| Credit stress | `euro_hy_oas_delta_1obs` |
+| Rates / yield curve | `us_2y_delta_1obs`, `us_10y_delta_1obs`, `estr_delta_1obs` |
+| USD FX | `usd_broad_delta_1obs` |
+
+The exact ordered added tuple is:
+
+```text
+vix_delta_1obs
+vix9d_delta_1obs
+vix3m_delta_1obs
+vix6m_delta_1obs
+vix1y_delta_1obs
+vstoxx_delta_1obs
+move_delta_1obs
+ciss_delta_1obs
+euro_hy_oas_delta_1obs
+us_2y_delta_1obs
+us_10y_delta_1obs
+estr_delta_1obs
+usd_broad_delta_1obs
+```
+
+Stage 1 runs the existing first-fold-TRAIN-only absolute-Spearman medoid selector on all 61 canonical features within the same eight semantic blocks. A `*_delta_1obs` feature is a normal Stage-1 candidate and may become its block's `preliminary_medoid`. Stage 2 applies the unchanged cross-block absolute-Spearman pruning rule to the eight Stage-1 representatives and freezes the surviving ordered multivariate feature tuple. Coverage, variance, complete-observation gates, numeric tie semantics, the strict `>0.85` cross-block conflict threshold, missing-value semantics, no-HMM-feedback rule and no-economic-input rule are unchanged from v2.
+
+Xetra v3 has exactly the same 12 model candidates, in the same order, as v2:
+
+```text
+gaussian_hmm_k2_full
+gaussian_hmm_k3_full
+gaussian_hmm_k4_full
+gaussian_hmm_k5_full
+gmm_hmm_k2_m2_full
+gmm_hmm_k3_m2_full
+gmm_hmm_k4_m2_full
+gmm_hmm_k5_m2_full
+student_t_hmm_k2_full
+student_t_hmm_k3_full
+student_t_hmm_k4_full
+student_t_hmm_k5_full
+```
+
+Walk-forward windows, multistart seeds/gates, family-specific fit settings, occupancy gates, common-valid-fold comparison, anchored `1e-12` ranking semantics, causal TEST continuation, state alignment, likelihood-parity checks and final-refit rules remain unchanged unless a later versioned contract explicitly changes them.
