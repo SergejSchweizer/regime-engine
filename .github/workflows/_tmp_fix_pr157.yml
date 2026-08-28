@@ -1,0 +1,34 @@
+name: Temporary fix PR157
+on:
+  push:
+    branches:
+      - 'pr/PR-157-xetra-v3-feature-policy'
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extend immutable policy/result IDs to v3
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/market_regime_engine/feature_selection/contracts.py')
+          text = p.read_text(encoding='utf-8')
+          old = '{"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2"}'
+          new = '{"xetra_semantic_medoid_v1", "xetra_semantic_medoid_v2", "xetra_semantic_medoid_v3"}'
+          if text.count(old) != 2:
+              raise SystemExit(f'expected two policy-id sets, got {text.count(old)}')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          git rm .github/workflows/_tmp_fix_pr157.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/market_regime_engine/feature_selection/contracts.py
+          git commit -m 'fix(PR-157-xetra-v3-feature-policy): allow versioned v3 policy contracts'
+          git push
