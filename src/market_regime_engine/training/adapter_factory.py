@@ -14,11 +14,20 @@ from market_regime_engine.profiles.config import ModelProfile
 
 
 class CandidateContract(Protocol):
-    candidate_id: str
-    model_family: str
-    state_count: int
-    mixture_count: int
-    feature_order: tuple[str, ...]
+    @property
+    def candidate_id(self) -> str: ...
+
+    @property
+    def model_family(self) -> str: ...
+
+    @property
+    def state_count(self) -> int: ...
+
+    @property
+    def mixture_count(self) -> int: ...
+
+    @property
+    def feature_order(self) -> tuple[str, ...]: ...
 
 
 def adapter_factory(profile: ModelProfile, candidate: CandidateContract) -> Callable[[], object]:
