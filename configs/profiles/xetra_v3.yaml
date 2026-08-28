@@ -1,0 +1,82 @@
+profile_id: xetra
+profile_config_version: 3
+registered_model: regime-xetra
+production_alias: champion
+challenger_alias: challenger
+feature_selection:
+  policy_id: xetra_semantic_medoid_v3
+  static_features: []
+  within_block_method: absolute_spearman_medoid
+  cross_block_method: absolute_spearman_prune
+  minimum_feature_coverage: 0.90
+  minimum_nonzero_variance: 1.0e-12
+  minimum_block_complete_observations: 504
+  maximum_cross_block_abs_spearman: 0.85
+  numeric_tie_abs_tolerance: 1.0e-12
+walk_forward:
+  minimum_train_source_observations: 1260
+  test_source_observations: 63
+  step_source_observations: 63
+  allow_partial_final_test: false
+  minimum_model_train_observations: 504
+  minimum_model_test_observations: 42
+  ranking_abs_tolerance: 1.0e-12
+gaussian_hmm:
+  candidate_states: [2, 3, 4, 5]
+  backend: hmmlearn==0.3.3
+  covariance_type: full
+  implementation: log
+  seeds: [11, 23, 37, 53, 71, 89, 107, 131]
+  minimum_valid_starts: 6
+  minimum_multistart_success_rate: 0.75
+  n_iter: 1000
+  tol: 1.0e-4
+  min_covar: 1.0e-6
+  startprob_prior: 1.0
+  transmat_prior: 1.0
+  means_prior: 0.0
+  means_weight: 0.0
+  covars_prior: 0.01
+  covars_weight: 1.0
+  params: stmc
+  init_params: stmc
+gmm_hmms:
+  - state_count: 2
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 3
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 4
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 5
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+student_t_hmm:
+  candidate_states: [2, 3, 4, 5]
+  backend: native-baum-welch-v1
+  covariance_type: full
+  minimum_nu: 2.05
+  maximum_nu: 200.0
+  initial_nu: 10.0
+  n_iter: 200
+  tol: 1.0e-4
+  min_covar: 1.0e-6
+gates:
+  minimum_train_hard_occupancy: 0.03
+  minimum_train_soft_occupancy: 0.05
+  candidate_minimum_valid_fold_rate: 0.80
+  low_confidence_threshold: 0.60
+  state_alignment_ambiguity_abs_tolerance: 1.0e-10
+  covariance_asymmetry_abs_tolerance: 1.0e-10
+  probability_normalization_abs_tolerance: 1.0e-10
+  minimum_covariance_diagonal_variance: 1.0e-12
