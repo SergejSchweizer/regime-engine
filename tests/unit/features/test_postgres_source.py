@@ -60,7 +60,7 @@ def lineage_row() -> tuple[Any, ...]:
     return (
         "build-7",
         "a" * 64,
-        1,
+        2,
         1,
         2,
         NOW,
@@ -111,6 +111,16 @@ def test_unregistered_identifier_is_rejected_before_connection() -> None:
     with pytest.raises(ValueError, match="unregistered"):
         source.read(FeatureRequest(("f1;DROP",), None, None, SourceMode.FEATURE_SELECTION))
     assert called is False
+
+
+def test_incompatible_source_schema_version_fails_closed() -> None:
+    values = list(lineage_row())
+    values[2] = 1
+    connection = FakeConnection(FakeCursor(tuple(values), []))
+    source = PostgresFeatureSource(lambda: connection, ("f1",))
+    with pytest.raises(ValueError, match="schema_version"):
+        source.read(FeatureRequest(("f1",), None, None, SourceMode.FEATURE_SELECTION))
+    assert connection.rolled_back and connection.closed
 
 
 def test_nonfinite_and_non_monotonic_rows_fail_closed_and_rollback() -> None:

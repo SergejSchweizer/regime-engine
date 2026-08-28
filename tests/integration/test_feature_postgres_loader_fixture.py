@@ -63,7 +63,7 @@ def loader_fixture() -> tuple[tuple[Any, ...], tuple[tuple[Any, ...], ...]]:
     lineage = (
         "loader-build-42",
         "a" * 64,
-        1,
+        2,
         1,
         3,
         start,
