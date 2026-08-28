@@ -17,11 +17,6 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
-from market_regime_engine.models.gaussian_hmm import (
-    HmmlearnGaussianHMMAdapter,
-    HmmlearnGMMHMMAdapter,
-)
-from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -29,6 +24,7 @@ from market_regime_engine.profiles.resolution import (
     expected_candidate_ids,
     validate_candidate_comparison_inputs,
 )
+from market_regime_engine.training.adapter_factory import adapter_factory
 
 SUPPORTED_CANDIDATE_IDS = frozenset(
     candidate_id
@@ -204,27 +200,7 @@ def aggregate_candidate(evaluation: WalkForwardEvaluation) -> CandidateAggregate
 def _default_adapter_builder(
     profile: ModelProfile, candidate: ResolvedCandidateProfile
 ) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
-        if candidate.model_family == "student_t_hmm":
-            settings = profile.student_t_hmm
-            if settings is None:
-                raise ValueError("Student-t candidate requires Student-t profile settings")
-            return StudentTHMMAdapter(
-                candidate.feature_order,
-                StudentTHMMSettings(
-                    minimum_nu=settings.minimum_nu,
-                    maximum_nu=settings.maximum_nu,
-                    initial_nu=settings.initial_nu,
-                    n_iter=settings.n_iter,
-                    tol=settings.tol,
-                    min_covar=settings.min_covar,
-                ),
-            )
-        if candidate.model_family == "gmm_hmm":
-            return HmmlearnGMMHMMAdapter(candidate.feature_order)
-        return HmmlearnGaussianHMMAdapter(candidate.feature_order)
-
-    return factory
+    return adapter_factory(profile, candidate)  # type: ignore[return-value]
 
 
 def _default_runner(
