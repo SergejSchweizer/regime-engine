@@ -62,6 +62,9 @@ Feature selection uses first-fold TRAIN only. K=2/K=3/K=4 full-covariance Gaussi
 
 A walk-forward fold model is never registered for production. After a statistical champion is selected, the winning K is fit again from scratch on all eligible current-vintage observations through the exact evaluation cutoff; only this final-refit artifact may become a `regime-xetra` version and later receive the `challenger`/`champion` alias.
 
+Xetra v3's independent multivariate, medoid-univariate, and delta-univariate
+workflow is documented in [docs/regime_evaluations.md](docs/regime_evaluations.md).
+
 ## Contract ownership
 
 - `BACKLOG.md`: implementation PR scope/dependencies/API/deployment/operations plan
