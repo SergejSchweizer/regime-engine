@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from market_regime_engine.evaluation.selection import select_statistical_champion
 from market_regime_engine.evaluation_statistics.contracts import RunStatistics, RunType, Status
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.contracts import EvaluationId, FeatureSpec
@@ -19,6 +23,68 @@ from market_regime_engine.training.candidate_grid import CandidateGridEvaluation
 EvaluationResult = (
     MedoidMultivariateEvaluation | MedoidUnivariateEvaluation | Delta1UnivariateEvaluation
 )
+
+
+def _write_candidate_comparison_table(
+    path: Path, grid: CandidateGridEvaluation, *, feature_name: str | None
+) -> None:
+    """Write the complete canonical statistical-comparison evidence as CSV."""
+
+    try:
+        selection = select_statistical_champion(grid)
+        evidence = {item.candidate_id: item for item in selection.evidence}
+    except ValueError:
+        evidence = {}
+    fields = (
+        "feature_name",
+        "statistical_rank",
+        "candidate_id",
+        "state_count_fewer_is_better",
+        "accepted",
+        "rejection_reasons",
+        "oos_predictive_loglik_mean_higher_is_better",
+        "oos_predictive_loglik_std_lower_is_better",
+        "oos_predictive_loglik_worst_fold_higher_is_better",
+        "bic_mean_lower_is_better",
+        "aic_mean_lower_is_better",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for aggregate in grid.aggregates:
+            item = evidence.get(aggregate.candidate_id)
+            mean = aggregate.oos_predictive_loglik_mean
+            std = aggregate.oos_predictive_loglik_std
+            worst = aggregate.oos_predictive_loglik_worst_fold
+            writer.writerow(
+                {
+                    "feature_name": feature_name or "all_medoids",
+                    "statistical_rank": "" if item is None or item.rank is None else item.rank,
+                    "candidate_id": aggregate.candidate_id,
+                    "state_count_fewer_is_better": aggregate.state_count,
+                    "accepted": "" if item is None else item.accepted,
+                    "rejection_reasons": "" if item is None else "; ".join(item.rejection_reasons),
+                    "oos_predictive_loglik_mean_higher_is_better": mean,
+                    "oos_predictive_loglik_std_lower_is_better": std,
+                    "oos_predictive_loglik_worst_fold_higher_is_better": worst,
+                    "bic_mean_lower_is_better": aggregate.bic_mean,
+                    "aic_mean_lower_is_better": aggregate.aic_mean,
+                }
+            )
+
+
+def _track_candidate_comparison_tables(
+    port: TrackingPort,
+    parent_run_id: str,
+    grids: tuple[tuple[str | None, CandidateGridEvaluation], ...],
+) -> None:
+    with TemporaryDirectory(prefix="regime-engine-candidate-comparison-") as directory:
+        root = Path(directory)
+        for feature_name, grid in grids:
+            name = "candidate_comparison.csv" if feature_name is None else f"{feature_name}.csv"
+            path = root / name
+            _write_candidate_comparison_table(path, grid, feature_name=feature_name)
+            port.log_artifact(parent_run_id, str(path), "candidate_comparison")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +238,10 @@ def track_evaluation_result(
     )
     feature_run_ids: list[tuple[str, str]] = []
     candidate_run_ids: list[tuple[str, str]] = []
+    comparison_grids = tuple((None, grid) for grid in grids) + tuple(
+        (feature_grid.feature_name, feature_grid.candidate_grid) for feature_grid in feature_grids
+    )
+    _track_candidate_comparison_tables(port, parent_run_id, comparison_grids)
     for grid in grids:
         candidate_run_ids.extend(_track_grid(port, writer, grid, parent_run_id))
     for feature_grid in feature_grids:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -99,6 +100,41 @@ def test_statistics_run_rejects_non_running_dossier(tmp_path: Path) -> None:
         )
 
 
+def test_candidate_comparison_table_contains_all_canonical_ranking_metrics(
+    tmp_path, monkeypatch
+) -> None:
+    aggregate = SimpleNamespace(
+        candidate_id="gaussian_hmm_k2_full",
+        state_count=2,
+        oos_predictive_loglik_mean=-1.0,
+        oos_predictive_loglik_std=0.2,
+        oos_predictive_loglik_worst_fold=-1.5,
+        bic_mean=100.0,
+        aic_mean=90.0,
+    )
+    grid = SimpleNamespace(aggregates=(aggregate,))
+    evidence = SimpleNamespace(
+        candidate_id=aggregate.candidate_id, rank=1, accepted=True, rejection_reasons=()
+    )
+    monkeypatch.setattr(
+        module,
+        "select_statistical_champion",
+        lambda _: SimpleNamespace(evidence=(evidence,)),
+    )
+    path = tmp_path / "candidate_comparison.csv"
+
+    module._write_candidate_comparison_table(path, grid, feature_name="vix_level")
+
+    row = next(csv.DictReader(path.open(encoding="utf-8")))
+    assert row["statistical_rank"] == "1"
+    assert row["candidate_id"] == "gaussian_hmm_k2_full"
+    assert row["oos_predictive_loglik_mean_higher_is_better"] == "-1.0"
+    assert row["oos_predictive_loglik_std_lower_is_better"] == "0.2"
+    assert row["oos_predictive_loglik_worst_fold_higher_is_better"] == "-1.5"
+    assert row["bic_mean_lower_is_better"] == "100.0"
+    assert row["aic_mean_lower_is_better"] == "90.0"
+
+
 class _Writer:
     def preflight(self) -> Path:
         return Path("evaluations")
@@ -114,6 +150,7 @@ def test_evaluation_tracking_creates_exact_v3_hierarchies(monkeypatch) -> None:
 
     monkeypatch.setattr(module, "track_statistics_run", track)
     monkeypatch.setattr(module, "_candidate_evidence", lambda *_: {})
+    monkeypatch.setattr(module, "_track_candidate_comparison_tables", lambda *_: None)
     monkeypatch.setattr(module, "asdict", lambda _: {})
     monkeypatch.setattr(
         module, "_track_grid", lambda *_: tuple((str(index), str(index)) for index in range(12))
