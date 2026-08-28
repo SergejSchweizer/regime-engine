@@ -42,7 +42,7 @@ artifacts/
 predictions/
 output/
 outputs/
-evaluations/
+/evaluations/
 
 # Temporary files
 *.tmp
