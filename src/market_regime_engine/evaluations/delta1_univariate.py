@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import cast
 
@@ -96,8 +98,9 @@ def evaluate_delta1_univariate(
     if multivariate_winner is None:
         raise ValueError("multivariate champion is not present in its candidate grid")
     active_runner = cast(CandidateRunner, run_univariate_candidate) if runner is None else runner
-    grids = tuple(
-        evaluate_univariate_feature_grid(
+
+    def evaluate_feature(feature_name: str) -> UnivariateFeatureGrid:
+        return evaluate_univariate_feature_grid(
             source_rows,
             plan=plan,
             profile=profile,
@@ -107,8 +110,10 @@ def evaluate_delta1_univariate(
             lineage=lineage,
             runner=active_runner,
         )
-        for feature_name in DELTA1_FEATURES
-    )
+
+    workers = min(len(DELTA1_FEATURES), os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        grids = tuple(executor.map(evaluate_feature, DELTA1_FEATURES))
     agreements = tuple(
         compare_univariate_to_multivariate(
             grid.feature_name, _winner_evaluation(grid), multivariate_winner
