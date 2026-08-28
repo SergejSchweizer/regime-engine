@@ -169,7 +169,9 @@ def test_report_fails_closed_when_inputs_do_not_reproduce_frozen_evidence() -> N
 
     changed = frame.copy()
     changed.loc[0, "f0"] = np.nan
-    with pytest.raises(ValueError, match="coverage evidence mismatch|complete-case count mismatch"):
+    with pytest.raises(
+        ValueError, match=r"coverage evidence mismatch|complete-case count mismatch"
+    ):
         build_feature_selection_report(changed, policy, frozen)
 
 
