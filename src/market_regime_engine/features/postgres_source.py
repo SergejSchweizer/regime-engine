@@ -56,7 +56,7 @@ class PostgresFeatureSource:
         connect: Callable[[], ConnectionLike],
         registered_feature_names: Iterable[str],
         *,
-        expected_schema_version: int = 1,
+        expected_schema_version: int = 2,
         expected_feature_version: int = 1,
     ) -> None:
         self._connect = connect
