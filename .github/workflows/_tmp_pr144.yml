@@ -1,0 +1,66 @@
+name: Temporary PR144 contract
+on:
+  push:
+    branches:
+      - 'pr/PR-144-three-evaluation-contract'
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Append three-evaluation contract
+        shell: bash
+        run: |
+          cat >> EVALUATION.md <<'EOF'
+
+## Xetra v3 first-class regime evaluations
+
+Xetra v3 exposes exactly three evaluation identities:
+
+```text
+medoid_multivariate
+medoid_univariate
+delta1_univariate
+```
+
+`xetra_univariate_shadow_v1` is not a v3 runtime evaluation identity. The three evaluations share the same Xetra v3 model-family/K configuration where applicable but have separate input, clock, lineage and evidence contracts.
+
+### `medoid_multivariate`
+
+Input features are exactly the frozen ordered Stage-2 feature tuple produced by canonical first-fold TRAIN-only Xetra v3 feature selection. It evaluates exactly the 12 Xetra v3 model candidates on the canonical complete-case walk-forward observation clock for that frozen multivariate tuple. Statistical gates, common-valid-fold support and the seven-stage anchored ranking are unchanged. Its winner is `medoid_multivariate_statistical_champion`. This is the only evaluation champion eligible for final production refit, immutable OOS publication, challenger registration and a later explicit production alias promotion.
+
+### `medoid_univariate`
+
+Input features are exactly the eight Stage-1 `preliminary_medoids`, in canonical semantic-block order, before Stage-2 pruning. Each feature is evaluated alone against exactly the 12 Xetra v3 model candidates, giving exactly 96 candidate evaluations. One common diagnostic complete-case clock is built across exactly these eight medoid features. Every one-feature grid in this evaluation uses that same medoid clock. The within-feature statistical winner is `diagnostic_feature_model_winner`; the evaluation-level diagnostic champion is `medoid_univariate_evaluation_champion`.
+
+### `delta1_univariate`
+
+Input features are exactly the ordered 13 canonical one-observation delta features defined by the Xetra v3 feature policy. Each feature is evaluated alone against exactly the 12 Xetra v3 model candidates, giving exactly 156 candidate evaluations. One common diagnostic complete-case clock is built across exactly these 13 delta features. Every one-feature grid in this evaluation uses that same delta1 clock. The within-feature statistical winner is `diagnostic_feature_model_winner`; the evaluation-level diagnostic champion is `delta1_univariate_evaluation_champion`.
+
+The complete three-evaluation execution therefore contains exactly 12 multivariate + 96 medoid-univariate + 156 delta1-univariate candidate evaluations before invalid-fold rejection.
+
+### Evaluation-clock isolation
+
+The three clocks are distinct contracts:
+
+- `medoid_multivariate` uses the canonical complete-case clock for the frozen final Stage-2 tuple;
+- `medoid_univariate` uses a diagnostic common clock over exactly the eight Stage-1 medoids;
+- `delta1_univariate` uses a diagnostic common clock over exactly the ordered 13 delta1 features.
+
+A combined 21-feature medoid+delta diagnostic clock is forbidden. A feature may occur in both univariate evaluations when a delta1 feature is also a Stage-1 medoid, but the two evaluations remain independent. Cross-evaluation fitted-model reuse is forbidden because the evaluation-specific retained observations, clock hash and execution lineage may differ even when the feature name and candidate ID are identical. No fill, interpolation, carry, synthesis, per-feature-clock fallback or source-row boundary mutation is allowed.
+
+### Statistical and production boundaries
+
+Within a single univariate feature, the 12 family/K candidates use the same hard gates, common-valid-fold comparison and seven-stage statistical ranking as the canonical Xetra v3 candidate grid. Raw OOS PLL, BIC and AIC are never used to rank different feature names. Both univariate evaluation champions are diagnostic-only and cannot trigger final refit, OOS publication, model registration, challenger/champion alias mutation or economic decisions. Only `medoid_multivariate_statistical_champion` is production-eligible.
+EOF
+          git rm .github/workflows/_tmp_pr144.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add EVALUATION.md
+          git commit -m 'docs(PR-144-three-evaluation-contract): pin three evaluation contracts'
+          git push
