@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
+import market_regime_engine.evaluation_statistics.writer as writer_module
 from market_regime_engine.evaluation_statistics import (
     RunStatistics,
     RunType,
@@ -95,3 +97,65 @@ def test_failed_run_retains_safe_final_dossier(tmp_path) -> None:
     assert '"status":"FAILED"' in (
         tmp_path / "evaluations" / "medoid_multivariate" / "run-123" / "statistics.json"
     ).read_text(encoding="utf-8")
+
+
+def test_statistics_contract_fails_closed_for_invalid_lifecycle_values() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    common = (
+        EvaluationId.MEDOID_MULTIVARIATE,
+        "run",
+        RunType.PARENT,
+        "parent",
+        Status.RUNNING,
+        now,
+    )
+    with pytest.raises(ValueError, match="schema version"):
+        RunStatistics(*common, schema_version=2)
+    with pytest.raises(ValueError, match="mlflow_run_id"):
+        RunStatistics(EvaluationId.MEDOID_MULTIVARIATE, " ", *common[2:])
+    with pytest.raises(ValueError, match="parent_run_id"):
+        RunStatistics(*common, parent_run_id=" ")
+    with pytest.raises(ValueError, match="timezone-aware"):
+        RunStatistics(*common[:-1], datetime(2026, 1, 1))
+    with pytest.raises(ValueError, match="must not precede"):
+        RunStatistics(*common, ended_at=datetime(2025, 1, 1, tzinfo=UTC))
+    with pytest.raises(ValueError, match="RUNNING"):
+        RunStatistics(*common, ended_at=now)
+    with pytest.raises(ValueError, match="final statistics"):
+        RunStatistics(*common[:4], Status.FINISHED, now)
+    with pytest.raises(ValueError, match="failure code"):
+        RunStatistics(*common[:4], Status.FAILED, now, ended_at=now)
+    with pytest.raises(ValueError, match="mapping keys"):
+        RunStatistics(*common, evidence={"aggregate": {1: "invalid"}})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="JSON primitives"):
+        RunStatistics(*common, evidence={"aggregate": {"bad": {1}}})
+
+
+def test_writer_fails_closed_and_cleans_atomic_temporary_files(tmp_path, monkeypatch) -> None:
+    writer = StatisticsWriter(tmp_path)
+    running = statistics(EvaluationId.MEDOID_MULTIVARIATE, Status.RUNNING)
+    finished = statistics(EvaluationId.MEDOID_MULTIVARIATE, Status.FINISHED)
+    with pytest.raises(ValueError, match="initial statistics"):
+        writer.start(finished)
+    with pytest.raises(FileNotFoundError, match="initialized"):
+        writer.finalize(finished)
+    directory = writer.start(running)
+    with pytest.raises(FileExistsError, match="immutable"):
+        writer.start(running)
+    with pytest.raises(ValueError, match="FINISHED or FAILED"):
+        writer.finalize(running)
+
+    target = directory / "atomic.json"
+    monkeypatch.setattr(writer_module.os, "replace", lambda *_: (_ for _ in ()).throw(OSError()))
+    with pytest.raises(OSError):
+        StatisticsWriter._atomic_write(target, b"content")
+    assert not tuple(directory.glob(".atomic.json.*"))
+
+
+def test_preflight_reports_an_unwritable_root(tmp_path, monkeypatch) -> None:
+    def fail_write(_: Path, __: bytes) -> int:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(Path, "write_bytes", fail_write)
+    with pytest.raises(OSError, match="not writable"):
+        StatisticsWriter(tmp_path).preflight()
