@@ -1,0 +1,86 @@
+policy_id: xetra_semantic_medoid_v3
+within_block_method: absolute_spearman_medoid
+cross_block_method: absolute_spearman_prune
+minimum_feature_coverage: 0.90
+minimum_nonzero_variance: 1.0e-12
+minimum_block_complete_observations: 504
+maximum_cross_block_abs_spearman: 0.85
+numeric_tie_abs_tolerance: 1.0e-12
+blocks:
+  - block_id: us_equity_volatility_spot
+    features:
+      - vix_level
+      - vix_delta_5obs
+      - vix_delta_20obs
+      - vix_zscore_60obs
+      - vix_delta_1obs
+  - block_id: us_equity_volatility_term_structure
+    features:
+      - vix9d_level
+      - vix9d_delta_5obs
+      - vix9d_delta_20obs
+      - vix9d_zscore_60obs
+      - vix3m_level
+      - vix3m_delta_5obs
+      - vix3m_delta_20obs
+      - vix3m_zscore_60obs
+      - vix6m_level
+      - vix6m_delta_5obs
+      - vix6m_delta_20obs
+      - vix6m_zscore_60obs
+      - vix1y_level
+      - vix1y_delta_5obs
+      - vix1y_delta_20obs
+      - vix1y_zscore_60obs
+      - vix9d_vix_ratio
+      - vix_vix3m_ratio
+      - vix3m_minus_vix
+      - vix6m_minus_vix
+      - vix1y_minus_vix
+      - vix9d_delta_1obs
+      - vix3m_delta_1obs
+      - vix6m_delta_1obs
+      - vix1y_delta_1obs
+  - block_id: europe_equity_volatility
+    features:
+      - vstoxx_level
+      - vstoxx_delta_5obs
+      - vstoxx_delta_20obs
+      - vstoxx_zscore_60obs
+      - vstoxx_delta_1obs
+  - block_id: rates_volatility
+    features:
+      - move_level
+      - move_delta_5obs
+      - move_delta_20obs
+      - move_zscore_60obs
+      - move_delta_1obs
+  - block_id: systemic_stress
+    features:
+      - ciss_level
+      - ciss_delta_5obs
+      - ciss_delta_20obs
+      - ciss_delta_1obs
+  - block_id: credit_stress
+    features:
+      - euro_hy_oas_level
+      - euro_hy_oas_delta_5obs
+      - euro_hy_oas_delta_20obs
+      - euro_hy_oas_delta_1obs
+  - block_id: rates_yield_curve
+    features:
+      - us_2y_level
+      - us_2y_delta_20obs
+      - us_10y_level
+      - us_10y_delta_20obs
+      - estr_level
+      - estr_delta_20obs
+      - us_10y_minus_us_2y
+      - us_2y_delta_1obs
+      - us_10y_delta_1obs
+      - estr_delta_1obs
+  - block_id: usd_fx
+    features:
+      - usd_broad_level
+      - usd_broad_delta_20obs
+      - usd_broad_delta_1obs
