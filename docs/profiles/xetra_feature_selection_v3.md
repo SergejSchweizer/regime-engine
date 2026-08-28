@@ -17,4 +17,6 @@ The added columns are assigned as follows:
 
 A delta feature is a normal Stage-1 candidate. If it becomes its block medoid and survives Stage 2, it is part of the frozen multivariate feature set. HMM performance and downstream economic metrics do not feed back into feature selection.
 
+The policy file, domain validation, and tests jointly enforce the exact 61-feature/eight-block contract.
+
 The normative statistical contract remains `EVALUATION.md`; this document is a profile-specific implementation reference.
