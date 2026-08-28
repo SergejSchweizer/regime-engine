@@ -122,10 +122,12 @@ def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment()
     assert min(first.train_soft_occupancy or ()) >= 0.05
 
 
-def test_walk_forward_evaluation_accepts_xetra_v2() -> None:
+def test_walk_forward_evaluation_accepts_xetra_v2_and_v3() -> None:
     result = evaluate(source_rows(1323))
     v2 = replace(result, profile_config_version=2)
+    v3 = replace(result, profile_config_version=3)
     assert v2.profile_config_version == 2
+    assert v3.profile_config_version == 3
 
 
 def test_source_windowing_precedes_complete_case_filtering_and_records_gaps() -> None:
