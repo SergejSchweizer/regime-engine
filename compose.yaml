@@ -26,6 +26,7 @@ services:
       MLFLOW_BACKEND_DB_USER: ${MLFLOW_BACKEND_DB_USER:?MLFLOW_BACKEND_DB_USER is required}
       MLFLOW_BACKEND_DB_PASSWORD_FILE: /run/secrets/mlflow_backend_password
       MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+      REGIME_EVALUATION_CACHE_DIR: /mlflow/artifacts/evaluation-cache
       REGIME_LOG_DIR: /opt/regime-engine/.logs
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       MLFLOW_RUNTIME_UID: ${MLFLOW_RUNTIME_UID:-10001}

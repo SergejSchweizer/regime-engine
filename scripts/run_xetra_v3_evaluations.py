@@ -22,6 +22,7 @@ from market_regime_engine.evaluations.contracts import (
     medoid_feature_spec,
     multivariate_feature_spec,
 )
+from market_regime_engine.evaluations.deduplication import EvaluationClaim, EvaluationDeduplicator
 from market_regime_engine.evaluations.delta1_univariate import evaluate_delta1_univariate
 from market_regime_engine.evaluations.medoid_multivariate import evaluate_medoid_multivariate
 from market_regime_engine.evaluations.medoid_univariate import evaluate_medoid_univariate
@@ -103,117 +104,143 @@ def main() -> None:
             policy.feature_universe, start=None, end=None, mode=SourceMode.FEATURE_SELECTION
         )
     )
-    rows = pd.DataFrame([row.values for row in snapshot.rows], columns=policy.feature_universe)
-    rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-    rows = _common_complete_feature_history(rows, policy.feature_universe)
-    logger.info(
-        "common_evaluation_timeline start=%s end=%s observations=%s",
-        rows["timestamp_m1"].iloc[0],
-        rows["timestamp_m1"].iloc[-1],
-        len(rows),
+    deduplicator = EvaluationDeduplicator(
+        Path(os.environ.get("REGIME_EVALUATION_CACHE_DIR", "/mlflow/artifacts/evaluation-cache")),
+        os.environ["REGIME_ENGINE_GIT_SHA"],
+        snapshot.lineage.data_sha256,
     )
-    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
-    selection = freeze_first_train_features(
-        rows.iloc[: plan.folds[0].train_source_observations],
-        policy,
-        source_build_id=snapshot.lineage.source_build_id,
-        data_sha256=snapshot.lineage.data_sha256,
-        evaluation_plan_hash=plan.plan_hash,
-    )
-    logger.info("feature_selection_completed final_features=%s", selection.final_features)
-    resolved = resolve_selected_feature_profile(
-        profile, policy, selection, source_build_id=snapshot.lineage.source_build_id
-    )
-    medoid_spec = medoid_feature_spec(selection)
-    multi_spec = multivariate_feature_spec(selection)
-    delta_spec = delta1_feature_spec(
-        tuple(feature for feature in policy.feature_universe if feature.endswith("_delta_1obs"))
-    )
-    multi_clock = build_evaluation_clock(rows, plan, multi_spec)
-    medoid_clock = build_evaluation_clock(rows, plan, medoid_spec)
-    delta_clock = build_evaluation_clock(rows, plan, delta_spec)
-    definition_hash = selection.feature_selection_definition_hash
-    execution_hash = selection.feature_selection_execution_hash
-    logger.info("evaluation_phase_started phase=medoid_multivariate")
-    multivariate = evaluate_medoid_multivariate(
-        rows,
-        plan=plan,
-        profile=profile,
-        resolved_profile=resolved,
-        feature_spec=multi_spec,
-        lineage=_lineage(
-            EvaluationId.MEDOID_MULTIVARIATE,
-            snapshot.lineage.source_build_id,
-            plan.plan_hash,
-            definition_hash,
-            execution_hash,
-            multi_clock.clock_hash,
-        ),
-    )
-    logger.info("evaluation_phase_completed phase=medoid_multivariate")
-    logger.info("evaluation_phase_started phase=medoid_univariate")
-    medoid = evaluate_medoid_univariate(
-        rows,
-        plan=plan,
-        profile=profile,
-        feature_spec=medoid_spec,
-        clock=medoid_clock,
-        lineage=_lineage(
-            EvaluationId.MEDOID_UNIVARIATE,
-            snapshot.lineage.source_build_id,
-            plan.plan_hash,
-            definition_hash,
-            execution_hash,
-            medoid_clock.clock_hash,
-        ),
-        multivariate=multivariate,
-    )
-    logger.info("evaluation_phase_completed phase=medoid_univariate")
-    logger.info("evaluation_phase_started phase=delta1_univariate")
-    delta = evaluate_delta1_univariate(
-        rows,
-        plan=plan,
-        profile=profile,
-        clock=delta_clock,
-        lineage=_lineage(
-            EvaluationId.DELTA1_UNIVARIATE,
-            snapshot.lineage.source_build_id,
-            plan.plan_hash,
-            definition_hash,
-            execution_hash,
-            delta_clock.clock_hash,
-        ),
-        multivariate=multivariate,
-    )
-    logger.info("evaluation_phase_completed phase=delta1_univariate")
-    writer = StatisticsWriter(root)
-    writer.preflight()
-    port = FileMlflowTrackingPort(os.environ["MLFLOW_TRACKING_URI"])
-    tracked = tuple(
-        track_evaluation_result(port, writer, result=result)
-        for result in (multivariate, medoid, delta)
-    )
-    print(
-        json.dumps(
-            {
-                "source_build_id": snapshot.lineage.source_build_id,
-                "parent_run_ids": [item.parent_run_id for item in tracked],
-                "candidate_counts": [len(item.candidate_run_ids) for item in tracked],
-                "clock_hashes": [
-                    multi_clock.clock_hash,
-                    medoid_clock.clock_hash,
-                    delta_clock.clock_hash,
-                ],
-                "champions": [
-                    multivariate.medoid_multivariate_statistical_champion,
-                    medoid.medoid_univariate_evaluation_champion,
-                    delta.delta1_univariate_evaluation_champion,
-                ],
-            },
-            sort_keys=True,
+    claim = deduplicator.claim()
+    if claim is not EvaluationClaim.CLAIMED:
+        logger.info(
+            "evaluation_skipped reason=%s code_sha=%s dataset_sha256=%s",
+            claim.value,
+            deduplicator.code_sha,
+            deduplicator.dataset_sha256,
         )
-    )
-    logger.info("evaluation_completed parent_runs=%s", [item.parent_run_id for item in tracked])
+        return
+    rows = pd.DataFrame([row.values for row in snapshot.rows], columns=policy.feature_universe)
+    try:
+        rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
+        rows = _common_complete_feature_history(rows, policy.feature_universe)
+        logger.info(
+            "common_evaluation_timeline start=%s end=%s observations=%s",
+            rows["timestamp_m1"].iloc[0],
+            rows["timestamp_m1"].iloc[-1],
+            len(rows),
+        )
+        plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+        selection = freeze_first_train_features(
+            rows.iloc[: plan.folds[0].train_source_observations],
+            policy,
+            source_build_id=snapshot.lineage.source_build_id,
+            data_sha256=snapshot.lineage.data_sha256,
+            evaluation_plan_hash=plan.plan_hash,
+        )
+        logger.info("feature_selection_completed final_features=%s", selection.final_features)
+        resolved = resolve_selected_feature_profile(
+            profile, policy, selection, source_build_id=snapshot.lineage.source_build_id
+        )
+        medoid_spec, multi_spec = (
+            medoid_feature_spec(selection),
+            multivariate_feature_spec(selection),
+        )
+        delta_spec = delta1_feature_spec(
+            tuple(feature for feature in policy.feature_universe if feature.endswith("_delta_1obs"))
+        )
+        multi_clock = build_evaluation_clock(rows, plan, multi_spec)
+        medoid_clock, delta_clock = (
+            build_evaluation_clock(rows, plan, medoid_spec),
+            build_evaluation_clock(rows, plan, delta_spec),
+        )
+        definition_hash, execution_hash = (
+            selection.feature_selection_definition_hash,
+            selection.feature_selection_execution_hash,
+        )
+        logger.info("evaluation_phase_started phase=medoid_multivariate")
+        multivariate = evaluate_medoid_multivariate(
+            rows,
+            plan=plan,
+            profile=profile,
+            resolved_profile=resolved,
+            feature_spec=multi_spec,
+            lineage=_lineage(
+                EvaluationId.MEDOID_MULTIVARIATE,
+                snapshot.lineage.source_build_id,
+                plan.plan_hash,
+                definition_hash,
+                execution_hash,
+                multi_clock.clock_hash,
+            ),
+        )
+        logger.info("evaluation_phase_completed phase=medoid_multivariate")
+        logger.info("evaluation_phase_started phase=medoid_univariate")
+        medoid = evaluate_medoid_univariate(
+            rows,
+            plan=plan,
+            profile=profile,
+            feature_spec=medoid_spec,
+            clock=medoid_clock,
+            lineage=_lineage(
+                EvaluationId.MEDOID_UNIVARIATE,
+                snapshot.lineage.source_build_id,
+                plan.plan_hash,
+                definition_hash,
+                execution_hash,
+                medoid_clock.clock_hash,
+            ),
+            multivariate=multivariate,
+        )
+        logger.info("evaluation_phase_completed phase=medoid_univariate")
+        logger.info("evaluation_phase_started phase=delta1_univariate")
+        delta = evaluate_delta1_univariate(
+            rows,
+            plan=plan,
+            profile=profile,
+            clock=delta_clock,
+            lineage=_lineage(
+                EvaluationId.DELTA1_UNIVARIATE,
+                snapshot.lineage.source_build_id,
+                plan.plan_hash,
+                definition_hash,
+                execution_hash,
+                delta_clock.clock_hash,
+            ),
+            multivariate=multivariate,
+        )
+        logger.info("evaluation_phase_completed phase=delta1_univariate")
+        writer = StatisticsWriter(root)
+        writer.preflight()
+        port = FileMlflowTrackingPort(os.environ["MLFLOW_TRACKING_URI"])
+        tracked = tuple(
+            track_evaluation_result(port, writer, result=result)
+            for result in (multivariate, medoid, delta)
+        )
+        print(
+            json.dumps(
+                {
+                    "source_build_id": snapshot.lineage.source_build_id,
+                    "parent_run_ids": [item.parent_run_id for item in tracked],
+                    "candidate_counts": [len(item.candidate_run_ids) for item in tracked],
+                    "clock_hashes": [
+                        multi_clock.clock_hash,
+                        medoid_clock.clock_hash,
+                        delta_clock.clock_hash,
+                    ],
+                    "champions": [
+                        multivariate.medoid_multivariate_statistical_champion,
+                        medoid.medoid_univariate_evaluation_champion,
+                        delta.delta1_univariate_evaluation_champion,
+                    ],
+                },
+                sort_keys=True,
+            )
+        )
+        deduplicator.complete()
+        logger.info("evaluation_completed parent_runs=%s", [item.parent_run_id for item in tracked])
+    except BaseException:
+        deduplicator.abort()
+        logger.exception("evaluation_failed")
+        raise
 
 
 if __name__ == "__main__":
