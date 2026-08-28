@@ -1,0 +1,26 @@
+name: Temporary format PR157
+on:
+  push:
+    branches:
+      - 'pr/PR-157-xetra-v3-feature-policy'
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - name: Format changed Python
+        shell: bash
+        run: |
+          uvx ruff format src/market_regime_engine/feature_selection/contracts.py
+          git rm .github/workflows/_tmp_format_pr157.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/market_regime_engine/feature_selection/contracts.py
+          git commit -m 'style(PR-157-xetra-v3-feature-policy): format v3 contract support'
+          git push
