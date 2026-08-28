@@ -204,7 +204,7 @@ class WalkForwardEvaluation:
     alignment_reference_scaler: StandardScalerArtifact | None = None
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3}:
             raise ValueError("walk-forward evaluation requires a supported xetra profile version")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("walk-forward evaluation supports exactly K2/K3/K4/K5")
