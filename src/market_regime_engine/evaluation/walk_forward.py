@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
+from typing import Protocol
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -31,7 +32,6 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
 from market_regime_engine.profiles.config import ModelProfile
-from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import (
     StateAlignment,
     align_first_fold,
@@ -42,6 +42,35 @@ from market_regime_engine.training.multistart import MultistartResult, run_multi
 
 AdapterFactory = Callable[[], GaussianHMMAdapter]
 _TIMESTAMP_COLUMN = "timestamp_m1"
+
+
+class WalkForwardCandidate(Protocol):
+    @property
+    def candidate_id(self) -> str: ...
+
+    @property
+    def model_family(self) -> str: ...
+
+    @property
+    def state_count(self) -> int: ...
+
+    @property
+    def mixture_count(self) -> int: ...
+
+    @property
+    def feature_order(self) -> tuple[str, ...]: ...
+
+    @property
+    def feature_dimension(self) -> int: ...
+
+    @property
+    def source_build_id(self) -> str: ...
+
+    @property
+    def feature_selection_definition_hash(self) -> str: ...
+
+    @property
+    def feature_selection_execution_hash(self) -> str: ...
 
 
 def _require_utc(value: datetime, field_name: str) -> datetime:
@@ -383,13 +412,13 @@ def run_walk_forward_candidate(
     *,
     plan: WalkForwardPlan,
     profile: ModelProfile,
-    candidate: ResolvedCandidateProfile,
+    candidate: WalkForwardCandidate,
     adapter_factory: AdapterFactory,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection."""
 
-    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2}:
-        raise ValueError("walk-forward runner supports xetra profile configurations 1 and 2")
+    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2, 3}:
+        raise ValueError("walk-forward runner supports xetra profile configurations 1, 2, and 3")
     if candidate.model_family == "gaussian_hmm":
         if candidate.state_count not in profile.gaussian_hmm.candidate_states:
             raise ValueError("resolved Gaussian candidate state count is absent from model profile")
