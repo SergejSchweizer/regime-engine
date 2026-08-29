@@ -10,6 +10,7 @@ from typing import Any, cast
 import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 import yaml
+from mlflow.tracking import MlflowClient
 
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
@@ -29,6 +30,10 @@ from market_regime_engine.feature_selection.freeze import freeze_first_train_fea
 from market_regime_engine.features.ports import FeatureRequest, SourceMode
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.mlflow_support.evaluation_dedup import (
+    record_completed_xetra_v3_evaluation,
+    xetra_v3_evaluation_fingerprint,
+)
 from market_regime_engine.mlflow_support.evaluation_tracking import track_evaluation_result
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 from market_regime_engine.profiles.loader import load_profile
@@ -83,6 +88,12 @@ def _common_feature_history(rows: pd.DataFrame, feature_names: tuple[str, ...]) 
             raise ValueError(f"canonical feature has no observations: {feature_name}")
         positions.append(first)
     return rows.iloc[max(positions) :].reset_index(drop=True)
+
+
+def _git_commit(root: Path) -> str:
+    import subprocess
+
+    return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
 
 
 def main() -> None:
@@ -176,11 +187,24 @@ def main() -> None:
         track_evaluation_result(port, writer, result=result)
         for result in (multivariate, medoid, delta)
     )
+    git_commit = _git_commit(root)
+    fingerprint = xetra_v3_evaluation_fingerprint(
+        git_commit=git_commit, data_sha256=snapshot.lineage.data_sha256
+    )
+    marker_run_id = record_completed_xetra_v3_evaluation(
+        MlflowClient(tracking_uri=os.environ["MLFLOW_TRACKING_URI"]),
+        fingerprint=fingerprint,
+        git_commit=git_commit,
+        data_sha256=snapshot.lineage.data_sha256,
+        parent_run_ids=tuple(item.parent_run_id for item in tracked),
+    )
     print(
         json.dumps(
             {
                 "source_build_id": snapshot.lineage.source_build_id,
                 "parent_run_ids": [item.parent_run_id for item in tracked],
+                "completion_marker_run_id": marker_run_id,
+                "evaluation_fingerprint": fingerprint,
                 "candidate_counts": [len(item.candidate_run_ids) for item in tracked],
                 "clock_hashes": [
                     multi_clock.clock_hash,
