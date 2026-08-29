@@ -78,7 +78,7 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
             assert lineage is not None and len(lineage) == 8
             assert lineage[0]
             assert isinstance(lineage[1], str) and len(lineage[1]) == 64
-            assert int(lineage[2]) == 1
+            assert int(lineage[2]) == 2
             assert int(lineage[3]) == 1
             assert int(lineage[4]) >= 0
             assert lineage[5] <= lineage[6]
