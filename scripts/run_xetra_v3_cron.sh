@@ -44,4 +44,9 @@ else
     fi
   fi
 fi
-exec .venv/bin/python scripts/run_xetra_v3_evaluations.py
+set +e
+.venv/bin/python scripts/run_xetra_v3_evaluations.py
+status=$?
+set -e
+printf '%s evaluation_finished exit_status=%s\n' "$(date --iso-8601=seconds)" "$status"
+exit "$status"
