@@ -31,13 +31,17 @@ export REGIME_ENGINE_ROOT="$ROOT"
 export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
 export MLFLOW_ARTIFACT_ROOT=/volume2/docker/mlflow/artifacts
 export MPLCONFIGDIR=/tmp/matplotlib-regime-engine
-if .venv/bin/python scripts/check_xetra_v3_evaluation_dedup.py; then
-  printf '%s evaluation_skipped reason=unchanged\n' "$(date --iso-8601=seconds)"
-  exit 0
+if [[ "${REGIME_FORCE_EVALUATION:-0}" == "1" ]]; then
+  printf '%s evaluation_forced reason=operator_request\n' "$(date --iso-8601=seconds)"
 else
-  status=$?
-  if [[ $status -ne 3 ]]; then
-    exit "$status"
+  if .venv/bin/python scripts/check_xetra_v3_evaluation_dedup.py; then
+    printf '%s evaluation_skipped reason=unchanged\n' "$(date --iso-8601=seconds)"
+    exit 0
+  else
+    status=$?
+    if [[ $status -ne 3 ]]; then
+      exit "$status"
+    fi
   fi
 fi
 exec .venv/bin/python scripts/run_xetra_v3_evaluations.py

@@ -68,8 +68,11 @@ def _expectation(
     artifact: GaussianHMMArtifact,
 ) -> tuple[ArrayF64, ArrayF64, float, ArrayF64]:
     emissions = gaussian_log_emissions(values, artifact)
-    log_start = np.log(np.asarray(artifact.start_probabilities))
-    log_transition = np.log(np.asarray(artifact.transition_matrix))
+    # Exact zero start/transition probabilities map to -inf in log-space; they
+    # are valid model parameters rather than a numerical failure.
+    with np.errstate(divide="ignore"):
+        log_start = np.log(np.asarray(artifact.start_probabilities))
+        log_transition = np.log(np.asarray(artifact.transition_matrix))
     count, states = emissions.shape
     alpha = np.empty_like(emissions)
     alpha[0] = log_start + emissions[0]

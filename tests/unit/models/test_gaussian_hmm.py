@@ -11,6 +11,7 @@ from market_regime_engine.models.gaussian_hmm import (
     GaussianHMMSettings,
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
+    _has_material_likelihood_regression,
     forward_filter,
     gaussian_log_emissions,
 )
@@ -134,6 +135,11 @@ def test_k2_fit_smoke_extracts_full_covariance() -> None:
     assert result.artifact.covariance_type == "full"
     assert result.artifact.state_count == 2
     assert result.artifact.feature_dimension == 2
+
+
+def test_hmmlearn_likelihood_regression_detection_allows_numerical_noise() -> None:
+    assert _has_material_likelihood_regression((-100.0, -100.0 - 1e-10)) is False
+    assert _has_material_likelihood_regression((-100.0, -100.1)) is True
 
 
 def test_bad_rows_and_state_count_fail_closed() -> None:

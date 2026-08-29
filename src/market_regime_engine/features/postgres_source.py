@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Any, Protocol, cast
 
-from psycopg import sql
+from psycopg import IsolationLevel, sql
 
 from market_regime_engine.contracts import DATA_TIME_SEMANTICS, SourceLineage
 from market_regime_engine.features.ports import (
@@ -39,6 +39,9 @@ class CursorLike(Protocol):
 
 
 class ConnectionLike(Protocol):
+    read_only: bool
+    isolation_level: IsolationLevel
+
     def cursor(self) -> CursorLike: ...
 
     def commit(self) -> None: ...
@@ -74,8 +77,12 @@ class PostgresFeatureSource:
         self._validate_requested_features(request.feature_names)
         connection = self._connect()
         try:
+            # psycopg starts a transaction automatically on the first query. Set
+            # its characteristics before issuing that query instead of sending a
+            # redundant BEGIN inside the implicit transaction.
+            connection.read_only = True
+            connection.isolation_level = IsolationLevel.REPEATABLE_READ
             with connection.cursor() as cursor:
-                cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 lineage = self._read_lineage(cursor)
                 raw_rows = self._read_rows(cursor, request)
                 snapshot = self._materialize(request, lineage, raw_rows)

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from psycopg import IsolationLevel
 
 from market_regime_engine.features import FeatureRequest, PostgresFeatureSource, SourceMode
 
@@ -39,6 +40,8 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self, cursor: FakeCursor) -> None:
         self._cursor = cursor
+        self.read_only = False
+        self.isolation_level: object | None = None
         self.committed = False
         self.rolled_back = False
         self.closed = False
@@ -81,8 +84,10 @@ def test_selection_mode_preserves_nulls_and_snapshot_transaction() -> None:
     assert snapshot.rows[0].values == (1.0, None)
     assert snapshot.skipped_incomplete_row_count == 0
     assert connection.committed and connection.closed and not connection.rolled_back
+    assert connection.read_only is True
+    assert connection.isolation_level is IsolationLevel.REPEATABLE_READ
     first_query = str(cursor.executed[0][0])
-    assert "REPEATABLE READ READ ONLY" in first_query
+    assert "source_build_id" in first_query
 
 
 def test_resolved_model_mode_excludes_incomplete_rows_without_fill() -> None:
