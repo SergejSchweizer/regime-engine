@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import pairwise
 from math import isfinite
 
 import numpy as np
@@ -14,6 +18,15 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import ArrayF64, FilterResult, FitResult
 
 _PROB_TOL = 1e-10
+_HMMLEARN_REGRESSION_TOLERANCE = float(np.finfo(np.float64).eps ** 0.5)
+
+
+def _has_material_likelihood_regression(history: Iterable[float]) -> bool:
+    values = tuple(float(value) for value in history)
+    return any(
+        current - previous < -_HMMLEARN_REGRESSION_TOLERANCE
+        for previous, current in pairwise(values)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,7 +268,23 @@ class HmmlearnGaussianHMMAdapter:
     def fit(self, train_rows: npt.ArrayLike, state_count: int, seed: int) -> FitResult:
         values = _rows(train_rows, len(self.feature_order))
         model = self._new_model(state_count, seed)
-        model.fit(values)
+        # Zero-probability mixture components are valid unused components.
+        # hmmlearn logs their mathematical log(0), while our artifacts preserve
+        # the exact zero-probability semantics without treating them as failures.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="divide by zero encountered in log",
+                category=RuntimeWarning,
+                module=r"hmmlearn\\._emissions",
+            )
+            hmmlearn_logger = logging.getLogger("hmmlearn.base")
+            was_disabled = hmmlearn_logger.disabled
+            hmmlearn_logger.disabled = True
+            try:
+                model.fit(values)
+            finally:
+                hmmlearn_logger.disabled = was_disabled
         self._model = model
         artifact = self._extract_model(model)
         _validate_positive_definite(artifact)
@@ -266,7 +295,8 @@ class HmmlearnGaussianHMMAdapter:
         return FitResult(
             artifact=artifact,
             train_log_likelihood=train_log_likelihood,
-            converged=bool(model.monitor_.converged),
+            converged=bool(model.monitor_.converged)
+            and not _has_material_likelihood_regression(model.monitor_.history),
             iterations=int(model.monitor_.iter),
             seed=seed,
         )

@@ -12,6 +12,7 @@ import subprocess
 
 import psycopg
 from mlflow.tracking import MlflowClient
+from psycopg import IsolationLevel
 
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.mlflow_support.evaluation_dedup import (
@@ -25,16 +26,15 @@ def _git_commit(root: str) -> str:
 
 
 def _source_data_sha256(settings: FeaturePostgresSettings) -> str:
-    with (
-        psycopg.connect(**settings.connection_kwargs()) as connection,
-        connection.cursor() as cursor,
-    ):
-        cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        cursor.execute(
-            "SELECT data_sha256 FROM regime_loader_sync.gold_sync_state WHERE dataset_id = %s",
-            ("regime_features_daily",),
-        )
-        row = cursor.fetchone()
+    with psycopg.connect(**settings.connection_kwargs()) as connection:
+        connection.read_only = True
+        connection.isolation_level = IsolationLevel.REPEATABLE_READ
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT data_sha256 FROM regime_loader_sync.gold_sync_state WHERE dataset_id = %s",
+                ("regime_features_daily",),
+            )
+            row = cursor.fetchone()
     if row is None or not isinstance(row[0], str) or not row[0]:
         raise ValueError("missing data_sha256 for regime_features_daily")
     return row[0]

@@ -23,11 +23,11 @@ class LoaderFixtureCursor:
         self.execute_count += 1
 
     def fetchone(self) -> tuple[Any, ...] | None:
-        assert self.execute_count == 2
+        assert self.execute_count == 1
         return self.lineage
 
     def fetchall(self) -> tuple[tuple[Any, ...], ...]:
-        assert self.execute_count == 3
+        assert self.execute_count == 2
         return self.rows
 
     def __enter__(self) -> LoaderFixtureCursor:
@@ -40,6 +40,8 @@ class LoaderFixtureCursor:
 class LoaderFixtureConnection:
     def __init__(self, lineage: tuple[Any, ...], rows: tuple[tuple[Any, ...], ...]) -> None:
         self.fixture_cursor = LoaderFixtureCursor(lineage, rows)
+        self.read_only = False
+        self.isolation_level: object | None = None
         self.committed = False
         self.rolled_back = False
         self.closed = False
@@ -101,7 +103,8 @@ def test_loader_shaped_fixture_preserves_lineage_nulls_and_read_only_snapshot_li
         (3.0, 12.0),
     )
     assert snapshot.skipped_incomplete_row_count == 0
-    assert connection.fixture_cursor.execute_count == 3
+    assert connection.read_only is True
+    assert connection.fixture_cursor.execute_count == 2
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True

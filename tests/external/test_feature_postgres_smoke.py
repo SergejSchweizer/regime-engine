@@ -4,6 +4,7 @@ import os
 
 import psycopg
 import pytest
+from psycopg import IsolationLevel
 
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 
@@ -31,9 +32,10 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
             "accepts plain transport with sslmode=disable"
         ) from None
 
+    connection.read_only = True
+    connection.isolation_level = IsolationLevel.REPEATABLE_READ
     with connection:
         with connection.cursor() as cursor:
-            cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             cursor.execute(
                 "SELECT current_user, current_setting('transaction_read_only'), "
                 "current_setting('transaction_isolation')"
