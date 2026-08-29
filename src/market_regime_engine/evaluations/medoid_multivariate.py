@@ -17,6 +17,7 @@ from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedSelectedFeatureProfile
 from market_regime_engine.training.candidate_grid import (
     CandidateGridEvaluation,
+    CandidateRunner,
     evaluate_candidate_grid,
 )
 
@@ -46,6 +47,7 @@ def evaluate_medoid_multivariate(
     resolved_profile: ResolvedSelectedFeatureProfile,
     feature_spec: FeatureSpec,
     lineage: EvaluationLineage,
+    runner: CandidateRunner | None = None,
 ) -> MedoidMultivariateEvaluation:
     """Evaluate the frozen Stage-2 tuple using the existing v3 grid and selection contracts."""
 
@@ -67,12 +69,21 @@ def evaluate_medoid_multivariate(
         != resolved_profile.feature_selection_execution_hash
     ):
         raise ValueError("multivariate lineage must match the frozen resolved profile and plan")
-    grid = evaluate_candidate_grid(
-        source_rows,
-        plan=plan,
-        profile=profile,
-        resolved_profile=resolved_profile,
-    )
+    if runner is None:
+        grid = evaluate_candidate_grid(
+            source_rows,
+            plan=plan,
+            profile=profile,
+            resolved_profile=resolved_profile,
+        )
+    else:
+        grid = evaluate_candidate_grid(
+            source_rows,
+            plan=plan,
+            profile=profile,
+            resolved_profile=resolved_profile,
+            runner=runner,
+        )
     champion: str | None
     reason: str | None
     try:

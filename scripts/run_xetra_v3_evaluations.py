@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,8 +13,10 @@ import psycopg
 import yaml
 from mlflow.tracking import MlflowClient
 
+from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
+from market_regime_engine.evaluations.checkpoints import EvaluationCheckpointStore
 from market_regime_engine.evaluations.clocks import build_evaluation_clock
 from market_regime_engine.evaluations.contracts import (
     EvaluationId,
@@ -91,9 +94,25 @@ def _common_feature_history(rows: pd.DataFrame, feature_names: tuple[str, ...]) 
 
 
 def _git_commit(root: Path) -> str:
-    import subprocess
-
     return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+
+
+def _checkpointed_runner(store: EvaluationCheckpointStore, evaluation_id: EvaluationId):
+    def runner(source_rows: Any, plan: Any, profile: Any, candidate: Any, factory: Any) -> Any:
+        return store.load_or_compute(
+            evaluation_id=evaluation_id.value,
+            feature_order=candidate.feature_order,
+            candidate_id=candidate.candidate_id,
+            compute=lambda: run_walk_forward_candidate(
+                source_rows,
+                plan=plan,
+                profile=profile,
+                candidate=candidate,
+                adapter_factory=factory,
+            ),
+        )
+
+    return runner
 
 
 def main() -> None:
@@ -134,6 +153,18 @@ def main() -> None:
     delta_clock = build_evaluation_clock(rows, plan, delta_spec)
     definition_hash = selection.feature_selection_definition_hash
     execution_hash = selection.feature_selection_execution_hash
+    git_commit = _git_commit(root)
+    fingerprint = xetra_v3_evaluation_fingerprint(
+        git_commit=git_commit, data_sha256=snapshot.lineage.data_sha256
+    )
+    checkpoints = EvaluationCheckpointStore(
+        Path(
+            os.environ.get(
+                "REGIME_EVALUATION_CHECKPOINT_ROOT", "/volume2/docker/mlflow/evaluation-checkpoints"
+            )
+        ),
+        fingerprint=fingerprint,
+    )
     multivariate = evaluate_medoid_multivariate(
         rows,
         plan=plan,
@@ -148,6 +179,7 @@ def main() -> None:
             execution_hash,
             multi_clock.clock_hash,
         ),
+        runner=_checkpointed_runner(checkpoints, EvaluationId.MEDOID_MULTIVARIATE),
     )
     medoid = evaluate_medoid_univariate(
         rows,
@@ -164,6 +196,7 @@ def main() -> None:
             medoid_clock.clock_hash,
         ),
         multivariate=multivariate,
+        runner=_checkpointed_runner(checkpoints, EvaluationId.MEDOID_UNIVARIATE),
     )
     delta = evaluate_delta1_univariate(
         rows,
@@ -179,6 +212,7 @@ def main() -> None:
             delta_clock.clock_hash,
         ),
         multivariate=multivariate,
+        runner=_checkpointed_runner(checkpoints, EvaluationId.DELTA1_UNIVARIATE),
     )
     writer = StatisticsWriter(root)
     writer.preflight()
@@ -186,10 +220,6 @@ def main() -> None:
     tracked = tuple(
         track_evaluation_result(port, writer, result=result)
         for result in (multivariate, medoid, delta)
-    )
-    git_commit = _git_commit(root)
-    fingerprint = xetra_v3_evaluation_fingerprint(
-        git_commit=git_commit, data_sha256=snapshot.lineage.data_sha256
     )
     marker_run_id = record_completed_xetra_v3_evaluation(
         MlflowClient(tracking_uri=os.environ["MLFLOW_TRACKING_URI"]),
