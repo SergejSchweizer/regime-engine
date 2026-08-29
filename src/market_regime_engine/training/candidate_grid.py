@@ -17,6 +17,7 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -249,6 +250,17 @@ def evaluate_candidate_grid(
     )
     if worker_limit < 1:
         raise ValueError("max_workers must be at least 1")
+    scheduled_candidates = tuple(
+        next(
+            candidate
+            for candidate in resolved_profile.candidates
+            if candidate.candidate_id == candidate_id
+        )
+        for candidate_id in randomized_order(
+            tuple(candidate.candidate_id for candidate in resolved_profile.candidates),
+            scope="candidate-grid:" + ",".join(resolved_profile.final_features),
+        )
+    )
     if worker_limit == 1:
         evaluations = tuple(
             runner(
@@ -262,7 +274,7 @@ def evaluate_candidate_grid(
                     else adapter_factory_builder(candidate)
                 ),
             )
-            for candidate in resolved_profile.candidates
+            for candidate in scheduled_candidates
         )
     else:
         with ThreadPoolExecutor(max_workers=worker_limit) as executor:
@@ -279,10 +291,16 @@ def evaluate_candidate_grid(
                         else adapter_factory_builder(candidate)
                     ),
                 )
-                for candidate in resolved_profile.candidates
+                for candidate in scheduled_candidates
             ]
             evaluations = tuple(future.result() for future in futures)
+    by_candidate_id = {item.candidate_id: item for item in evaluations}
     expected_ids = expected_candidate_ids(profile.profile_config_version)
+    if set(by_candidate_id) != set(expected_ids) or len(by_candidate_id) != len(evaluations):
+        raise ValueError("candidate runner returned unexpected candidate identities/order")
+    evaluations = tuple(
+        by_candidate_id[candidate.candidate_id] for candidate in resolved_profile.candidates
+    )
     if tuple(item.candidate_id for item in evaluations) != expected_ids:
         raise ValueError("candidate runner returned unexpected candidate identities/order")
     expected_fold_ids = tuple(fold.fold_id for fold in plan.folds)

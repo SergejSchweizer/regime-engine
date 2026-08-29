@@ -157,6 +157,7 @@ def main() -> None:
     fingerprint = xetra_v3_evaluation_fingerprint(
         git_commit=git_commit, data_sha256=snapshot.lineage.data_sha256
     )
+    os.environ["REGIME_EVALUATION_SCHEDULING_SEED"] = fingerprint
     checkpoints = EvaluationCheckpointStore(
         Path(
             os.environ.get(

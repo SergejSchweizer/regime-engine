@@ -20,6 +20,7 @@ from market_regime_engine.evaluations.agreement import (
 from market_regime_engine.evaluations.clocks import EvaluationClock
 from market_regime_engine.evaluations.contracts import EvaluationId, EvaluationLineage, FeatureSpec
 from market_regime_engine.evaluations.medoid_multivariate import MedoidMultivariateEvaluation
+from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.evaluations.univariate_grid import (
     CandidateRunner,
     UnivariateFeatureGrid,
@@ -165,7 +166,16 @@ def evaluate_medoid_univariate(
 
     workers = min(len(feature_spec.feature_order), os.cpu_count() or 1)
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        grids = tuple(executor.map(evaluate_feature, feature_spec.feature_order))
+        grids = tuple(
+            executor.map(
+                evaluate_feature,
+                randomized_order(
+                    feature_spec.feature_order, scope=EvaluationId.MEDOID_UNIVARIATE.value
+                ),
+            )
+        )
+    by_feature_name = {grid.feature_name: grid for grid in grids}
+    grids = tuple(by_feature_name[feature_name] for feature_name in feature_spec.feature_order)
     agreements = tuple(
         compare_univariate_to_multivariate(
             grid.feature_name, _winner_evaluation(grid), multivariate_winner
