@@ -26,6 +26,7 @@ from market_regime_engine.evaluations.contracts import (
     FeatureSpec,
     candidate_specs,
 )
+from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import (
@@ -164,6 +165,13 @@ def evaluate_univariate_feature_grid(
         for spec in candidate_specs((feature_name,))
     )
     clocked_rows = _clocked_source_rows(source_rows, clock, feature_name)
+    scheduled_candidates = tuple(
+        next(candidate for candidate in candidates if candidate.candidate_id == candidate_id)
+        for candidate_id in randomized_order(
+            tuple(candidate.candidate_id for candidate in candidates),
+            scope=f"{feature_spec.evaluation_id.value}:{feature_name}",
+        )
+    )
     evaluations = tuple(
         runner(
             clocked_rows,
@@ -172,8 +180,10 @@ def evaluate_univariate_feature_grid(
             candidate,
             cast(AdapterFactory, adapter_factory(profile, candidate)),
         )
-        for candidate in candidates
+        for candidate in scheduled_candidates
     )
+    by_candidate_id = {item.candidate_id: item for item in evaluations}
+    evaluations = tuple(by_candidate_id[candidate.candidate_id] for candidate in candidates)
     grid = CandidateGridEvaluation(
         profile_id=profile.profile_id,
         profile_config_version=profile.profile_config_version,
