@@ -36,6 +36,7 @@ def fit_result(seed: int, loglik: float, *, converged: bool = True) -> FitResult
         converged=converged,
         iterations=17,
         seed=seed,
+        em_log_likelihood_history=tuple(float(index) for index in range(17)),
     )
 
 
@@ -83,6 +84,7 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     assert result.valid_start_count == 6
     assert result.success_rate == 0.75
     assert result.winner.seed == 89
+    assert result.winner.em_log_likelihood_history == tuple(float(index) for index in range(17))
     assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS
     assert result.diagnostics[6].failure_reason == "RuntimeError: numerical failure"
     assert result.diagnostics[7].failure_reason == "not converged"
@@ -141,7 +143,7 @@ def test_invalid_result_paths_are_counted_as_failed_starts() -> None:
     outcomes: dict[int, FitResult | Exception] = {
         seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS
     }
-    outcomes[11] = replace(outcomes[11], iterations=0)  # type: ignore[arg-type]
+    outcomes[11] = replace(outcomes[11], iterations=0, em_log_likelihood_history=())  # type: ignore[arg-type]
     outcomes[23] = replace(outcomes[23], train_log_likelihood=nan)  # type: ignore[arg-type]
     outcomes[37] = replace(outcomes[37], seed=999)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="valid_starts=5/8"):

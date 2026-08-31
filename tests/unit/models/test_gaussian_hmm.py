@@ -12,6 +12,7 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
     _has_material_likelihood_regression,
+    _validated_em_history,
     forward_filter,
     gaussian_log_emissions,
 )
@@ -135,6 +136,18 @@ def test_k2_fit_smoke_extracts_full_covariance() -> None:
     assert result.artifact.covariance_type == "full"
     assert result.artifact.state_count == 2
     assert result.artifact.feature_dimension == 2
+    assert len(result.em_log_likelihood_history) == result.iterations
+    assert result.em_log_likelihood_history
+    assert np.all(np.isfinite(result.em_log_likelihood_history))
+
+
+def test_em_history_validation_rejects_missing_nonfinite_and_wrong_lengths() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _validated_em_history((), 1)
+    with pytest.raises(ValueError, match="length"):
+        _validated_em_history((-10.0,), 2)
+    with pytest.raises(ValueError, match="finite"):
+        _validated_em_history((-10.0, np.nan), 2)
 
 
 def test_hmmlearn_likelihood_regression_detection_allows_numerical_noise() -> None:
@@ -168,6 +181,9 @@ def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
     assert result.artifact.mixture_weights is not None
     assert all(len(weights) == 2 for weights in result.artifact.mixture_weights)
     assert np.isfinite(result.train_log_likelihood)
+    assert result.em_log_likelihood_history
+    assert len(result.em_log_likelihood_history) == result.iterations
+    assert np.all(np.isfinite(result.em_log_likelihood_history))
     filtered = adapter.causal_filter(values[:5])
     assert np.allclose(filtered.filtered_probabilities.sum(axis=1), 1.0)
     restored = HmmlearnGMMHMMAdapter(("a", "b"))

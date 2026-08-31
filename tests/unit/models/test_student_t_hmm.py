@@ -29,6 +29,9 @@ def test_student_t_em_estimates_state_specific_nu_and_filters_causally() -> None
     assert len(result.artifact.degrees_of_freedom) == 2
     assert all(2.0 < value <= 200.0 for value in result.artifact.degrees_of_freedom)
     assert np.isfinite(result.train_log_likelihood)
+    assert result.em_log_likelihood_history
+    assert len(result.em_log_likelihood_history) == result.iterations
+    assert np.all(np.isfinite(result.em_log_likelihood_history))
     filtered = adapter.causal_filter(sample()[:8])
     assert np.allclose(filtered.filtered_probabilities.sum(axis=1), 1.0)
 
