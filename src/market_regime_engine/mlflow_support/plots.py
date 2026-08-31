@@ -992,3 +992,279 @@ def render_candidate_oos_summary(
 
 def fold_history_metric_keys() -> tuple[str, ...]:
     return tuple(_FOLD_METRICS)
+
+
+@dataclass(frozen=True, slots=True)
+class EMFoldConvergence:
+    fold_id: str
+    winning_seed: int
+    train_model_observation_count: int
+    raw_log_likelihood: tuple[float, ...]
+    normalized_log_likelihood: tuple[float, ...]
+
+    def as_json_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
+
+
+@dataclass(frozen=True, slots=True)
+class EMCandidateConvergence:
+    candidate_id: str
+    fold_series: tuple[EMFoldConvergence, ...]
+    iterations: tuple[int, ...]
+    median: tuple[float, ...]
+    q25: tuple[float, ...]
+    q75: tuple[float, ...]
+    invalid_fold_count: int
+    missing_trace_fold_ids: tuple[str, ...]
+    unavailable_reason: str | None
+
+    @property
+    def available(self) -> bool:
+        return self.unavailable_reason is None
+
+    def as_json_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
+
+
+@dataclass(frozen=True, slots=True)
+class EMConvergencePlotEntry:
+    png_path: str
+    svg_path: str
+    plot_type: str
+    feature_name: str
+    candidate_ids: tuple[str, ...]
+    available_candidate_ids: tuple[str, ...]
+    unavailable_candidate_ids: tuple[str, ...]
+    source_artifact_hash: str
+    x_axis_label: str = "EM iteration"
+    y_axis_label: str = "TRAIN log likelihood per observation"
+    diagnostic_label: str = "optimization diagnostic only — not model selection"
+
+    def as_json_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
+
+
+def summarize_em_convergence(evaluation: WalkForwardEvaluation) -> EMCandidateConvergence:
+    """Aggregate only valid-fold winning-start EM histories without tail fabrication."""
+
+    fold_series: list[EMFoldConvergence] = []
+    missing_trace_fold_ids: list[str] = []
+    invalid_fold_count = 0
+    for fold in evaluation.folds:
+        if not fold.valid:
+            invalid_fold_count += 1
+            continue
+        if fold.multistart_result is None:
+            missing_trace_fold_ids.append(fold.fold_id)
+            continue
+        winner = fold.multistart_result.winner
+        history = tuple(float(value) for value in winner.em_log_likelihood_history)
+        if not history:
+            missing_trace_fold_ids.append(fold.fold_id)
+            continue
+        if fold.train_model_observation_count < 1:
+            raise ValueError("EM convergence normalization requires positive TRAIN observations")
+        if len(history) != winner.iterations:
+            raise ValueError("winning EM history length differs from completed iterations")
+        if not all(isfinite(value) for value in history):
+            raise ValueError("winning EM history must contain only finite values")
+        normalized = tuple(value / fold.train_model_observation_count for value in history)
+        fold_series.append(
+            EMFoldConvergence(
+                fold_id=fold.fold_id,
+                winning_seed=winner.seed,
+                train_model_observation_count=fold.train_model_observation_count,
+                raw_log_likelihood=history,
+                normalized_log_likelihood=normalized,
+            )
+        )
+
+    if not fold_series:
+        return EMCandidateConvergence(
+            candidate_id=evaluation.candidate_id,
+            fold_series=(),
+            iterations=(),
+            median=(),
+            q25=(),
+            q75=(),
+            invalid_fold_count=invalid_fold_count,
+            missing_trace_fold_ids=tuple(missing_trace_fold_ids),
+            unavailable_reason="no usable valid-fold winning-start EM histories",
+        )
+
+    maximum_length = max(len(series.normalized_log_likelihood) for series in fold_series)
+    median: list[float] = []
+    q25: list[float] = []
+    q75: list[float] = []
+    for offset in range(maximum_length):
+        observed = np.asarray(
+            [
+                series.normalized_log_likelihood[offset]
+                for series in fold_series
+                if len(series.normalized_log_likelihood) > offset
+            ],
+            dtype=np.float64,
+        )
+        if observed.size < 1:
+            raise AssertionError("EM aggregation iteration unexpectedly has no observations")
+        q25_value, median_value, q75_value = np.quantile(
+            observed, (0.25, 0.50, 0.75), method="linear"
+        )
+        q25.append(float(q25_value))
+        median.append(float(median_value))
+        q75.append(float(q75_value))
+    return EMCandidateConvergence(
+        candidate_id=evaluation.candidate_id,
+        fold_series=tuple(fold_series),
+        iterations=tuple(range(1, maximum_length + 1)),
+        median=tuple(median),
+        q25=tuple(q25),
+        q75=tuple(q75),
+        invalid_fold_count=invalid_fold_count,
+        missing_trace_fold_ids=tuple(missing_trace_fold_ids),
+        unavailable_reason=None,
+    )
+
+
+def _save_figure_pair(fig: matplotlib.figure.Figure, base_path: Path) -> tuple[Path, Path]:
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    png_path = base_path.with_suffix(".png")
+    svg_path = base_path.with_suffix(".svg")
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=PNG_DPI, bbox_inches="tight")
+    fig.savefig(svg_path, bbox_inches="tight")
+    plt.close(fig)
+    return png_path, svg_path
+
+
+def render_em_convergence(
+    evaluation: WalkForwardEvaluation,
+    feature_name: str,
+    output_dir: str | Path,
+) -> tuple[EMConvergencePlotEntry, EMCandidateConvergence]:
+    """Render one candidate's fold winners plus median/IQR EM diagnostic."""
+
+    if evaluation.feature_order != (feature_name,):
+        raise ValueError("EM convergence feature must match the univariate evaluation feature")
+    summary = summarize_em_convergence(evaluation)
+    fig, ax = plt.subplots(figsize=WIDE_FIGSIZE)
+    qualifier = "optimization diagnostic only — not model selection"
+    if summary.available:
+        for series in summary.fold_series:
+            iterations = np.arange(1, len(series.normalized_log_likelihood) + 1)
+            ax.plot(
+                iterations,
+                series.normalized_log_likelihood,
+                marker=".",
+                linewidth=0.8,
+                alpha=0.45,
+                label=series.fold_id,
+            )
+        ax.fill_between(
+            summary.iterations,
+            summary.q25,
+            summary.q75,
+            alpha=0.20,
+            label="25th-75th percentile",
+        )
+        ax.plot(
+            summary.iterations,
+            summary.median,
+            marker="o",
+            linewidth=2.4,
+            label=f"{evaluation.candidate_id} median",
+        )
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            f"Unavailable: {summary.unavailable_reason}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+        )
+    ax.set_title(f"EM convergence — {feature_name} — {evaluation.candidate_id}\n{qualifier}")
+    ax.set_xlabel("EM iteration")
+    ax.set_ylabel("TRAIN log likelihood per observation")
+    ax.grid(True, alpha=0.25)
+    if summary.available:
+        ax.legend()
+    base = Path(output_dir) / evaluation.candidate_id / "em_convergence"
+    png_path, svg_path = _save_figure_pair(fig, base)
+    payload = {
+        "feature_name": feature_name,
+        "candidate_id": evaluation.candidate_id,
+        "aggregation": (
+            "per-iteration median and linear 25th/75th percentiles over observed tails only"
+        ),
+        "summary": summary.as_json_dict(),
+    }
+    entry = EMConvergencePlotEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="em_convergence",
+        feature_name=feature_name,
+        candidate_ids=(evaluation.candidate_id,),
+        available_candidate_ids=(evaluation.candidate_id,) if summary.available else (),
+        unavailable_candidate_ids=() if summary.available else (evaluation.candidate_id,),
+        source_artifact_hash=_canonical_hash(payload),
+    )
+    return entry, summary
+
+
+def render_em_convergence_comparison(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    feature_name: str,
+    output_dir: str | Path,
+) -> tuple[EMConvergencePlotEntry, tuple[EMCandidateConvergence, ...]]:
+    """Render one median EM curve per supplied candidate without diagnostic ranking."""
+
+    if not evaluations:
+        raise ValueError("EM convergence comparison requires at least one candidate")
+    if len({evaluation.candidate_id for evaluation in evaluations}) != len(evaluations):
+        raise ValueError("EM convergence comparison candidate IDs must be unique")
+    for evaluation in evaluations:
+        if evaluation.feature_order != (feature_name,):
+            raise ValueError("all EM comparison candidates must use the same univariate feature")
+    summaries = tuple(summarize_em_convergence(evaluation) for evaluation in evaluations)
+    fig, ax = plt.subplots(figsize=COMPARISON_FIGSIZE)
+    qualifier = "optimization diagnostic only — not model selection"
+    for summary in summaries:
+        if summary.available:
+            ax.plot(
+                summary.iterations,
+                summary.median,
+                marker="o",
+                linewidth=1.6,
+                label=summary.candidate_id,
+            )
+        else:
+            ax.plot([], [], label=f"{summary.candidate_id} (unavailable)")
+    ax.set_title(f"EM convergence model comparison — {feature_name}\n{qualifier}")
+    ax.set_xlabel("EM iteration")
+    ax.set_ylabel("TRAIN log likelihood per observation")
+    ax.grid(True, alpha=0.25)
+    ax.legend(title="Canonical candidate order")
+    base = Path(output_dir) / "em_convergence_all_models"
+    png_path, svg_path = _save_figure_pair(fig, base)
+    payload = {
+        "feature_name": feature_name,
+        "candidate_order": [summary.candidate_id for summary in summaries],
+        "aggregation": "one per-candidate observed-tail median curve; no cross-model ranking",
+        "summaries": [summary.as_json_dict() for summary in summaries],
+    }
+    entry = EMConvergencePlotEntry(
+        png_path=str(png_path),
+        svg_path=str(svg_path),
+        plot_type="em_convergence_all_models",
+        feature_name=feature_name,
+        candidate_ids=tuple(summary.candidate_id for summary in summaries),
+        available_candidate_ids=tuple(
+            summary.candidate_id for summary in summaries if summary.available
+        ),
+        unavailable_candidate_ids=tuple(
+            summary.candidate_id for summary in summaries if not summary.available
+        ),
+        source_artifact_hash=_canonical_hash(payload),
+    )
+    return entry, summaries
