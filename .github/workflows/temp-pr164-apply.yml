@@ -1,0 +1,47 @@
+name: Temporary PR-164 implementation
+
+on:
+  push:
+    branches:
+      - pr/PR-164-hmm-em-likelihood-history
+    paths:
+      - .github/workflows/temp-pr164-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Create exact environment
+        run: |
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
+      - name: Apply implementation
+        run: .venv/bin/python scripts/.temp_pr164_patch.py
+      - name: Format and lint touched code
+        run: |
+          .venv/bin/ruff format src/market_regime_engine/models/protocols.py src/market_regime_engine/models/gaussian_hmm.py src/market_regime_engine/models/student_t_hmm.py src/market_regime_engine/training/multistart.py tests/unit/models/test_gaussian_hmm.py tests/unit/models/test_student_t_hmm.py tests/unit/training/test_multistart.py
+          .venv/bin/ruff check src/market_regime_engine/models/protocols.py src/market_regime_engine/models/gaussian_hmm.py src/market_regime_engine/models/student_t_hmm.py src/market_regime_engine/training/multistart.py tests/unit/models/test_gaussian_hmm.py tests/unit/models/test_student_t_hmm.py tests/unit/training/test_multistart.py
+      - name: Strict type check
+        run: .venv/bin/mypy src/market_regime_engine
+      - name: Targeted unit tests
+        run: .venv/bin/pytest tests/unit/models/test_gaussian_hmm.py tests/unit/models/test_student_t_hmm.py tests/unit/training/test_multistart.py
+      - name: Commit implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/market_regime_engine/models/protocols.py src/market_regime_engine/models/gaussian_hmm.py src/market_regime_engine/models/student_t_hmm.py src/market_regime_engine/training/multistart.py tests/unit/models/test_gaussian_hmm.py tests/unit/models/test_student_t_hmm.py tests/unit/training/test_multistart.py
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(PR-164-hmm-em-likelihood-history): preserve EM histories'
+          git push
