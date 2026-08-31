@@ -29,6 +29,17 @@ def _has_material_likelihood_regression(history: Iterable[float]) -> bool:
     )
 
 
+def _validated_em_history(history: Iterable[float], iterations: int) -> tuple[float, ...]:
+    values = tuple(float(value) for value in history)
+    if not values:
+        raise ValueError("successful HMM fit requires a non-empty EM log-likelihood history")
+    if len(values) != iterations:
+        raise ValueError("EM log-likelihood history length must equal completed iterations")
+    if not all(isfinite(value) for value in values):
+        raise ValueError("EM log-likelihood history must contain only finite values")
+    return values
+
+
 @dataclass(frozen=True, slots=True)
 class GaussianHMMSettings:
     backend: str = "hmmlearn==0.3.3"
@@ -292,13 +303,16 @@ class HmmlearnGaussianHMMAdapter:
         train_log_likelihood = float(model.score(values))
         if not isfinite(train_log_likelihood):
             raise ValueError("TRAIN log likelihood must be finite")
+        iterations = int(model.monitor_.iter)
+        history = _validated_em_history(model.monitor_.history, iterations)
         return FitResult(
             artifact=artifact,
             train_log_likelihood=train_log_likelihood,
             converged=bool(model.monitor_.converged)
-            and not _has_material_likelihood_regression(model.monitor_.history),
-            iterations=int(model.monitor_.iter),
+            and not _has_material_likelihood_regression(history),
+            iterations=iterations,
             seed=seed,
+            em_log_likelihood_history=history,
         )
 
     def _extract_model(self, model: GaussianHMM | GMMHMM) -> GaussianHMMArtifact:
