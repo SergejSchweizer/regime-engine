@@ -23,6 +23,7 @@ _EVIDENCE_GROUPS = {
     "feature_selection",
     "agreement",
     "champion",
+    "optimization",
     "failure",
 }
 
