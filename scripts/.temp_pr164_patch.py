@@ -86,3 +86,9 @@ replace_once(
     '''    assert result.winner.seed == 89\n    assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS\n''',
     '''    assert result.winner.seed == 89\n    assert result.winner.em_log_likelihood_history == tuple(float(index) for index in range(17))\n    assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS\n''',
 )
+
+replace_once(
+    "tests/unit/training/test_multistart.py",
+    '''    outcomes[11] = replace(outcomes[11], iterations=0)  # type: ignore[arg-type]\n''',
+    '''    outcomes[11] = replace(\n        outcomes[11], iterations=0, em_log_likelihood_history=()\n    )  # type: ignore[arg-type]\n''',
+)
