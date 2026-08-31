@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -78,6 +79,80 @@ def test_statistics_failure_marks_mlflow_run_failed(tmp_path: Path) -> None:
             run_name="parent",
             statistics=_statistics(),
         )
+    assert port.failed == ["run-1"]
+
+
+def test_statistics_run_payload_emitter_runs_before_finalization(tmp_path: Path) -> None:
+    port = RecordingPort()
+    seen: list[tuple[str, Path]] = []
+
+    def emit(run_id: str, directory: Path) -> None:
+        seen.append((run_id, directory))
+        (directory / "payload.txt").write_text("payload", encoding="utf-8")
+
+    run_id, _ = track_statistics_run(
+        port,
+        StatisticsWriter(tmp_path),
+        run_name="parent",
+        statistics=_statistics(),
+        payload_emitter=emit,
+    )
+    directory = tmp_path / "evaluations" / "medoid_multivariate" / run_id
+    assert seen == [(run_id, directory)]
+    assert (directory / "payload.txt").read_text(encoding="utf-8") == "payload"
+    assert port.finished == [run_id]
+    assert port.failed == []
+
+
+def test_payload_emitter_failure_finalizes_local_failed_and_fails_mlflow(tmp_path: Path) -> None:
+    port = RecordingPort()
+
+    def emit(_run_id: str, _directory: Path) -> None:
+        raise RuntimeError("payload failure")
+
+    with pytest.raises(RuntimeError, match="payload failure"):
+        track_statistics_run(
+            port,
+            StatisticsWriter(tmp_path),
+            run_name="parent",
+            statistics=_statistics(),
+            payload_emitter=emit,
+        )
+    path = tmp_path / "evaluations" / "medoid_multivariate" / "run-1" / "statistics.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["status"] == "FAILED"
+    assert payload["evidence"]["failure"]["code"] == "RuntimeError"
+    assert port.finished == []
+    assert port.failed == ["run-1"]
+
+
+def test_mlflow_logging_failure_never_ends_run_successfully(tmp_path: Path) -> None:
+    class FailingPort(RecordingPort):
+        def log_params(self, run_id: str, params: dict[str, str]) -> None:
+            del run_id, params
+            raise RuntimeError("metric logging failed")
+
+    port = FailingPort()
+    with pytest.raises(RuntimeError, match="metric logging failed"):
+        track_statistics_run(
+            port, StatisticsWriter(tmp_path), run_name="parent", statistics=_statistics()
+        )
+    assert port.finished == []
+    assert port.failed == ["run-1"]
+
+
+def test_local_finalization_failure_fails_mlflow_exactly_once(tmp_path: Path) -> None:
+    class FailingWriter(StatisticsWriter):
+        def finalize(self, statistics: RunStatistics) -> str:
+            del statistics
+            raise OSError("finalize failed")
+
+    port = RecordingPort()
+    with pytest.raises(OSError, match="finalize failed"):
+        track_statistics_run(
+            port, FailingWriter(tmp_path), run_name="parent", statistics=_statistics()
+        )
+    assert port.finished == []
     assert port.failed == ["run-1"]
 
 
