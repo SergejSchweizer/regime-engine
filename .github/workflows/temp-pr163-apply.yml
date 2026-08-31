@@ -1,0 +1,105 @@
+name: Temporary PR-163 contract patch
+
+on:
+  push:
+    branches:
+      - pr/PR-163-delta1-model-metrics-contract
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Append delta1 Model Metrics contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          evaluation = Path('EVALUATION.md')
+          marker = '## 19. Delta1-univariate Model Metrics diagnostics'
+          text = evaluation.read_text(encoding='utf-8')
+          if marker not in text:
+              text += r'''
+
+---
+
+## 19. Delta1-univariate Model Metrics diagnostics
+
+This diagnostic contract applies only to the Xetra v3 `delta1_univariate` evaluation. A dataset is exactly one feature from the canonical ordered 13-delta tuple; a model is exactly one of the canonical 12 Xetra v3 candidate IDs. `medoid_multivariate` and `medoid_univariate` behavior, evidence and artifact layout are unchanged.
+
+Each delta feature run owns one deterministic `model_metrics/` namespace:
+
+```text
+model_metrics/
+  models/
+    <candidate_id>/
+      performance/
+        train_loglik_per_obs
+        oos_predictive_loglik_per_obs
+        aic_per_train_obs
+        bic_per_train_obs
+        multistart_success_rate
+      optimization/
+        em_convergence
+  comparisons/
+    oos_predictive_loglik_per_obs_all_models
+    em_convergence_all_models
+  manifest.json
+```
+
+The five per-model performance histories retain their existing evaluation definitions. Cross-model performance comparison within one delta dataset remains OOS predictive log likelihood per observation on that evaluation's common clock. No TRAIN likelihood, EM convergence, AIC, BIC, convergence speed or other optimization diagnostic may alter within-feature statistical selection, cross-feature NMI agreement ranking, `diagnostic_feature_model_winner`, or `delta1_univariate_evaluation_champion`.
+
+### EM convergence diagnostic
+
+EM x-axis values are one-based completed EM iterations. The y-axis is `TRAIN log likelihood per observation`, obtained for a fold by dividing that winning start's recorded optimizer objective at each iteration by the same fold's retained TRAIN model observation count.
+
+For one candidate, the main diagnostic contains every usable valid-fold winning-start trajectory, an across-fold median trajectory, and a 25th/75th percentile envelope. Only the winning multistart fit for a valid fold contributes. Failed starts, successful non-winning starts, invalid folds and unavailable traces do not contribute numeric points.
+
+Iteration lengths may differ. At EM iteration `i`, the median and quantiles use only winner histories that actually contain iteration `i`. Forward fill, interpolation, extrapolation, padding, synthetic plateaus and fabricated zeros are forbidden. A candidate with no usable trace remains explicitly represented as unavailable.
+
+The all-model EM comparison contains one across-fold median curve per canonical candidate, in canonical candidate order. It is an optimization diagnostic only and is never a model-selection or feature-selection metric. The first rollout uses existing MLflow nested runs, metric histories and artifacts; it does not fork or patch the MLflow frontend and does not introduce a second dashboard service.
+'''
+              evaluation.write_text(text, encoding='utf-8')
+
+          style = Path('PLOT_STYLE.md')
+          marker = '## Delta1-univariate Model Metrics'
+          text = style.read_text(encoding='utf-8')
+          if marker not in text:
+              text += r'''
+
+## Delta1-univariate Model Metrics
+
+This section applies only to `delta1_univariate` Model Metrics artifacts.
+
+- Every delta feature/dataset keeps all 12 canonical model identities visible in canonical order, including explicit unavailable entries.
+- Per-model EM convergence plots use x-axis `EM iteration` and y-axis `TRAIN log likelihood per observation`.
+- Usable fold winner trajectories are individually identifiable; the across-fold median is visually dominant and the 25th/75th percentile envelope is distinguishable without relying on color alone.
+- No curve may extend beyond its recorded completed iterations. Missing tail iterations are absent rather than filled or interpolated.
+- The all-model EM comparison uses one median curve per candidate in canonical candidate order and must not reorder by likelihood, AIC/BIC, convergence speed or OOS score.
+- Every EM convergence title or legend must include the unambiguous qualifier `optimization diagnostic only — not model selection`.
+- Candidate-unavailable cases must remain visible with a deterministic unavailable annotation/evidence rather than a fake zero line.
+- The dataset-level OOS predictive-log-likelihood comparison remains a performance diagnostic; no cross-dataset raw likelihood comparison is introduced.
+- Artifacts remain PNG plus SVG where vector-compatible, with deterministic manifest lineage under the feature run's `model_metrics/` namespace.
+'''
+              style.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify patch
+        run: |
+          grep -q '## 19. Delta1-univariate Model Metrics diagnostics' EVALUATION.md
+          grep -q '## Delta1-univariate Model Metrics' PLOT_STYLE.md
+          git diff --check
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add EVALUATION.md PLOT_STYLE.md
+          git diff --cached --quiet && exit 0
+          git commit -m 'docs(PR-163-delta1-model-metrics-contract): pin diagnostic semantics'
+          git push
