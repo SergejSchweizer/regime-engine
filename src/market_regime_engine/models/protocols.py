@@ -20,6 +20,14 @@ class FitResult:
     converged: bool
     iterations: int
     seed: int
+    em_log_likelihood_history: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        history = self.em_log_likelihood_history
+        if history and len(history) != self.iterations:
+            raise ValueError("EM log-likelihood history length must equal completed iterations")
+        if history and not all(np.isfinite(value) for value in history):
+            raise ValueError("EM log-likelihood history must contain only finite values")
 
 
 @dataclass(frozen=True, slots=True)

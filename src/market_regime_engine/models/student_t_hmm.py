@@ -12,7 +12,11 @@ from scipy.optimize import brentq  # type: ignore[import-untyped]
 from scipy.special import digamma, logsumexp  # type: ignore[import-untyped]
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
-from market_regime_engine.models.gaussian_hmm import forward_filter, gaussian_log_emissions
+from market_regime_engine.models.gaussian_hmm import (
+    _validated_em_history,
+    forward_filter,
+    gaussian_log_emissions,
+)
 from market_regime_engine.models.protocols import ArrayF64, FilterResult, FitResult
 
 
@@ -160,10 +164,12 @@ class StudentTHMMAdapter:
         iterations = 0
         dimension = values.shape[1]
         identity = np.eye(dimension)
+        history: list[float] = []
         for iteration in range(1, self.settings.n_iter + 1):
             iterations = iteration
             current = _artifact(self.feature_order, start, transition, means, scales, nu)
             gamma, xi_sum, likelihood, _ = _expectation(values, current)
+            history.append(float(likelihood))
             start = np.maximum(gamma[0], 1e-12)
             start /= start.sum()
             transition = np.maximum(xi_sum, 1e-12)
@@ -195,6 +201,7 @@ class StudentTHMMAdapter:
             previous = likelihood
         result = _artifact(self.feature_order, start, transition, means, scales, nu)
         final_likelihood = forward_filter(values, result).log_likelihood
+        em_history = _validated_em_history(history, iterations)
         self._artifact = result
         return FitResult(
             artifact=result,
@@ -202,6 +209,7 @@ class StudentTHMMAdapter:
             converged=converged,
             iterations=iterations,
             seed=seed,
+            em_log_likelihood_history=em_history,
         )
 
     def extract(self) -> GaussianHMMArtifact:
