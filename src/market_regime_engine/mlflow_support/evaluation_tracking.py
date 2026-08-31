@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 
 from market_regime_engine.evaluation_statistics.contracts import RunStatistics, RunType, Status
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
@@ -19,6 +22,7 @@ from market_regime_engine.training.candidate_grid import CandidateGridEvaluation
 EvaluationResult = (
     MedoidMultivariateEvaluation | MedoidUnivariateEvaluation | Delta1UnivariateEvaluation
 )
+PayloadEmitter = Callable[[str, Path], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,17 +40,23 @@ def track_statistics_run(
     run_name: str,
     statistics: RunStatistics,
     parent_run_id: str | None = None,
+    payload_emitter: PayloadEmitter | None = None,
 ) -> tuple[str, str]:
-    """Create one MLflow run and its exact immutable finalized statistics mirror."""
+    """Create one MLflow run, emit payloads, then finalize its immutable local mirror."""
 
     if statistics.status is not Status.RUNNING:
         raise ValueError("statistics tracking requires an initial RUNNING dossier")
     run_id = port.start_run(run_name=run_name, parent_run_id=parent_run_id)
     started = replace(statistics, mlflow_run_id=run_id, parent_run_id=parent_run_id)
+    directory: Path | None = None
+    finalized_locally = False
     try:
         directory = writer.start(started)
+        if payload_emitter is not None:
+            payload_emitter(run_id, directory)
         finalized = replace(started, status=Status.FINISHED, ended_at=datetime.now(UTC))
         digest = writer.finalize(finalized)
+        finalized_locally = True
         path = directory / "statistics.json"
         if sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError("finalized statistics hash mismatch")
@@ -54,7 +64,21 @@ def track_statistics_run(
         port.log_artifact(run_id, str(path), "statistics")
         port.end_run(run_id)
         return run_id, digest
-    except BaseException:
+    except BaseException as exc:
+        if directory is not None and not finalized_locally:
+            failed_evidence = dict(started.evidence)
+            failed_evidence["failure"] = {
+                "code": type(exc).__name__,
+                "reason": "evaluation tracking payload/finalization failed",
+            }
+            failed = replace(
+                started,
+                status=Status.FAILED,
+                ended_at=datetime.now(UTC),
+                evidence=failed_evidence,
+            )
+            with suppress(BaseException):
+                writer.finalize(failed)
         port.fail_run(run_id)
         raise
 
