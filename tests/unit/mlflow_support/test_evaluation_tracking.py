@@ -156,6 +156,53 @@ def test_local_finalization_failure_fails_mlflow_exactly_once(tmp_path: Path) ->
     assert port.failed == ["run-1"]
 
 
+def test_delta_model_metrics_payload_writes_manifest_artifacts_and_em_metric_points(
+    tmp_path: Path,
+) -> None:
+    def fold(index: int, history: tuple[float, ...]) -> SimpleNamespace:
+        return SimpleNamespace(
+            fold_id=f"fold_{index:03d}",
+            valid=True,
+            train_model_observation_count=10,
+            train_log_likelihood=-100.0,
+            oos_predictive_log_likelihood_per_observation=-2.0,
+            aic=40.0,
+            bic=50.0,
+            multistart_success_rate=0.875,
+            multistart_result=SimpleNamespace(
+                winner=SimpleNamespace(
+                    seed=11,
+                    iterations=len(history),
+                    em_log_likelihood_history=history,
+                )
+            ),
+        )
+
+    first = SimpleNamespace(
+        candidate_id="gaussian_hmm_k2_full",
+        feature_order=("vix_delta_1obs",),
+        folds=(fold(1, (-100.0, -90.0)),),
+    )
+    second = SimpleNamespace(
+        candidate_id="gaussian_hmm_k3_full",
+        feature_order=("vix_delta_1obs",),
+        folds=(fold(1, (-120.0, -110.0)),),
+    )
+    grid = SimpleNamespace(feature_order=("vix_delta_1obs",), evaluations=(first, second))
+    port = RecordingPort()
+
+    module._emit_delta_model_metrics(port, "run-1", tmp_path, grid)
+
+    manifest = json.loads((tmp_path / "model_metrics" / "manifest.json").read_text())
+    assert manifest["candidate_ids"] == [first.candidate_id, second.candidate_id]
+    assert len(manifest["candidates"]) == 2
+    assert all(len(item["performance"]) == 5 for item in manifest["candidates"])
+    assert any(path == "model_metrics" for _, _, path in port.artifacts)
+    summary = module.summarize_em_convergence(first)
+    points = module._em_metric_points(summary)
+    assert [(point.step, point.value) for point in points] == [(1, -10.0), (2, -9.0)]
+
+
 def test_statistics_run_rejects_non_running_dossier(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="RUNNING"):
         track_statistics_run(
@@ -182,13 +229,13 @@ class _Writer:
 def test_evaluation_tracking_creates_exact_v3_hierarchies(monkeypatch) -> None:
     calls: list[tuple[str, str | None]] = []
 
-    def track(_port, _writer, *, run_name, statistics, parent_run_id=None):
-        del _port, _writer, statistics
+    def track(_port, _writer, *, run_name, statistics, parent_run_id=None, payload_emitter=None):
+        del _port, _writer, statistics, payload_emitter
         calls.append((run_name, parent_run_id))
         return f"run-{len(calls)}", "a" * 64
 
     monkeypatch.setattr(module, "track_statistics_run", track)
-    monkeypatch.setattr(module, "_candidate_evidence", lambda *_: {})
+    monkeypatch.setattr(module, "_candidate_evidence", lambda *_, **__: {})
     monkeypatch.setattr(module, "asdict", lambda _: {})
     monkeypatch.setattr(
         module, "_track_grid", lambda *_: tuple((str(index), str(index)) for index in range(12))
