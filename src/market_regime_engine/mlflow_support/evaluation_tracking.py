@@ -250,6 +250,31 @@ def _em_metric_points(summary: EMCandidateConvergence) -> tuple[MetricPoint, ...
     )
 
 
+def _model_metric_points(
+    evaluation: WalkForwardEvaluation,
+    aggregate: object | None,
+) -> tuple[MetricPoint, ...]:
+    """Return scalar summaries plus fold histories for MLflow's Model Metrics view."""
+    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+    points: list[MetricPoint] = []
+    if aggregate is not None:
+        for key, attribute in (
+            ("oos_predictive_loglik_per_obs_mean", "oos_predictive_loglik_mean"),
+            ("oos_predictive_loglik_per_obs_std", "oos_predictive_loglik_std"),
+            (
+                "oos_predictive_loglik_per_obs_worst_fold",
+                "oos_predictive_loglik_worst_fold",
+            ),
+            ("bic_per_train_obs_mean", "bic_mean"),
+            ("aic_per_train_obs_mean", "aic_mean"),
+        ):
+            value = getattr(aggregate, attribute)
+            if value is not None and isfinite(value):
+                points.append(MetricPoint(key=key, value=value, step=0, timestamp_ms=timestamp_ms))
+    points.extend(_em_metric_points(summarize_em_convergence(evaluation)))
+    return tuple(points)
+
+
 def _emit_delta_model_metrics(
     port: TrackingPort,
     feature_run_id: str,
@@ -262,7 +287,25 @@ def _emit_delta_model_metrics(
     root = directory / "model_metrics"
     candidates: list[dict[str, object]] = []
     for evaluation in grid.evaluations:
+        aggregate = next(
+            (
+                item
+                for item in getattr(grid, "aggregates", ())
+                if item.candidate_id == evaluation.candidate_id
+            ),
+            None,
+        )
         candidate_root = root / "models" / evaluation.candidate_id
+        model_id = port.create_logged_model(
+            name=f"delta1_{feature_name}_{evaluation.candidate_id}",
+            source_run_id=feature_run_id,
+            model_type="hmm",
+            tags={
+                "evaluation_id": EvaluationId.DELTA1_UNIVARIATE.value,
+                "feature_name": feature_name,
+                "candidate_id": evaluation.candidate_id,
+            },
+        )
         performance: list[dict[str, object]] = []
         for metric_key, label in _PERFORMANCE_METRICS:
             path, values = _render_performance_history(
@@ -284,6 +327,14 @@ def _emit_delta_model_metrics(
         em_destination = f"model_metrics/models/{evaluation.candidate_id}/optimization"
         port.log_artifact(feature_run_id, em_entry.png_path, em_destination)
         port.log_artifact(feature_run_id, em_entry.svg_path, em_destination)
+        try:
+            port.log_model_metric_points(model_id, _model_metric_points(evaluation, aggregate))
+            port.log_model_artifacts(model_id, str(candidate_root))
+            port.finalize_logged_model(model_id)
+        except BaseException:
+            with suppress(BaseException):
+                port.finalize_logged_model(model_id, failed=True)
+            raise
         candidates.append(
             {
                 "candidate_id": evaluation.candidate_id,

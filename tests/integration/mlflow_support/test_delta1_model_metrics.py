@@ -49,6 +49,17 @@ def _result() -> Delta1UnivariateEvaluation:
                     _candidate(candidate_id, feature_name)
                     for candidate_id in expected_candidate_ids(3)
                 ),
+                aggregates=tuple(
+                    SimpleNamespace(
+                        candidate_id=candidate_id,
+                        oos_predictive_loglik_mean=-2.0,
+                        oos_predictive_loglik_std=0.0,
+                        oos_predictive_loglik_worst_fold=-2.0,
+                        bic_mean=5.0,
+                        aic_mean=4.0,
+                    )
+                    for candidate_id in expected_candidate_ids(3)
+                ),
             ),
         )
         for feature_name in DELTA1_FEATURES
@@ -122,6 +133,24 @@ def test_delta1_model_metrics_hierarchy_is_hermetic_and_complete(
     client = MlflowClient(tracking_uri=tracking_uri)
     runs = client.search_runs([port._experiment_id])  # type: ignore[attr-defined]
     assert len(runs) == 1 + 13 + 156
+    logged_models = client.search_logged_models([port._experiment_id], max_results=1000)
+    assert len(logged_models) == 13 * 12
+    first_model = next(
+        model for model in logged_models if model.name.endswith(expected_candidate_ids(3)[0])
+    )
+    assert first_model.status.value == "READY"
+    assert first_model.source_run_id in {run_id for _, run_id in tracked.feature_run_ids}
+    assert {metric.key for metric in first_model.metrics} >= {
+        "oos_predictive_loglik_per_obs_mean",
+        "oos_predictive_loglik_per_obs_std",
+        "oos_predictive_loglik_per_obs_worst_fold",
+        "bic_per_train_obs_mean",
+        "aic_per_train_obs_mean",
+    }
+    assert any(
+        artifact.path == "performance/train_loglik_per_obs.png"
+        for artifact in client.list_logged_model_artifacts(first_model.model_id, "performance")
+    )
     for feature_name, run_id in tracked.feature_run_ids:
         manifest = client.list_artifacts(run_id, "model_metrics")
         assert any(item.path == "model_metrics/manifest.json" for item in manifest)
