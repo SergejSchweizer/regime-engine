@@ -64,6 +64,7 @@ class FileMlflowTrackingPort:
             if experiment is None
             else experiment.experiment_id
         )
+        self._logged_model_source_runs: dict[str, str] = {}
 
     def start_run(self, *, run_name: str, parent_run_id: str | None = None) -> str:
         tags = {"mlflow.runName": run_name}
@@ -88,6 +89,50 @@ class FileMlflowTrackingPort:
                 timestamp=point.timestamp_ms,
                 step=point.step,
             )
+
+    def create_logged_model(
+        self,
+        *,
+        name: str,
+        source_run_id: str,
+        model_type: str,
+        tags: dict[str, str],
+    ) -> str:
+        model = self._client.create_logged_model(
+            self._experiment_id,
+            name=name,
+            source_run_id=source_run_id,
+            model_type=model_type,
+            tags=tags,
+        )
+        model_id = model.model_id
+        if not isinstance(model_id, str):
+            raise TypeError("MLflow logged model_id must be a string")
+        self._logged_model_source_runs[model_id] = source_run_id
+        return model_id
+
+    def log_model_metric_points(self, model_id: str, points: tuple[MetricPoint, ...]) -> None:
+        run_id = self._logged_model_source_runs.get(model_id)
+        if run_id is None:
+            model = self._client.get_logged_model(model_id)
+            run_id = model.source_run_id
+        if not isinstance(run_id, str):
+            raise ValueError(f"logged model {model_id} has no source run")
+        for point in points:
+            self._client.log_metric(
+                run_id,
+                point.key,
+                point.value,
+                timestamp=point.timestamp_ms,
+                step=point.step,
+                model_id=model_id,
+            )
+
+    def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
+        self._client.log_model_artifacts(model_id, local_dir)
+
+    def finalize_logged_model(self, model_id: str, *, failed: bool = False) -> None:
+        self._client.finalize_logged_model(model_id, "FAILED" if failed else "READY")
 
     def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
         self._client.log_artifact(run_id, local_path, artifact_path)
