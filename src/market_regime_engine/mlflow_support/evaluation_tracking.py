@@ -235,6 +235,34 @@ def _render_oos_comparison(grid: CandidateGridEvaluation, output_path: Path) -> 
     return output_path
 
 
+def _render_train_refit_comparison(
+    grid: CandidateGridEvaluation,
+    output_path: Path,
+) -> Path:
+    """Compare normalized TRAIN likelihood over the dynamic candidate set."""
+    figure, axis = plt.subplots(figsize=(13.0, 8.0))
+    for evaluation in grid.evaluations:
+        values = _metric_history(evaluation, "train_loglik_per_obs")
+        axis.plot(
+            np.arange(1, len(values) + 1, dtype=np.int64),
+            np.asarray([np.nan if value is None else value for value in values]),
+            marker="o",
+            linewidth=1.5,
+            markersize=3.5,
+            label=evaluation.candidate_id,
+        )
+    axis.set_title(f"TRAIN log-likelihood per refit — {grid.feature_order[0]}")
+    axis.set_xlabel("Walk-forward refit / fold")
+    axis.set_ylabel("TRAIN log-likelihood per observation")
+    axis.grid(True, alpha=0.25)
+    axis.legend(title="Candidate model", fontsize="small")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=180, bbox_inches="tight")
+    plt.close(figure)
+    return output_path
+
+
 def _em_metric_points(summary: EMCandidateConvergence) -> tuple[MetricPoint, ...]:
     if not summary.available:
         return ()
@@ -271,6 +299,16 @@ def _model_metric_points(
             value = getattr(aggregate, attribute)
             if value is not None and isfinite(value):
                 points.append(MetricPoint(key=key, value=value, step=0, timestamp_ms=timestamp_ms))
+    for step, value in enumerate(_metric_history(evaluation, "train_loglik_per_obs"), start=1):
+        if value is not None:
+            points.append(
+                MetricPoint(
+                    key="train_loglik_per_refit",
+                    value=value,
+                    step=step,
+                    timestamp_ms=timestamp_ms,
+                )
+            )
     points.extend(_em_metric_points(summarize_em_convergence(evaluation)))
     return tuple(points)
 
@@ -356,6 +394,10 @@ def _emit_delta_model_metrics(
         str(oos_path),
         "model_metrics/comparisons",
     )
+    train_path = _render_train_refit_comparison(
+        grid, comparison_root / "train_loglik_per_refit_all_models.png"
+    )
+    port.log_artifact(feature_run_id, str(train_path), "model_metrics/comparisons")
     em_entry, _ = render_em_convergence_comparison(grid.evaluations, feature_name, comparison_root)
     port.log_artifact(feature_run_id, em_entry.png_path, "model_metrics/comparisons")
     port.log_artifact(feature_run_id, em_entry.svg_path, "model_metrics/comparisons")
@@ -369,6 +411,9 @@ def _emit_delta_model_metrics(
             "comparisons": {
                 "oos_predictive_loglik_per_obs_all_models": (
                     "model_metrics/comparisons/oos_predictive_loglik_per_obs_all_models.png"
+                ),
+                "train_loglik_per_refit_all_models": (
+                    "model_metrics/comparisons/train_loglik_per_refit_all_models.png"
                 ),
                 "em_convergence_all_models": (
                     "model_metrics/comparisons/em_convergence_all_models.png"

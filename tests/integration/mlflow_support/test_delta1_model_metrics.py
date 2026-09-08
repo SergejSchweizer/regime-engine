@@ -146,6 +146,7 @@ def test_delta1_model_metrics_hierarchy_is_hermetic_and_complete(
         "oos_predictive_loglik_per_obs_worst_fold",
         "bic_per_train_obs_mean",
         "aic_per_train_obs_mean",
+        "train_loglik_per_refit",
     }
     assert any(
         artifact.path == "performance/train_loglik_per_obs.png"
@@ -154,6 +155,10 @@ def test_delta1_model_metrics_hierarchy_is_hermetic_and_complete(
     for feature_name, run_id in tracked.feature_run_ids:
         manifest = client.list_artifacts(run_id, "model_metrics")
         assert any(item.path == "model_metrics/manifest.json" for item in manifest)
+        comparison = client.list_artifacts(run_id, "model_metrics/comparisons")
+        assert any(
+            item.path.endswith("train_loglik_per_refit_all_models.png") for item in comparison
+        )
         assert feature_name in DELTA1_FEATURES
     first_candidate_run = tracked.candidate_run_ids[0][1]
     history = client.get_metric_history(
