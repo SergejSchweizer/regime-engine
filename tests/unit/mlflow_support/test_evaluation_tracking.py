@@ -18,6 +18,7 @@ from market_regime_engine.mlflow_support.evaluation_tracking import track_statis
 class RecordingPort:
     def __init__(self) -> None:
         self.artifacts: list[tuple[str, str, str]] = []
+        self.models: list[tuple[str, str]] = []
         self.finished: list[str] = []
         self.failed: list[str] = []
 
@@ -30,6 +31,28 @@ class RecordingPort:
 
     def log_metric_points(self, run_id: str, points: tuple[object, ...]) -> None:
         del run_id, points
+
+    def create_logged_model(
+        self,
+        *,
+        name: str,
+        source_run_id: str,
+        model_type: str,
+        tags: dict[str, str],
+    ) -> str:
+        del source_run_id, model_type, tags
+        model_id = f"model-{len(self.models) + 1}"
+        self.models.append((model_id, name))
+        return model_id
+
+    def log_model_metric_points(self, model_id: str, points: tuple[object, ...]) -> None:
+        del model_id, points
+
+    def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
+        del model_id, local_dir
+
+    def finalize_logged_model(self, model_id: str, *, failed: bool = False) -> None:
+        del model_id, failed
 
     def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
         self.artifacts.append((run_id, local_path, artifact_path))

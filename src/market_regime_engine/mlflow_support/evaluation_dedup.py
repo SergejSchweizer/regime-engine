@@ -89,7 +89,7 @@ def record_completed_xetra_v3_evaluation(
         if experiment is None
         else experiment.experiment_id
     )
-    run = client.create_run(experiment_id, {"mlflow.runName": _MARKER_RUN_NAME})
+    run = client.create_run(experiment_id, tags={"mlflow.runName": _MARKER_RUN_NAME})
     run_id = getattr(run.info, "run_id", None)
     if not isinstance(run_id, str) or not run_id:
         raise TypeError("MLflow completion marker needs a run_id")

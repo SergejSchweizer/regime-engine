@@ -1,4 +1,12 @@
 exceptions:
+  - id: GHSA-h7x2-h6g9-p789
+    package: mlflow
+    version: "3.15.1"
+    expires: "2026-09-30"
+    reason: >-
+      The deployed tracking server does not enable MLflow AI Gateway secret/proxy
+      functionality; access is restricted to the internal host. Re-evaluate when
+      the pinned MLflow release is upgraded with the advisory fix.
   - id: PYSEC-2026-3552
     package: cryptography
     version: "49.0.0"
