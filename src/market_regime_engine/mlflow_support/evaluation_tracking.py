@@ -263,6 +263,37 @@ def _render_train_refit_comparison(
     return output_path
 
 
+def _render_train_refit_comparison_all_features(
+    grids: tuple[CandidateGridEvaluation, ...],
+    output_path: Path,
+) -> Path:
+    """Compare TRAIN likelihood across every feature and dynamic candidate."""
+    figure, axis = plt.subplots(figsize=(16.0, 10.0))
+    labels_seen: set[str] = set()
+    for grid in grids:
+        for evaluation in grid.evaluations:
+            values = _metric_history(evaluation, "train_loglik_per_obs")
+            label = evaluation.candidate_id
+            axis.plot(
+                np.arange(1, len(values) + 1, dtype=np.int64),
+                np.asarray([np.nan if value is None else value for value in values]),
+                alpha=0.28,
+                linewidth=1.0,
+                label=label if label not in labels_seen else "_nolegend_",
+            )
+            labels_seen.add(label)
+    axis.set_title("TRAIN log-likelihood per refit — all Delta1 features and models")
+    axis.set_xlabel("Walk-forward refit / fold")
+    axis.set_ylabel("TRAIN log-likelihood per observation")
+    axis.grid(True, alpha=0.25)
+    axis.legend(title="Candidate model (all feature lines shown)", fontsize="small")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=180, bbox_inches="tight")
+    plt.close(figure)
+    return output_path
+
+
 def _em_metric_points(summary: EMCandidateConvergence) -> tuple[MetricPoint, ...]:
     if not summary.available:
         return ()
@@ -424,6 +455,36 @@ def _emit_delta_model_metrics(
     port.log_artifact(feature_run_id, str(manifest_path), "model_metrics")
 
 
+def _emit_delta_parent_comparison(
+    port: TrackingPort,
+    parent_run_id: str,
+    directory: Path,
+    grids: tuple[CandidateGridEvaluation, ...],
+) -> None:
+    comparison_root = directory / "model_metrics" / "comparisons"
+    plot_path = _render_train_refit_comparison_all_features(
+        grids,
+        comparison_root / "train_loglik_per_refit_all_features_all_models.png",
+    )
+    port.log_artifact(parent_run_id, str(plot_path), "model_metrics/comparisons")
+    model_id = port.create_logged_model(
+        name="delta1_univariate_comparison",
+        source_run_id=parent_run_id,
+        model_type="comparison",
+        tags={
+            "evaluation_id": EvaluationId.DELTA1_UNIVARIATE.value,
+            "comparison_scope": "all_features_all_models",
+        },
+    )
+    try:
+        port.log_model_artifacts(model_id, str(comparison_root))
+        port.finalize_logged_model(model_id)
+    except BaseException:
+        with suppress(BaseException):
+            port.finalize_logged_model(model_id, failed=True)
+        raise
+
+
 def _delta_feature_payload(port: TrackingPort, grid: CandidateGridEvaluation) -> PayloadEmitter:
     def emit(run_id: str, directory: Path) -> None:
         _emit_delta_model_metrics(port, run_id, directory, grid)
@@ -511,6 +572,18 @@ def track_evaluation_result(
         run_name=evaluation_id.value,
         statistics=_running_statistics(
             evaluation_id, RunType.PARENT, evaluation_id.value, parent_evidence
+        ),
+        payload_emitter=(
+            (
+                lambda run_id, directory: _emit_delta_parent_comparison(
+                    port,
+                    run_id,
+                    directory,
+                    tuple(feature_grid.candidate_grid for feature_grid in feature_grids),
+                )
+            )
+            if evaluation_id is EvaluationId.DELTA1_UNIVARIATE
+            else None
         ),
     )
     feature_run_ids: list[tuple[str, str]] = []

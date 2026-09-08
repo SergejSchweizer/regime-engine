@@ -134,7 +134,12 @@ def test_delta1_model_metrics_hierarchy_is_hermetic_and_complete(
     runs = client.search_runs([port._experiment_id])  # type: ignore[attr-defined]
     assert len(runs) == 1 + 13 + 156
     logged_models = client.search_logged_models([port._experiment_id], max_results=1000)
-    assert len(logged_models) == 13 * 12
+    assert len(logged_models) == 13 * 12 + 1
+    comparison_models = [
+        model for model in logged_models if model.name == "delta1_univariate_comparison"
+    ]
+    assert len(comparison_models) == 1
+    assert comparison_models[0].status.value == "READY"
     first_model = next(
         model for model in logged_models if model.name.endswith(expected_candidate_ids(3)[0])
     )
@@ -160,6 +165,11 @@ def test_delta1_model_metrics_hierarchy_is_hermetic_and_complete(
             item.path.endswith("train_loglik_per_refit_all_models.png") for item in comparison
         )
         assert feature_name in DELTA1_FEATURES
+    parent_comparison = client.list_artifacts(tracked.parent_run_id, "model_metrics/comparisons")
+    assert any(
+        item.path.endswith("train_loglik_per_refit_all_features_all_models.png")
+        for item in parent_comparison
+    )
     first_candidate_run = tracked.candidate_run_ids[0][1]
     history = client.get_metric_history(
         first_candidate_run,
