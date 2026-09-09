@@ -764,19 +764,20 @@ QA:
 - **Branch:** `pr/PR-227-final-v4-model-grid`
 - **Depends on:** PR-211, PR-220, PR-226
 - **Allowed:** `src/market_regime_engine/evaluations/final_v4_grid.py`, `src/market_regime_engine/training/candidate_grid.py`, `tests/unit/evaluations/test_final_v4_grid.py`, `tests/integration/evaluations/test_final_v4_grid_compute.py`
+- **Status:** complete; GitHub PR #222 merged to `main`.
 
 Acceptance:
 
-- [ ] Exact 12 IDs/order; same L* features, source, inner plan and hashes.
-- [ ] V4 candidate-grid contracts contain no semantic medoid cardinality requirement.
-- [ ] Existing adapter factory, runner and PR-220 ranking only; no duplicate family dispatch/ranking.
-- [ ] OOS PLL/BIC/AIC ranking is permitted because vector is identical.
-- [ ] Return exactly one statistical champion or explicit no-champion failure.
-- [ ] Teacher/provisional K has no tie preference.
+- [x] Exact 12 IDs/order; same L* features, source, inner plan and hashes.
+- [x] V4 candidate-grid contracts contain no semantic medoid cardinality requirement.
+- [x] Existing adapter factory, runner and PR-220 ranking only; no duplicate family dispatch/ranking.
+- [x] OOS PLL/BIC/AIC ranking is permitted because vector is identical.
+- [x] Return exactly one statistical champion or explicit no-champion failure.
+- [x] Teacher/provisional K has no tie preference.
 
 QA:
 
-- [ ] Exact IDs, missing/reordered/extra fail; real Gaussian/GMM/Student-t full compute; independent common-support aggregate check.
+- [x] Exact IDs, missing/reordered/extra fail; real Gaussian/GMM/Student-t full compute; independent common-support aggregate check.
 
 ### PR-228 — Orchestrate the complete adaptive outer policy
 
