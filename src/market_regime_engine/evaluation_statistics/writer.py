@@ -7,7 +7,11 @@ import tempfile
 from hashlib import sha256
 from pathlib import Path
 
-from market_regime_engine.evaluation_statistics.contracts import RunStatistics, Status
+from market_regime_engine.evaluation_statistics.contracts import (
+    RunStatistics,
+    Status,
+    _evaluation_id_value,
+)
 from market_regime_engine.evaluation_statistics.render import render_statistics
 
 
@@ -26,7 +30,9 @@ class StatisticsWriter:
         return self._root
 
     def _directory(self, statistics: RunStatistics) -> Path:
-        return self._root / statistics.evaluation_id.value / statistics.mlflow_run_id
+        return (
+            self._root / _evaluation_id_value(statistics.evaluation_id) / statistics.mlflow_run_id
+        )
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
