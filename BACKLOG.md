@@ -405,106 +405,111 @@ Every PR body records commands, exit codes and proof test/artifact names.
 - **Branch:** `pr/PR-210-pin-global-regime-v4-contract`
 - **Depends on:** none
 - **Allowed:** `EVALUATION.md`, `src/market_regime_engine/feature_discovery/__init__.py`, `src/market_regime_engine/feature_discovery/contracts.py`, `tests/unit/feature_discovery/test_contracts.py`
+- **Status:** complete; GitHub PR #193 merged to `main`.
 
 Acceptance:
 
-- [ ] Encode every section-2 quantity/formula/tolerance and its semantic role.
-- [ ] Immutable contracts cover catalog identity, quality, distance, cluster solution, prototypes, model-clock feasibility, teacher, feature scores, winners, prefix search, final config, outer fold result, adaptive evaluation result and deployment selection.
-- [ ] Primary feature score is `state_information_ratio`; posterior `eta_squared` is diagnostic/secondary only.
-- [ ] Soft regime NMI formula and cross-dimension likelihood prohibition are explicit.
-- [ ] Parameter-count safety bounds `M<=12`, `L<=8` are exact.
-- [ ] Outer PLL non-pooling, outer validity gates, deployment-selection cutoff and model-version-local state identity are explicit.
-- [ ] Hashes are canonical JSON/SHA-256, finite-only, with explicit ordered tuples.
-- [ ] No MLflow/PostgreSQL/HMM backend import.
+- [x] Encode every section-2 quantity/formula/tolerance and its semantic role.
+- [x] Immutable contracts cover catalog identity, quality, distance, cluster solution, prototypes, model-clock feasibility, teacher, feature scores, winners, prefix search, final config, outer fold result, adaptive evaluation result and deployment selection.
+- [x] Primary feature score is `state_information_ratio`; posterior `eta_squared` is diagnostic/secondary only.
+- [x] Soft regime NMI formula and cross-dimension likelihood prohibition are explicit.
+- [x] Parameter-count safety bounds `M<=12`, `L<=8` are exact.
+- [x] Outer PLL non-pooling, outer validity gates, deployment-selection cutoff and model-version-local state identity are explicit.
+- [x] Hashes are canonical JSON/SHA-256, finite-only, with explicit ordered tuples.
+- [x] No MLflow/PostgreSQL/HMM backend import.
 
 QA:
 
-- [ ] Independent Python/reference arithmetic proves `p_G(5,12)=474`, `p_G(5,13)=544`, `p_GMM(5,2,8)=469`, `p_GMM(5,2,9)=569`.
-- [ ] Contract mutation matrix rejects invalid N/M/L/K, nonfinite values, duplicate features, invalid prefixes and illegal cross-dimension PLL ranking payloads.
-- [ ] Complete synthetic outer-result + deployment-selection round trip is lossless and deterministic.
+- [x] Independent Python/reference arithmetic proves `p_G(5,12)=474`, `p_G(5,13)=544`, `p_GMM(5,2,8)=469`, `p_GMM(5,2,9)=569`.
+- [x] Contract mutation matrix rejects invalid N/M/L/K, nonfinite values, duplicate features, invalid prefixes and illegal cross-dimension PLL ranking payloads.
+- [x] Complete synthetic outer-result + deployment-selection round trip is lossless and deterministic.
 
 ### PR-211 — Add a dedicated v4 profile schema/config
 
 - **Branch:** `pr/PR-211-xetra-v4-profile`
 - **Depends on:** PR-210
 - **Allowed:** `configs/profiles/xetra_v4.yaml`, `src/market_regime_engine/profiles/config.py`, `src/market_regime_engine/profiles/resolution.py`, `tests/unit/profiles/test_xetra_v4_profile.py`, `tests/unit/profiles/test_resolution.py`
+- **Status:** complete; GitHub PR #194 and hash-preservation follow-up #195 merged to `main`.
 
 Acceptance:
 
-- [ ] Introduce a dedicated `FeatureDiscoveryConfig`; do not stuff v4 into legacy `FeatureSelectionConfig` semantic fields.
-- [ ] `ModelProfile` permits exactly legacy selection for v1-v3 or global discovery for v4, never both.
-- [ ] v4 config explicitly pins every source/quality/clustering/inner/score/prefix/outer constant; no hidden defaults.
-- [ ] Add v4 discovery candidate/result contracts that do not require fixed universe cardinality, eight medoids or semantic blocks.
-- [ ] Exact final candidate order is the 12 IDs in section 2.10.
-- [ ] v1-v3 loading/resolution remains behavior-identical until retirement.
-- [ ] Unknown/missing v4 fields, semantic-selection fields in v4, changed model order or changed pinned constants fail closed.
+- [x] Introduce a dedicated `FeatureDiscoveryConfig`; do not stuff v4 into legacy `FeatureSelectionConfig` semantic fields.
+- [x] `ModelProfile` permits exactly legacy selection for v1-v3 or global discovery for v4, never both.
+- [x] v4 config explicitly pins every source/quality/clustering/inner/score/prefix/outer constant; no hidden defaults.
+- [x] Add v4 discovery candidate/result contracts that do not require fixed universe cardinality, eight medoids or semantic blocks.
+- [x] Exact final candidate order is the 12 IDs in section 2.10.
+- [x] v1-v3 loading/resolution remains behavior-identical until retirement.
+- [x] Unknown/missing v4 fields, semantic-selection fields in v4, changed model order or changed pinned constants fail closed.
 
 QA:
 
-- [ ] Golden config asserts every v4 field and exact hashes.
-- [ ] One-field mutation matrix proves hash/validation sensitivity.
-- [ ] Load v1-v4 together and prove no shared mutable or semantic state leaks into v4.
+- [x] Golden config asserts every v4 field and exact hashes.
+- [x] One-field mutation matrix proves hash/validation sensitivity.
+- [x] Load v1-v4 together and prove no shared mutable or semantic state leaks into v4.
 
 ### PR-212 — Add dynamic feature-catalog port contracts
 
 - **Branch:** `pr/PR-212-feature-catalog-contracts`
 - **Depends on:** PR-210
 - **Allowed:** `src/market_regime_engine/features/ports.py`, `tests/unit/features/test_feature_catalog_contracts.py`
+- **Status:** complete; GitHub PR #196 merged to `main`.
 
 Acceptance:
 
-- [ ] Add immutable catalog entry/snapshot contracts carrying name, ordinal, PostgreSQL type, lineage and catalog hash.
-- [ ] Catalog requires exact `timestamp_m1` identity separately from feature entries.
-- [ ] V4 feature entries are ordered by ordinal, unique, safe SQL identifiers and exactly `DOUBLE PRECISION`.
-- [ ] Catalog hash includes source build/version identity and exact ordered name/type/ordinal triples.
-- [ ] Existing `FeatureSource.read(FeatureRequest)` contract remains compatible.
+- [x] Add immutable catalog entry/snapshot contracts carrying name, ordinal, PostgreSQL type, lineage and catalog hash.
+- [x] Catalog requires exact `timestamp_m1` identity separately from feature entries.
+- [x] V4 feature entries are ordered by ordinal, unique, safe SQL identifiers and exactly `DOUBLE PRECISION`.
+- [x] Catalog hash includes source build/version identity and exact ordered name/type/ordinal triples.
+- [x] Existing `FeatureSource.read(FeatureRequest)` contract remains compatible.
 
 QA:
 
-- [ ] Independent canonical-JSON/hash fixture.
-- [ ] Reordered physical mapping with unchanged declared ordinals yields identical result; changed ordinal/type/name changes hash.
+- [x] Independent canonical-JSON/hash fixture.
+- [x] Reordered physical mapping with unchanged declared ordinals yields identical result; changed ordinal/type/name changes hash.
 
 ### PR-213 — Implement one-snapshot PostgreSQL dynamic catalog + row read
 
 - **Branch:** `pr/PR-213-postgres-dynamic-feature-catalog`
 - **Depends on:** PR-212
 - **Allowed:** `DATA_SOURCE.md`, `src/market_regime_engine/features/postgres_source.py`, `tests/unit/features/test_feature_catalog.py`, `tests/integration/features/test_postgres_feature_catalog.py`
+- **Status:** complete; GitHub PR #197 merged to `main`.
 
 Acceptance:
 
-- [ ] In one `REPEATABLE READ READ ONLY` transaction read sync-state, table catalog and requested discovery rows; close transaction before model work.
-- [ ] `timestamp_m1` must be PostgreSQL timestamp-with-time-zone and every other Gold table column must be `DOUBLE PRECISION`; unexpected non-feature columns fail closed.
-- [ ] V4 discovery does not require constructor `registered_feature_names`; legacy resolved-model/legacy-profile behavior stays exact.
-- [ ] Dynamic SELECT uses only catalog-validated `sql.Identifier` objects in ordinal order.
-- [ ] Source versions are recorded as lineage; v4 structural compatibility and same-name-semantic-change limitation are documented explicitly.
-- [ ] Any non-null NaN/Inf remains a source failure, matching `DATA_SOURCE.md`.
-- [ ] A newly added `DOUBLE PRECISION` Gold column appears automatically on the next source build without engine feature config edits.
-- [ ] No DB mutation or long-lived transaction.
+- [x] In one `REPEATABLE READ READ ONLY` transaction read sync-state, table catalog and requested discovery rows; close transaction before model work.
+- [x] `timestamp_m1` must be PostgreSQL timestamp-with-time-zone and every other Gold table column must be `DOUBLE PRECISION`; unexpected non-feature columns fail closed.
+- [x] V4 discovery does not require constructor `registered_feature_names`; legacy resolved-model/legacy-profile behavior stays exact.
+- [x] Dynamic SELECT uses only catalog-validated `sql.Identifier` objects in ordinal order.
+- [x] Source versions are recorded as lineage; v4 structural compatibility and same-name-semantic-change limitation are documented explicitly.
+- [x] Any non-null NaN/Inf remains a source failure, matching `DATA_SOURCE.md`.
+- [x] A newly added `DOUBLE PRECISION` Gold column appears automatically on the next source build without engine feature config edits.
+- [x] No DB mutation or long-lived transaction.
 
 QA:
 
-- [ ] Hermetic PG-shaped fixture proves automatic added-column discovery, ordinal order and exact row shape.
-- [ ] Unsupported type, wrong timestamp type, duplicate/unsafe identifier, lineage/catalog mismatch and concurrent post-snapshot schema change all fail or remain snapshot-consistent as specified.
+- [x] Hermetic PG-shaped fixture proves automatic added-column discovery, ordinal order and exact row shape.
+- [x] Unsupported type, wrong timestamp type, duplicate/unsafe identifier, lineage/catalog mismatch and concurrent post-snapshot schema change all fail or remain snapshot-consistent as specified.
 
 ### PR-214 — Implement pure Outer-TRAIN quality filtering
 
 - **Branch:** `pr/PR-214-global-feature-quality`
 - **Depends on:** PR-210, PR-212
 - **Allowed:** `src/market_regime_engine/feature_discovery/quality.py`, `tests/unit/feature_discovery/test_quality.py`
+- **Status:** complete; GitHub PR #198 merged to `main`.
 
 Acceptance:
 
-- [ ] Coverage denominator is exact Outer-TRAIN source-row count; `>=0.90` passes.
-- [ ] Variance is finite population variance `ddof=0`, strictly `>1e-12`.
-- [ ] NULLs count against coverage; no fill.
-- [ ] Any nonfinite supplied value invalidates the invocation, not merely that feature, matching source contract.
-- [ ] Output order is catalog order and records exact counts/coverage/variance/reason.
-- [ ] Require at least three eligible features.
-- [ ] Rows outside supplied TRAIN bounds are impossible through the API and mutation after TRAIN has no effect.
+- [x] Coverage denominator is exact Outer-TRAIN source-row count; `>=0.90` passes.
+- [x] Variance is finite population variance `ddof=0`, strictly `>1e-12`.
+- [x] NULLs count against coverage; no fill.
+- [x] Any nonfinite supplied value invalidates the invocation, not merely that feature, matching source contract.
+- [x] Output order is catalog order and records exact counts/coverage/variance/reason.
+- [x] Require at least three eligible features.
+- [x] Rows outside supplied TRAIN bounds are impossible through the API and mutation after TRAIN has no effect.
 
 QA:
 
-- [ ] Primitive-sum variance reference, 0.90 boundary, near-threshold variance and 50-feature mixed fixture.
+- [x] Primitive-sum variance reference, 0.90 boundary, near-threshold variance and 50-feature mixed fixture.
 
 ### PR-215 — Implement global absolute-Spearman distance
 
