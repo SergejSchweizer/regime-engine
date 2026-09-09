@@ -34,6 +34,22 @@ def candidate() -> ResolvedCandidateProfile:
     )
 
 
+def v4_candidate() -> ResolvedCandidateProfile:
+    return ResolvedCandidateProfile(
+        candidate_id="gaussian_hmm_k2_full",
+        state_count=2,
+        covariance_type="full",
+        feature_order=("f0", "f1"),
+        feature_dimension=2,
+        source_build_id="build-1",
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        original_feature_universe=tuple(f"f{index}" for index in range(12)),
+        preliminary_medoids=(),
+        feature_contract_version=4,
+    )
+
+
 def model_artifact() -> GaussianHMMArtifact:
     return GaussianHMMArtifact(
         state_count=2,
@@ -102,6 +118,18 @@ def evaluate(rows: pd.DataFrame):
     )
 
 
+def evaluate_v4(rows: pd.DataFrame):
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+    return run_walk_forward_candidate(
+        rows,
+        plan=plan,
+        profile=profile,
+        candidate=v4_candidate(),
+        adapter_factory=DeterministicAdapter,
+    )
+
+
 def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment() -> None:
     result = evaluate(source_rows(1386))
     assert len(result.folds) == 2
@@ -128,6 +156,20 @@ def test_walk_forward_evaluation_accepts_xetra_v2_and_v3() -> None:
     v3 = replace(result, profile_config_version=3)
     assert v2.profile_config_version == 2
     assert v3.profile_config_version == 3
+
+
+def test_v4_structural_candidate_reuses_the_same_runner_evidence_without_legacy_assumptions() -> (
+    None
+):
+    rows = source_rows(1323)
+    legacy = evaluate(rows)
+    v4 = evaluate_v4(rows)
+
+    assert v4.profile_config_version == 4
+    assert v4.candidate_id == "gaussian_hmm_k2_full"
+    assert v4.feature_order == ("f0", "f1")
+    assert v4.folds == legacy.folds
+    assert v4.alignment_reference_scaler == legacy.alignment_reference_scaler
 
 
 def test_source_windowing_precedes_complete_case_filtering_and_records_gaps() -> None:
