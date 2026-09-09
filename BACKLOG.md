@@ -537,22 +537,23 @@ QA:
 - **Branch:** `pr/PR-216-global-clustering-mstar`
 - **Depends on:** PR-215
 - **Allowed:** `src/market_regime_engine/feature_discovery/clustering.py`, `tests/unit/feature_discovery/test_clustering.py`
+- **Status:** complete; GitHub PR #202 merged to `main`; contract-domain follow-up merged as GitHub PR #203.
 
 Acceptance:
 
-- [ ] Build exactly one full average-linkage hierarchy from precomputed distance using pinned sklearn behavior.
-- [ ] Derive exact cuts `M=2..min(12,N-1)` from that one merge tree.
-- [ ] Store merge tree, complete silhouette curve and every candidate membership.
-- [ ] Silhouette singleton=0; best-anchor/anchored-tie/smaller-M semantics exact.
-- [ ] Selected best silhouette must be >0.
-- [ ] Cluster IDs use minimum canonical feature ordinal.
-- [ ] Internal container/iteration order cannot alter bytes while declared canonical feature order is unchanged.
+- [x] Build exactly one full average-linkage hierarchy from precomputed distance using pinned sklearn behavior.
+- [x] Derive exact cuts `M=2..min(12,N-1)` from that one merge tree.
+- [x] Store merge tree, complete silhouette curve and every candidate membership.
+- [x] Silhouette singleton=0; best-anchor/anchored-tie/smaller-M semantics exact.
+- [x] Selected best silhouette must be >0.
+- [x] Cluster IDs use minimum canonical feature ordinal.
+- [x] Internal container/iteration order cannot alter bytes while declared canonical feature order is unchanged.
 
 QA:
 
-- [ ] Independent silhouette-by-sample oracle for explicit matrix.
-- [ ] Equal-distance/tie merge fixture pins deterministic hierarchy under sklearn 1.9.0.
-- [ ] Full candidate-M run reruns byte-identically.
+- [x] Independent silhouette-by-sample oracle for explicit matrix.
+- [x] Equal-distance/tie merge fixture pins deterministic hierarchy under sklearn 1.9.0.
+- [x] Full candidate-M run reruns byte-identically.
 
 ### PR-217 — Select temporary prototypes
 
