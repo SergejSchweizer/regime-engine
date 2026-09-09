@@ -6,11 +6,14 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from math import isfinite
 
 from market_regime_engine.evaluations.contracts import EvaluationId
 
 SCHEMA_VERSION = 1
+GLOBAL_V4_SCHEMA_VERSION = 1
+GLOBAL_V4_EVALUATION_ID = "global_regime_v4"
 _FORBIDDEN = ("dsn", "password", "secret", "credential", "raw_feature", "source_rows")
 _EVIDENCE_GROUPS = {
     "identity",
@@ -26,6 +29,30 @@ _EVIDENCE_GROUPS = {
     "optimization",
     "failure",
 }
+_GLOBAL_V4_EVIDENCE_GROUPS = {
+    "identity",
+    "lineage",
+    "input",
+    "quality",
+    "distance",
+    "clustering",
+    "prototypes",
+    "teacher",
+    "feature_scores",
+    "prefix_search",
+    "final_grid",
+    "outer_folds",
+    "agreement",
+    "validity",
+    "stability",
+    "deployment_selection",
+    "failure",
+}
+_REQUIRED_GLOBAL_V4_EVIDENCE_GROUPS = _GLOBAL_V4_EVIDENCE_GROUPS - {
+    "deployment_selection",
+    "failure",
+}
+_EVIDENCE_GROUPS.update(_GLOBAL_V4_EVIDENCE_GROUPS)
 
 
 class RunType(StrEnum):
@@ -62,9 +89,83 @@ def _safe(value: object, field_name: str = "") -> None:
         raise ValueError("statistics values must be JSON primitives, mappings, or sequences")
 
 
+def _evaluation_id_value(value: EvaluationId | str) -> str:
+    result = value.value if isinstance(value, EvaluationId) else value
+    if not result or result.strip() != result:
+        raise ValueError("evaluation_id must be a non-empty trimmed string")
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalV4Evidence:
+    """Canonical, model-binary-free evidence payload for one global-v4 run."""
+
+    source_build_id: str
+    source_data_hash: str
+    catalog_hash: str
+    profile_hash: str
+    repository_hash: str
+    outer_plan_hash: str
+    evidence: dict[str, object]
+    schema_version: int = GLOBAL_V4_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != GLOBAL_V4_SCHEMA_VERSION:
+            raise ValueError("global v4 evidence schema version is unsupported")
+        if not self.source_build_id or self.source_build_id.strip() != self.source_build_id:
+            raise ValueError("source_build_id must be a non-empty trimmed string")
+        for value, name in (
+            (self.source_data_hash, "source_data_hash"),
+            (self.catalog_hash, "catalog_hash"),
+            (self.profile_hash, "profile_hash"),
+            (self.repository_hash, "repository_hash"),
+            (self.outer_plan_hash, "outer_plan_hash"),
+        ):
+            if (
+                len(value) != 64
+                or value != value.lower()
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        if not isinstance(self.evidence, dict):
+            raise TypeError("global v4 evidence groups must be a mapping")
+        unknown = set(self.evidence) - _GLOBAL_V4_EVIDENCE_GROUPS
+        if unknown:
+            raise ValueError(f"unknown global v4 evidence groups: {sorted(unknown)}")
+        missing = _REQUIRED_GLOBAL_V4_EVIDENCE_GROUPS - set(self.evidence)
+        if missing:
+            raise ValueError(f"missing global v4 evidence groups: {sorted(missing)}")
+        _safe(self.evidence)
+
+    def as_dict(self) -> dict[str, object]:
+        """Return the JSON-compatible payload without operational run metadata."""
+
+        return {
+            "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+            "schema_version": self.schema_version,
+            "source_build_id": self.source_build_id,
+            "source_data_hash": self.source_data_hash,
+            "catalog_hash": self.catalog_hash,
+            "profile_hash": self.profile_hash,
+            "repository_hash": self.repository_hash,
+            "outer_plan_hash": self.outer_plan_hash,
+            "evidence": self.evidence,
+        }
+
+    def canonical_json(self) -> bytes:
+        return (
+            json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            + "\n"
+        ).encode("utf-8")
+
+    @property
+    def evidence_hash(self) -> str:
+        return sha256(self.canonical_json()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class RunStatistics:
-    evaluation_id: EvaluationId
+    evaluation_id: EvaluationId | str
     mlflow_run_id: str
     run_type: RunType
     run_name: str
@@ -78,6 +179,7 @@ class RunStatistics:
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
             raise ValueError("statistics schema version is unsupported")
+        _evaluation_id_value(self.evaluation_id)
         for name in ("mlflow_run_id", "run_name"):
             value = getattr(self, name)
             if not value or value.strip() != value:
@@ -109,7 +211,7 @@ class RunStatistics:
 
     def canonical_json(self) -> bytes:
         payload = asdict(self)
-        payload["evaluation_id"] = self.evaluation_id.value
+        payload["evaluation_id"] = _evaluation_id_value(self.evaluation_id)
         payload["run_type"] = self.run_type.value
         payload["status"] = self.status.value
         payload["started_at"] = self.started_at.isoformat()
