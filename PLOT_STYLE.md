@@ -49,17 +49,15 @@ Font sizes must be centrally configured in the plotting module rather than chose
 
 ## Output formats and resolution
 
-Every required diagnostic plot must be exported as:
-
-- PNG for immediate MLflow preview;
-- SVG for publication-quality/vector inspection where the plot type is vector-compatible.
+Every required diagnostic plot must be exported as PNG for immediate MLflow
+preview. MLflow diagnostics are intentionally PNG-only; no SVG artifact may
+be produced or uploaded.
 
 PNG output must use a deterministic minimum resolution of 180 DPI. Figure dimensions must be centrally defined and appropriate to the information density. Wide fold-history plots should use a landscape aspect ratio; square matrix heatmaps should use a near-square layout.
 
 The plot manifest must record for each artifact:
 
 - PNG path;
-- SVG path when applicable;
 - plot type;
 - candidate ID;
 - fold ID when applicable;
@@ -164,7 +162,6 @@ Plot generation must fail tests if any required plot is missing any of the follo
 - canonical candidate/persistent-state labels;
 - real fold `test_end` mapping for fold-history plots;
 - deterministic PNG artifact path;
-- SVG counterpart where required;
 - manifest entry with source metric/artifact lineage.
 
 Tests should inspect Matplotlib figure/axes objects or the plotting specification before serialization rather than relying on fragile pixel-perfect screenshot comparisons.
@@ -188,4 +185,4 @@ This section applies only to `delta1_univariate` Model Metrics artifacts.
 - Every EM convergence title or legend must include the unambiguous qualifier `optimization diagnostic only — not model selection`.
 - Candidate-unavailable cases must remain visible with a deterministic unavailable annotation/evidence rather than a fake zero line.
 - The dataset-level OOS predictive-log-likelihood comparison remains a performance diagnostic; no cross-dataset raw likelihood comparison is introduced.
-- Artifacts remain PNG plus SVG where vector-compatible, with deterministic manifest lineage under the feature run's `model_metrics/` namespace.
+- Artifacts remain PNG-only, with deterministic manifest lineage under the feature run's `model_metrics/` namespace.
