@@ -11,6 +11,7 @@ from market_regime_engine.evaluation.selection import (
     StatisticalChampionSelection,
     _rank,
     _required,
+    rank_same_feature_candidates,
     select_statistical_champion,
 )
 from market_regime_engine.evaluation.walk_forward import (
@@ -142,6 +143,43 @@ def test_ranking_stage_5_prefers_lower_aic() -> None:
 
 def test_ranking_stage_6_prefers_fewer_states() -> None:
     assert champion(base()) == "gaussian_hmm_k2_full"
+
+
+def test_generic_same_feature_kernel_supports_gaussian_k2_to_k5_subset() -> None:
+    evaluations = tuple(evaluation(k) for k in (2, 3, 4, 5))
+    aggregates = tuple(aggregate(k) for k in (2, 3, 4, 5))
+
+    result = rank_same_feature_candidates(evaluations, aggregates)
+
+    assert result.champion_candidate_id == "gaussian_hmm_k2_full"
+    assert result.ranked_candidate_ids == (
+        "gaussian_hmm_k2_full",
+        "gaussian_hmm_k3_full",
+        "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
+    )
+
+
+def test_generic_same_feature_kernel_enforces_shared_contract_and_input_permutation() -> None:
+    evaluations = tuple(evaluation(k) for k in (2, 3, 4))
+    aggregates = tuple(aggregate(k) for k in (2, 3, 4))
+    baseline = rank_same_feature_candidates(evaluations, aggregates)
+    permuted = rank_same_feature_candidates(
+        (evaluations[2], evaluations[0], evaluations[1]),
+        (aggregates[1], aggregates[2], aggregates[0]),
+    )
+    assert permuted.ranked_candidate_ids == baseline.ranked_candidate_ids
+
+    for field_name, value, message in (
+        ("feature_order", ("other",), "identical feature vector"),
+        ("source_build_id", "other-build", "identical feature vector"),
+        ("evaluation_plan_hash", "d" * 64, "identical feature vector"),
+        ("feature_selection_definition_hash", "d" * 64, "identical feature vector"),
+        ("feature_selection_execution_hash", "d" * 64, "identical feature vector"),
+    ):
+        drifted = replace(evaluations[1], **{field_name: value})
+        with pytest.raises(ValueError, match=message):
+            rank_same_feature_candidates((evaluations[0], drifted, evaluations[2]), aggregates)
 
 
 def test_hard_gate_rejects_candidate_below_80_percent_and_records_reason() -> None:

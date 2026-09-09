@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from market_regime_engine.evaluation.selection import select_statistical_champion
 from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
     WalkForwardFoldResult,
@@ -388,3 +389,45 @@ def test_candidate_grid_contract_accepts_profile_version_3() -> None:
         aggregates=aggregates,
     )
     assert tuple(item.candidate_id for item in grid.evaluations) == ids
+
+
+def test_candidate_grid_contract_accepts_the_exact_full_v4_candidate_universe() -> None:
+    ids = (
+        "gaussian_hmm_k2_full",
+        "gaussian_hmm_k3_full",
+        "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
+        "gmm_hmm_k2_m2_full",
+        "gmm_hmm_k3_m2_full",
+        "gmm_hmm_k4_m2_full",
+        "gmm_hmm_k5_m2_full",
+        "student_t_hmm_k2_full",
+        "student_t_hmm_k3_full",
+        "student_t_hmm_k4_full",
+        "student_t_hmm_k5_full",
+    )
+    base, _, _ = base_evaluation()
+    evaluations = tuple(
+        replace(
+            base,
+            profile_config_version=4,
+            candidate_id=candidate_id,
+            state_count=int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),
+        )
+        for candidate_id in ids
+    )
+    aggregates = tuple(aggregate_candidate(item) for item in evaluations)
+    grid = CandidateGridEvaluation(
+        profile_id="xetra",
+        profile_config_version=4,
+        source_build_id=base.source_build_id,
+        feature_order=base.feature_order,
+        feature_selection_definition_hash=base.feature_selection_definition_hash,
+        feature_selection_execution_hash=base.feature_selection_execution_hash,
+        evaluation_plan_hash=base.evaluation_plan_hash,
+        evaluations=evaluations,
+        aggregates=aggregates,
+    )
+    result = select_statistical_champion(grid)
+    assert result.ranked_candidate_ids[0] == "gaussian_hmm_k2_full"
+    assert tuple(item.candidate_id for item in grid.aggregates) == ids
