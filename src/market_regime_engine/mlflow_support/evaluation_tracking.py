@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -18,13 +18,26 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
-from market_regime_engine.evaluation_statistics.contracts import RunStatistics, RunType, Status
+from market_regime_engine.evaluation_statistics.contracts import (
+    GLOBAL_V4_EVALUATION_ID,
+    GlobalV4Evidence,
+    RunStatistics,
+    RunType,
+    Status,
+)
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.contracts import EvaluationId, FeatureSpec
 from market_regime_engine.evaluations.delta1_univariate import Delta1UnivariateEvaluation
+from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
 from market_regime_engine.evaluations.medoid_multivariate import MedoidMultivariateEvaluation
 from market_regime_engine.evaluations.medoid_univariate import MedoidUnivariateEvaluation
+from market_regime_engine.evaluations.plots import render_global_v4_diagnostics
 from market_regime_engine.evaluations.univariate_grid import UnivariateFeatureGrid
+from market_regime_engine.feature_discovery.contracts import (
+    AdaptiveEvaluationResult,
+    FinalSelectedConfiguration,
+    OuterFoldResult,
+)
 from market_regime_engine.mlflow_support.plots import (
     EMCandidateConvergence,
     render_em_convergence,
@@ -32,7 +45,7 @@ from market_regime_engine.mlflow_support.plots import (
     summarize_em_convergence,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
-from market_regime_engine.training.candidate_grid import CandidateGridEvaluation
+from market_regime_engine.training.candidate_grid import CandidateAggregate, CandidateGridEvaluation
 
 EvaluationResult = (
     MedoidMultivariateEvaluation | MedoidUnivariateEvaluation | Delta1UnivariateEvaluation
@@ -53,6 +66,17 @@ class EvaluationTrackingResult:
     feature_run_ids: tuple[tuple[str, str], ...]
     candidate_run_ids: tuple[tuple[str, str], ...]
     statistics_root: str
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalV4TrackingResult:
+    """Tracked global-v4 parent and fold children with immutable local mirrors."""
+
+    parent_run_id: str
+    outer_fold_run_ids: tuple[tuple[str, str], ...]
+    statistics_root: str
+    global_evidence_hash: str
+    plot_manifest_path: str
 
 
 def track_statistics_run(
@@ -106,7 +130,7 @@ def track_statistics_run(
 
 
 def _running_statistics(
-    evaluation_id: EvaluationId,
+    evaluation_id: EvaluationId | str,
     run_type: RunType,
     run_name: str,
     evidence: dict[str, object],
@@ -524,6 +548,364 @@ def _track_grid(
             )[0],
         )
         for candidate in grid.evaluations
+    )
+
+
+def _v4_configuration_record(configuration: FinalSelectedConfiguration) -> dict[str, object]:
+    return {
+        "feature_order": list(configuration.feature_order),
+        "candidate_id": configuration.candidate_id,
+        "state_count": configuration.state_count,
+        "model_family": configuration.model_family,
+        "selected_prefix_length": configuration.selected_prefix_length,
+        "feature_discovery_hash": configuration.feature_discovery_hash,
+        "source_build_id": configuration.source_build_id,
+        "catalog_hash": configuration.catalog_hash,
+        "selection_definition_hash": configuration.selection_definition_hash,
+        "selection_execution_hash": configuration.selection_execution_hash,
+        "state_identity_scope": configuration.state_identity_scope,
+    }
+
+
+def _v4_aggregate_record(aggregate: CandidateAggregate) -> dict[str, object]:
+    return {
+        "candidate_id": aggregate.candidate_id,
+        "state_count": aggregate.state_count,
+        "planned_fold_count": aggregate.planned_fold_count,
+        "valid_fold_count": aggregate.valid_fold_count,
+        "invalid_fold_count": aggregate.invalid_fold_count,
+        "valid_fold_rate": aggregate.valid_fold_rate,
+        "passes_valid_fold_rate_gate": aggregate.passes_valid_fold_rate_gate,
+        "oos_predictive_loglik_mean": aggregate.oos_predictive_loglik_mean,
+        "oos_predictive_loglik_std": aggregate.oos_predictive_loglik_std,
+        "oos_predictive_loglik_worst_fold": aggregate.oos_predictive_loglik_worst_fold,
+        "oos_predictive_loglik_best_fold": aggregate.oos_predictive_loglik_best_fold,
+        "bic_mean": aggregate.bic_mean,
+        "aic_mean": aggregate.aic_mean,
+    }
+
+
+def _v4_outer_record(fold: OuterFoldResult) -> dict[str, object]:
+    """Persist fold outcome primitives, but no model binary or OOS probability rows."""
+
+    return {
+        "fold_id": f"outer_fold_{fold.fold_index:03d}",
+        "fold_index": fold.fold_index,
+        "train_start": fold.train_start.isoformat(),
+        "train_end": fold.train_end.isoformat(),
+        "test_start": fold.test_start.isoformat(),
+        "test_end": fold.test_end.isoformat(),
+        "final_configuration": _v4_configuration_record(fold.final_configuration),
+        "oos_predictive_loglik_per_observation": fold.oos_predictive_loglik_per_observation,
+        "state_identity": fold.state_identity,
+        "teacher_reference_hash": fold.teacher_reference_hash,
+        "outer_teacher_final_soft_nmi": fold.outer_teacher_final_soft_nmi,
+        "outer_shared_timestamp_count": fold.outer_shared_timestamp_count,
+        "valid": fold.valid,
+        "failure_reason": fold.failure_reason,
+    }
+
+
+def _v4_selected_fold_evidence(
+    fold: OuterFoldResult,
+    selection: V4ConfigurationSelection,
+) -> dict[str, object]:
+    """Return complete fold-local v4 evidence in JSON primitives only.
+
+    This is intentionally a compact, model-binary-free mirror of every
+    TRAIN-only decision.  Prefix likelihood aggregates are retained in their
+    exact local candidate records only; no cross-prefix likelihood ranking is
+    constructed here or in the plots.
+    """
+
+    quality = selection.quality
+    teacher = selection.teacher_evaluation
+    teacher_reference = selection.teacher_reference
+    final_grid = selection.final_grid
+    final_selection = final_grid.selection
+    if final_selection is None:
+        raise ValueError("tracked global v4 selection requires a final-grid champion")
+    return {
+        "identity": {
+            "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+            "outer_fold_id": f"outer_fold_{fold.fold_index:03d}",
+            "feature_discovery_hash": selection.feature_discovery_hash,
+        },
+        "lineage": {
+            "source_build_id": selection.source_build_id,
+            "catalog_hash": selection.catalog_hash,
+            "quality_result_hash": quality.result_hash,
+            "distance_matrix_hash": selection.distance.matrix_hash,
+            "cluster_solution_hash": selection.clusters.solution_hash,
+            "teacher_reference_hash": teacher_reference.reference_hash,
+            "inner_plan_hash": teacher_reference.inner_plan_hash,
+            "final_grid_plan_hash": final_grid.candidate_grid.evaluation_plan_hash,
+        },
+        "input": {
+            "catalog_feature_order": list(selection.distance.feature_order),
+            "selected_feature_order": list(selection.final_candidate.feature_order),
+            "outer_train_bounds": {
+                "start": fold.train_start.isoformat(),
+                "end": fold.train_end.isoformat(),
+            },
+        },
+        "quality": {
+            "train_source_observation_count": quality.train_source_observation_count,
+            "eligible_features": list(quality.eligible_features),
+            "features": [
+                {
+                    "feature_name": item.feature_name,
+                    "canonical_ordinal": item.canonical_ordinal,
+                    "finite_observation_count": item.finite_observation_count,
+                    "coverage": item.coverage,
+                    "population_variance": item.population_variance,
+                    "eligible": item.eligible,
+                    "rejection_reason": item.rejection_reason,
+                }
+                for item in quality.features
+            ],
+        },
+        "distance": {
+            "feature_order": list(selection.distance.feature_order),
+            "matrix_hash": selection.distance.matrix_hash,
+            "minimum_pairwise_observations": selection.distance.minimum_pairwise_observations,
+            "distances": [list(row) for row in selection.distance.distances],
+            "pairwise_support": [list(row) for row in selection.distance.pairwise_support],
+            "spearman_correlations": [
+                list(row) for row in selection.distance.spearman_correlations
+            ],
+        },
+        "clustering": {
+            "solution_hash": selection.clusters.solution_hash,
+            "candidate_count": selection.clusters.candidate_count,
+            "selected_m": selection.clusters.selected_count,
+            "silhouette_curve": [list(item) for item in selection.clusters.silhouette_curve],
+            "selected_silhouette": selection.clusters.selected_silhouette,
+            "singleton_count": selection.clusters.singleton_count,
+            "memberships": [
+                {"cluster_id": cluster_id, "features": list(features)}
+                for cluster_id, features in selection.clusters.memberships
+            ],
+        },
+        "prototypes": {
+            "temporary": selection.prototypes.temporary,
+            "cluster_ids": list(selection.prototypes.cluster_ids),
+            "features": list(selection.prototypes.prototypes),
+            "mean_distances": [list(item) for item in selection.prototypes.mean_distances],
+        },
+        "teacher": {
+            "candidate_id": teacher_reference.candidate_id,
+            "state_count": teacher_reference.state_count,
+            "reference_hash": teacher_reference.reference_hash,
+            "prototype_features": list(teacher_reference.prototype_features),
+            "valid_inner_fold_ids": list(teacher_reference.valid_inner_fold_ids),
+            "inner_plan_hash": teacher_reference.inner_plan_hash,
+            "selection_candidate_id": teacher.provisional_candidate_id,
+            "selection_state_count": teacher.provisional_state_count,
+            "selection_no_reason": teacher.no_selection_reason,
+        },
+        "feature_scores": {
+            "scores": [
+                {
+                    "feature_name": item.feature_name,
+                    "canonical_ordinal": item.canonical_ordinal,
+                    "coverage": item.coverage,
+                    "observation_count": item.observation_count,
+                    "state_information_ratio": item.state_information_ratio,
+                    "eta_squared": item.eta_squared,
+                    "eligible": item.eligible,
+                    "exclusion_reason": item.exclusion_reason,
+                }
+                for item in selection.feature_scores
+            ],
+            "ranked_winners": list(selection.winner_selection.ranked_features),
+            "cluster_winners": [
+                {
+                    "cluster_id": item.cluster_id,
+                    "winner_feature": item.winner_feature,
+                    "member_features": list(item.member_features),
+                }
+                for item in selection.winner_selection.winners
+            ],
+        },
+        "prefix_search": {
+            "ranked_features": list(selection.prefix_search.ranked_features),
+            "selected_l": selection.prefix_search.selected_prefix_length,
+            "selected_candidate_id": selection.prefix_search.selected_candidate_id,
+            "evaluations": [
+                {
+                    "prefix_length": item.prefix_length,
+                    "feature_order": list(item.feature_order),
+                    "candidate_id": item.candidate_id,
+                    "shared_timestamp_count": item.shared_timestamp_count,
+                    "shared_teacher_coverage": item.shared_teacher_coverage,
+                    "soft_regime_nmi": item.soft_regime_nmi,
+                    "valid": item.valid,
+                    "invalid_reason": item.invalid_reason,
+                }
+                for item in selection.prefix_search.evaluations
+            ],
+        },
+        "final_grid": {
+            "feature_order": list(final_grid.candidate_grid.feature_order),
+            "evaluation_plan_hash": final_grid.candidate_grid.evaluation_plan_hash,
+            "candidate_aggregates": [
+                _v4_aggregate_record(item) for item in final_grid.candidate_grid.aggregates
+            ],
+            "champion_candidate_id": final_selection.champion_candidate_id,
+            "champion_state_count": final_selection.champion_state_count,
+            "ranked_candidate_ids": list(final_selection.ranked_candidate_ids),
+        },
+        "outer_folds": [_v4_outer_record(fold)],
+        "agreement": {
+            "outer_teacher_final_soft_nmi": fold.outer_teacher_final_soft_nmi,
+            "outer_shared_timestamp_count": fold.outer_shared_timestamp_count,
+            "teacher_reference_hash": fold.teacher_reference_hash,
+        },
+        "validity": {
+            "valid": fold.valid,
+            "failure_reason": fold.failure_reason,
+        },
+        "stability": {"adjacent_cluster_membership_jaccard": []},
+    }
+
+
+def _v4_failed_fold_evidence(fold: OuterFoldResult) -> dict[str, object]:
+    return {
+        "identity": {
+            "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+            "outer_fold_id": f"outer_fold_{fold.fold_index:03d}",
+        },
+        "outer_folds": [_v4_outer_record(fold)],
+        "validity": {"valid": False, "failure_reason": fold.failure_reason},
+        "failure": {
+            "code": "OuterFoldFailure",
+            "reason": fold.failure_reason or "outer fold did not complete",
+        },
+    }
+
+
+def _validate_global_v4_tracking_inputs(
+    evidence: GlobalV4Evidence,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+) -> None:
+    if result.source_build_id != evidence.source_build_id:
+        raise ValueError("global v4 tracking source build differs from canonical evidence")
+    if result.catalog_hash != evidence.catalog_hash:
+        raise ValueError("global v4 tracking catalog differs from canonical evidence")
+    fold_by_index = {fold.fold_index: fold for fold in result.outer_folds}
+    unknown = set(selections) - set(fold_by_index)
+    if unknown:
+        raise ValueError("global v4 tracking selections reference unknown outer folds")
+    missing_valid = {fold.fold_index for fold in result.outer_folds if fold.valid} - set(selections)
+    if missing_valid:
+        raise ValueError(
+            "global v4 tracking requires selection evidence for every valid outer fold"
+        )
+    for fold_index, selection in selections.items():
+        fold = fold_by_index[fold_index]
+        if selection.source_build_id != result.source_build_id:
+            raise ValueError("global v4 tracked selection source build differs from result")
+        if selection.catalog_hash != result.catalog_hash:
+            raise ValueError("global v4 tracked selection catalog differs from result")
+        if fold.valid and (
+            selection.final_candidate.candidate_id != fold.final_configuration.candidate_id
+            or selection.final_candidate.feature_order != fold.final_configuration.feature_order
+        ):
+            raise ValueError("global v4 tracked selection differs from frozen outer configuration")
+
+
+def track_global_v4_evaluation(
+    port: TrackingPort,
+    writer: StatisticsWriter,
+    *,
+    evidence: GlobalV4Evidence,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+) -> GlobalV4TrackingResult:
+    """Track global v4 as one parent and one fail-closed child per outer fold.
+
+    ``evidence`` is the canonical statistical payload; its hash intentionally
+    contains neither MLflow run IDs nor run timestamps.  The local evidence
+    artifact is written and hash-checked before it is uploaded unchanged.
+    """
+
+    _validate_global_v4_tracking_inputs(evidence, result, selections)
+    tracked_folds: list[tuple[str, str]] = []
+    plot_manifest_path: Path | None = None
+
+    def emit_parent(parent_run_id: str, directory: Path) -> None:
+        nonlocal plot_manifest_path
+        canonical_path = directory / "global_v4_evidence.json"
+        canonical_path.write_bytes(evidence.canonical_json())
+        if sha256(canonical_path.read_bytes()).hexdigest() != evidence.evidence_hash:
+            raise ValueError("global v4 canonical evidence hash mismatch")
+        port.log_params(parent_run_id, {"global_v4_evidence_sha256": evidence.evidence_hash})
+        port.log_artifact(parent_run_id, str(canonical_path), "evidence")
+
+        for fold in result.outer_folds:
+            fold_id = f"outer_fold_{fold.fold_index:03d}"
+            selection = selections.get(fold.fold_index)
+            fold_evidence = (
+                _v4_selected_fold_evidence(fold, selection)
+                if selection is not None
+                else _v4_failed_fold_evidence(fold)
+            )
+            # RunType has no outer-fold value; CANDIDATE is the existing generic
+            # child type while the immutable identity names this exact outer fold.
+            child_run_id, _ = track_statistics_run(
+                port,
+                writer,
+                run_name=fold_id,
+                parent_run_id=parent_run_id,
+                statistics=_running_statistics(
+                    GLOBAL_V4_EVALUATION_ID,
+                    RunType.CANDIDATE,
+                    fold_id,
+                    fold_evidence,
+                ),
+            )
+            tracked_folds.append((fold_id, child_run_id))
+
+        entries = render_global_v4_diagnostics(result, selections, directory)
+        manifest_entries: list[dict[str, object]] = []
+        for entry in entries:
+            port.log_artifact(parent_run_id, entry.png_path, "plots")
+            item = entry.as_dict()
+            item["png_path"] = f"plots/{Path(entry.png_path).name}"
+            manifest_entries.append(item)
+        plot_manifest_path = directory / "global_v4_plot_manifest.json"
+        _write_json(
+            plot_manifest_path,
+            {
+                "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+                "global_evidence_hash": evidence.evidence_hash,
+                "entries": manifest_entries,
+            },
+        )
+        port.log_artifact(parent_run_id, str(plot_manifest_path), "plots")
+
+    parent_run_id, _ = track_statistics_run(
+        port,
+        writer,
+        run_name=GLOBAL_V4_EVALUATION_ID,
+        statistics=_running_statistics(
+            GLOBAL_V4_EVALUATION_ID,
+            RunType.PARENT,
+            GLOBAL_V4_EVALUATION_ID,
+            evidence.evidence,
+        ),
+        payload_emitter=emit_parent,
+    )
+    if plot_manifest_path is None:
+        raise RuntimeError("global v4 plot manifest was not created")
+    return GlobalV4TrackingResult(
+        parent_run_id=parent_run_id,
+        outer_fold_run_ids=tuple(tracked_folds),
+        statistics_root=str(writer.preflight()),
+        global_evidence_hash=evidence.evidence_hash,
+        plot_manifest_path=str(plot_manifest_path),
     )
 
 
