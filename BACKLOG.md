@@ -741,22 +741,23 @@ QA:
 - **Branch:** `pr/PR-226-prefix-feature-count-search`
 - **Depends on:** PR-211, PR-218, PR-220, PR-222, PR-224, PR-225
 - **Allowed:** `src/market_regime_engine/feature_discovery/prefix_search.py`, `tests/unit/feature_discovery/test_prefix_search.py`, `tests/integration/feature_discovery/test_prefix_search_compute.py`
+- **Status:** complete; GitHub PR #220 merged to `main`.
 
 Acceptance:
 
-- [ ] Evaluate exactly `L=2..min(M*,8)` ranked prefixes; no arbitrary subsets.
-- [ ] Each prefix runs model-clock preflight then Gaussian K2-K5 on same inner plan.
-- [ ] Within prefix choose K using PR-220 predictive ranking **before** teacher agreement.
-- [ ] Compute soft regime NMI only for that prefix's statistical K winner against teacher.
-- [ ] Shared teacher support >=0.90.
-- [ ] Across L use NMI, shared count, smaller L only; no PLL/BIC/AIC crosses dimensions.
-- [ ] Infeasible prefix is explicit; if no eligible prefix, outer fold fails.
-- [ ] Final feature tuple is exact first L* ranked winners.
+- [x] Evaluate exactly `L=2..min(M*,8)` ranked prefixes; no arbitrary subsets.
+- [x] Each prefix runs model-clock preflight then Gaussian K2-K5 on same inner plan.
+- [x] Within prefix choose K using PR-220 predictive ranking **before** teacher agreement.
+- [x] Compute soft regime NMI only for that prefix's statistical K winner against teacher.
+- [x] Shared teacher support >=0.90.
+- [x] Across L use NMI, shared count, smaller L only; no PLL/BIC/AIC crosses dimensions.
+- [x] Infeasible prefix is explicit; if no eligible prefix, outer fold fails.
+- [x] Final feature tuple is exact first L* ranked winners.
 
 QA:
 
-- [ ] Adversarial case where raw PLL would prefer a different L but NMI rule wins correctly.
-- [ ] All prefixes/K values run with real HMM math on deterministic synthetic data.
+- [x] Adversarial case where raw PLL would prefer a different L but NMI rule wins correctly.
+- [x] All prefixes/K values run with real HMM math on deterministic synthetic data.
 
 ### PR-227 — Run the exact final 12-candidate grid on L*
 
