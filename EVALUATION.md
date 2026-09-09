@@ -1,744 +1,1154 @@
-# Regime Engine Evaluation Contract
+# Regime Engine Evaluation Architecture
 
-Status date: 2026-08-23
+## Purpose
 
-This document is authoritative for the statistical feature-selection, HMM fitting, walk-forward evaluation, state-alignment, candidate-ranking and final-production-refit semantics of `regime-engine`.
+This document defines the evaluation and feature-selection architecture for `regime-engine`.
 
-Consumer portfolio/economic metrics are outside this contract.
+The design goal is deliberately narrow:
 
-## 1. Identity
+> Given a potentially large and continuously growing universe of market features, identify a compact set of non-redundant features that best discriminate latent market regimes, determine an appropriate number of retained regime features, determine the hidden-state count/model family using causal out-of-sample evidence, and evaluate the complete procedure without look-ahead bias.
 
-```text
-profile_id=xetra
-profile_config_version=1
-registered_model=regime-xetra
-production_alias=champion
-feature_selection_policy=xetra_semantic_medoid_v1
-```
+The previous semantic-group medoid architecture is removed from the statistical decision process. Semantic groups are not used to determine which features survive, how many representatives are retained, or which HMM wins. If semantic labels are stored, they are metadata only for interpretation and visualization.
 
-The phrase *statistical champion* denotes the winning candidate family/K after evaluation. `champion` denotes the MLflow serving alias after a separate mandatory final production refit. `engine-champion` is not an alias.
-
-## 2. Scientific claim boundary
-
-Input time semantics are:
-
-```text
-data_time_semantics=current_vintage_observation_day
-```
-
-Evaluation is split-leak-free and causal relative to the current-vintage observation sequence. It is not claimed to be historical provider-release-time/vintage-safe or fully point-in-time tradable because upstream `timestamp_m1` is observation-day identity rather than release/availability time.
-
-## 3. Model observation sequence
-
-Upstream SQL NULLs are allowed. No fill/interpolation/carry is permitted.
-
-After the final feature set is frozen, an HMM observation exists only at a timestamp where every selected feature is non-null and finite. Incomplete timestamps are excluded and retained as gap evidence.
-
-One HMM transition occurs per consecutive retained observation. Calendar gaps do not apply extra powers of the transition matrix.
-
-This identical observation clock is used for every fold, final refit, latest and replay.
-
-## 4. Feature selection
-
-Source universe: exactly 48 `regime-loader` feature-version-1 feature columns in the eight semantic blocks defined in `BACKLOG.md` and `configs/feature_selection/xetra_semantic_medoid_v1.yaml`.
-
-Pinned policy:
-
-```text
-within_block_method=absolute_spearman_medoid
-cross_block_method=absolute_spearman_prune
-minimum_feature_coverage=0.90
-minimum_nonzero_variance=1e-12
-minimum_block_complete_observations=504
-maximum_cross_block_abs_spearman=0.85
-numeric_tie_abs_tolerance=1e-12
-```
-
-Selection uses only first-fold TRAIN source rows.
-
-### Spearman definition
-
-For every relevant complete-case matrix:
-
-1. rank each feature column using average ranks for tied values;
-2. compute ordinary Pearson correlation among rank columns;
-3. all required correlations must be finite.
-
-Greek symbol: $\rho$ (Spearman rank correlation).
-
-### Stage 1
-
-For each block:
-
-- $c = n_{\mathrm{non\text{-}null}} / n_{\mathrm{TRAIN}}$;
-- eligible iff $c \ge 0.90$, all non-null values are finite, and population variance $\sigma^2$ (`ddof=0`) is $> 10^{-12}$;
-- block complete cases use all eligible candidates;
-- require $n \ge 504$ complete rows;
-- distance $d(i,j) = 1 - |\rho(i,j)|$;
-- medoid score $\overline{d}_i$ is the arithmetic mean distance to the other eligible candidates; for a singleton, $\overline{d}_i = 0$;
-- rank lower $\overline{d}_i$, higher $c$, then earlier configured position; differences $\le 10^{-12}$ are ties;
-- exactly one winner per block, yielding exactly eight preliminary medoids.
-
-### Stage 2
-
-- form one fixed complete-case $8 \times 8$ Spearman matrix over preliminary medoids;
-- require $n \ge 504$ rows;
-- conflict iff $|\rho| > 0.85$; exactly $0.85$ is allowed;
-- process highest absolute correlation first, then canonical pair order on ties;
-- remove higher Stage-1 medoid score, then lower coverage, then later block;
-- never recompute correlations;
-- never search for replacement features;
-- survivors stay in canonical block order;
-- legal final dimension is $1 \le d \le 8$.
-
-The cross-block comparison of Stage-1 medoid scores from blocks of different size is an intentional policy-v1 simplification and is not silently normalized.
-
-No fitted-HMM metric, ETF return, portfolio statistic or trading target may affect feature selection.
-
-### Anchored numeric-tolerance semantics
-
-The absolute numeric tolerance is exactly $\varepsilon = 10^{-12}$. It defines an anchored equivalence
-set, never a pairwise comparator relation: pairwise tolerance chaining is forbidden.
-For a maximize stage, compute the exact maximum of the current candidate set as the
-anchor $a$ and retain every value $x \ge a - \varepsilon$. For a minimize stage, compute the
-exact minimum as the anchor $a$ and retain every value $x \le a + \varepsilon$.
-
-Every secondary feature-selection stage is evaluated only inside the anchored tied set
-from the preceding stage. For example, Stage 1 first anchors the global minimum medoid
-score, then anchors the global maximum coverage among only those tied features, then
-uses configured position as the exact final tie-breaker.
-
-The adversarial chain $a = 0$, $b = 0.75\varepsilon$, $c = 1.5\varepsilon$ demonstrates why pairwise
-comparison is invalid: $a$ and $b$ may share an anchor tie, and $b$ and $c$ may share
-another, but $a$ and $c$ must not be joined transitively.
-
-### Selection hashes
-
-`feature_selection_definition_hash` covers only first-fold-TRAIN-determined policy/evidence/final features. It deliberately excludes full-build identity and later rows.
-
-`feature_selection_execution_hash` covers:
-
-```text
-feature_selection_definition_hash
-source_build_id
-data_sha256
-evaluation_plan_hash
-```
-
-Changing rows strictly after first-fold `train_end` may change execution/source lineage but must not change the definition hash or selection evidence.
-
-### Non-decision diagnostics
-
-The frozen production/evaluation feature set is never changed after first-fold selection. Two diagnostics are permitted and must be labelled non-decision evidence:
-
-1. first-fold Stage-2 threshold sensitivity at `0.80`, `0.85`, and `0.90`; canonical policy remains exactly `0.85`;
-2. shadow reruns of the same Stage-1/Stage-2 selector on later fold TRAIN samples to measure selected-feature overlap/stability versus the frozen set.
-
-These diagnostics may not change any fold input, definition hash, champion ranking, or registered model. They exist only to expose feature-selection fragility.
-
-## 5. Walk-forward plan
-
-$$
-n_{\mathrm{TRAIN,source}} \ge 1260, \qquad
-n_{\mathrm{TEST,source}} = 63, \qquad
-\Delta n_{\mathrm{source}} = 63, \qquad
-n_{\mathrm{TRAIN,model}} \ge 504, \qquad
-n_{\mathrm{TEST,model}} \ge 42, \qquad
-\varepsilon_{\mathrm{rank}} = 10^{-12}.
-$$
-
-Partial final TEST folds are forbidden.
-
-Windows expand. TEST starts strictly after TRAIN. No synthetic dates. Every fold has stable one-based `fold_index`, deterministic `fold_id`, and UTC train/test bounds.
-
-The evaluation cutoff is exactly the `test_end` of the final planned complete fold. No source observation after that timestamp may participate in walk-forward scoring or the subsequent final production refit for that evaluation run.
-
-Source-row windowing occurs first; resolved-feature complete-case filtering then determines usable HMM observation counts.
-
-## 6. Gaussian HMM candidates and pinned fitting policy
-
-Candidates:
-
-| Candidate | K | Covariance |
-|---|---:|---|
-| `gaussian_hmm_k2_full` | 2 | full |
-| `gaussian_hmm_k3_full` | 3 | full |
-| `gaussian_hmm_k4_full` | 4 | full |
-
-Candidate identity is profile-versioned and exact. The public candidate universes are:
-
-```text
-v1 = gaussian_hmm_k2_full, gaussian_hmm_k3_full, gaussian_hmm_k4_full
-v2 = gaussian_hmm_k2_full through gaussian_hmm_k5_full,
-     gmm_hmm_k2_m2_full through gmm_hmm_k5_m2_full,
-     student_t_hmm_k2_full through student_t_hmm_k5_full
-```
-
-No candidate universe is inferred from its length. A missing, reordered or unexpected candidate fails closed.
-
-Backend/configuration:
-
-```text
-backend=hmmlearn==0.3.3
-covariance_type=full
-implementation=log
-seeds=[11,23,37,53,71,89,107,131]
-minimum_valid_starts=6
-minimum_multistart_success_rate=0.75
-n_iter=1000
-tol=1e-4
-min_covar=1e-6
-startprob_prior=1.0
-transmat_prior=1.0
-means_prior=0.0
-means_weight=0.0
-covars_prior=0.01
-covars_weight=1.0
-params=stmc
-init_params=stmc
-```
-
-Reduced covariance modes `diag`, `spherical`, `tied`, or any other non-`full` mode are unsupported and fail closed.
-
-Each start records seed, convergence, iterations, TRAIN log likelihood, numerical validity and failure reason. All valid converged starts are collected before winner selection. The exact global maximum TRAIN log likelihood is the anchor; starts within $\varepsilon = 10^{-12}$ of it form the tied set and the lowest seed in that set wins. Fewer than $6$ valid starts or success rate $< 0.75$ invalidates the fold.
-
-## 7. Causal forward filter
-
-Greek symbol: $\alpha$ (filtered state probability).
-
-For the first retained observation $x_0$:
-
-$$
-u_0(k) = \pi(k) b_0(k), \qquad
-c_0 = \sum_k u_0(k), \qquad
-\alpha_0(k) = \frac{u_0(k)}{c_0}, \qquad
-\log \mathcal{L} = \ln(c_0).
-$$
-
-For each later retained observation:
-
-$$
-\boldsymbol{\pi}_t = \boldsymbol{\alpha}_{t-1} A, \qquad
-u_t(k) = \pi_t(k) b_t(k), \qquad
-c_t = \sum_k u_t(k), \qquad
-\alpha_t(k) = \frac{u_t(k)}{c_t}, \qquad
-\log \mathcal{L} \mathrel{+}= \ln(c_t).
-$$
-
-Implementation must be numerically stabilized/log-domain equivalent. Filtered values at time t depend only on retained observations through t.
-
-Viterbi/smoothing are retrospective diagnostics only and cannot be used for OOS/production probabilities.
-
-## 8. OOS predictive likelihood — TRAIN continuation is mandatory
-
-A fold TEST sequence does not restart from $\boldsymbol{\pi}$.
-
-1. filter retained TRAIN observations;
-2. keep $\boldsymbol{\alpha}_{\mathrm{TRAIN,end}}$;
-3. first retained TEST prior is $\boldsymbol{\alpha}_{\mathrm{TRAIN,end}} A$;
-4. process TEST sequentially;
-5. sum only TEST $\ln(c_t)$ terms;
-6. divide by retained TEST observation count for fold per-observation OOS PLL.
-
-A backend `score(X_test)` call that independently initializes TEST from `startprob_` is not this metric and may not be used.
-
-Candidate aggregates:
-
-$$
-\bar{\ell}_{\mathrm{OOS}} = \operatorname{mean}(\ell_f), \qquad
-\sigma_{\mathrm{OOS}} = \operatorname{std}_{\mathrm{population}}(\ell_f), \qquad
-\ell_{\mathrm{worst}} = \min_f \ell_f, \qquad
-\ell_{\mathrm{best}} = \max_f \ell_f.
-$$
-
-A separately named pooled observation-weighted diagnostic is permitted but is not a ranking substitute.
-
-After each candidate's independent valid-fold-rate gate passes, statistical ranking
-uses only the intersection of valid fold IDs across all accepted candidates. The
-common-valid-fold rate is the intersection count divided by planned fold count and
-must be at least `0.80`, otherwise selection fails closed. OOS mean, population
-standard deviation, worst fold, BIC mean, and AIC mean are recomputed from exactly
-that common support. Per-candidate valid-fold aggregates remain diagnostics and
-cannot improve a candidate's statistical rank by omitting difficult folds.
-
-## 9. State signatures and persistent alignment
-
-Persistent IDs are `state_0 ... state_(K-1)`.
-
-For a fitted state k in the fixed alignment coordinate system:
-
-$$
-\mathbf{s}_k = \operatorname{concat}\!\left(
-\boldsymbol{\mu}_k,
-\log\!\sqrt{\operatorname{diag}(\Sigma_k)},
-\operatorname{upper}\!\left(\operatorname{corr}(\Sigma_k)\right)
-\right).
-$$
-
-All components finite.
-
-The fixed alignment coordinate system is the scaler fitted only on retained TRAIN
-observations of the first planned fold for the frozen final feature set. It is
-evaluation evidence only: each fold still fits and filters with its own TRAIN-only
-scaler. Direct RMS comparison of parameters standardized by different fold scalers
-is forbidden. For a fold-local mean $\mu_f$, covariance $\Sigma_f$, scaler mean
-$m_f$, scale $s_f$, and fixed reference scaler mean $m_r$, scale $s_r$:
-
-$$
-\boldsymbol{\mu}_r = \frac{\mathbf{m}_f + \mathbf{s}_f \odot \boldsymbol{\mu}_f - \mathbf{m}_r}{\mathbf{s}_r},
-\qquad D = \operatorname{diag}\!\left(\frac{\mathbf{s}_f}{\mathbf{s}_r}\right),
-\qquad \Sigma_r = D \Sigma_f D.
-$$
-
-No diagonal-only covariance approximation is permitted.
-
-Distance:
-
-$$
-\operatorname{RMS}(\mathbf{s}_1, \mathbf{s}_2) = \sqrt{\operatorname{mean}\!\left((\mathbf{s}_1 - \mathbf{s}_2)^2\right)}.
-$$
-
-First valid fold:
-
-- construct `signature_sort_key = tuple(round(component, 10) for component in signature)`;
-- sort keys lexicographically ascending and assign `state_0...`;
-- if any two rounded sort keys are identical, initial alignment is ambiguous and the fold is invalid.
-
-Later folds:
-
-- reference is previous valid fold's persistent signatures for same K;
-- enumerate all $K!$ one-to-one mappings for $K \le 4$;
-- total cost is sum of matched RMS distances;
-- choose unique minimum;
-- if best and second-best total costs differ by $\le 10^{-10}$, mapping is ambiguous and the fold is invalid;
-- record matched per-state and maximum drift.
-
-Drift is diagnostic in profile v1. There is no maximum-drift hard threshold and no agent may invent one.
-
-Final production refit aligns to the last valid evaluation fold of the winning K by the same rule.
-
-## 10. Numerical/covariance validity
-
-For every full covariance state matrix:
-
-- shape $d \times d$;
-- finite;
-- maximum absolute asymmetry $\le 10^{-10}$;
-- after that check only, $(\Sigma + \Sigma^\mathsf{T}) / 2$ may be used for validation;
-- minimum diagonal variance $\ge 10^{-12}$;
-- Cholesky succeeds without unrecorded jitter.
-
-Initial probabilities and every transition row must be finite, nonnegative and normalized within absolute tolerance $\varepsilon = 10^{-10}$; values outside that tolerance fail rather than being silently renormalized.
-
-For a Gaussian HMM with K states and d features:
-
-Before AIC/BIC use, the winning-start TRAIN likelihood is recomputed by the
-causal forward/emission implementation. The fit-returned and causal values must
-satisfy $|\mathcal{L}_{\mathrm{fit}} - \mathcal{L}_{\mathrm{filter}}| \le 10^{-10} \max(1, |\mathcal{L}_{\mathrm{fit}}|, |\mathcal{L}_{\mathrm{filter}}|)$.
-A parity failure invalidates that fold; after a passing check, $\mathcal{L}_{\mathrm{filter}}$ is
-the canonical stored TRAIN likelihood and the value used for AIC/BIC.
-
-$$
-p = (K - 1) + K(K - 1) + Kd + \frac{Kd(d + 1)}{2}, \qquad
-\operatorname{AIC} = 2p - 2\mathcal{L}_{\mathrm{TRAIN}}, \qquad
-\operatorname{BIC} = p \ln(n_{\mathrm{TRAIN}}) - 2\mathcal{L}_{\mathrm{TRAIN}}.
-$$
-
-## 11. Occupancy, persistence and uncertainty
-
-TRAIN hard occupancy is the fraction of retained TRAIN observations whose largest filtered probability is that state.
-
-TRAIN soft occupancy for state k:
-
-$$
-\bar{\alpha}(k) = \operatorname{mean}_t \alpha_t(k).
-$$
-
-Fold hard gates:
-
-```text
-minimum_train_hard_occupancy=0.03
-minimum_train_soft_occupancy=0.05
-```
-
-OOS occupancy is diagnostic only.
-
-Dominant-state durations are counts of consecutive retained model observations, not calendar days.
-
-`switches_per_year` uses actual UTC timestamp span:
-
-$$
-\lambda_{\mathrm{switch}} = \frac{N_{\mathrm{switch}}}{D_{\mathrm{calendar}}} \cdot 365.2425.
-$$
-
-Undefined for zero elapsed span; never fabricated.
-
-Confidence:
-
-$$
-\gamma_t = \max_k \alpha_t(k).
-$$
-
-Entropy uses natural logarithm:
-
-$$
-H_t = -\sum_k \alpha_t(k) \ln\!\left(\alpha_t(k)\right).
-$$
-
-Low-confidence diagnostic threshold is exactly 0.60.
-
-## 12. Fold and candidate hard gates
-
-A fold is valid only if:
-
-- retained TRAIN observations >=504;
-- retained TEST observations >=42;
-- >=6 of 8 starts valid/converged;
-- multistart success rate >=0.75;
-- all parameters finite/valid;
-- full covariance checks pass;
-- every TRAIN hard occupancy >=0.03;
-- every TRAIN soft occupancy >=0.05;
-- state alignment succeeds uniquely.
-
-Candidate valid-fold rate must be >=0.80.
-
-Invalid folds stay in evidence with failure reasons and missing unavailable metric values; they are not interpolated and do not enter valid-fold means.
-
-## 13. Statistical champion ranking
-
-After hard gates, deterministic order is:
-
-1. highest `oos_predictive_loglik_mean`;
-2. lower `oos_predictive_loglik_std`;
-3. higher `oos_predictive_loglik_worst_fold`;
-4. lower `bic_mean`;
-5. lower `aic_mean`;
-6. fewer states K;
-7. lexicographically earlier canonical candidate ID.
-
-At every numeric ranking stage, recursively partition the current group from the exact
-best anchor using the anchored $\varepsilon = 10^{-12}$ rule. The tied partition proceeds to the next
-numeric stage; later partitions remain after it. This makes ranking deterministic and
-transitive. K and candidate ID are exact tie-breaks.
-
-There is no weighted score. TRAIN likelihood alone cannot select the champion. Consumer economics never enter this ranking.
-
-## 14. Mandatory final production refit
-
-No walk-forward fold model is registered as production.
-
-After statistical champion K is selected:
-
-1. keep frozen selected features unchanged;
-2. take all source rows from the same evaluation source snapshot through the exact evaluation cutoff defined in section 5;
-3. apply identical resolved-feature complete-case observation mask;
-4. require >=504 usable observations;
-5. fit a fresh scaler over the full refit sample;
-6. run the exact eight-seed multistart fit for winning K;
-7. reapply numerical/covariance/multistart/TRAIN-occupancy gates;
-8. align to the last valid evaluation fold for the winning K;
-9. filter the entire final-refit sequence causally;
-10. persist the final temporal/filter state.
-
-Required production artifact fields:
-
-```text
-inference_origin_timestamp
-trained_through_timestamp
-terminal_filtered_probabilities
-```
-
-`trained_through_timestamp` is the final retained complete model observation at or before the evaluation cutoff; it need not equal cutoff if the cutoff source row is incomplete across final features.
-
-Final refit never retroactively changes the OOS evaluation/ranking.
-
-Only this final-refit artifact may be registered as a version of `regime-xetra`.
-
-## 15. Latest and fixed-model replay initialization
-
-For inference entirely after `trained_through_timestamp`:
-
-- initialize continuation from stored terminal filtered probabilities;
-- process every subsequent retained observation through requested end;
-- return only requested interval/timestamp.
-
-If replay includes a timestamp at or before `trained_through_timestamp`:
-
-- filter from stored `inference_origin_timestamp` using model initial probabilities through requested end;
-- return only predictions inside the inclusive interval `[start,end]`.
-
-The client's arbitrary replay start never becomes a new HMM initial condition.
-
-For same exact model version and same source build, overlapping returned replay timestamps must have identical probabilities even when requested replay starts differ.
-
-Replay mode is exactly `fixed_model_replay` and uses the current serving-source vintage. It is never `walk_forward_oos`.
-
-## 16. Required MLflow evaluation evidence
-
-Parent evaluation run records profile/config/hash, source lineage, time semantics, split plan, both selection hashes, candidate count and statistical selection result.
-
-Candidate runs record family/K/full covariance, feature order/hash, multistart settings, aggregate scorecard and candidate-run `fold_*` metric histories.
-
-Every planned fold is represented in `fold_timeline.parquet` and `fold_metrics.parquet`.
-
-Canonical fold-history keys include at least:
-
-```text
-fold_train_loglik
-fold_oos_predictive_loglik
-fold_oos_predictive_loglik_per_obs
-fold_aic
-fold_bic
-fold_multistart_success_rate
-fold_min_train_hard_occupancy
-fold_min_train_soft_occupancy
-fold_max_state_signature_drift
-fold_mean_state_duration
-fold_switches_per_year
-fold_oos_entropy_mean
-fold_oos_confidence_mean
-```
-
-Per-state histories use persistent state IDs.
-
-Trend x-axis is actual TEST-end UTC. Invalid/missing folds appear as gaps/explicit invalid markers, never interpolation.
-
-Per valid fold, retain machine-readable transition matrix and full covariance matrices plus transition/covariance heatmaps preserving persistent states, exact feature order and off-diagonals.
-
-Required parent cross-candidate plots and all feature-selection visual-audit plots follow `PLOT_STYLE.md`.
-
-Feature-selection non-decision diagnostics from section 4 are stored under `feature_selection/diagnostics/` and clearly labelled as diagnostics; they must never be used by the selector or champion code path.
-
-`plots/manifest.json` deterministically maps plots to exact source artifacts/metrics/hashes.
-
-## 17. Separation from downstream economics
-
-The engine selects statistically robust regime models only.
-
-Portfell or future consumers may evaluate immutable `walk_forward_oos` predictions using asset returns/portfolio metrics, but this cannot change engine feature selection or statistical champion rules.
-
-Because source timestamps lack historical release/vintage semantics, downstream research must preserve the same current-vintage limitation unless/until the upstream source contract is versioned to provide availability/vintage information.
-
-## 18. Non-normative MLflow evaluation snapshot
-
-This section records an operational snapshot queried from the deployed MLflow backend on
-2026-08-27. It is empirical evidence, not part of the selection contract above, and must be
-updated or removed when the referenced source build or candidate universe changes.
-
-### Comparable runs
-
-MLflow contained 14 finished parent evaluation runs for source build
-`20260823T063926Z`. All used evaluation-plan hash prefix `33e8f85db7e9` and
-feature-selection-definition hash prefix `237a8b1fe699`. Five three-candidate runs repeated
-one exact aggregate result signature, as did five four-candidate runs. This confirms
-deterministic aggregate reproduction for those repeated inputs; repeated runs are not
-independent statistical evidence.
-
-The newest finished comparison was parent run `cd5a3e05e2824f4ba9c481de2e66e6df`.
-It contained eight candidates and 62 planned folds. Its aggregate scorecard, ordered by the
-primary ranking metric, was:
-
-| Candidate | Valid folds | OOS loglik mean | OOS std | Worst fold | BIC mean | AIC mean |
-|---|---:|---:|---:|---:|---:|---:|
-| `gaussian_hmm_k5_full` | 62/62 | -7.2689 | 3.5307 | -20.4292 | 29150.45 | 28212.43 |
-| `gaussian_hmm_k4_full` | 62/62 | -7.3444 | 3.7793 | -26.2415 | 30975.34 | 30249.70 |
-| `gaussian_hmm_k3_full` | 62/62 | -7.4670 | 3.1924 | -21.6244 | 34067.79 | 33542.73 |
-| `gmm_hmm_k3_m2_full` | 62/62 | -7.5851 | 3.5805 | -19.4449 | 30682.79 | 29662.17 |
-| `gaussian_hmm_k2_full` | 62/62 | -8.0874 | 3.7954 | -30.4469 | 38850.01 | 38513.74 |
-| `gmm_hmm_k4_m2_full` | 62/62 | -8.0922 | 4.3984 | -21.4038 | 28288.97 | 26902.59 |
-| `gmm_hmm_k2_m2_full` | 62/62 | -8.0958 | 3.2797 | -19.4792 | 34889.95 | 34223.31 |
-| `gmm_hmm_k5_m2_full` | 60/62 | -8.1638 | 5.2439 | -30.2428 | 26855.29 | 25088.71 |
-
-### Interpretation
-
-- `gaussian_hmm_k5_full` was the statistical selection result. Its mean OOS advantage was
-    0.0755 over Gaussian K=4 and 0.3162 over the best GMM candidate, GMM K=3.
-- Gaussian K=3 had the lowest OOS standard deviation among Gaussian candidates, and GMM K=3
-    had the best worst-fold result overall. Neither can override the primary mean-OOS ranking
-    stage defined in section 13.
-- GMM K=4 and K=5 had lower mean AIC/BIC than Gaussian K=5, but their OOS means were worse.
-    This is expected under the ranking contract, where information criteria are later
-    tie-breakers rather than weighted objectives.
-- GMM K=5 was the only candidate with invalid folds (two of 62), had the lowest valid-fold
-    rate, and had the highest OOS dispersion. It still passed the 0.80 valid-fold-rate gate,
-    but its stability evidence was weakest in this comparison.
-
-### Operational limitations
-
-The completed eight-candidate run predates the full 12-candidate universe. It contains all
-Gaussian candidates and all two-mixture GMM candidates, but no Student-t candidates.
-Therefore it cannot establish the champion of the complete v2 universe. A 12-candidate run
-started from image revision `18edfebfacd12c91f942d203aff8d0695bd22cc2` was still running
-at snapshot time and is deliberately excluded until MLflow records a finished parent run.
-
-Three older parent runs remained marked `RUNNING` despite having no active evaluation
-process. They use different plan/selection hashes and are excluded from every comparison;
-their stale lifecycle status should be repaired operationally. Registered model versions
-2 through 17 were `READY` but exposed no MLflow `run_id`, so direct registry-version to
-evaluation-run linkage could not be verified from registry metadata alone.
-
-The observed parent-run durations measure evidence rendering and MLflow persistence after
-candidate evaluation, not total model-fitting time. The eight-candidate parent took 509.0
-seconds; this value must not be used to estimate end-to-end evaluation runtime.
-
-
-## Xetra v3 canonical 61-feature policy
-
-Xetra profile configuration version 3 is a versioned extension of v2. Historical v1/v2 profile and feature-selection identities, hashes and behavior remain immutable.
-
-Canonical identity:
-
- ```text
-profile_id=xetra
-profile_config_version=3
-feature_selection_policy=xetra_semantic_medoid_v3
-canonical_feature_universe_size=61
-semantic_block_count=8
-```
-
-The ordered v3 feature universe is the ordered v2 48-feature universe plus these exact existing PostgreSQL columns, assigned to their economic blocks:
-
-| Semantic block | Added v3 feature(s) |
-|---|---|
-| US equity volatility spot | `vix_delta_1obs` |
-| US equity volatility term structure | `vix9d_delta_1obs`, `vix3m_delta_1obs`, `vix6m_delta_1obs`, `vix1y_delta_1obs` |
-| Europe equity volatility | `vstoxx_delta_1obs` |
-| Rates volatility | `move_delta_1obs` |
-| Systemic stress | `ciss_delta_1obs` |
-| Credit stress | `euro_hy_oas_delta_1obs` |
-| Rates / yield curve | `us_2y_delta_1obs`, `us_10y_delta_1obs`, `estr_delta_1obs` |
-| USD FX | `usd_broad_delta_1obs` |
-
-The exact ordered added tuple is:
-
-```text
-vix_delta_1obs
-vix9d_delta_1obs
-vix3m_delta_1obs
-vix6m_delta_1obs
-vix1y_delta_1obs
-vstoxx_delta_1obs
-move_delta_1obs
-ciss_delta_1obs
-euro_hy_oas_delta_1obs
-us_2y_delta_1obs
-us_10y_delta_1obs
-estr_delta_1obs
-usd_broad_delta_1obs
-```
-
-Stage 1 runs the existing first-fold-TRAIN-only absolute-Spearman medoid selector on all 61 canonical features within the same eight semantic blocks. A `*_delta_1obs` feature is a normal Stage-1 candidate and may become its block's `preliminary_medoid`. Stage 2 applies the unchanged cross-block absolute-Spearman pruning rule to the eight Stage-1 representatives and freezes the surviving ordered multivariate feature tuple. Coverage, variance, complete-observation gates, numeric tie semantics, the strict `>0.85` cross-block conflict threshold, missing-value semantics, no-HMM-feedback rule and no-economic-input rule are unchanged from v2.
-
-Xetra v3 has exactly the same 12 model candidates, in the same order, as v2:
-
-```text
-gaussian_hmm_k2_full
-gaussian_hmm_k3_full
-gaussian_hmm_k4_full
-gaussian_hmm_k5_full
-gmm_hmm_k2_m2_full
-gmm_hmm_k3_m2_full
-gmm_hmm_k4_m2_full
-gmm_hmm_k5_m2_full
-student_t_hmm_k2_full
-student_t_hmm_k3_full
-student_t_hmm_k4_full
-student_t_hmm_k5_full
-```
-
-Walk-forward windows, multistart seeds/gates, family-specific fit settings, occupancy gates, common-valid-fold comparison, anchored `1e-12` ranking semantics, causal TEST continuation, state alignment, likelihood-parity checks and final-refit rules remain unchanged unless a later versioned contract explicitly changes them.
-
-## Xetra v3 first-class regime evaluations
-
-Xetra v3 exposes exactly three evaluation identities:
-
-```text
-medoid_multivariate
-medoid_univariate
-delta1_univariate
-```
-
-`xetra_univariate_shadow_v1` is not a v3 runtime evaluation identity. The three evaluations share the same Xetra v3 model-family/K configuration where applicable but have separate input, clock, lineage and evidence contracts.
-
-### `medoid_multivariate`
-
-Input features are exactly the frozen ordered Stage-2 feature tuple produced by canonical first-fold TRAIN-only Xetra v3 feature selection. It evaluates exactly the 12 Xetra v3 model candidates on the canonical complete-case walk-forward observation clock for that frozen multivariate tuple. Statistical gates, common-valid-fold support and the seven-stage anchored ranking are unchanged. Its winner is `medoid_multivariate_statistical_champion`. This is the only evaluation champion eligible for final production refit, immutable OOS publication, challenger registration and a later explicit production alias promotion.
-
-### `medoid_univariate`
-
-Input features are exactly the eight Stage-1 `preliminary_medoids`, in canonical semantic-block order, before Stage-2 pruning. Each feature is evaluated alone against exactly the 12 Xetra v3 model candidates, giving exactly 96 candidate evaluations. One common diagnostic complete-case clock is built across exactly these eight medoid features. Every one-feature grid in this evaluation uses that same medoid clock. The within-feature statistical winner is `diagnostic_feature_model_winner`; the evaluation-level diagnostic champion is `medoid_univariate_evaluation_champion`.
-
-### `delta1_univariate`
-
-Input features are exactly the ordered 13 canonical one-observation delta features defined by the Xetra v3 feature policy. Each feature is evaluated alone against exactly the 12 Xetra v3 model candidates, giving exactly 156 candidate evaluations. One common diagnostic complete-case clock is built across exactly these 13 delta features. Every one-feature grid in this evaluation uses that same delta1 clock. The within-feature statistical winner is `diagnostic_feature_model_winner`; the evaluation-level diagnostic champion is `delta1_univariate_evaluation_champion`.
-
-The complete three-evaluation execution therefore contains exactly 12 multivariate + 96 medoid-univariate + 156 delta1-univariate candidate evaluations before invalid-fold rejection.
-
-### Evaluation-clock isolation
-
-The three clocks are distinct contracts:
-
-- `medoid_multivariate` uses the canonical complete-case clock for the frozen final Stage-2 tuple;
-- `medoid_univariate` uses a diagnostic common clock over exactly the eight Stage-1 medoids;
-- `delta1_univariate` uses a diagnostic common clock over exactly the ordered 13 delta1 features.
-
-A combined 21-feature medoid+delta diagnostic clock is forbidden. A feature may occur in both univariate evaluations when a delta1 feature is also a Stage-1 medoid, but the two evaluations remain independent. Cross-evaluation fitted-model reuse is forbidden because the evaluation-specific retained observations, clock hash and execution lineage may differ even when the feature name and candidate ID are identical. No fill, interpolation, carry, synthesis, per-feature-clock fallback or source-row boundary mutation is allowed.
-
-### Statistical and production boundaries
-
-Within a single univariate feature, the 12 family/K candidates use the same hard gates,
-common-valid-fold comparison and seven-stage statistical ranking as the canonical Xetra v3
-candidate grid. This winner is that feature's `diagnostic_feature_model_winner`. A feature
-with shared valid-fold support below $0.80$ is ineligible only for its evaluation-level
-champion selection; its diagnostic grid evidence remains recorded.
-
-The exact cross-feature selection rule for both univariate evaluations is: rank eligible
-feature winners by dominant-state NMI descending using anchored
-$\varepsilon = 10^{-12}$ ties, then shared OOS timestamp count descending, then feature
-name ascending. No eligible feature produces explicit no-champion evidence. No fallback
-metric is allowed. Raw OOS PLL, BIC, AIC and economic metrics are forbidden for ranking
-different feature names.
-
-`medoid_univariate_evaluation_champion` and `delta1_univariate_evaluation_champion` are
-diagnostic-only and cannot trigger final refit, OOS publication, model registration,
-challenger/champion alias mutation or economic decisions. Only
-`medoid_multivariate_statistical_champion` is production-eligible.
+The architecture is intentionally deterministic, auditable, computationally bounded, and compatible with an expanding walk-forward evaluation.
 
 ---
 
-## 19. Delta1-univariate Model Metrics diagnostics
+## 1. Core principles
 
-This diagnostic contract applies only to the Xetra v3 `delta1_univariate` evaluation. A dataset is exactly one feature from the canonical ordered 13-delta tuple; a model is exactly one of the canonical 12 Xetra v3 candidate IDs. `medoid_multivariate` and `medoid_univariate` behavior, evidence and artifact layout are unchanged.
+The evaluation system separates four different questions that must not be conflated:
 
-Each delta feature run owns one deterministic `model_metrics/` namespace:
+1. **Which raw features are redundant with each other?**
+2. **How many statistically distinct feature clusters exist?**
+3. **Which feature inside each cluster best discriminates the provisional latent regimes?**
+4. **How many of those cluster winners are actually useful for the final regime model, and which model/state count generalizes best out of sample?**
 
-```text
-model_metrics/
-  models/
-    <candidate_id>/
-      performance/
-        train_loglik_per_obs
-        oos_predictive_loglik_per_obs
-        aic_per_train_obs
-        bic_per_train_obs
-        multistart_success_rate
-      optimization/
-        em_convergence
-  comparisons/
-    oos_predictive_loglik_per_obs_all_models
-    em_convergence_all_models
-  manifest.json
+This produces four explicit quantities:
+
+- `N`: number of raw eligible features.
+- `M*`: selected number of global feature clusters.
+- `L*`: selected number of final regime features retained from the cluster winners.
+- `K*`: selected number of latent HMM states in the final model.
+
+These quantities solve different problems and must be estimated separately.
+
+```mermaid
+flowchart LR
+    A[Raw eligible features N] --> B[Global redundancy structure]
+    B --> C[Feature clusters M*]
+    C --> D[Cluster regime winners]
+    D --> E[Final feature count L*]
+    E --> F[Final HMM / state count K*]
 ```
 
-The five per-model performance histories retain their existing evaluation definitions. Cross-model performance comparison within one delta dataset remains OOS predictive log likelihood per observation on that evaluation's common clock. No TRAIN likelihood, EM convergence, AIC, BIC, convergence speed or other optimization diagnostic may alter within-feature statistical selection, cross-feature NMI agreement ranking, `diagnostic_feature_model_winner`, or `delta1_univariate_evaluation_champion`.
+A typical result could therefore be:
 
-### EM convergence diagnostic
+```text
+N = 180 raw eligible features
+M* = 16 global correlation clusters
+L* = 7 final regime features
+K* = 3 hidden market states
+```
 
-EM x-axis values are one-based completed EM iterations. The y-axis is `TRAIN log likelihood per observation`, obtained for a fold by dividing that winning start's recorded optimizer objective at each iteration by the same fold's retained TRAIN model observation count.
+No assumption requires `M* = L*`, and no assumption requires the provisional state count to equal the final state count.
 
-For one candidate, the main diagnostic contains every usable valid-fold winning-start trajectory, an across-fold median trajectory, and a 25th/75th percentile envelope. Only the winning multistart fit for a valid fold contributes. Failed starts, successful non-winning starts, invalid folds and unavailable traces do not contribute numeric points.
+---
 
-Iteration lengths may differ. At EM iteration `i`, the median and quantiles use only winner histories that actually contain iteration `i`. Forward fill, interpolation, extrapolation, padding, synthetic plateaus and fabricated zeros are forbidden. A candidate with no usable trace remains explicitly represented as unavailable.
+## 2. Semantic groups are removed from statistical selection
 
-The all-model EM comparison contains one across-fold median curve per canonical candidate, in canonical candidate order. It is an optimization diagnostic only and is never a model-selection or feature-selection metric. The first rollout uses existing MLflow nested runs, metric histories and artifacts; it does not fork or patch the MLflow frontend and does not introduce a second dashboard service.
+All eligible features are pooled into one global feature universe.
+
+The system must not enforce rules such as:
+
+```text
+one VIX representative
+one rates representative
+one credit representative
+one FX representative
+...
+```
+
+Those rules impose economic taxonomy on the statistical representation and can create artificial dimensionality.
+
+A global clustering procedure is preferred because:
+
+- several features from one economic theme may contain genuinely different information and should be allowed to fall into different clusters;
+- features from different economic themes may be statistically redundant and should be allowed to share the same cluster;
+- the number of retained feature structures should be learned from the data rather than inherited from a hand-written taxonomy;
+- adding many redundant transforms of an existing signal should not automatically increase model dimensionality;
+- adding a genuinely new, weakly correlated signal should be able to create a new feature cluster.
+
+Semantic labels may still be attached to features for dashboards, documentation, or economic interpretation, but:
+
+```text
+semantic_group ∉ statistical_selection_rule
+```
+
+---
+
+## 3. High-level architecture
+
+```mermaid
+flowchart TD
+    A[All raw features] --> B[TRAIN-only quality filter]
+    B --> C[Global absolute-Spearman distance matrix]
+    C --> D[Global clustering over candidate cluster counts]
+    D --> E[Select M* using cluster quality/stability rule]
+    E --> F[Temporary prototype from each cluster]
+    F --> G[Initial Gaussian HMM search K=2..5]
+    G --> H[Choose provisional K* using inner causal WF]
+    H --> I[Produce causal OOS filtered state probabilities]
+    I --> J[Score ALL eligible raw features against common provisional regimes]
+    J --> K[Best regime-separating feature inside each cluster]
+    K --> L[Rank cluster winners by regime relevance]
+    L --> M[Evaluate top-L prefixes for L=2..M*]
+    M --> N[Select L* using inner causal WF]
+    N --> O[Final feature set]
+    O --> P[Final model-family and K grid]
+    P --> Q[Choose final statistical champion]
+    Q --> R[Outer expanding WF OOS evaluation]
+```
+
+The initial HMM is only a temporary teacher. It creates a common provisional latent-state reference so every raw feature can be evaluated against the same regime definition.
+
+It is not the final production model.
+
+---
+
+## 4. Outer evaluation boundary
+
+The primary protection against look-ahead bias is a strict outer expanding walk-forward.
+
+For outer fold `f`:
+
+```mermaid
+flowchart LR
+    A[Outer TRAIN_f] --> B[Entire feature-selection and model-selection procedure]
+    B --> C[Freeze fold-specific selected configuration]
+    C --> D[Refit on complete Outer TRAIN_f]
+    D --> E[Evaluate once on Outer TEST_f]
+```
+
+The outer test block must never influence:
+
+- feature quality thresholds;
+- feature clustering;
+- `M*`;
+- temporary prototypes;
+- provisional `K*`;
+- regime-separation scores;
+- cluster winner selection;
+- `L*`;
+- final model family;
+- final state count;
+- HMM hyperparameters or initialization policy.
+
+Any choice that uses the outer test sample converts that sample into validation data and invalidates it as OOS evidence.
+
+The canonical outer evaluation remains expanding because the objective is to accumulate increasingly broad historical regime evidence while preserving a strict future test block.
+
+---
+
+## 5. Step 1 — TRAIN-only feature quality filter
+
+Before clustering, raw features are screened using rules that do not depend on any fitted HMM or trading target.
+
+At minimum, the quality filter should enforce:
+
+- minimum observation coverage;
+- finite numeric values;
+- non-zero / non-negligible variance;
+- sufficient common observations for pairwise dependence estimation;
+- deterministic ordering and feature identity;
+- no target leakage or future-derived data.
+
+The filter answers only:
+
+> Is the feature statistically usable?
+
+It does not answer whether the feature is regime-informative.
+
+The resulting eligible feature count is `N`.
+
+---
+
+## 6. Step 2 — Global redundancy matrix
+
+All eligible features are compared with all other eligible features.
+
+Use absolute Spearman rank correlation as the redundancy measure.
+
+For features `i` and `j`:
+
+\[
+d_{ij}=1-|\rho^{Spearman}_{ij}|.
+\]
+
+Interpretation:
+
+- `|rho| ≈ 1` -> very small distance -> strong redundancy;
+- `|rho| ≈ 0` -> large distance -> little monotonic redundancy.
+
+The absolute value is intentional. Two features with almost perfect negative correlation usually encode the same information direction up to sign and should not be treated as independent regime dimensions.
+
+```mermaid
+flowchart LR
+    A[Eligible feature i] --> C[Absolute Spearman matrix]
+    B[Eligible feature j] --> C
+    C --> D[d_ij = 1 - abs(rho_ij)]
+```
+
+The global matrix must be estimated from TRAIN observations only.
+
+---
+
+## 7. Step 3 — Global clustering and optimal cluster count M*
+
+The purpose of clustering is redundancy compression, not regime selection.
+
+All eligible features are clustered together without semantic constraints.
+
+A medoid-based clustering method is convenient because the pairwise distance is non-Euclidean and a medoid is an actual observed feature. However, the medoid has no final feature-selection status.
+
+The system evaluates a bounded candidate range:
+
+```text
+M = M_min, ..., M_max
+```
+
+where the bounds are source-controlled and deterministic.
+
+For each candidate `M`:
+
+1. fit the global clustering using the TRAIN-only distance matrix;
+2. compute a cluster-quality metric such as mean silhouette;
+3. record cluster sizes, singleton clusters, and membership;
+4. optionally record cluster stability under deterministic perturbation/bootstrap rules if introduced later.
+
+The canonical selected count is:
+
+\[
+M^*=\arg\max_M \text{ClusterQuality}(M),
+\]
+
+subject to deterministic tie-breaking and minimum-quality constraints.
+
+```mermaid
+flowchart TD
+    A[Global distance matrix] --> B1[Cluster M=2]
+    A --> B2[Cluster M=3]
+    A --> B3[Cluster M=...]
+    A --> B4[Cluster M=Mmax]
+    B1 --> C[Compare silhouette / cluster quality]
+    B2 --> C
+    B3 --> C
+    B4 --> C
+    C --> D[Select M*]
+```
+
+### Singleton clusters
+
+Singleton clusters are valid and must not be automatically discarded.
+
+A feature that is weakly correlated with the entire universe may represent genuinely new information. Its regime relevance is determined later by the regime-separation stage.
+
+### Important distinction
+
+`M*` means:
+
+> number of statistically distinct feature-information clusters.
+
+It does **not** mean:
+
+> number of features the final HMM must use.
+
+That second quantity is `L*` and is selected later.
+
+---
+
+## 8. Step 4 — Temporary cluster prototypes
+
+The provisional HMM should not be fitted to all raw features if the universe is large.
+
+Therefore one temporary prototype is chosen from each of the `M*` clusters.
+
+A correlation medoid is a suitable deterministic prototype because it is the cluster member with the smallest average distance to the other members.
+
+The prototype answers only:
+
+> Which actual feature gives a neutral compact representation of this correlation cluster for initialization?
+
+It does **not** answer:
+
+> Which feature is most important for regime detection?
+
+The prototype is temporary and is discarded after the regime-separation stage.
+
+```mermaid
+flowchart TD
+    A[Cluster 1] --> P1[Temporary prototype 1]
+    B[Cluster 2] --> P2[Temporary prototype 2]
+    C[Cluster ...] --> P3[Temporary prototype ...]
+    D[Cluster M*] --> P4[Temporary prototype M*]
+    P1 --> H[Initial HMM input matrix]
+    P2 --> H
+    P3 --> H
+    P4 --> H
+```
+
+---
+
+## 9. Step 5 — Initial HMM and provisional K*
+
+### 9.1 Purpose
+
+The initial HMM exists only to construct a common provisional regime reference.
+
+It is a teacher model for feature scoring.
+
+The initial model should remain deliberately simple to avoid coupling feature selection to unnecessary model-family complexity.
+
+Canonical bootstrap family:
+
+```text
+Gaussian HMM
+K ∈ {2, 3, 4, 5}
+```
+
+The existing deterministic multistart policy and HMM validity gates should be reused.
+
+### 9.2 Inner expanding walk-forward
+
+The provisional state count must be selected using causal evidence inside the current outer TRAIN sample.
+
+```mermaid
+flowchart TD
+    A[Outer TRAIN only] --> B[Inner expanding WF]
+    B --> C2[Gaussian HMM K=2]
+    B --> C3[Gaussian HMM K=3]
+    B --> C4[Gaussian HMM K=4]
+    B --> C5[Gaussian HMM K=5]
+    C2 --> D[Aggregate causal inner OOS evidence]
+    C3 --> D
+    C4 --> D
+    C5 --> D
+    D --> E[Apply validity / occupancy / multistart gates]
+    E --> F[Choose provisional K*]
+```
+
+Each candidate is evaluated on the same temporary prototype feature matrix and same inner folds.
+
+The primary evidence is causal OOS predictive likelihood. Secondary deterministic tie-breakers may reuse the current model-selection discipline, for example:
+
+1. higher mean inner OOS predictive log-likelihood;
+2. lower OOS dispersion;
+3. better worst-fold predictive likelihood;
+4. lower BIC;
+5. lower AIC;
+6. lower state count / deterministic candidate identity if all previous criteria tie.
+
+The exact canonical ordering must be source-controlled.
+
+The provisional selected count is:
+
+\[
+K^*_{provisional}.
+\]
+
+This value is not binding for the final model.
+
+---
+
+## 10. Step 6 — Causal provisional regime probabilities
+
+After choosing `K*_provisional`, the initial HMM is used to generate a common causal state-probability reference over the inner OOS observations.
+
+For each OOS timestamp `t`, retain filtered probabilities:
+
+\[
+\gamma_{tk}=P(S_t=k\mid X_1,\ldots,X_t).
+\]
+
+Filtered probabilities are preferred over full-sample smoothed probabilities because the latter condition on future observations.
+
+Hard Viterbi labels are not sufficient for feature scoring because they discard uncertainty.
+
+Example:
+
+```text
+Date        State0  State1  State2
+2026-01-02   0.92    0.06    0.02
+2026-01-03   0.49    0.46    0.05
+2026-01-04   0.03    0.11    0.86
+```
+
+The second row is intrinsically uncertain and should not count as strongly toward any one state as the first or third row.
+
+```mermaid
+flowchart LR
+    A[Selected provisional HMM] --> B[Causal filtering]
+    B --> C[gamma_t1]
+    B --> D[gamma_t2]
+    B --> E[gamma_t...]
+    C --> F[Common provisional regime reference]
+    D --> F
+    E --> F
+```
+
+---
+
+## 11. Step 7 — Regime-separation score for ALL original eligible features
+
+This is the key feature-discovery stage.
+
+The initial HMM saw only `M*` temporary prototypes, but the regime-separation calculation now returns to the full eligible universe of `N` features.
+
+Every eligible feature is evaluated against the **same** provisional state probabilities.
+
+No separate HMM needs to be fitted for each raw feature.
+
+This has three advantages:
+
+- feature scores are directly comparable because they share the same regime reference;
+- computational cost remains low even as the feature universe grows;
+- the procedure can identify a strong regime feature even when that feature was not the temporary cluster medoid.
+
+### 11.1 Posterior-weighted state occupancy
+
+For provisional state `k`:
+
+\[
+\pi_k=\frac{1}{T}\sum_t\gamma_{tk}.
+\]
+
+### 11.2 Posterior-weighted feature mean by state
+
+For raw feature `j`:
+
+\[
+\mu_{jk}=\frac{\sum_t\gamma_{tk}x_{tj}}{\sum_t\gamma_{tk}}.
+\]
+
+The overall feature mean is:
+
+\[
+\mu_j=\frac{1}{T}\sum_t x_{tj}.
+\]
+
+### 11.3 Between-regime variance
+
+\[
+B_j=\sum_k\pi_k(\mu_{jk}-\mu_j)^2.
+\]
+
+### 11.4 Within-regime variance
+
+Let `sigma_jk^2` be the posterior-weighted variance of feature `j` inside provisional state `k`.
+
+Then:
+
+\[
+W_j=\sum_k\pi_k\sigma_{jk}^2.
+\]
+
+### 11.5 Canonical regime-separation score
+
+Use a bounded posterior-weighted effect-size statistic:
+
+\[
+\eta_j^2=\frac{B_j}{B_j+W_j}.
+\]
+
+with:
+
+\[
+0\le\eta_j^2\le1.
+\]
+
+Interpretation:
+
+- near `0`: the feature changes little across the inferred regimes relative to its within-regime variation;
+- high value: the feature has materially different distributions/means across the inferred regimes and therefore strongly discriminates the provisional state partition.
+
+This statistic measures **regime discrimination**, not causal influence. Documentation and metrics must not claim that a high score proves the feature causes regime changes.
+
+```mermaid
+flowchart TD
+    A[Common provisional filtered probabilities gamma] --> S[Posterior-weighted regime scoring]
+    X1[Raw feature 1] --> S
+    X2[Raw feature 2] --> S
+    X3[Raw feature ...] --> S
+    XN[Raw feature N] --> S
+    S --> R1[eta² feature 1]
+    S --> R2[eta² feature 2]
+    S --> R3[eta² feature ...]
+    S --> RN[eta² feature N]
+```
+
+### 11.6 Missing observations
+
+Feature `j` must be scored only on timestamps where:
+
+- the causal provisional state probabilities exist;
+- the feature value is observed and finite.
+
+The score must store its effective observation count and coverage.
+
+A minimum score-support threshold must be enforced to prevent a sparse feature from winning a cluster based on very little evidence.
+
+---
+
+## 12. Step 8 — Select the best regime feature inside every cluster
+
+For cluster `c`, let `C_c` be its member features.
+
+The cluster regime representative is:
+
+\[
+r_c=\arg\max_{j\in C_c}\eta_j^2.
+\]
+
+Deterministic ties must be resolved by source-controlled rules, for example:
+
+1. higher regime-separation score;
+2. higher scoring-sample coverage;
+3. better data-quality status;
+4. canonical feature-name order.
+
+The temporary medoid/prototype is no longer relevant after this stage.
+
+Example:
+
+```text
+Cluster 4
+---------------------------------
+vix_delta_1obs          eta² 0.48   <- final cluster winner
+vstoxx_delta_1obs       eta² 0.43
+vix_delta_5obs          eta² 0.41
+ciss_delta_1obs         eta² 0.39
+vix_level               eta² 0.18
+
+Temporary prototype: vix_delta_5obs
+Final cluster representative: vix_delta_1obs
+```
+
+```mermaid
+flowchart LR
+    A[Cluster members] --> B[Regime-separation scores]
+    B --> C[Highest eligible eta²]
+    C --> D[Cluster regime representative]
+```
+
+This is the central conceptual change from the old medoid architecture:
+
+> correlation determines redundancy groups; regime separation determines which actual feature represents each group in the final candidate pool.
+
+---
+
+## 13. Step 9 — Rank cluster winners globally
+
+After one winner is selected from each of the `M*` clusters, there are `M*` non-redundant regime candidate features.
+
+Rank them globally by the same regime-separation evidence.
+
+Example:
+
+```text
+Rank  Feature                  eta²
+1     vix_delta_1obs           0.48
+2     ciss_delta_1obs          0.43
+3     vix_vix3m_ratio          0.39
+4     move_level               0.34
+5     euro_hy_oas_level        0.30
+6     us_10y_minus_us_2y       0.27
+...
+14    usd_broad_delta_1obs     0.01
+```
+
+The clustering stage ensures that these candidates are representatives of different redundancy clusters.
+
+The ranking stage does **not** automatically imply all `M*` should enter the final model.
+
+---
+
+## 14. Step 10 — Determine optimal final feature count L*
+
+The number of statistical clusters `M*` is an upper bound on the final regime-feature count, not the final count itself.
+
+A cluster can be statistically distinct while still being irrelevant to regime discrimination.
+
+Therefore evaluate nested ranked prefixes:
+
+```text
+Top 2 cluster winners
+Top 3 cluster winners
+Top 4 cluster winners
+...
+Top M* cluster winners
+```
+
+This reduces the subset problem from a combinatorial search to a simple ordered sequence of at most `M*-1` candidate feature sets.
+
+```mermaid
+flowchart TD
+    A[Ranked cluster winners] --> B2[Top 2]
+    A --> B3[Top 3]
+    A --> B4[Top 4]
+    A --> BX[...]
+    A --> BM[Top M*]
+    B2 --> C[Inner causal WF model evaluation]
+    B3 --> C
+    B4 --> C
+    BX --> C
+    BM --> C
+    C --> D[Select optimal L*]
+```
+
+For each prefix length `L`, evaluate a source-controlled HMM comparison on the same inner folds.
+
+The selected feature count is:
+
+\[
+L^*=\arg\max_L \text{InnerOOSModelEvidence}(L),
+\]
+
+with deterministic complexity-aware tie-breaking.
+
+A practical tie policy should prefer the smaller `L` when predictive evidence is statistically indistinguishable, because unnecessary dimensions increase covariance-estimation risk and model instability.
+
+This stage answers:
+
+> How many of the statistically distinct cluster winners actually improve regime modelling?
+
+---
+
+## 15. Step 11 — Final feature set
+
+The final selected feature tuple for the current outer fold is the first `L*` members of the globally ranked cluster-winner list.
+
+Example:
+
+```text
+N = 180 eligible raw features
+M* = 16 global redundancy clusters
+L* = 7 selected regime features
+
+Final features:
+- vix_delta_1obs
+- ciss_delta_1obs
+- vix_vix3m_ratio
+- move_level
+- euro_hy_oas_level
+- us_10y_minus_us_2y
+- usd_broad_delta_20obs
+```
+
+The exact tuple, order, hashes, cluster memberships, scores, and selection evidence must be persisted for reproducibility.
+
+---
+
+## 16. Step 12 — Final HMM model-family and state-count search
+
+The provisional Gaussian HMM must now be discarded as a selection aid.
+
+The final feature tuple is evaluated using the production candidate model universe.
+
+The existing candidate families may remain:
+
+```text
+Gaussian HMM       K = 2,3,4,5
+GMM-HMM            K = 2,3,4,5
+Student-t HMM      K = 2,3,4,5
+```
+
+All final candidates must:
+
+- see the same final feature tuple;
+- use the same inner/outer fold support where required;
+- use deterministic multistart rules;
+- pass the same validity and occupancy gates;
+- be compared with causal OOS predictive evidence.
+
+The final statistical champion can therefore have:
+
+```text
+K*_final != K*_provisional
+```
+
+and this is expected and valid.
+
+```mermaid
+flowchart TD
+    A[Final L* features] --> G2[Gaussian K2]
+    A --> G3[Gaussian K3]
+    A --> G4[Gaussian K4]
+    A --> G5[Gaussian K5]
+    A --> M2[GMM-HMM K2..K5]
+    A --> T2[Student-t K2..K5]
+    G2 --> C[Common candidate comparison]
+    G3 --> C
+    G4 --> C
+    G5 --> C
+    M2 --> C
+    T2 --> C
+    C --> D[Final statistical champion]
+```
+
+---
+
+## 17. Step 13 — Outer OOS evaluation
+
+Once the entire selection process has completed inside `Outer TRAIN_f`:
+
+1. freeze `M*`, cluster membership, cluster winners, ranked winners, `L*`, final features, final model family, final `K*`, and all relevant configuration;
+2. refit the selected final model on all usable observations in `Outer TRAIN_f`;
+3. continue the fitted model causally into `Outer TEST_f`;
+4. record OOS predictive likelihood, filtered probabilities, state diagnostics, occupancy, stability, and alignment evidence;
+5. do not revise any selection decision using `Outer TEST_f`.
+
+```mermaid
+flowchart LR
+    A[Outer TRAIN_f] --> B[Global clustering]
+    B --> C[Initial HMM teacher]
+    C --> D[All-feature regime scoring]
+    D --> E[L* selection]
+    E --> F[Final candidate grid]
+    F --> G[Freeze champion]
+    G --> H[Refit on all Outer TRAIN_f]
+    H --> I[One-shot causal Outer TEST_f]
+```
+
+This outer test evidence is the basis for judging whether the complete adaptive selection policy generalizes.
+
+---
+
+## 18. Why the provisional regime reference must be common to all features
+
+An alternative would be to fit an independent HMM for every raw feature.
+
+That is rejected as the canonical feature-scoring method because every feature would then create its own regime definition.
+
+Comparing feature A and feature B would no longer mean comparing their ability to explain the same latent partition.
+
+The proposed architecture instead creates one provisional reference:
+
+```mermaid
+flowchart TD
+    H[Initial HMM teacher] --> R[Common provisional regimes]
+    R --> A[Score feature A]
+    R --> B[Score feature B]
+    R --> C[Score feature C]
+    R --> D[Score feature ...]
+```
+
+This makes regime-separation scores directly comparable across the complete feature universe.
+
+---
+
+## 19. Why raw HMM likelihood must not rank arbitrary feature subsets directly
+
+Raw log-likelihoods for different observed random vectors are not directly comparable as a universal feature-importance score.
+
+For example, a univariate model of:
+
+```text
+VIX change
+```
+
+and a multivariate model of:
+
+```text
+VIX change + MOVE + CISS + credit spread
+```
+
+are likelihoods for different-dimensional observations.
+
+Therefore the architecture avoids statements such as:
+
+> feature subset A is more important because its raw HMM likelihood is larger than feature subset B.
+
+Instead:
+
+- clustering handles redundancy;
+- posterior-weighted separation handles per-feature regime discrimination;
+- inner OOS model comparison handles the usefulness of nested final feature counts;
+- the outer OOS loop evaluates the complete selected policy.
+
+---
+
+## 20. Feature-scoring reliability requirements
+
+Every feature score should persist at least:
+
+```text
+feature_name
+cluster_id
+score_eta_squared
+score_observation_count
+score_coverage
+state_weighted_means
+state_weighted_variances
+provisional_state_count
+provisional_model_id
+outer_fold_id
+inner_plan_hash
+source_build_id
+feature_definition_hash
+```
+
+A feature must be ineligible to win its cluster when score support is below the source-controlled minimum.
+
+No score may be based on:
+
+- smoothed probabilities that use future observations;
+- outer TEST observations;
+- trading returns or portfolio performance unless the evaluation objective is explicitly changed in a future architecture version;
+- manually privileged semantic categories.
+
+---
+
+## 21. Cluster-stability diagnostics
+
+The canonical selection should remain causal and fold-local, but clustering stability should be measured because `M*` and memberships can change as the sample expands.
+
+Recommended non-decision diagnostics include:
+
+- selected `M*` by outer fold;
+- silhouette curve by candidate `M`;
+- adjusted Rand index / normalized mutual information between compatible clusterings on expanding samples;
+- persistence of pairwise co-clustering relationships;
+- cluster-size distribution;
+- number of singleton clusters;
+- identity changes of cluster winners;
+- rank stability of regime-separation scores.
+
+Example diagnostic history:
+
+```text
+Outer fold       M*
+fold_01          11
+fold_02          11
+fold_03          12
+fold_04          11
+fold_05          11
+fold_06          12
+```
+
+This does not invalidate adaptation. It quantifies how structurally stable the discovered feature representation is.
+
+---
+
+## 22. State-label alignment implications
+
+The current regime engine requires persistent interpretation of latent states across folds.
+
+Adaptive final feature tuples create a challenge because state signatures defined directly in model-feature coordinate space are not necessarily comparable when the selected input features change.
+
+Therefore a future implementation of this architecture must explicitly choose one of the following:
+
+1. **Fixed anchor-space state signatures** independent of selected model inputs; or
+2. state alignment based on an invariant set of economic observables/statistics; or
+3. declare state labels fold-local and only compare label-invariant quantities across folds.
+
+This issue is independent of feature clustering and must not be hidden by assuming that state index `2` in one fold automatically means state index `2` in another fold.
+
+Until invariant alignment is implemented, cross-fold analyses should rely on label-invariant quantities whenever possible.
+
+---
+
+## 23. Determinism and reproducibility
+
+The entire procedure must be reproducible from explicit inputs and versioned policy.
+
+Persist hashes/identities for:
+
+- source build;
+- quality-filter policy;
+- eligible feature universe;
+- pairwise distance matrix definition;
+- clustering algorithm and version;
+- candidate `M` range;
+- selected `M*`;
+- cluster memberships;
+- temporary prototypes;
+- inner walk-forward plan;
+- provisional HMM configuration;
+- filtered probability evidence;
+- regime-separation score definition;
+- cluster winners and ranking;
+- candidate `L` range;
+- selected `L*`;
+- final feature tuple;
+- final model grid;
+- selected final champion;
+- outer walk-forward plan.
+
+Randomized algorithms must use fixed source-controlled seeds, and result ordering must be canonicalized before persistence.
+
+---
+
+## 24. MLflow evidence model
+
+The evaluation should expose enough evidence to answer not merely which model won, but why each feature survived.
+
+Recommended MLflow hierarchy:
+
+```mermaid
+flowchart TD
+    A[Outer fold run] --> B[Feature quality]
+    A --> C[Global clustering]
+    A --> D[Provisional HMM]
+    A --> E[Feature regime scores]
+    A --> F[Final feature-count search]
+    A --> G[Final model grid]
+    A --> H[Outer OOS result]
+```
+
+Recommended logged artifacts/metrics include:
+
+### Global clustering
+
+```text
+N_eligible
+M_star
+silhouette_M_2
+silhouette_M_3
+...
+cluster_membership.csv
+cluster_sizes.csv
+cluster_distance_matrix metadata/hash
+```
+
+### Provisional HMM
+
+```text
+provisional_model_family = gaussian_hmm
+provisional_K_star
+inner_oos_pll_mean
+inner_oos_pll_std
+inner_oos_pll_worst
+valid_fold_rate
+occupancies
+```
+
+### Feature regime scores
+
+```text
+feature_scores.csv
+feature_name
+cluster_id
+eta_squared
+coverage
+state_mean_0
+state_mean_1
+...
+cluster_winner
+```
+
+### Final feature-count selection
+
+```text
+L_candidate
+feature_tuple
+best_inner_model_id
+inner_oos_pll_mean
+inner_oos_pll_std
+inner_oos_pll_worst
+validity evidence
+L_star
+```
+
+### Final model grid
+
+Reuse the existing candidate-level evidence and statistical champion outputs.
+
+---
+
+## 25. Complexity characteristics
+
+The design is intentionally bounded.
+
+For `N` raw features:
+
+- pairwise redundancy calculation is approximately `O(N^2)` pairwise dependence estimates;
+- clustering searches only a bounded `M` range;
+- the provisional HMM uses only `M*` dimensions;
+- raw-feature regime scoring is approximately linear in `N × T × K` once provisional probabilities exist;
+- final feature-count search evaluates only nested prefixes rather than all subsets.
+
+The architecture therefore avoids the combinatorial search:
+
+\[
+2^N
+\]
+
+that would arise from unrestricted subset optimization.
+
+For a large universe such as 500 features, the pair count is:
+
+\[
+\frac{500\times499}{2}=124750,
+\]
+
+which is tractable and far cheaper than thousands or millions of HMM subset evaluations.
+
+---
+
+## 26. Full nested evaluation diagram
+
+```mermaid
+flowchart TD
+    subgraph OUTER[Outer expanding walk-forward fold]
+        OT[Outer TRAIN]
+        OE[Outer TEST - untouched]
+
+        subgraph SELECT[Selection inside Outer TRAIN only]
+            Q[Quality filter]
+            R[Global abs-Spearman matrix]
+            CL[Global clustering M candidates]
+            MS[Select M*]
+            TP[Temporary cluster prototypes]
+
+            subgraph PROV[Provisional regime teacher]
+                IW[Inner expanding WF]
+                GK[Gaussian HMM K=2..5]
+                PK[Select provisional K*]
+                GP[Causal filtered OOS probabilities gamma]
+            end
+
+            FS[Score ALL raw eligible features with eta²]
+            CW[Choose best feature in each cluster]
+            RR[Rank cluster winners]
+
+            subgraph LF[Final feature-count search]
+                L2[Top 2]
+                L3[Top 3]
+                LX[...]
+                LM[Top M*]
+                LC[Inner OOS comparison]
+                LS[Select L*]
+            end
+
+            FF[Final L* feature tuple]
+            MG[Full production HMM candidate grid]
+            FC[Select final model and K*]
+        end
+
+        OT --> Q --> R --> CL --> MS --> TP
+        TP --> IW --> GK --> PK --> GP
+        GP --> FS
+        OT --> FS
+        FS --> CW --> RR
+        RR --> L2
+        RR --> L3
+        RR --> LX
+        RR --> LM
+        L2 --> LC
+        L3 --> LC
+        LX --> LC
+        LM --> LC
+        LC --> LS --> FF --> MG --> FC
+        FC --> REFIT[Refit selected model on all Outer TRAIN]
+        REFIT --> OE
+        OE --> OOS[Record one-shot causal outer OOS evidence]
+    end
+```
+
+---
+
+## 27. Decision semantics
+
+The architecture uses precise terminology:
+
+### `feature cluster`
+A group of features with similar monotonic information according to global absolute Spearman distance.
+
+### `temporary prototype`
+A deterministic actual feature used only to construct the provisional HMM input representation.
+
+### `provisional regime`
+A latent state inferred by the temporary Gaussian HMM inside TRAIN and used solely as a common reference for feature scoring.
+
+### `regime-separation score`
+A posterior-weighted bounded effect size describing how strongly a feature differs across the provisional regimes.
+
+### `cluster regime representative`
+The eligible member of a feature cluster with the strongest regime-separation evidence.
+
+### `L*`
+The number of ranked cluster representatives supported by inner causal OOS model evidence.
+
+### `final statistical champion`
+The production-model candidate selected using the final `L*` feature tuple and the canonical model-selection rules.
+
+The term **feature importance** may be used operationally, but it must be understood as statistical regime discrimination, not causal attribution.
+
+---
+
+## 28. Rejected alternatives
+
+### Fixed semantic-group medoids
+Rejected because they impose the number and composition of feature representatives before observing the global redundancy structure.
+
+### Final selection by statistical medoid
+Rejected because correlation centrality answers which feature is most representative of its neighbors, not which feature best discriminates latent regimes.
+
+### Unrestricted Optuna feature-subset search
+Rejected as the default architecture because it introduces combinatorial search, substantial multiple-testing risk, greater computational cost, and weaker interpretability.
+
+### Independent HMM for every raw feature as the primary score
+Rejected because every feature would generate a different regime target, reducing comparability of feature scores.
+
+### Full-sample Viterbi/smoothed-state scoring
+Rejected because future observations influence historical state assignment.
+
+### Selecting features using outer OOS performance
+Rejected because it leaks test information into the selection process.
+
+---
+
+## 29. Canonical implementation sequence
+
+The implementation should be staged so each component can be tested independently.
+
+```mermaid
+flowchart LR
+    A[1 Global clustering contracts] --> B[2 M* selection]
+    B --> C[3 Temporary prototypes]
+    C --> D[4 Provisional Gaussian inner-WF]
+    D --> E[5 Causal probability collector]
+    E --> F[6 eta² feature scorer]
+    F --> G[7 Cluster winner selector]
+    G --> H[8 L* prefix evaluator]
+    H --> I[9 Final model-grid integration]
+    I --> J[10 Outer-WF integration]
+    J --> K[11 MLflow evidence + diagnostics]
+```
+
+The current production path should not be silently mutated during development. The redesigned architecture should be introduced under an explicit new evaluation/profile version, validated against existing deterministic fixtures, and promoted only after OOS evidence is available.
+
+---
+
+## 30. Summary
+
+The new evaluation architecture replaces semantic-group medoid selection with a fully global, statistically driven process.
+
+The central logic is:
+
+```text
+all features
+    -> global redundancy clustering
+    -> optimal cluster count M*
+    -> temporary prototypes
+    -> provisional causal HMM regimes
+    -> regime-separation score for every raw feature
+    -> best feature per cluster
+    -> ranked non-redundant regime features
+    -> optimal final feature count L*
+    -> final production HMM/model-state search
+    -> strict outer expanding-WF OOS evaluation
+```
+
+This design deliberately separates redundancy, regime discrimination, feature-count selection, and latent-state/model selection.
+
+It remains simple enough to audit, scales to a much larger feature universe, does not require semantic groups or unrestricted feature-subset optimization, and provides a direct explanation for why each retained feature is present in the final regime model.
