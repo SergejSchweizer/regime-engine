@@ -719,19 +719,20 @@ QA:
 - **Branch:** `pr/PR-225-soft-regime-nmi`
 - **Depends on:** PR-210
 - **Allowed:** `src/market_regime_engine/evaluations/agreement_v4.py`, `tests/unit/evaluations/test_agreement_v4.py`
+- **Status:** complete; GitHub PR #218 merged to `main`.
 
 Acceptance:
 
-- [ ] Exact section-2.9 soft joint formula from two probability matrices on exact shared timestamps.
-- [ ] Supports unequal K without state mapping.
-- [ ] Label permutations on either matrix leave score unchanged.
-- [ ] Probability validation finite/nonnegative/normalized within 1e-10.
-- [ ] Degenerate entropy or zero shared support fails with explicit reason.
-- [ ] Persist joint matrix, marginals, entropies, MI, shared timestamps/count and hash.
+- [x] Exact section-2.9 soft joint formula from two probability matrices on exact shared timestamps.
+- [x] Supports unequal K without state mapping.
+- [x] Label permutations on either matrix leave score unchanged.
+- [x] Probability validation finite/nonnegative/normalized within 1e-10.
+- [x] Degenerate entropy or zero shared support fails with explicit reason.
+- [x] Persist joint matrix, marginals, entropies, MI, shared timestamps/count and hash.
 
 QA:
 
-- [ ] Independent primitive implementation; one-hot perfect relabeling=1; independent sequences≈0 on exact constructed table; uncertain soft example checked by hand/reference.
+- [x] Independent primitive implementation; one-hot perfect relabeling=1; independent sequences≈0 on exact constructed table; uncertain soft example checked by hand/reference.
 
 ## Wave B — feature-count/model selection and outer policy
 
