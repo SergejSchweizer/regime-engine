@@ -810,18 +810,19 @@ QA:
 - **Branch:** `pr/PR-229-global-v4-evidence-schema`
 - **Depends on:** PR-210
 - **Allowed:** `src/market_regime_engine/evaluation_statistics/contracts.py`, `src/market_regime_engine/evaluation_statistics/writer.py`, `src/market_regime_engine/evaluation_statistics/render.py`, `tests/unit/evaluation_statistics/test_global_v4_statistics.py`
+- **Status:** complete; GitHub PR #226 and render follow-up #228 merged to `main`.
 
 Acceptance:
 
-- [ ] Versioned global-v4 schema covers all section-2 evidence, including merge tree, M curve, teacher, state-information score primitives, eta diagnostics, prefix winners/NMI, outer teacher/final agreement, validity/stability and deployment-selection lineage.
-- [ ] No raw source rows, secrets, DSNs or model binaries.
-- [ ] Failed fold/run keeps evidence accumulated before failure.
-- [ ] Deterministic finite-only JSON, exact-byte hash, immutable finalize.
-- [ ] Markdown renders enough primitives/formulas for external recomputation.
+- [x] Versioned global-v4 schema covers all section-2 evidence, including merge tree, M curve, teacher, state-information score primitives, eta diagnostics, prefix winners/NMI, outer teacher/final agreement, validity/stability and deployment-selection lineage.
+- [x] No raw source rows, secrets, DSNs or model binaries.
+- [x] Failed fold/run keeps evidence accumulated before failure.
+- [x] Deterministic finite-only JSON, exact-byte hash, immutable finalize.
+- [x] Markdown renders enough primitives/formulas for external recomputation.
 
 QA:
 
-- [ ] Full synthetic v4 dossier round trip; forbidden payload tests; exact hash recomputation from final bytes.
+- [x] Full synthetic v4 dossier round trip; forbidden payload tests; exact hash recomputation from final bytes.
 
 ### PR-230 — Add v4 MLflow hierarchy, plots and stability diagnostics
 
