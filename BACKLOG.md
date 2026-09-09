@@ -616,20 +616,21 @@ QA:
 - **Branch:** `pr/PR-220-same-feature-candidate-ranking`
 - **Depends on:** PR-219
 - **Allowed:** `src/market_regime_engine/evaluation/selection.py`, `src/market_regime_engine/training/candidate_grid.py`, `tests/unit/evaluation/test_selection.py`, `tests/unit/training/test_candidate_grid.py`
+- **Status:** complete; GitHub PR #208 merged to `main`.
 
 Acceptance:
 
-- [ ] Extract one generic same-feature ranking kernel over supplied candidate evaluations/aggregates.
-- [ ] Enforce identical feature vector, source, plan and selection hashes before ranking.
-- [ ] Hard gates, common-valid-fold support, anchored numeric tiers and ranking stages remain exact.
-- [ ] Existing `select_statistical_champion` delegates to the kernel and returns behavior-identical legacy results.
-- [ ] Supports exact Gaussian K2-K5 subsets and full 12-candidate v4 sets without duplicating ranking logic.
+- [x] Extract one generic same-feature ranking kernel over supplied candidate evaluations/aggregates.
+- [x] Enforce identical feature vector, source, plan and selection hashes before ranking.
+- [x] Hard gates, common-valid-fold support, anchored numeric tiers and ranking stages remain exact.
+- [x] Existing `select_statistical_champion` delegates to the kernel and returns behavior-identical legacy results.
+- [x] Supports exact Gaussian K2-K5 subsets and full 12-candidate v4 sets without duplicating ranking logic.
 
 QA:
 
-- [ ] Legacy ranking golden evidence unchanged.
-- [ ] Adversarial invalid-hard-fold case proves common-support fairness.
-- [ ] Input permutation does not change ranked IDs.
+- [x] Legacy ranking golden evidence unchanged.
+- [x] Adversarial invalid-hard-fold case proves common-support fairness.
+- [x] Input permutation does not change ranked IDs.
 
 ### PR-221 — Select provisional Gaussian K*
 
