@@ -516,20 +516,21 @@ QA:
 - **Branch:** `pr/PR-215-global-spearman-distance`
 - **Depends on:** PR-214
 - **Allowed:** `src/market_regime_engine/feature_discovery/distance.py`, `tests/unit/feature_discovery/test_distance.py`
+- **Status:** complete; GitHub PR #200 merged to `main`.
 
 Acceptance:
 
-- [ ] Exact pairwise-complete support and `>=504` gate for every pair.
-- [ ] Average ranks for ties; Spearman is Pearson of those ranks.
-- [ ] Exact clipping/failure semantics from section 2.2.
-- [ ] Symmetric matrix, exact zero diagonal, finite `[0,1]`, canonical feature order.
-- [ ] Persist full support-count matrix and deterministic hash.
-- [ ] Perfect positive and negative monotonic pairs both have zero distance.
+- [x] Exact pairwise-complete support and `>=504` gate for every pair.
+- [x] Average ranks for ties; Spearman is Pearson of those ranks.
+- [x] Exact clipping/failure semantics from section 2.2.
+- [x] Symmetric matrix, exact zero diagonal, finite `[0,1]`, canonical feature order.
+- [x] Persist full support-count matrix and deterministic hash.
+- [x] Perfect positive and negative monotonic pairs both have zero distance.
 
 QA:
 
-- [ ] Independent slow implementation recomputes every pair of a >=50-feature fixture.
-- [ ] Tied-rank hand calculation and row-permutation invariance proof.
+- [x] Independent slow implementation recomputes every pair of a >=50-feature fixture.
+- [x] Tied-rank hand calculation and row-permutation invariance proof.
 
 ### PR-216 — Build one deterministic hierarchy and select M*
 
