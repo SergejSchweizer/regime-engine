@@ -41,6 +41,14 @@ The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstrea
 
 Feature columns are nullable `DOUBLE PRECISION`. SQL NULL is permitted by the upstream source; NaN/infinity is invalid.
 
+For global discovery v4, the engine reads `information_schema.columns` in the
+same repeatable-read transaction as sync-state and feature rows. The catalog
+must contain exactly one `timestamp_m1` column of PostgreSQL timestamp-with-time
+zone type; every other table column is a feature and must be
+`DOUBLE PRECISION`. Feature entries are ordered by `ordinal_position`, and the
+catalog snapshot hash includes the source lineage and each ordered
+name/type/ordinal triple. No feature-name allowlist is used in this mode.
+
 ## Dedicated least-privilege identity
 
 Production runtime username is exactly:
@@ -114,6 +122,11 @@ BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
   validate lineage/source bounds
 COMMIT;
 ```
+
+The dynamic v4 catalog and requested rows are materialized before the
+transaction closes. A catalog change therefore becomes visible as one new
+source snapshot; the engine does not keep a database transaction open while
+fitting or evaluating models.
 
 The PostgreSQL transaction ends after source materialization. HMM fitting/evaluation must not hold a long-lived database transaction open.
 
