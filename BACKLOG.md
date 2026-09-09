@@ -701,17 +701,18 @@ QA:
 - **Branch:** `pr/PR-224-cluster-regime-winners`
 - **Depends on:** PR-216, PR-223
 - **Allowed:** `src/market_regime_engine/feature_discovery/winners.py`, `tests/unit/feature_discovery/test_winners.py`
+- **Status:** complete; GitHub PR #216 merged to `main`.
 
 Acceptance:
 
-- [ ] Exactly section-2.8 tier order; globally anchored tolerance tiers, never pairwise chaining.
-- [ ] Every selected cluster requires >=1 eligible score.
-- [ ] Exactly M* unique winners; prototype has no privilege.
-- [ ] Persist every candidate/tier/tie decision and canonical winner order.
+- [x] Exactly section-2.8 tier order; globally anchored tolerance tiers, never pairwise chaining.
+- [x] Every selected cluster requires >=1 eligible score.
+- [x] Exactly M* unique winners; prototype has no privilege.
+- [x] Persist every candidate/tier/tie decision and canonical winner order.
 
 QA:
 
-- [ ] Prototype-loses adversarial case; `0/0.75e-12/1.5e-12` transitivity case; full cluster table compute.
+- [x] Prototype-loses adversarial case; `0/0.75e-12/1.5e-12` transitivity case; full cluster table compute.
 
 ### PR-225 — Implement pure soft-regime-NMI agreement
 
