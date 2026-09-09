@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from math import isfinite
 from statistics import fmean, pstdev
 
+from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.training.candidate_grid import (
     CANDIDATE_VALID_FOLD_RATE_GATE,
     RANKING_ABS_TOLERANCE,
@@ -138,12 +140,12 @@ def _rank(accepted: tuple[CandidateAggregate, ...]) -> tuple[CandidateAggregate,
 
 
 def _common_support_ranked_aggregates(
-    grid: CandidateGridEvaluation,
+    evaluation_sequence: tuple[WalkForwardEvaluation, ...],
     accepted: tuple[CandidateAggregate, ...],
 ) -> tuple[tuple[CandidateAggregate, ...], tuple[str, ...], float]:
     evaluations = {
         evaluation.candidate_id: evaluation
-        for evaluation in grid.evaluations
+        for evaluation in evaluation_sequence
         if evaluation.candidate_id in {candidate.candidate_id for candidate in accepted}
     }
     if any(
@@ -191,19 +193,70 @@ def _common_support_ranked_aggregates(
     return tuple(ranked_inputs), ordered_ids, rate
 
 
-def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalChampionSelection:
-    """Apply hard gates then the exact seven-stage EVALUATION ranking."""
+def _validate_same_feature_inputs(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    aggregates: tuple[CandidateAggregate, ...],
+) -> None:
+    if not evaluations or not aggregates or len(evaluations) != len(aggregates):
+        raise ValueError(
+            "same-feature ranking requires matching non-empty evaluations and aggregates"
+        )
+    evaluation_by_id = {evaluation.candidate_id: evaluation for evaluation in evaluations}
+    aggregate_by_id = {aggregate.candidate_id: aggregate for aggregate in aggregates}
+    if len(evaluation_by_id) != len(evaluations) or len(aggregate_by_id) != len(aggregates):
+        raise ValueError("same-feature ranking candidate IDs must be unique")
+    if set(evaluation_by_id) != set(aggregate_by_id):
+        raise ValueError("same-feature ranking evaluation and aggregate IDs differ")
+    first = evaluations[0]
+    shared = (
+        first.feature_order,
+        first.source_build_id,
+        first.evaluation_plan_hash,
+        first.feature_selection_definition_hash,
+        first.feature_selection_execution_hash,
+    )
+    if not first.feature_order or len(set(first.feature_order)) != len(first.feature_order):
+        raise ValueError("same-feature ranking feature order must be non-empty and duplicate-free")
+    first_fold_ids = tuple(fold.fold_id for fold in first.folds)
+    for evaluation in evaluations:
+        current = (
+            evaluation.feature_order,
+            evaluation.source_build_id,
+            evaluation.evaluation_plan_hash,
+            evaluation.feature_selection_definition_hash,
+            evaluation.feature_selection_execution_hash,
+        )
+        if current != shared:
+            raise ValueError(
+                "same-feature ranking requires identical feature vector, source, plan, "
+                "and selection hashes"
+            )
+        if tuple(fold.fold_id for fold in evaluation.folds) != first_fold_ids:
+            raise ValueError("same-feature ranking requires identical planned fold identities")
+        aggregate = aggregate_by_id[evaluation.candidate_id]
+        if aggregate.state_count != evaluation.state_count:
+            raise ValueError("same-feature ranking evaluation and aggregate state counts differ")
 
+
+def rank_same_feature_candidates(
+    evaluations: Sequence[WalkForwardEvaluation],
+    aggregates: Sequence[CandidateAggregate],
+) -> StatisticalChampionSelection:
+    """Rank supplied candidates only when their statistical feature contract is identical."""
+
+    evaluation_tuple = tuple(evaluations)
+    aggregate_tuple = tuple(aggregates)
+    _validate_same_feature_inputs(evaluation_tuple, aggregate_tuple)
     rejection_map = {
-        candidate.candidate_id: _rejections(candidate) for candidate in grid.aggregates
+        candidate.candidate_id: _rejections(candidate) for candidate in aggregate_tuple
     }
     accepted = tuple(
-        candidate for candidate in grid.aggregates if not rejection_map[candidate.candidate_id]
+        candidate for candidate in aggregate_tuple if not rejection_map[candidate.candidate_id]
     )
     if not accepted:
         raise ValueError("no candidate passes statistical hard gates")
     ranking_inputs, common_valid_fold_ids, common_valid_fold_rate = (
-        _common_support_ranked_aggregates(grid, accepted)
+        _common_support_ranked_aggregates(evaluation_tuple, accepted)
     )
     ranked = _rank(ranking_inputs)
     rank_map = {candidate.candidate_id: index for index, candidate in enumerate(ranked, start=1)}
@@ -215,7 +268,7 @@ def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalCha
             rejection_reasons=rejection_map[candidate.candidate_id],
             rank=rank_map.get(candidate.candidate_id),
         )
-        for candidate in grid.aggregates
+        for candidate in aggregate_tuple
     )
     champion = ranked[0]
     return StatisticalChampionSelection(
@@ -227,3 +280,12 @@ def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalCha
         common_valid_fold_count=len(common_valid_fold_ids),
         common_valid_fold_rate=common_valid_fold_rate,
     )
+
+
+def select_statistical_champion(grid: CandidateGridEvaluation) -> StatisticalChampionSelection:
+    """Apply hard gates then the exact seven-stage EVALUATION ranking."""
+
+    return rank_same_feature_candidates(grid.evaluations, grid.aggregates)
+
+
+rank_candidates_same_feature = rank_same_feature_candidates
