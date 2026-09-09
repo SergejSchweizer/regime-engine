@@ -223,11 +223,11 @@ def _configuration_hash(
             clusters.solution_hash,
             content_hash(prototypes),
             teacher.reference_hash,
-            content_hash(scores),
+            tuple(content_hash(score) for score in scores),
             content_hash(winners),
             content_hash(prefixes),
-            final_grid.candidate_grid,
-            final_grid.selection,
+            content_hash(final_grid.candidate_grid),
+            content_hash(final_grid.selection),
         )
     )
 
