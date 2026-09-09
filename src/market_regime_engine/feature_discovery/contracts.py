@@ -573,8 +573,8 @@ class ClusterSolution:
             raise ValueError("silhouette curve is required")
         for _count, value in self.silhouette_curve:
             _finite(value, "silhouette")
-            if not 0.0 <= value <= 1.0:
-                raise ValueError("silhouette must be in [0,1]")
+            if not -1.0 <= value <= 1.0:
+                raise ValueError("silhouette must be in [-1,1]")
         _finite(self.selected_silhouette, "selected_silhouette")
         if self.selected_silhouette <= MIN_SILHOUETTE:
             raise ValueError("selected silhouette must be strictly positive")
