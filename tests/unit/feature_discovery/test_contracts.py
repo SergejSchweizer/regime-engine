@@ -781,11 +781,17 @@ def test_remaining_contract_boundaries_fail_closed() -> None:
         feature_ordinals=(("f0", 1), ("f1", 2), ("f2", 3), ("f3", 4)),
     )
     assert cluster.solution_hash
+    negative_candidate_silhouette = replace(
+        cluster,
+        silhouette_curve=((2, 0.4), (3, -0.3)),
+    )
+    assert negative_candidate_silhouette.selected_silhouette == 0.4
     reject(
         lambda: replace(cluster, candidate_count=2),
         lambda: replace(cluster, selected_count=3),
         lambda: replace(cluster, silhouette_curve=((2, 0.4),)),
         lambda: replace(cluster, silhouette_curve=((2, 1.1), (3, 0.3))),
+        lambda: replace(cluster, silhouette_curve=((2, 0.4), (3, -1.1))),
         lambda: replace(cluster, selected_silhouette=0.0),
         lambda: replace(cluster, selected_silhouette=0.2),
         lambda: replace(cluster, memberships=(("cluster_000", ("f0",)),)),
