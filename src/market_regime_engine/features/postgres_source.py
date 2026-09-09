@@ -12,6 +12,8 @@ from psycopg import IsolationLevel, sql
 
 from market_regime_engine.contracts import DATA_TIME_SEMANTICS, SourceLineage
 from market_regime_engine.features.ports import (
+    FeatureCatalogEntry,
+    FeatureCatalogSnapshot,
     FeatureRequest,
     FeatureRow,
     FeatureSnapshot,
@@ -57,24 +59,40 @@ class PostgresFeatureSource:
     def __init__(
         self,
         connect: Callable[[], ConnectionLike],
-        registered_feature_names: Iterable[str],
+        registered_feature_names: Iterable[str] | None = None,
         *,
         expected_schema_version: int = 2,
         expected_feature_version: int = 1,
     ) -> None:
         self._connect = connect
-        self._registered = frozenset(registered_feature_names)
+        self._registered = frozenset(registered_feature_names or ())
         self._expected_schema_version = expected_schema_version
         self._expected_feature_version = expected_feature_version
-        if not self._registered:
-            raise ValueError("registered_feature_names cannot be empty")
         if any(_IDENTIFIER_RE.fullmatch(name) is None for name in self._registered):
             raise ValueError("registered feature names must be safe SQL identifiers")
         if expected_schema_version < 1 or expected_feature_version < 1:
             raise ValueError("expected source versions must be positive")
 
     def read(self, request: FeatureRequest) -> FeatureSnapshot:
-        self._validate_requested_features(request.feature_names)
+        if self._registered:
+            self._validate_requested_features(request.feature_names)
+        _, snapshot = self._read_snapshot(request, include_catalog=False)
+        return snapshot
+
+    def read_with_catalog(
+        self, request: FeatureRequest
+    ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]:
+        """Read a dynamic catalog and rows in one repeatable-read transaction."""
+
+        if self._registered:
+            raise ValueError("read_with_catalog requires dynamic catalog mode")
+        catalog, snapshot = self._read_snapshot(request, include_catalog=True)
+        assert catalog is not None
+        return catalog, snapshot
+
+    def _read_snapshot(
+        self, request: FeatureRequest, *, include_catalog: bool
+    ) -> tuple[FeatureCatalogSnapshot | None, FeatureSnapshot]:
         connection = self._connect()
         try:
             # psycopg starts a transaction automatically on the first query. Set
@@ -84,6 +102,9 @@ class PostgresFeatureSource:
             connection.isolation_level = IsolationLevel.REPEATABLE_READ
             with connection.cursor() as cursor:
                 lineage = self._read_lineage(cursor)
+                catalog = self._read_catalog(cursor, lineage) if not self._registered else None
+                if catalog is not None:
+                    self._validate_requested_features(request.feature_names, catalog.feature_names)
                 raw_rows = self._read_rows(cursor, request)
                 snapshot = self._materialize(request, lineage, raw_rows)
             connection.commit()
@@ -92,13 +113,18 @@ class PostgresFeatureSource:
             raise
         finally:
             connection.close()
-        return snapshot
+        if include_catalog and catalog is None:
+            raise ValueError("dynamic catalog was not materialized")
+        return catalog, snapshot
 
-    def _validate_requested_features(self, names: tuple[str, ...]) -> None:
+    def _validate_requested_features(
+        self, names: tuple[str, ...], registered: Iterable[str] | None = None
+    ) -> None:
+        available = self._registered if registered is None else frozenset(registered)
         invalid = [
             name
             for name in names
-            if name not in self._registered or _IDENTIFIER_RE.fullmatch(name) is None
+            if name not in available or _IDENTIFIER_RE.fullmatch(name) is None
         ]
         if invalid:
             raise ValueError(f"unregistered or invalid feature columns: {invalid}")
@@ -152,6 +178,46 @@ class PostgresFeatureSource:
             min_timestamp=min_timestamp,
             max_timestamp=max_timestamp,
         )
+
+    @staticmethod
+    def _read_catalog(cursor: CursorLike, lineage: SourceLineage) -> FeatureCatalogSnapshot:
+        query = sql.SQL(
+            "SELECT column_name, ordinal_position, data_type, udt_name "
+            "FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s "
+            "ORDER BY ordinal_position ASC"
+        )
+        cursor.execute(query, ("regime_loader", "regime_features_daily"))
+        columns = cursor.fetchall()
+        if not columns:
+            raise ValueError("feature table catalog is empty")
+        timestamp_columns = [row for row in columns if len(row) >= 1 and row[0] == "timestamp_m1"]
+        if len(timestamp_columns) != 1:
+            raise ValueError("feature table must contain exactly one timestamp_m1 column")
+        timestamp = timestamp_columns[0]
+        if (
+            len(timestamp) < 4
+            or timestamp[2] != "timestamp with time zone"
+            or timestamp[3] != "timestamptz"
+        ):
+            raise ValueError("timestamp_m1 must be PostgreSQL timestamp-with-time-zone")
+        entries: list[FeatureCatalogEntry] = []
+        for row in columns:
+            if len(row) != 4:
+                raise ValueError("unexpected information_schema column shape")
+            name, ordinal, data_type, _udt_name = row
+            if name == "timestamp_m1":
+                continue
+            if data_type != "double precision":
+                raise ValueError(f"unsupported Gold feature type for {name}: {data_type}")
+            if not isinstance(name, str) or _IDENTIFIER_RE.fullmatch(name) is None:
+                raise ValueError("catalog contains an unsafe feature identifier")
+            if not isinstance(ordinal, int) or isinstance(ordinal, bool):
+                raise ValueError("catalog ordinal must be an integer")
+            entries.append(FeatureCatalogEntry(name, ordinal))
+        if not entries:
+            raise ValueError("feature table has no dynamic Gold feature columns")
+        return FeatureCatalogSnapshot.from_entries(lineage, "timestamp_m1", entries)
 
     @staticmethod
     def _read_rows(
