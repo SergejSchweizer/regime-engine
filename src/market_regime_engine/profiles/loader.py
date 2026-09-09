@@ -11,6 +11,7 @@ import yaml
 
 from market_regime_engine.profiles.config import (
     EvaluationGates,
+    FeatureDiscoveryConfig,
     FeatureSelectionConfig,
     GaussianHMMConfig,
     GMMHMMConfig,
@@ -22,6 +23,7 @@ from market_regime_engine.profiles.config import (
 type ProfileDataclass = (
     ModelProfile
     | FeatureSelectionConfig
+    | FeatureDiscoveryConfig
     | WalkForwardConfig
     | GaussianHMMConfig
     | GMMHMMConfig
@@ -55,15 +57,32 @@ def _require_mapping(value: Any, field: str) -> Mapping[str, Any]:
 
 def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     top = _strict_kwargs(ModelProfile, raw)
-    feature_selection_raw = _require_mapping(top.pop("feature_selection"), "feature_selection")
+    feature_selection_value = top.pop("feature_selection", None)
+    feature_discovery_value = top.pop("feature_discovery", None)
     walk_forward_raw = _require_mapping(top.pop("walk_forward"), "walk_forward")
     gaussian_hmm_raw = _require_mapping(top.pop("gaussian_hmm"), "gaussian_hmm")
     gates_raw = _require_mapping(top.pop("gates"), "gates")
     gmm_hmms_raw = top.pop("gmm_hmms", ())
     student_t_raw = top.pop("student_t_hmm", None)
 
-    fs_kwargs = _strict_kwargs(FeatureSelectionConfig, feature_selection_raw)
-    fs_kwargs["static_features"] = tuple(fs_kwargs["static_features"])
+    feature_selection = None
+    if feature_selection_value is not None:
+        feature_selection_raw = _require_mapping(feature_selection_value, "feature_selection")
+        fs_kwargs = _strict_kwargs(FeatureSelectionConfig, feature_selection_raw)
+        fs_kwargs["static_features"] = tuple(fs_kwargs["static_features"])
+        feature_selection = FeatureSelectionConfig(**fs_kwargs)
+    feature_discovery = None
+    if feature_discovery_value is not None:
+        feature_discovery_raw = _require_mapping(feature_discovery_value, "feature_discovery")
+        discovery_kwargs = _strict_kwargs(FeatureDiscoveryConfig, feature_discovery_raw)
+        discovery_kwargs["provisional_state_counts"] = tuple(
+            discovery_kwargs["provisional_state_counts"]
+        )
+        discovery_kwargs["prefix_state_counts"] = tuple(discovery_kwargs["prefix_state_counts"])
+        discovery_kwargs["score_tie_order"] = tuple(discovery_kwargs["score_tie_order"])
+        discovery_kwargs["cross_l_tie_breaks"] = tuple(discovery_kwargs["cross_l_tie_breaks"])
+        discovery_kwargs["final_candidate_ids"] = tuple(discovery_kwargs["final_candidate_ids"])
+        feature_discovery = FeatureDiscoveryConfig(**discovery_kwargs)
     hmm_kwargs = _strict_kwargs(GaussianHMMConfig, gaussian_hmm_raw)
     hmm_kwargs["candidate_states"] = tuple(hmm_kwargs["candidate_states"])
     hmm_kwargs["seeds"] = tuple(hmm_kwargs["seeds"])
@@ -84,7 +103,8 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
         student_t_hmm = StudentTHMMConfig(**student_kwargs)
     return ModelProfile(
         **top,
-        feature_selection=FeatureSelectionConfig(**fs_kwargs),
+        feature_selection=feature_selection,
+        feature_discovery=feature_discovery,
         walk_forward=WalkForwardConfig(**_strict_kwargs(WalkForwardConfig, walk_forward_raw)),
         gaussian_hmm=GaussianHMMConfig(**hmm_kwargs),
         gates=EvaluationGates(**_strict_kwargs(EvaluationGates, gates_raw)),
