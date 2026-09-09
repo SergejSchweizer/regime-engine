@@ -832,15 +832,16 @@ QA:
 - **Branch:** `pr/PR-230-global-v4-mlflow-tracking`
 - **Depends on:** PR-228, PR-229
 - **Allowed:** `src/market_regime_engine/mlflow_support/evaluation_tracking.py`, `src/market_regime_engine/evaluations/plots.py`, `PLOT_STYLE.md`, `tests/unit/mlflow_support/test_global_v4_tracking.py`, `tests/unit/evaluations/test_global_v4_plots.py`
+- **Status:** implementation merged in GitHub PR #231 (`c2d9b2e`); the full PR-228 synthetic tracking QA remains pending for PR-231.
 
 Acceptance:
 
-- [ ] Parent -> outer-fold hierarchy exposes quality, distance/clustering, prototypes, teacher, feature information scores, prefix search, final grid, teacher/final Outer TEST agreement and failure evidence.
-- [ ] Exact local statistics JSON logged back with byte/hash parity.
-- [ ] Plots include quality, silhouette M curve, cluster size, state-information rank with eta diagnostic/prototype/winner markers, prefix soft-NMI-vs-L, final 12-model same-vector comparison, outer soft-NMI history, M*/L* history, feature-selection frequency and adjacent-fold cluster stability.
-- [ ] No cross-L or cross-outer-fold raw PLL plot/rank.
-- [ ] Operational MLflow IDs/timestamps do not enter canonical statistical hashes.
-- [ ] Tracking/plot failure fails evaluation; no best-effort success.
+- [x] Parent -> outer-fold hierarchy exposes quality, distance/clustering, prototypes, teacher, feature information scores, prefix search, final grid, teacher/final Outer TEST agreement and failure evidence.
+- [x] Exact local statistics JSON logged back with byte/hash parity.
+- [x] Plots include quality, silhouette M curve, cluster size, state-information rank with eta diagnostic/prototype/winner markers, prefix soft-NMI-vs-L, final 12-model same-vector comparison, outer soft-NMI history, M*/L* history, feature-selection frequency and adjacent-fold cluster stability.
+- [x] No cross-L or cross-outer-fold raw PLL plot/rank.
+- [x] Operational MLflow IDs/timestamps do not enter canonical statistical hashes.
+- [x] Tracking/plot failure fails evaluation; no best-effort success.
 
 QA:
 
