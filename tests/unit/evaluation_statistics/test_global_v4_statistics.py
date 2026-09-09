@@ -14,6 +14,7 @@ from market_regime_engine.evaluation_statistics import (
     StatisticsWriter,
     Status,
 )
+from market_regime_engine.evaluation_statistics.render import render_statistics
 
 HASH = "a" * 64
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -129,3 +130,25 @@ def test_global_v4_evidence_can_be_written_as_immutable_statistics_dossier(tmp_p
     assert '"evaluation_id":"global_regime_v4"' in (directory / "statistics.json").read_text(
         encoding="utf-8"
     )
+
+
+def test_global_v4_markdown_renders_evidence_and_recomputable_formulas() -> None:
+    statistics = RunStatistics(
+        evaluation_id=GLOBAL_V4_EVALUATION_ID,
+        mlflow_run_id="run-v4",
+        run_type=RunType.PARENT,
+        run_name="global-v4",
+        status=Status.FINISHED,
+        started_at=NOW,
+        ended_at=NOW,
+        evidence=global_evidence().evidence,
+    )
+
+    rendered = render_statistics(statistics)
+
+    assert "## Evidence" in rendered
+    assert "quality" in rendered
+    assert "selected_l" in rendered
+    assert "d_ij = 1 - |rho_ij|" in rendered
+    assert "SIR = I(X; Z) / H(Z)" in rendered
+    assert "exact shared timestamps" in rendered
