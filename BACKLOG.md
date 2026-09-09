@@ -659,19 +659,20 @@ QA:
 - **Branch:** `pr/PR-222-causal-teacher-reference`
 - **Depends on:** PR-221
 - **Allowed:** `src/market_regime_engine/evaluations/teacher_reference.py`, `tests/unit/evaluations/test_teacher_reference.py`
+- **Status:** complete; GitHub PR #212 merged to `main`.
 
 Acceptance:
 
-- [ ] Collect selected K's aligned causal filtered probabilities only from valid inner TEST rows, ordered and unique.
-- [ ] Every probability row finite/nonnegative/normalized within 1e-10.
-- [ ] Persist teacher K, prototypes, inner folds, source/plan hashes and teacher hash.
-- [ ] Add reusable helper to refit the already-frozen teacher K/prototype tuple on a supplied TRAIN and continue once into supplied TEST; helper never reselects M/K.
-- [ ] No smoothed/Viterbi teacher weights.
+- [x] Collect selected K's aligned causal filtered probabilities only from valid inner TEST rows, ordered and unique.
+- [x] Every probability row finite/nonnegative/normalized within 1e-10.
+- [x] Persist teacher K, prototypes, inner folds, source/plan hashes and teacher hash.
+- [x] Add reusable helper to refit the already-frozen teacher K/prototype tuple on a supplied TRAIN and continue once into supplied TEST; helper never reselects M/K.
+- [x] No smoothed/Viterbi teacher weights.
 
 QA:
 
-- [ ] Independent forward recursion reproduces every probability in a two-state fixture.
-- [ ] Frozen-teacher refit helper proves no reselection call and future mutation invariance.
+- [x] Independent forward recursion reproduces every probability in a two-state fixture.
+- [x] Frozen-teacher refit helper proves no reselection call and future mutation invariance.
 
 ### PR-223 — Score all raw features with state information ratio + eta² diagnostic
 
