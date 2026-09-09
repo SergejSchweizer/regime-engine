@@ -8,6 +8,70 @@ from hashlib import sha256
 from math import isclose
 from typing import Any
 
+from market_regime_engine.feature_discovery.contracts import (
+    CLUSTER_COUNT_MAX,
+    CLUSTER_COUNT_MIN,
+    CLUSTER_COUNT_TIE_BREAK,
+    FEATURE_SCORE_BIN_COUNT,
+    FEATURE_SCORE_TIE_TOLERANCE,
+    FINAL_CANDIDATE_IDS,
+    INNER_ALLOW_PARTIAL_FINAL_TEST,
+    INNER_STEP_SOURCE_OBSERVATIONS,
+    INNER_TEST_SOURCE_OBSERVATIONS,
+    INNER_TRAIN_SOURCE_OBSERVATIONS,
+    MAX_PREFIX_LENGTH,
+    MIN_ELIGIBLE_FEATURES,
+    MIN_FEATURE_COVERAGE,
+    MIN_FEATURE_SCORE_COVERAGE,
+    MIN_FEATURE_SCORE_OBSERVATIONS,
+    MIN_FEATURE_VARIANCE,
+    MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+    MIN_MODEL_TEST_OBSERVATIONS,
+    MIN_MODEL_TRAIN_OBSERVATIONS,
+    MIN_OUTER_VALID_FOLD_RATE,
+    MIN_OUTER_VALID_FOLDS,
+    MIN_PAIRWISE_OBSERVATIONS,
+    MIN_PREFIX_LENGTH,
+    MIN_SILHOUETTE,
+    MIN_TEACHER_SHARED_SUPPORT,
+    OUTER_ALLOW_PARTIAL_FINAL_TEST,
+    OUTER_STEP_SOURCE_OBSERVATIONS,
+    OUTER_TEST_SOURCE_OBSERVATIONS,
+    OUTER_TRAIN_SOURCE_OBSERVATIONS,
+    POPULATION_VARIANCE_DDOF,
+    PREFIX_NMI_TIE_TOLERANCE,
+    RHO_CLIP_TOLERANCE,
+    SILHOUETTE_SINGLETON_VALUE,
+    SILHOUETTE_TIE_TOLERANCE,
+    V4_CLUSTER_ID_ORDERING,
+    V4_CLUSTERING_METHOD,
+    V4_CROSS_L_LIKELIHOOD_FORBIDDEN,
+    V4_CROSS_L_TIE_BREAKS,
+    V4_DEPLOYMENT_SELECTION_SCOPE,
+    V4_DISTANCE_METHOD,
+    V4_EVALUATION_ID,
+    V4_EXCLUDED_SOURCE_COLUMN,
+    V4_FEATURE_DISCOVERY_POLICY,
+    V4_FEATURE_ORDERING,
+    V4_FEATURE_REGIME_SCORE,
+    V4_FEATURE_SCORE_DIAGNOSTIC,
+    V4_FEATURE_UNIVERSE_MODE,
+    V4_GAUSSIAN_PARAMETER_BOUND,
+    V4_MISSING_VALUE_POLICY,
+    V4_OUTER_STATE_IDENTITY,
+    V4_PREFIX_LIKELIHOOD_SCOPE,
+    V4_PREFIX_MODEL_FAMILY,
+    V4_PREFIX_SELECTION_TARGET,
+    V4_PREFIX_STATE_COUNTS,
+    V4_PRODUCTION_STATE_IDENTITY,
+    V4_PROVISIONAL_MODEL_FAMILY,
+    V4_PROVISIONAL_STATE_COUNTS,
+    V4_REDUNDANCY_MEASURE,
+    V4_SCORE_TIE_ORDER,
+    V4_SOURCE_NAN_INF_POLICY,
+    V4_TEMPORARY_PROTOTYPE_METHOD,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FeatureSelectionConfig:
@@ -188,16 +252,185 @@ class EvaluationGates:
 
 
 @dataclass(frozen=True, slots=True)
+class FeatureDiscoveryConfig:
+    """Explicit, semantic-free configuration for global discovery v4."""
+
+    evaluation_id: str
+    policy_id: str
+    feature_universe_mode: str
+    excluded_source_column: str
+    feature_ordering: str
+    minimum_feature_coverage: float
+    population_variance_ddof: int
+    minimum_feature_variance: float
+    minimum_eligible_features: int
+    minimum_pairwise_observations: int
+    redundancy_measure: str
+    distance_method: str
+    clustering_method: str
+    rho_clip_tolerance: float
+    cluster_count_min: int
+    cluster_count_max: int
+    silhouette_singleton_value: float
+    silhouette_tie_tolerance: float
+    minimum_silhouette: float
+    cluster_count_tie_break: str
+    temporary_prototype_method: str
+    cluster_id_ordering: str
+    provisional_model_family: str
+    provisional_state_counts: tuple[int, ...]
+    gaussian_parameter_bound: str
+    feature_score_coverage: float
+    feature_score_observations: int
+    feature_score_bin_count: int
+    feature_regime_score: str
+    feature_score_diagnostic: str
+    feature_score_tie_tolerance: float
+    score_tie_order: tuple[str, ...]
+    minimum_prefix_length: int
+    maximum_prefix_length: int
+    prefix_model_family: str
+    prefix_state_counts: tuple[int, ...]
+    prefix_selection_target: str
+    minimum_teacher_shared_support: float
+    prefix_nmi_tie_tolerance: float
+    cross_l_tie_breaks: tuple[str, ...]
+    cross_l_likelihood_forbidden: bool
+    prefix_likelihood_scope: str
+    inner_train_source_observations: int
+    inner_test_source_observations: int
+    inner_step_source_observations: int
+    inner_partial_final_test: bool
+    minimum_model_train_observations: int
+    minimum_model_test_observations: int
+    minimum_model_clock_valid_fold_rate: float
+    outer_train_source_observations: int
+    outer_test_source_observations: int
+    outer_step_source_observations: int
+    outer_partial_final_test: bool
+    minimum_outer_valid_fold_rate: float
+    minimum_outer_valid_folds: int
+    outer_state_identity: str
+    production_state_identity: str
+    deployment_selection_scope: str
+    source_nan_inf_policy: str
+    missing_value_policy: str
+    final_candidate_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        string_fields = (
+            "evaluation_id",
+            "policy_id",
+            "feature_universe_mode",
+            "excluded_source_column",
+            "feature_ordering",
+            "redundancy_measure",
+            "distance_method",
+            "clustering_method",
+            "cluster_count_tie_break",
+            "temporary_prototype_method",
+            "cluster_id_ordering",
+            "provisional_model_family",
+            "gaussian_parameter_bound",
+            "feature_regime_score",
+            "feature_score_diagnostic",
+            "prefix_model_family",
+            "prefix_selection_target",
+            "prefix_likelihood_scope",
+            "outer_state_identity",
+            "production_state_identity",
+            "deployment_selection_scope",
+            "source_nan_inf_policy",
+            "missing_value_policy",
+        )
+        for field_name in string_fields:
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value or value.strip() != value:
+                raise ValueError(f"{field_name} must be a non-empty trimmed string")
+        expected = {
+            "evaluation_id": V4_EVALUATION_ID,
+            "policy_id": V4_FEATURE_DISCOVERY_POLICY,
+            "feature_universe_mode": V4_FEATURE_UNIVERSE_MODE,
+            "excluded_source_column": V4_EXCLUDED_SOURCE_COLUMN,
+            "feature_ordering": V4_FEATURE_ORDERING,
+            "minimum_feature_coverage": MIN_FEATURE_COVERAGE,
+            "population_variance_ddof": POPULATION_VARIANCE_DDOF,
+            "minimum_feature_variance": MIN_FEATURE_VARIANCE,
+            "minimum_eligible_features": MIN_ELIGIBLE_FEATURES,
+            "minimum_pairwise_observations": MIN_PAIRWISE_OBSERVATIONS,
+            "redundancy_measure": V4_REDUNDANCY_MEASURE,
+            "distance_method": V4_DISTANCE_METHOD,
+            "clustering_method": V4_CLUSTERING_METHOD,
+            "rho_clip_tolerance": RHO_CLIP_TOLERANCE,
+            "cluster_count_min": CLUSTER_COUNT_MIN,
+            "cluster_count_max": CLUSTER_COUNT_MAX,
+            "silhouette_singleton_value": SILHOUETTE_SINGLETON_VALUE,
+            "silhouette_tie_tolerance": SILHOUETTE_TIE_TOLERANCE,
+            "minimum_silhouette": MIN_SILHOUETTE,
+            "cluster_count_tie_break": CLUSTER_COUNT_TIE_BREAK,
+            "temporary_prototype_method": V4_TEMPORARY_PROTOTYPE_METHOD,
+            "cluster_id_ordering": V4_CLUSTER_ID_ORDERING,
+            "provisional_model_family": V4_PROVISIONAL_MODEL_FAMILY,
+            "provisional_state_counts": V4_PROVISIONAL_STATE_COUNTS,
+            "gaussian_parameter_bound": V4_GAUSSIAN_PARAMETER_BOUND,
+            "feature_score_coverage": MIN_FEATURE_SCORE_COVERAGE,
+            "feature_score_observations": MIN_FEATURE_SCORE_OBSERVATIONS,
+            "feature_score_bin_count": FEATURE_SCORE_BIN_COUNT,
+            "feature_regime_score": V4_FEATURE_REGIME_SCORE,
+            "feature_score_diagnostic": V4_FEATURE_SCORE_DIAGNOSTIC,
+            "feature_score_tie_tolerance": FEATURE_SCORE_TIE_TOLERANCE,
+            "score_tie_order": V4_SCORE_TIE_ORDER,
+            "minimum_prefix_length": MIN_PREFIX_LENGTH,
+            "maximum_prefix_length": MAX_PREFIX_LENGTH,
+            "prefix_model_family": V4_PREFIX_MODEL_FAMILY,
+            "prefix_state_counts": V4_PREFIX_STATE_COUNTS,
+            "prefix_selection_target": V4_PREFIX_SELECTION_TARGET,
+            "minimum_teacher_shared_support": MIN_TEACHER_SHARED_SUPPORT,
+            "prefix_nmi_tie_tolerance": PREFIX_NMI_TIE_TOLERANCE,
+            "cross_l_tie_breaks": V4_CROSS_L_TIE_BREAKS,
+            "cross_l_likelihood_forbidden": V4_CROSS_L_LIKELIHOOD_FORBIDDEN,
+            "prefix_likelihood_scope": V4_PREFIX_LIKELIHOOD_SCOPE,
+            "inner_train_source_observations": INNER_TRAIN_SOURCE_OBSERVATIONS,
+            "inner_test_source_observations": INNER_TEST_SOURCE_OBSERVATIONS,
+            "inner_step_source_observations": INNER_STEP_SOURCE_OBSERVATIONS,
+            "inner_partial_final_test": INNER_ALLOW_PARTIAL_FINAL_TEST,
+            "minimum_model_train_observations": MIN_MODEL_TRAIN_OBSERVATIONS,
+            "minimum_model_test_observations": MIN_MODEL_TEST_OBSERVATIONS,
+            "minimum_model_clock_valid_fold_rate": MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+            "outer_train_source_observations": OUTER_TRAIN_SOURCE_OBSERVATIONS,
+            "outer_test_source_observations": OUTER_TEST_SOURCE_OBSERVATIONS,
+            "outer_step_source_observations": OUTER_STEP_SOURCE_OBSERVATIONS,
+            "outer_partial_final_test": OUTER_ALLOW_PARTIAL_FINAL_TEST,
+            "minimum_outer_valid_fold_rate": MIN_OUTER_VALID_FOLD_RATE,
+            "minimum_outer_valid_folds": MIN_OUTER_VALID_FOLDS,
+            "outer_state_identity": V4_OUTER_STATE_IDENTITY,
+            "production_state_identity": V4_PRODUCTION_STATE_IDENTITY,
+            "deployment_selection_scope": V4_DEPLOYMENT_SELECTION_SCOPE,
+            "source_nan_inf_policy": V4_SOURCE_NAN_INF_POLICY,
+            "missing_value_policy": V4_MISSING_VALUE_POLICY,
+            "final_candidate_ids": FINAL_CANDIDATE_IDS,
+        }
+        for field_name, expected_value in expected.items():
+            if getattr(self, field_name) != expected_value:
+                raise ValueError(
+                    f"v4 discovery field {field_name} differs from the pinned contract"
+                )
+        if not self.final_candidate_ids:
+            raise ValueError("v4 discovery requires a non-empty final candidate universe")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelProfile:
     profile_id: str
     profile_config_version: int
     registered_model: str
     production_alias: str
     challenger_alias: str
-    feature_selection: FeatureSelectionConfig
     walk_forward: WalkForwardConfig
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
+    feature_selection: FeatureSelectionConfig | None = None
+    feature_discovery: FeatureDiscoveryConfig | None = None
     gmm_hmms: tuple[GMMHMMConfig, ...] = ()
     student_t_hmm: StudentTHMMConfig | None = None
 
@@ -216,17 +449,25 @@ class ModelProfile:
             raise ValueError("profile_config_version must be positive")
         if self.production_alias != "champion" or self.challenger_alias != "challenger":
             raise ValueError("registry aliases must be champion/challenger")
+        if (self.feature_selection is None) == (self.feature_discovery is None):
+            raise ValueError(
+                "configure exactly one of legacy feature_selection or feature_discovery"
+            )
         gmm_identities = tuple(
             (candidate.state_count, candidate.mixture_count) for candidate in self.gmm_hmms
         )
         if len(set(gmm_identities)) != len(gmm_identities):
             raise ValueError("GMM-HMM candidates must be unique by state and mixture count")
         if self.profile_config_version == 1:
+            if self.feature_selection is None:
+                raise ValueError("xetra v1 requires legacy feature_selection")
             if self.gaussian_hmm.candidate_states != (2, 3, 4):
                 raise ValueError("xetra v1 Gaussian candidates must be exactly K=2,3,4")
             if self.gmm_hmms or self.student_t_hmm is not None:
                 raise ValueError("xetra v1 supports only its immutable Gaussian candidate set")
         elif self.profile_config_version in (2, 3):
+            if self.feature_selection is None:
+                raise ValueError("xetra v2/v3 require legacy feature_selection")
             expected_policy = f"xetra_semantic_medoid_v{self.profile_config_version}"
             if self.feature_selection.policy_id != expected_policy:
                 raise ValueError("Xetra profile version and feature-selection policy differ")
@@ -237,6 +478,16 @@ class ModelProfile:
                 raise ValueError("Xetra v2/v3 GMM candidates must be exactly K2-K5 with M=2")
             if self.student_t_hmm is None:
                 raise ValueError("Xetra v2/v3 requires the Student-t K2-K5 candidate family")
+        elif self.profile_config_version == 4:
+            if self.feature_discovery is None:
+                raise ValueError("xetra v4 requires dedicated feature_discovery")
+            if self.gaussian_hmm.candidate_states != (2, 3, 4, 5):
+                raise ValueError("xetra v4 Gaussian candidates must be exactly K=2,3,4,5")
+            expected_gmm = ((2, 2), (3, 2), (4, 2), (5, 2))
+            if gmm_identities != expected_gmm:
+                raise ValueError("xetra v4 GMM candidates must be exactly K2-K5 with M=2")
+            if self.student_t_hmm is None:
+                raise ValueError("xetra v4 requires the Student-t K2-K5 candidate family")
         else:
             raise ValueError("unsupported Xetra profile configuration version")
 
@@ -253,6 +504,8 @@ class ModelProfile:
 
 def assert_xetra_v1_pins(profile: ModelProfile) -> None:
     """Fail closed unless every evaluation-contract constant is exactly pinned."""
+    if profile.feature_selection is None:
+        raise ValueError("xetra v1 pin audit requires legacy feature_selection")
     fs = profile.feature_selection
     wf = profile.walk_forward
     hmm = profile.gaussian_hmm

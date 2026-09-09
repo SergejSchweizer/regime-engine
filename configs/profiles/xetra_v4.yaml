@@ -1,0 +1,153 @@
+profile_id: xetra
+profile_config_version: 4
+registered_model: regime-xetra
+production_alias: champion
+challenger_alias: challenger
+feature_discovery:
+  evaluation_id: global_regime_v4
+  policy_id: xetra_global_regime_v4
+  feature_universe_mode: all_non_timestamp_m1_double_precision
+  excluded_source_column: timestamp_m1
+  feature_ordering: postgresql_ordinal_position
+  minimum_feature_coverage: 0.90
+  population_variance_ddof: 0
+  minimum_feature_variance: 1.0e-12
+  minimum_eligible_features: 3
+  minimum_pairwise_observations: 504
+  redundancy_measure: absolute_spearman_rank_correlation
+  distance_method: one_minus_absolute_spearman
+  clustering_method: agglomerative_average_linkage_precomputed_sklearn_1.9.0
+  rho_clip_tolerance: 1.0e-12
+  cluster_count_min: 2
+  cluster_count_max: 12
+  silhouette_singleton_value: 0.0
+  silhouette_tie_tolerance: 1.0e-12
+  minimum_silhouette: 0.0
+  cluster_count_tie_break: smaller_m
+  temporary_prototype_method: within_cluster_correlation_medoid
+  cluster_id_ordering: minimum_canonical_feature_ordinal
+  provisional_model_family: gaussian_hmm
+  provisional_state_counts: [2, 3, 4, 5]
+  gaussian_parameter_bound: p_G(K,d) <= n_min
+  feature_score_coverage: 0.90
+  feature_score_observations: 126
+  feature_score_bin_count: 10
+  feature_regime_score: state_information_ratio
+  feature_score_diagnostic: eta_squared
+  feature_score_tie_tolerance: 1.0e-12
+  score_tie_order:
+    - state_information_ratio
+    - eta_squared
+    - coverage
+    - observation_count
+    - canonical_ordinal
+  minimum_prefix_length: 2
+  maximum_prefix_length: 8
+  prefix_model_family: gaussian_hmm
+  prefix_state_counts: [2, 3, 4, 5]
+  prefix_selection_target: soft_regime_nmi_to_common_causal_teacher
+  minimum_teacher_shared_support: 0.90
+  prefix_nmi_tie_tolerance: 1.0e-12
+  cross_l_tie_breaks:
+    - higher_shared_timestamp_count
+    - smaller_L
+  cross_l_likelihood_forbidden: true
+  prefix_likelihood_scope: same_prefix_only
+  inner_train_source_observations: 756
+  inner_test_source_observations: 63
+  inner_step_source_observations: 63
+  inner_partial_final_test: false
+  minimum_model_train_observations: 504
+  minimum_model_test_observations: 42
+  minimum_model_clock_valid_fold_rate: 0.80
+  outer_train_source_observations: 1260
+  outer_test_source_observations: 63
+  outer_step_source_observations: 63
+  outer_partial_final_test: false
+  minimum_outer_valid_fold_rate: 0.80
+  minimum_outer_valid_folds: 3
+  outer_state_identity: outer_fold_local
+  production_state_identity: model_version_local
+  deployment_selection_scope: all_source_rows_through_source_max_timestamp
+  source_nan_inf_policy: source_contract_failure
+  missing_value_policy: no_fill_interpolate_or_carry
+  final_candidate_ids:
+    - gaussian_hmm_k2_full
+    - gaussian_hmm_k3_full
+    - gaussian_hmm_k4_full
+    - gaussian_hmm_k5_full
+    - gmm_hmm_k2_m2_full
+    - gmm_hmm_k3_m2_full
+    - gmm_hmm_k4_m2_full
+    - gmm_hmm_k5_m2_full
+    - student_t_hmm_k2_full
+    - student_t_hmm_k3_full
+    - student_t_hmm_k4_full
+    - student_t_hmm_k5_full
+walk_forward:
+  minimum_train_source_observations: 1260
+  test_source_observations: 63
+  step_source_observations: 63
+  allow_partial_final_test: false
+  minimum_model_train_observations: 504
+  minimum_model_test_observations: 42
+  ranking_abs_tolerance: 1.0e-12
+gaussian_hmm:
+  candidate_states: [2, 3, 4, 5]
+  backend: hmmlearn==0.3.3
+  covariance_type: full
+  implementation: log
+  seeds: [11, 23, 37, 53, 71, 89, 107, 131]
+  minimum_valid_starts: 6
+  minimum_multistart_success_rate: 0.75
+  n_iter: 1000
+  tol: 1.0e-4
+  min_covar: 1.0e-6
+  startprob_prior: 1.0
+  transmat_prior: 1.0
+  means_prior: 0.0
+  means_weight: 0.0
+  covars_prior: 0.01
+  covars_weight: 1.0
+  params: stmc
+  init_params: stmc
+gmm_hmms:
+  - state_count: 2
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 3
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 4
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+  - state_count: 5
+    mixture_count: 2
+    backend: hmmlearn==0.3.3
+    covariance_type: full
+    implementation: log
+student_t_hmm:
+  candidate_states: [2, 3, 4, 5]
+  backend: native-baum-welch-v1
+  covariance_type: full
+  minimum_nu: 2.05
+  maximum_nu: 200.0
+  initial_nu: 10.0
+  n_iter: 200
+  tol: 1.0e-4
+  min_covar: 1.0e-6
+gates:
+  minimum_train_hard_occupancy: 0.03
+  minimum_train_soft_occupancy: 0.05
+  candidate_minimum_valid_fold_rate: 0.80
+  low_confidence_threshold: 0.60
+  state_alignment_ambiguity_abs_tolerance: 1.0e-10
+  covariance_asymmetry_abs_tolerance: 1.0e-10
+  probability_normalization_abs_tolerance: 1.0e-10
+  minimum_covariance_diagonal_variance: 1.0e-12

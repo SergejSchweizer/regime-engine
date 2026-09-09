@@ -13,6 +13,7 @@ from market_regime_engine.feature_selection.freeze import freeze_first_train_fea
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import (
     EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION,
+    resolve_global_feature_profile,
     resolve_selected_feature_profile,
     validate_candidate_comparison_inputs,
 )
@@ -23,6 +24,7 @@ V2_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid
 V2_PROFILE_CONFIG = Path("configs/profiles/xetra_v2.yaml")
 V3_FEATURE_POLICY_CONFIG = Path("configs/feature_selection/xetra_semantic_medoid_v3.yaml")
 V3_PROFILE_CONFIG = Path("configs/profiles/xetra_v3.yaml")
+V4_PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 
 
 def load_policy(path: Path = FEATURE_POLICY_CONFIG) -> FeatureSelectionPolicy:
@@ -271,3 +273,57 @@ def test_xetra_v3_validation_rejects_wrong_candidate_order() -> None:
     wrong_order = (resolved.candidates[1], resolved.candidates[0], *resolved.candidates[2:])
     with pytest.raises(ValueError, match="IDs/order"):
         validate_candidate_comparison_inputs(wrong_order, profile_config_version=3)
+
+
+def test_v4_resolution_accepts_dynamic_universe_without_legacy_medoids() -> None:
+    resolved = resolve_global_feature_profile(
+        load_profile(V4_PROFILE_CONFIG),
+        source_build_id="build-v4",
+        original_feature_universe=("feature_a", "feature_b", "feature_c"),
+        final_features=("feature_a", "feature_c"),
+        feature_discovery_definition_hash="a" * 64,
+        feature_discovery_execution_hash="b" * 64,
+    )
+    assert resolved.profile_config_version == 4
+    assert resolved.preliminary_medoids == ()
+    assert resolved.final_features == ("feature_a", "feature_c")
+    assert (
+        tuple(candidate.candidate_id for candidate in resolved.candidates)
+        == (EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[4])
+    )
+    assert all(candidate.feature_contract_version == 4 for candidate in resolved.candidates)
+    assert all(
+        candidate.original_feature_universe == resolved.original_feature_universe
+        for candidate in resolved.candidates
+    )
+
+
+def test_v4_resolution_rejects_fixed_semantic_contracts_and_identity_mutations() -> None:
+    profile = load_profile(V4_PROFILE_CONFIG)
+    common = {
+        "source_build_id": "build-v4",
+        "original_feature_universe": ("feature_a", "feature_b", "feature_c"),
+        "final_features": ("feature_a", "feature_c"),
+        "feature_discovery_definition_hash": "a" * 64,
+        "feature_discovery_execution_hash": "b" * 64,
+    }
+    with pytest.raises(ValueError, match="duplicate-free"):
+        resolve_global_feature_profile(
+            profile,
+            **{**common, "original_feature_universe": ("feature_a", "feature_a")},
+        )
+    with pytest.raises(ValueError, match="belong"):
+        resolve_global_feature_profile(
+            profile,
+            **{**common, "final_features": ("feature_z", "feature_a")},
+        )
+    with pytest.raises(ValueError, match="SHA-256"):
+        resolve_global_feature_profile(
+            profile,
+            **{**common, "feature_discovery_execution_hash": "not-a-hash"},
+        )
+    with pytest.raises(ValueError, match="global feature resolution"):
+        resolve_global_feature_profile(
+            load_profile(PROFILE_CONFIG),
+            **common,
+        )
