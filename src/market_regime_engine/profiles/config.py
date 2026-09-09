@@ -492,7 +492,12 @@ class ModelProfile:
             raise ValueError("unsupported Xetra profile configuration version")
 
     def canonical_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if self.feature_selection is None:
+            payload.pop("feature_selection", None)
+        if self.feature_discovery is None:
+            payload.pop("feature_discovery", None)
+        return payload
 
     @property
     def profile_hash(self) -> str:
