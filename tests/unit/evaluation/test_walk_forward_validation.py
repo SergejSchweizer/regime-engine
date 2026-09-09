@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -227,3 +228,44 @@ def test_runner_rejects_wrong_profile_and_empty_plan_before_fitting() -> None:
             candidate=candidate(),
             adapter_factory=lambda: object(),  # type: ignore[arg-type,return-value]
         )
+
+
+def test_runner_rejects_invalid_v4_lineage_and_unknown_family_before_adapter_work() -> None:
+    rows = source_rows()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+    calls = 0
+
+    def adapter_factory() -> object:
+        nonlocal calls
+        calls += 1
+        return object()
+
+    with pytest.raises(ValueError, match="contract version 4"):
+        run_walk_forward_candidate(
+            rows,
+            plan=plan,
+            profile=profile,
+            candidate=candidate(),
+            adapter_factory=adapter_factory,  # type: ignore[arg-type]
+        )
+    unknown = SimpleNamespace(
+        candidate_id="other_k2_full",
+        model_family="other",
+        state_count=2,
+        mixture_count=1,
+        feature_order=("f0", "f1"),
+        feature_dimension=2,
+        source_build_id="build-1",
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+    )
+    with pytest.raises(ValueError, match="model family"):
+        run_walk_forward_candidate(
+            rows,
+            plan=plan,
+            profile=profile,
+            candidate=unknown,  # type: ignore[arg-type]
+            adapter_factory=adapter_factory,  # type: ignore[arg-type]
+        )
+    assert calls == 0

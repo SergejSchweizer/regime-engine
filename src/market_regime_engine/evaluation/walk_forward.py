@@ -204,7 +204,7 @@ class WalkForwardEvaluation:
     alignment_reference_scaler: StandardScalerArtifact | None = None
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3}:
+        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3, 4}:
             raise ValueError("walk-forward evaluation requires a supported xetra profile version")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("walk-forward evaluation supports exactly K2/K3/K4/K5")
@@ -255,6 +255,63 @@ def _validate_source_rows(
     if any(left >= right for left, right in pairwise(timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
     return timestamps
+
+
+def _validate_candidate_contract(
+    candidate: WalkForwardCandidate,
+    profile: ModelProfile,
+) -> None:
+    """Validate generic candidate identity before any source/model work."""
+
+    families = {"gaussian_hmm", "gmm_hmm", "student_t_hmm"}
+    if candidate.model_family not in families:
+        raise ValueError("resolved candidate model family is unsupported")
+    expected_id = (
+        f"gmm_hmm_k{candidate.state_count}_m{candidate.mixture_count}_full"
+        if candidate.model_family == "gmm_hmm"
+        else f"{candidate.model_family}_k{candidate.state_count}_full"
+    )
+    if candidate.candidate_id != expected_id:
+        raise ValueError("resolved candidate identity is inconsistent with family/state/mixture")
+    if candidate.state_count not in (2, 3, 4, 5):
+        raise ValueError("resolved candidate state count must be one of 2, 3, 4, 5")
+    expected_mixture_count = 2 if candidate.model_family == "gmm_hmm" else 1
+    if candidate.mixture_count != expected_mixture_count:
+        raise ValueError("resolved candidate mixture count is inconsistent with family")
+    if (
+        not isinstance(candidate.feature_order, tuple)
+        or not candidate.feature_order
+        or len(set(candidate.feature_order)) != len(candidate.feature_order)
+        or any(
+            not isinstance(feature, str) or not feature.strip()
+            for feature in candidate.feature_order
+        )
+    ):
+        raise ValueError("resolved candidate feature order must be non-empty and duplicate-free")
+    if candidate.feature_dimension != len(candidate.feature_order):
+        raise ValueError("resolved candidate feature dimension is inconsistent")
+    if (
+        not isinstance(candidate.source_build_id, str)
+        or not candidate.source_build_id.strip() == candidate.source_build_id
+    ):
+        raise ValueError("resolved candidate source build must be a non-empty trimmed string")
+    for field_name in (
+        "feature_selection_definition_hash",
+        "feature_selection_execution_hash",
+    ):
+        value = getattr(candidate, field_name)
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or value != value.lower()
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError(f"resolved candidate {field_name} must be a lowercase SHA-256 digest")
+    contract_version = getattr(candidate, "feature_contract_version", 1)
+    if profile.profile_config_version == 4 and contract_version != 4:
+        raise ValueError("xetra v4 walk-forward candidates require feature contract version 4")
+    if profile.profile_config_version != 4 and contract_version != 1:
+        raise ValueError("legacy walk-forward candidates require feature contract version 1")
 
 
 def _fold_source_frames(
@@ -417,8 +474,9 @@ def run_walk_forward_candidate(
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection."""
 
-    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2, 3}:
-        raise ValueError("walk-forward runner supports xetra profile configurations 1, 2, and 3")
+    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2, 3, 4}:
+        raise ValueError("walk-forward runner supports xetra profile configurations 1, 2, 3, and 4")
+    _validate_candidate_contract(candidate, profile)
     if candidate.model_family == "gaussian_hmm":
         if candidate.state_count not in profile.gaussian_hmm.candidate_states:
             raise ValueError("resolved Gaussian candidate state count is absent from model profile")
@@ -432,10 +490,6 @@ def run_walk_forward_candidate(
         or candidate.state_count not in profile.student_t_hmm.candidate_states
     ):
         raise ValueError("resolved Student-t candidate differs from the model profile")
-    if candidate.feature_order == ():
-        raise ValueError("resolved candidate feature order cannot be empty")
-    if candidate.feature_dimension != len(candidate.feature_order):
-        raise ValueError("resolved candidate feature dimension is inconsistent")
     if plan.evaluation_cutoff is None or not plan.folds:
         raise ValueError("walk-forward plan must contain at least one complete fold")
     timestamps = _validate_source_rows(source_rows, candidate.feature_order)
