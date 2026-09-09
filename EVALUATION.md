@@ -45,7 +45,7 @@ A typical result could therefore be:
 
 ```text
 N = 180 raw eligible features
-M* = 16 global correlation clusters
+M* = 12 global correlation clusters (at most, under the pinned v4 bound)
 L* = 7 final regime features
 K* = 3 hidden market states
 ```
@@ -54,7 +54,182 @@ No assumption requires `M* = L*`, and no assumption requires the provisional sta
 
 ---
 
-## 2. Semantic groups are removed from statistical selection
+## 2. Canonical statistical and mathematical contract
+
+For `profile_id=xetra`, `profile_config_version=4`, and
+`feature_discovery_policy=xetra_global_regime_v4`, this section is normative.
+The implementation must use these values and formulas; profile-local defaults
+or semantic-group decisions may not replace them.
+
+### 2.1 Source and quality
+
+The feature universe is all non-`timestamp_m1` columns in the validated Gold
+feature table. Every feature column must be PostgreSQL `DOUBLE PRECISION` and
+features are ordered by PostgreSQL ordinal position. Coverage is measured on
+Outer-TRAIN source rows, with `ddof=0` population variance:
+
+```text
+minimum coverage                 = 0.90
+minimum population variance      = strictly > 1.0e-12
+minimum eligible feature count   = 3
+minimum pairwise support         = 504 complete observations
+missing-value policy             = no fill, interpolation or carry
+non-null NaN/Inf                 = source-contract failure
+```
+
+The source catalog carries `schema_version`, `feature_version`, and
+`source_build_id` as lineage. It does not use a feature-name allowlist. A
+same-name semantic redefinition upstream cannot be inferred from SQL type
+metadata and remains an explicit current-vintage source limitation.
+
+### 2.2 Redundancy, clustering, and prototypes
+
+For pairwise-complete TRAIN observations, Spearman correlation is Pearson
+correlation of average ranks:
+
+```text
+rho_ij = corr(rank_average(x_i), rank_average(x_j))
+d_ij   = 1 - abs(rho_ij)
+```
+
+Undefined/non-finite correlations fail the distance result. Values outside
+`[-1,1]` may only be clipped when the violation is at most `1.0e-12`.
+Distances are finite, symmetric, bounded in `[0,1]`, and have an exact zero
+diagonal.
+
+One deterministic agglomerative average-linkage hierarchy is built from the
+precomputed distance matrix using the repository-pinned scikit-learn 1.9.0
+behavior. Candidate cuts are exactly:
+
+```text
+M = 2, 3, ..., min(12, N - 1)
+```
+
+The full merge tree and every candidate cut are retained. Silhouette uses the
+same precomputed distance matrix, singleton sample silhouette is `0.0`, and
+the arithmetic mean is used. The best silhouette anchor must be strictly
+greater than zero; values within absolute `1.0e-12` tie and the smaller `M`
+wins. Cluster IDs use the smallest canonical feature ordinal.
+
+The temporary prototype is the actual cluster member with the smallest mean
+distance to the *other* members. A singleton is its own prototype. Ties use
+absolute `1.0e-12` and canonical ordinal. Prototypes are initialization-only
+and have no final-feature-selection privilege.
+
+The Gaussian full-covariance safety count is:
+
+```text
+p_G(K,d) = (K-1) + K(K-1) + Kd + K*d*(d+1)/2
+p_G(5,12) = 474 <= 504
+p_G(5,13) = 544 > 504
+```
+
+### 2.3 Model clocks and the provisional teacher
+
+Inner expanding walk-forward is `756/63/63`, with no partial final TEST;
+model minimums are TRAIN `504` and TEST `42`. Every feature tuple is checked
+by a pure complete-case preflight before fitting. It records every fold,
+requires first-TRAIN complete rows and per-feature population variance, and
+requires structural valid-fold rate `>=0.80`.
+
+The provisional teacher is a Gaussian full-covariance HMM with
+`K ∈ {2,3,4,5}` and the existing eight-seed multistart/gates. All K values see
+the same prototype vector and inner folds, so same-feature predictive ranking
+is valid. Teacher evidence consists only of aligned causal filtered
+probabilities from valid inner TEST timestamps; smoothed probabilities and
+full-sample Viterbi labels are forbidden as weights.
+
+### 2.4 Feature information score
+
+For each eligible feature, use the finite support shared by that feature and
+the teacher. Require coverage `>=0.90` of teacher timestamps and at least 126
+observations. Average ranks are divided into exactly `B=10` bins:
+
+```text
+bin_t = min(9, floor(10 * (rank_average(x_t) - 1) / n))
+p_bk = (1/n) * sum_t 1[bin_t=b] * gamma_tk
+p_b  = sum_k p_bk
+p_k  = sum_b p_bk
+I    = sum_{b,k:p_bk>0} p_bk * ln(p_bk/(p_b*p_k))
+H_S  = -sum_{k:p_k>0} p_k * ln(p_k)
+state_information_ratio = I / H_S
+```
+
+`H_S <= 1.0e-12` is invalid. The primary score must be finite and in `[0,1]`.
+On the same support, posterior eta-squared is a diagnostic only:
+
+```text
+pi_k      = mean_t gamma_tk
+mu_jk     = sum_t gamma_tk*x_tj / sum_t gamma_tk
+mu_j      = mean_t x_tj
+B_j       = sum_k pi_k*(mu_jk-mu_j)^2
+W_j       = sum_k pi_k*sigma_jk^2
+eta_sq_j  = B_j/(B_j+W_j)
+```
+
+All score primitives use the same feature-specific support. There is no HMM
+fit per raw feature. Cluster and global winner tiers are primary score,
+eta-squared, coverage, observation count, then smaller canonical ordinal;
+each numeric tier uses anchored absolute `1.0e-12` tolerance.
+
+### 2.5 Prefix selection and final grid
+
+The full-covariance GMM-HMM safety count is:
+
+```text
+p_GMM(K,M,d) = (K-1) + K(K-1) + K(M-1) + KMd + KM*d*(d+1)/2
+p_GMM(5,2,8) = 469 <= 504
+p_GMM(5,2,9) = 569 > 504
+```
+
+Therefore prefixes are exactly `L=2,...,min(M*,8)`. Each prefix first selects
+Gaussian K2-K5 using same-feature predictive ranking. Only that prefix winner
+is compared with the common teacher using soft regime NMI on exact shared
+timestamps:
+
+```text
+p_kl = (1/T) * sum_t P_tk * Q_tl
+p_k  = sum_l p_kl          q_l = sum_k p_kl
+I    = sum_{k,l:p_kl>0} p_kl * ln(p_kl/(p_k*q_l))
+H_P  = -sum_k p_k*ln(p_k)  H_Q = -sum_l q_l*ln(q_l)
+soft_regime_nmi = 2*I/(H_P+H_Q)
+```
+
+Denominator `<=1.0e-12` is invalid; shared support must be `>=0.90`. Across
+different `L`, selection is soft NMI, then shared timestamp count, then
+smaller `L`. Raw PLL/BIC/AIC are forbidden across dimensions and are valid
+only inside one identical feature vector.
+
+The final grid is exactly these 12 candidates, in this order:
+
+```text
+gaussian_hmm_k2_full, gaussian_hmm_k3_full, gaussian_hmm_k4_full,
+gaussian_hmm_k5_full, gmm_hmm_k2_m2_full, gmm_hmm_k3_m2_full,
+gmm_hmm_k4_m2_full, gmm_hmm_k5_m2_full, student_t_hmm_k2_full,
+student_t_hmm_k3_full, student_t_hmm_k4_full, student_t_hmm_k5_full
+```
+
+### 2.6 Outer, deployment, and state identity
+
+Outer expanding walk-forward is `1260/63/63`, no partial final TEST. The full
+selection procedure reruns on each Outer-TRAIN and is frozen before TEST. The
+outer policy requires valid-fold rate `>=0.80`, at least three valid folds,
+and a valid latest complete fold. Outer PLL/BIC/AIC are fold-local diagnostics
+and are never pooled across adaptive folds; comparable policy evidence uses
+soft NMI and validity/stability measures.
+
+After validation, deployment selection reruns the exact same TRAIN-only
+selection function through `source.max_timestamp`; it does not copy the last
+outer-fold configuration. Persist separately:
+`validation_evaluation_cutoff` and `deployment_selection_cutoff`.
+
+Outer state IDs are `outer_fold_local`. Production state IDs are
+`model_version_local`; `state_0` in two model versions has no implied common
+economic meaning. All contract hashes use finite-only canonical JSON and
+SHA-256. Raw rows, credentials, DSNs, semantic/economic/portfolio labels are
+never statistical decision inputs.
+
+## 2.14 Historical semantic compatibility
 
 All eligible features are pooled into one global feature universe.
 
@@ -101,7 +276,7 @@ flowchart TD
     I --> J[Score ALL eligible raw features against common provisional regimes]
     J --> K[Best regime-separating feature inside each cluster]
     K --> L[Rank cluster winners by regime relevance]
-    L --> M[Evaluate top-L prefixes for L=2..M*]
+    L --> M[Evaluate top-L prefixes for L=2..min(M*,8)]
     M --> N[Select L* using inner causal WF]
     N --> O[Final feature set]
     O --> P[Final model-family and K grid]
@@ -216,7 +391,7 @@ The system evaluates a bounded candidate range:
 M = M_min, ..., M_max
 ```
 
-where the bounds are source-controlled and deterministic.
+where the bounds are pinned to `M=2,...,min(12,N-1)` and are deterministic.
 
 For each candidate `M`:
 
@@ -413,64 +588,43 @@ This has three advantages:
 - computational cost remains low even as the feature universe grows;
 - the procedure can identify a strong regime feature even when that feature was not the temporary cluster medoid.
 
-### 11.1 Posterior-weighted state occupancy
+### 11.1 Common causal support
 
-For provisional state `k`:
+Every raw feature is scored on the finite timestamps shared with the causal
+teacher probabilities. Require at least `0.90` coverage of the teacher support
+and at least `126` observations. No feature-specific HMM is fitted.
 
-\[
-\pi_k=\frac{1}{T}\sum_t\gamma_{tk}.
-\]
+### 11.2 Primary state-information score
 
-### 11.2 Posterior-weighted feature mean by state
-
-For raw feature `j`:
-
-\[
-\mu_{jk}=\frac{\sum_t\gamma_{tk}x_{tj}}{\sum_t\gamma_{tk}}.
-\]
-
-The overall feature mean is:
+Average feature ranks are assigned to ten fixed bins and combined with the
+teacher posterior masses. The primary score is the normalized mutual
+information ratio:
 
 \[
-\mu_j=\frac{1}{T}\sum_t x_{tj}.
+I_j=\sum_{b,k:p_{bj}>0}p_{bjk}\log\frac{p_{bjk}}{p_{bj}p_k},
+\qquad
+H_S=-\sum_{k:p_k>0}p_k\log p_k,
+\qquad
+R_j=I_j/H_S.
 \]
 
-### 11.3 Between-regime variance
+`R_j` is persisted as `state_information_ratio`, must be finite and in
+`[0,1]`, and is the only primary regime-separation score. A state entropy at
+or below `1e-12` makes the score ineligible.
 
-\[
-B_j=\sum_k\pi_k(\mu_{jk}-\mu_j)^2.
-\]
+### 11.3 Secondary eta-squared diagnostic
 
-### 11.4 Within-regime variance
-
-Let `sigma_jk^2` be the posterior-weighted variance of feature `j` inside provisional state `k`.
-
-Then:
-
-\[
-W_j=\sum_k\pi_k\sigma_{jk}^2.
-\]
-
-### 11.5 Canonical regime-separation score
-
-Use a bounded posterior-weighted effect-size statistic:
+On exactly the same feature-specific support, persist posterior-weighted state
+occupancies, state means, between-state variance `B_j`, within-state variance
+`W_j`, and:
 
 \[
 \eta_j^2=\frac{B_j}{B_j+W_j}.
 \]
 
-with:
-
-\[
-0\le\eta_j^2\le1.
-\]
-
-Interpretation:
-
-- near `0`: the feature changes little across the inferred regimes relative to its within-regime variation;
-- high value: the feature has materially different distributions/means across the inferred regimes and therefore strongly discriminates the provisional state partition.
-
-This statistic measures **regime discrimination**, not causal influence. Documentation and metrics must not claim that a high score proves the feature causes regime changes.
+Eta-squared is diagnostic/secondary evidence only. It must never replace
+`state_information_ratio` in cluster or global winner selection. It measures
+regime discrimination, not causal influence.
 
 ```mermaid
 flowchart TD
@@ -479,13 +633,13 @@ flowchart TD
     X2[Raw feature 2] --> S
     X3[Raw feature ...] --> S
     XN[Raw feature N] --> S
-    S --> R1[eta² feature 1]
-    S --> R2[eta² feature 2]
-    S --> R3[eta² feature ...]
-    S --> RN[eta² feature N]
+    S --> R1[state information ratio feature 1]
+    S --> R2[state information ratio feature 2]
+    S --> R3[state information ratio feature ...]
+    S --> RN[state information ratio feature N]
 ```
 
-### 11.6 Missing observations
+### 11.4 Missing observations
 
 Feature `j` must be scored only on timestamps where:
 
@@ -505,15 +659,16 @@ For cluster `c`, let `C_c` be its member features.
 The cluster regime representative is:
 
 \[
-r_c=\arg\max_{j\in C_c}\eta_j^2.
+r_c=\arg\max_{j\in C_c}R_j.
 \]
 
 Deterministic ties must be resolved by source-controlled rules, for example:
 
-1. higher regime-separation score;
-2. higher scoring-sample coverage;
-3. better data-quality status;
-4. canonical feature-name order.
+1. higher `state_information_ratio`;
+2. higher eta-squared diagnostic;
+3. higher scoring-sample coverage;
+4. higher observation count;
+5. smaller canonical ordinal.
 
 The temporary medoid/prototype is no longer relevant after this stage.
 
@@ -522,11 +677,11 @@ Example:
 ```text
 Cluster 4
 ---------------------------------
-vix_delta_1obs          eta² 0.48   <- final cluster winner
-vstoxx_delta_1obs       eta² 0.43
-vix_delta_5obs          eta² 0.41
-ciss_delta_1obs         eta² 0.39
-vix_level               eta² 0.18
+vix_delta_1obs          ratio 0.48   <- final cluster winner
+vstoxx_delta_1obs       ratio 0.43
+vix_delta_5obs          ratio 0.41
+ciss_delta_1obs         ratio 0.39
+vix_level               ratio 0.18
 
 Temporary prototype: vix_delta_5obs
 Final cluster representative: vix_delta_1obs
@@ -535,7 +690,7 @@ Final cluster representative: vix_delta_1obs
 ```mermaid
 flowchart LR
     A[Cluster members] --> B[Regime-separation scores]
-    B --> C[Highest eligible eta²]
+    B --> C[Highest eligible state-information ratio]
     C --> D[Cluster regime representative]
 ```
 
@@ -554,7 +709,7 @@ Rank them globally by the same regime-separation evidence.
 Example:
 
 ```text
-Rank  Feature                  eta²
+Rank  Feature                  ratio
 1     vix_delta_1obs           0.48
 2     ciss_delta_1obs          0.43
 3     vix_vix3m_ratio          0.39
@@ -562,7 +717,7 @@ Rank  Feature                  eta²
 5     euro_hy_oas_level        0.30
 6     us_10y_minus_us_2y       0.27
 ...
-14    usd_broad_delta_1obs     0.01
+12    usd_broad_delta_1obs     0.01
 ```
 
 The clustering stage ensures that these candidates are representatives of different redundancy clusters.
@@ -584,7 +739,7 @@ Top 2 cluster winners
 Top 3 cluster winners
 Top 4 cluster winners
 ...
-Top M* cluster winners
+Top min(M*, 8) cluster winners
 ```
 
 This reduces the subset problem from a combinatorial search to a simple ordered sequence of at most `M*-1` candidate feature sets.
@@ -595,7 +750,7 @@ flowchart TD
     A --> B3[Top 3]
     A --> B4[Top 4]
     A --> BX[...]
-    A --> BM[Top M*]
+    A --> BM[Top min(M*,8)]
     B2 --> C[Inner causal WF model evaluation]
     B3 --> C
     B4 --> C
@@ -630,7 +785,7 @@ Example:
 
 ```text
 N = 180 eligible raw features
-M* = 16 global redundancy clusters
+M* = 12 global redundancy clusters
 L* = 7 selected regime features
 
 Final features:
@@ -783,7 +938,7 @@ Every feature score should persist at least:
 ```text
 feature_name
 cluster_id
-score_eta_squared
+state_information_ratio
 score_observation_count
 score_coverage
 state_weighted_means
@@ -937,7 +1092,7 @@ occupancies
 feature_scores.csv
 feature_name
 cluster_id
-eta_squared
+eta_squared (diagnostic)
 coverage
 state_mean_0
 state_mean_1
@@ -1016,7 +1171,7 @@ flowchart TD
                 GP[Causal filtered OOS probabilities gamma]
             end
 
-            FS[Score ALL raw eligible features with eta²]
+            FS[Score ALL raw eligible features with state-information ratio]
             CW[Choose best feature in each cluster]
             RR[Rank cluster winners]
 
@@ -1024,7 +1179,7 @@ flowchart TD
                 L2[Top 2]
                 L3[Top 3]
                 LX[...]
-                LM[Top M*]
+                LM[Top min(M*,8)]
                 LC[Inner OOS comparison]
                 LS[Select L*]
             end
@@ -1117,7 +1272,7 @@ flowchart LR
     B --> C[3 Temporary prototypes]
     C --> D[4 Provisional Gaussian inner-WF]
     D --> E[5 Causal probability collector]
-    E --> F[6 eta² feature scorer]
+    E --> F[6 state-information scorer]
     F --> G[7 Cluster winner selector]
     G --> H[8 L* prefix evaluator]
     H --> I[9 Final model-grid integration]
