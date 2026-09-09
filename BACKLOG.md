@@ -784,25 +784,26 @@ QA:
 - **Branch:** `pr/PR-228-global-v4-outer-policy`
 - **Depends on:** PR-213, PR-214, PR-215, PR-216, PR-217, PR-218, PR-221, PR-222, PR-223, PR-224, PR-226, PR-227
 - **Allowed:** `src/market_regime_engine/evaluations/global_regime_v4.py`, `tests/unit/evaluations/test_global_regime_v4.py`, `tests/integration/evaluations/test_global_regime_v4_compute.py`
+- **Status:** complete; GitHub PR #224 merged to `main`.
 
 Acceptance:
 
-- [ ] Outer plan exact `1260/63/63`, no partial TEST.
-- [ ] Expose one reusable `select_v4_configuration(TRAIN_only, ...)` function containing catalog-bound quality -> clustering -> teacher -> score -> winners -> L* -> final grid; deployment code must later call this exact function.
-- [ ] Each outer fold invokes that function on TRAIN only and freezes its result before TEST access.
-- [ ] Refit final model and frozen teacher configuration independently on complete Outer TRAIN; no reselection.
-- [ ] Continue both once into Outer TEST and compute soft regime NMI on exact shared TEST timestamps, minimum 42.
-- [ ] Final-model OOS PLL remains fold-local diagnostic; no cross-fold PLL/BIC/AIC pooling.
-- [ ] Feature tuples/K may vary; state IDs are outer-fold-local.
-- [ ] Record feature eligibility frequency, M*, L*, winner frequency and adjacent-fold clustering stability diagnostics on common eligible features, but none feed selection.
-- [ ] Policy result calculates valid-fold rate and NMI mean/pstdev/worst; production-eligibility flags require >=0.80 valid rate, >=3 valid folds and valid latest fold.
-- [ ] Failure never reuses prior fold configuration.
+- [x] Outer plan exact `1260/63/63`, no partial TEST.
+- [x] Expose one reusable `select_v4_configuration(TRAIN_only, ...)` function containing catalog-bound quality -> clustering -> teacher -> score -> winners -> L* -> final grid; deployment code must later call this exact function.
+- [x] Each outer fold invokes that function on TRAIN only and freezes its result before TEST access.
+- [x] Refit final model and frozen teacher configuration independently on complete Outer TRAIN; no reselection.
+- [x] Continue both once into Outer TEST and compute soft regime NMI on exact shared TEST timestamps, minimum 42.
+- [x] Final-model OOS PLL remains fold-local diagnostic; no cross-fold PLL/BIC/AIC pooling.
+- [x] Feature tuples/K may vary; state IDs are outer-fold-local.
+- [x] Record feature eligibility frequency, M*, L*, winner frequency and adjacent-fold clustering stability diagnostics on common eligible features, but none feed selection.
+- [x] Policy result calculates valid-fold rate and NMI mean/pstdev/worst; production-eligibility flags require >=0.80 valid rate, >=3 valid folds and valid latest fold.
+- [x] Failure never reuses prior fold configuration.
 
 QA:
 
-- [ ] Dependency spy proves TEST rows cannot reach selection.
-- [ ] Future mutation leaves earlier fold bytes identical.
-- [ ] At least three real-HMM outer folds execute end to end.
+- [x] Dependency spy proves TEST rows cannot reach selection.
+- [x] Future mutation leaves earlier fold bytes identical.
+- [x] At least three real-HMM outer folds execute end to end.
 
 ### PR-229 — Extend immutable local statistics for full v4 evidence
 
