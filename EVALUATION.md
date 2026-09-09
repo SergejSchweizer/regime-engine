@@ -113,6 +113,48 @@ The initial HMM is only a temporary teacher. It creates a common provisional lat
 
 It is not the final production model.
 
+### 3.1 Pinned Xetra v4 statistical contract
+
+The following values are normative for `profile_id=xetra`,
+`profile_config_version=4`, and `feature_discovery_policy=xetra_global_regime_v4`.
+They are represented by the immutable v4 contract module; an implementation may
+not replace them with profile-local defaults or semantic-group rules.
+
+| Setting | Canonical value |
+|---|---|
+| feature universe | all numeric feature columns from the validated Gold source table, excluding `timestamp_m1` |
+| minimum TRAIN coverage | `0.90` |
+| minimum population variance | strictly greater than `1.0e-12` |
+| pairwise support | at least `504` finite observations |
+| redundancy measure | absolute Spearman rank correlation, with average ranks for ties |
+| distance | `1 - abs(spearman)` |
+| clustering | deterministic agglomerative average linkage on the precomputed distance matrix |
+| candidate `M` range | `2` through `min(25, N - 1)` |
+| silhouette | mean precomputed-distance silhouette; singleton sample value `0.0` |
+| silhouette tie | absolute tolerance `1.0e-12`; smaller `M` wins |
+| minimum accepted silhouette | strictly greater than `0.0` |
+| temporary prototype | within-cluster correlation medoid; initialization only |
+| provisional model | Gaussian HMM with `K ∈ {2,3,4,5}` |
+| inner walk-forward | `756/63/63` source observations, no partial final TEST |
+| inner model support | TRAIN `>=504`, TEST `>=42` observations |
+| feature score | posterior-weighted `eta_squared` on each feature's own finite teacher support |
+| feature-score support | coverage `>=0.90` and at least `126` observations |
+| prefix search | exact nested `Top 2` through `Top M*`, Gaussian HMM `K ∈ {2,3,4,5}` |
+| prefix target | label-invariant dominant-state NMI against the common causal teacher |
+| shared teacher support | at least `0.90` |
+| cross-`L` ties | absolute NMI tolerance `1.0e-12`, then higher shared count, then smaller `L` |
+| cross-`L` likelihood | raw PLL/BIC/AIC forbidden because feature dimension changes |
+| final model universe | Gaussian K2–K5, GMM-HMM M2 K2–K5, Student-t K2–K5 |
+| outer walk-forward | existing expanding `1260/63/63` source observations, no partial final TEST |
+| outer state identity | `outer_fold_local`; state index meaning is not shared across folds |
+
+Every feature-specific score uses one identical finite-support mask for its
+state weights, state means, overall mean, within-state variances, between
+variance, and within variance. All persisted contract hashes are SHA-256 over
+canonical JSON with sorted keys and rejected NaN/Inf values. Semantic labels,
+economic labels, portfolio fields, and raw source rows are not statistical
+decision inputs.
+
 ---
 
 ## 4. Outer evaluation boundary
