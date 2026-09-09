@@ -560,56 +560,59 @@ QA:
 - **Branch:** `pr/PR-217-temporary-prototypes`
 - **Depends on:** PR-216
 - **Allowed:** `src/market_regime_engine/feature_discovery/prototypes.py`, `tests/unit/feature_discovery/test_prototypes.py`
+- **Status:** complete; GitHub PR #205 merged to `main`.
 
 Acceptance:
 
-- [ ] Mean distance excludes self; singleton is itself.
-- [ ] Anchored `1e-12` ties use canonical ordinal.
-- [ ] Output is cluster order and stores every candidate mean/tie tier.
-- [ ] No HMM/score/semantic/economic influence.
-- [ ] Prototype contract explicitly says initialization-only.
+- [x] Mean distance excludes self; singleton is itself.
+- [x] Anchored `1e-12` ties use canonical ordinal.
+- [x] Output is cluster order and stores every candidate mean/tie tier.
+- [x] No HMM/score/semantic/economic influence.
+- [x] Prototype contract explicitly says initialization-only.
 
 QA:
 
-- [ ] Independent arithmetic medoid oracle and adversarial fixture where prototype later loses cluster regime selection.
+- [x] Independent arithmetic medoid oracle and adversarial fixture where prototype later loses cluster regime selection.
 
 ### PR-218 — Add reusable complete-case model-clock preflight
 
 - **Branch:** `pr/PR-218-model-clock-preflight`
 - **Depends on:** PR-210
 - **Allowed:** `src/market_regime_engine/evaluation/model_clock.py`, `tests/unit/evaluation/test_model_clock.py`
+- **Status:** complete; GitHub PR #206 merged to `main`.
 
 Acceptance:
 
-- [ ] Pure function accepts source rows, exact feature tuple, walk-forward plan and model-row thresholds.
-- [ ] Records every fold's TRAIN/TEST complete-case counts without fitting/scaling an HMM.
-- [ ] First TRAIN requires >=504 complete rows and per-feature population variance >1e-12 on that common matrix.
-- [ ] Structural valid-fold rate >=0.80.
-- [ ] No feature dropping, fill or K-dependent support.
-- [ ] Prototype failure invalidates outer selection; prefix failure marks only that prefix ineligible; caller behavior is explicit.
+- [x] Pure function accepts source rows, exact feature tuple, walk-forward plan and model-row thresholds.
+- [x] Records every fold's TRAIN/TEST complete-case counts without fitting/scaling an HMM.
+- [x] First TRAIN requires >=504 complete rows and per-feature population variance >1e-12 on that common matrix.
+- [x] Structural valid-fold rate >=0.80.
+- [x] No feature dropping, fill or K-dependent support.
+- [x] Prototype failure invalidates outer selection; prefix failure marks only that prefix ineligible; caller behavior is explicit.
 
 QA:
 
-- [ ] Hand complete-case masks/counts and variance reference; adversarial missingness fixture demonstrates why individual 90% coverage does not imply multivariate clock feasibility.
+- [x] Hand complete-case masks/counts and variance reference; adversarial missingness fixture demonstrates why individual 90% coverage does not imply multivariate clock feasibility.
 
 ### PR-219 — Make the proven walk-forward runner v4-capable without semantic coupling
 
 - **Branch:** `pr/PR-219-v4-walk-forward-candidate-protocol`
 - **Depends on:** PR-211
 - **Allowed:** `src/market_regime_engine/evaluation/walk_forward.py`, `tests/unit/evaluation/test_walk_forward.py`, `tests/unit/evaluation/test_walk_forward_validation.py`
+- **Status:** complete; GitHub PR #207 merged to `main`. Legacy-preservation language below is superseded by the zero-legacy addendum merged in GitHub PR #227.
 
 Acceptance:
 
-- [ ] Accept profile v4 structural candidate protocol while preserving v1-v3 behavior.
-- [ ] V4 candidate requires exact feature order/dimension, source build and generic feature-selection definition/execution hashes; no medoid/universe cardinality assumptions.
-- [ ] Same scaler, multistart, causal filter, TRAIN likelihood parity, gates, within-vector state alignment and diagnostics are reused.
-- [ ] No adaptive feature selection is moved into the runner.
-- [ ] Unsupported version/family/dimension fails before fit.
+- [x] Accept profile v4 structural candidate protocol while preserving v1-v3 behavior.
+- [x] V4 candidate requires exact feature order/dimension, source build and generic feature-selection definition/execution hashes; no medoid/universe cardinality assumptions.
+- [x] Same scaler, multistart, causal filter, TRAIN likelihood parity, gates, within-vector state alignment and diagnostics are reused.
+- [x] No adaptive feature selection is moved into the runner.
+- [x] Unsupported version/family/dimension fails before fit.
 
 QA:
 
-- [ ] Legacy golden fixtures unchanged.
-- [ ] V4 structural candidate with same numerical input as legacy candidate produces identical HMM/filter evidence apart from version/lineage fields.
+- [x] Legacy golden fixtures unchanged.
+- [x] V4 structural candidate with same numerical input as legacy candidate produces identical HMM/filter evidence apart from version/lineage fields.
 
 ### PR-220 — Extract reusable same-feature candidate ranking
 
