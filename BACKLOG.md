@@ -637,21 +637,22 @@ QA:
 - **Branch:** `pr/PR-221-provisional-gaussian-teacher`
 - **Depends on:** PR-211, PR-217, PR-218, PR-219, PR-220
 - **Allowed:** `src/market_regime_engine/evaluations/provisional_teacher.py`, `tests/unit/evaluations/test_provisional_teacher.py`, `tests/integration/evaluations/test_provisional_teacher_compute.py`
+- **Status:** complete; GitHub PR #210 merged to `main`.
 
 Acceptance:
 
-- [ ] Exact inner `756/63/63`, no partial final TEST.
-- [ ] Run prototype preflight before any HMM.
-- [ ] Evaluate Gaussian K2-K5 only using existing adapters/multistart/runner.
-- [ ] Same prototype order/folds for every K.
-- [ ] Select K with PR-220 same-feature predictive ranking.
-- [ ] Persist all invalid/valid folds, common support and selection chain.
-- [ ] No fallback M, GMM, Student-t, Outer TEST, registration or alias action.
+- [x] Exact inner `756/63/63`, no partial final TEST.
+- [x] Run prototype preflight before any HMM.
+- [x] Evaluate Gaussian K2-K5 only using existing adapters/multistart/runner.
+- [x] Same prototype order/folds for every K.
+- [x] Select K with PR-220 same-feature predictive ranking.
+- [x] Persist all invalid/valid folds, common support and selection chain.
+- [x] No fallback M, GMM, Student-t, Outer TEST, registration or alias action.
 
 QA:
 
-- [ ] Independent forward-likelihood calculation on small explicit HMM.
-- [ ] Real four-K synthetic compute with no mocked HMM math.
+- [x] Independent forward-likelihood calculation on small explicit HMM.
+- [x] Real four-K synthetic compute with no mocked HMM math.
 
 ### PR-222 — Build causal teacher reference and frozen-teacher refit helper
 
