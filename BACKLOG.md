@@ -679,21 +679,22 @@ QA:
 - **Branch:** `pr/PR-223-all-feature-regime-information`
 - **Depends on:** PR-210
 - **Allowed:** `src/market_regime_engine/feature_discovery/scoring.py`, `tests/unit/feature_discovery/test_scoring.py`
+- **Status:** complete; GitHub PR #214 merged to `main`.
 
 Acceptance:
 
-- [ ] Exact feature-specific support, >=0.90 coverage and >=126 rows.
-- [ ] Exact average-rank decile bins and section-2.7 joint-probability formula.
-- [ ] Primary state information ratio finite `[0,1]`; entropy-degenerate cases fail.
-- [ ] Compute eta² on identical support as diagnostic/secondary value.
-- [ ] Persist primitive bin/state joint masses, state masses, entropies, MI, eta inputs and counts sufficient for independent recomputation.
-- [ ] State-label permutation and monotonic feature transform leave primary score unchanged within tolerance.
-- [ ] No HMM fit.
+- [x] Exact feature-specific support, >=0.90 coverage and >=126 rows.
+- [x] Exact average-rank decile bins and section-2.7 joint-probability formula.
+- [x] Primary state information ratio finite `[0,1]`; entropy-degenerate cases fail.
+- [x] Compute eta² on identical support as diagnostic/secondary value.
+- [x] Persist primitive bin/state joint masses, state masses, entropies, MI, eta inputs and counts sufficient for independent recomputation.
+- [x] State-label permutation and monotonic feature transform leave primary score unchanged within tolerance.
+- [x] No HMM fit.
 
 QA:
 
-- [ ] Independent primitive MI and eta implementation; explicit variance-only/tail-separation fixture must receive non-zero information score while eta² is near zero.
-- [ ] 100-feature full scoring fixture.
+- [x] Independent primitive MI and eta implementation; explicit variance-only/tail-separation fixture must receive non-zero information score while eta² is near zero.
+- [x] 100-feature full scoring fixture.
 
 ### PR-224 — Select one regime winner per cluster and rank globally
 
