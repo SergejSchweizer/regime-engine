@@ -903,7 +903,7 @@ Final PR evidence:
 
 - **Branch:** `pr/PR-254-pg-schema-all-feature-discovery`
 - **GitHub:** PR #236 (open)
-- **Status:** schema-wide source/catalog implementation and hermetic regression tests are pushed; durable snapshot/run identity, resumable execution and full external audit remain open dependencies and this PR is not merge-ready yet.
+- **Status:** schema-wide source/catalog implementation, durable file-backed snapshot/run identity, outer-fold resume ledger and hermetic regression tests are pushed; finer-grained stage resume and the full external audit remain open dependencies.
 
 Validated on the branch:
 
@@ -911,11 +911,12 @@ Validated on the branch:
 - [x] No feature-name allowlist on the schema-wide v4 API; deterministic full timestamp union preserves NULLs.
 - [x] Catalog/materialization identity includes canonical origins, ordered matrix digest and materialized bounds.
 - [x] v4 source entrypoint passes the complete discovered catalog into the existing evaluator.
-- [x] `ruff`, strict `mypy`, non-E2E full suite: 634 passed, 2 expected external skips, combined coverage 90.07%.
+- [x] `FileDatasetSnapshotStore` and `FileEvaluationRunStore` persist immutable snapshot/run identity and resume completed outer-fold units.
+- [x] `ruff`, strict `mypy`, non-E2E full suite: 694 passed, 2 expected external skips, combined coverage 90.15%.
 
 Still open and deliberately not claimed:
 
-- [ ] Durable `DatasetSnapshotKey`/`EvaluationRunKey` integration and crash-safe resume ledger.
+- [ ] Ledger integration for every inner discovery, teacher-candidate, prefix, final-grid and outer-test stage.
 - [ ] Full current-source audit and complete real-HMM schema-wide run.
 - [ ] PR-231 long-running hermetic E2E proof and its independent rerun evidence.
 

@@ -1,6 +1,6 @@
 # Regime Engine — Dataset-Pinned, Idempotent and Resumable Evaluation Execution
 
-Status date: 2026-09-09
+Status date: 2026-09-10
 
 This document is an authoritative cross-cutting execution contract for **all evaluation workflows** in `regime-engine`, including legacy compatibility evaluations while they remain callable, Xetra v4 inner/outer evaluations, full-source audit evaluations, deployment-selection evaluations, and future evaluation families.
 
@@ -93,6 +93,13 @@ After the durable snapshot is finalized:
 - a resume operation must not silently recapture the current live table under the old run identity.
 
 If the durable snapshot bytes are missing or fail their persisted file/content hash, the run fails closed. It must not reconstruct the old run from a newer live dataset.
+
+The current implementation provides this contract through
+`FileDatasetSnapshotStore`. It writes a canonical `snapshot.json` plus a
+separate manifest containing the payload hash, uses an exclusive filesystem
+lock, flushes payload and directory metadata, and refuses partial, corrupted,
+or changed bytes. `DatasetSnapshotKey.from_catalog(...)` binds the source
+lineage, discovered catalog, materialized matrix hash, row count, and bounds.
 
 ```mermaid
 sequenceDiagram
@@ -208,6 +215,20 @@ created/updated operational timestamps
 ```
 
 Canonical statistical payloads remain separate from operational lease/timestamp metadata.
+
+The current implementation is `FileEvaluationRunStore`. Its JSON ledger is
+stored below the caller-selected persistent root and is updated under an
+exclusive filesystem lock with atomic replacement. Completed work-unit
+payloads and the final result payload are stored separately and verified by
+their hashes. A work unit with an expired lease can be claimed again; a
+completed unit or completed run is immutable. The v4 outer evaluator uses one
+ledger unit per outer fold, so a restart reuses completed folds and claims
+only the remaining folds.
+
+The finer-grained quality, distance, clustering, teacher-candidate, prefix,
+and final-grid units listed below remain a follow-up integration point. Until
+those units are ledger-backed as well, the implementation must not claim
+full stage-level resume coverage.
 
 ### 5.1 Work-unit state machine
 
