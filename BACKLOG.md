@@ -911,7 +911,7 @@ Validated on the branch:
 - [x] No feature-name allowlist on the schema-wide v4 API; deterministic full timestamp union preserves NULLs.
 - [x] Catalog/materialization identity includes canonical origins, ordered matrix digest and materialized bounds.
 - [x] v4 source entrypoint passes the complete discovered catalog into the existing evaluator.
-- [x] `ruff`, strict `mypy`, and non-E2E full suite: 593 passed, 2 expected external skips.
+- [x] `ruff`, strict `mypy`, non-E2E full suite: 634 passed, 2 expected external skips, combined coverage 90.07%.
 
 Still open and deliberately not claimed:
 
