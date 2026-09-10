@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import isfinite
 
@@ -96,6 +97,28 @@ def _failure(seed: int, reason: str, *, converged: bool = False) -> StartDiagnos
     )
 
 
+def _evaluate_start(
+    train_rows: npt.ArrayLike,
+    *,
+    state_count: int,
+    adapter_factory: AdapterFactory,
+    seed: int,
+) -> tuple[StartDiagnostic, FitResult | None]:
+    try:
+        result = adapter_factory().fit(train_rows, state_count, seed)
+        if result.seed != seed:
+            raise ValueError("adapter returned a mismatched seed")
+        if not result.converged:
+            return _failure(seed, "not converged"), None
+        if result.iterations < 1:
+            return _failure(seed, "invalid iteration count", converged=True), None
+        if not isfinite(result.train_log_likelihood):
+            return _failure(seed, "non-finite TRAIN log likelihood", converged=True), None
+        return _successful_diagnostic(result), result
+    except Exception as exc:
+        return _failure(seed, f"{type(exc).__name__}: {exc}"), None
+
+
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
     """Choose from starts tied to the exact global maximum likelihood."""
 
@@ -115,34 +138,45 @@ def run_multistart(
     *,
     state_count: int,
     adapter_factory: AdapterFactory,
+    max_workers: int | None = None,
 ) -> MultistartResult:
     """Fit exactly eight starts and choose the valid TRAIN-loglik winner deterministically."""
 
     if state_count not in (2, 3, 4, 5):
         raise ValueError("state_count must be K=2,3,4,5")
 
-    diagnostics: list[StartDiagnostic] = []
-    valid_results: list[FitResult] = []
-    for seed in MULTISTART_SEEDS:
-        try:
-            result = adapter_factory().fit(train_rows, state_count, seed)
-            if result.seed != seed:
-                raise ValueError("adapter returned a mismatched seed")
-            if not result.converged:
-                diagnostics.append(_failure(seed, "not converged"))
-                continue
-            if result.iterations < 1:
-                diagnostics.append(_failure(seed, "invalid iteration count", converged=True))
-                continue
-            if not isfinite(result.train_log_likelihood):
-                diagnostics.append(
-                    _failure(seed, "non-finite TRAIN log likelihood", converged=True)
+    worker_limit = 1 if max_workers is None else max_workers
+    if worker_limit < 1:
+        raise ValueError("max_workers must be at least 1")
+    worker_limit = min(worker_limit, len(MULTISTART_SEEDS))
+
+    if worker_limit == 1:
+        evaluated = tuple(
+            _evaluate_start(
+                train_rows,
+                state_count=state_count,
+                adapter_factory=adapter_factory,
+                seed=seed,
+            )
+            for seed in MULTISTART_SEEDS
+        )
+    else:
+        with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+            futures = {
+                seed: executor.submit(
+                    _evaluate_start,
+                    train_rows,
+                    state_count=state_count,
+                    adapter_factory=adapter_factory,
+                    seed=seed,
                 )
-                continue
-            diagnostics.append(_successful_diagnostic(result))
-            valid_results.append(result)
-        except Exception as exc:
-            diagnostics.append(_failure(seed, f"{type(exc).__name__}: {exc}"))
+                for seed in MULTISTART_SEEDS
+            }
+            evaluated = tuple(futures[seed].result() for seed in MULTISTART_SEEDS)
+
+    diagnostics = [diagnostic for diagnostic, _result in evaluated]
+    valid_results: list[FitResult] = []
+    valid_results.extend(result for _diagnostic, result in evaluated if result is not None)
 
     valid_count = len(valid_results)
     success_rate = valid_count / len(MULTISTART_SEEDS)

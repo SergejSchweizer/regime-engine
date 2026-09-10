@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import cast
@@ -49,6 +50,39 @@ PrefixCandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+
+
+def _evaluate_candidates(
+    source_rows: pd.DataFrame,
+    plan: WalkForwardPlan,
+    profile: ModelProfile,
+    candidates: tuple[ResolvedCandidateProfile, ...],
+    runner: PrefixCandidateRunner,
+    max_workers: int | None,
+) -> dict[str, WalkForwardEvaluation]:
+    """Evaluate one prefix's candidates concurrently with deterministic output assembly."""
+
+    worker_limit = 1 if max_workers is None else max_workers
+    if worker_limit < 1:
+        raise ValueError("max_workers must be at least 1")
+    worker_limit = min(worker_limit, len(candidates))
+
+    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+        return runner(
+            source_rows,
+            plan,
+            profile,
+            candidate,
+            cast(AdapterFactory, adapter_factory(profile, candidate)),
+        )
+
+    if worker_limit == 1:
+        return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
+    with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+        futures = {
+            candidate.candidate_id: executor.submit(evaluate, candidate) for candidate in candidates
+        }
+        return {candidate_id: future.result() for candidate_id, future in futures.items()}
 
 
 def _utc(value: object, field_name: str) -> datetime:
@@ -198,6 +232,7 @@ def search_ranked_prefixes(
     feature_selection_definition_hash: str | None = None,
     feature_selection_execution_hash: str | None = None,
     runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
+    max_workers: int | None = None,
 ) -> PrefixSearchResult:
     """Evaluate every exact ranked prefix and choose only by teacher soft NMI.
 
@@ -259,16 +294,14 @@ def search_ranked_prefixes(
                 minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
             )
             require_model_clock_eligible(preflight, "prefix")
-            evaluations_by_id = {
-                candidate.candidate_id: runner(
-                    source_rows,
-                    inner_plan,
-                    profile,
-                    candidate,
-                    cast(AdapterFactory, adapter_factory(profile, candidate)),
-                )
-                for candidate in candidates
-            }
+            evaluations_by_id = _evaluate_candidates(
+                source_rows,
+                inner_plan,
+                profile,
+                candidates,
+                runner,
+                max_workers,
+            )
             raw_evaluations = tuple(
                 evaluations_by_id[candidate.candidate_id] for candidate in candidates
             )

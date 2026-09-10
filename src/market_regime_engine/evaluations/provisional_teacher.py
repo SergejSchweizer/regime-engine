@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -56,6 +57,39 @@ ProvisionalCandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+
+
+def _evaluate_candidates(
+    source_rows: pd.DataFrame,
+    plan: WalkForwardPlan,
+    profile: ModelProfile,
+    candidates: tuple[ResolvedCandidateProfile, ...],
+    runner: ProvisionalCandidateRunner,
+    max_workers: int | None,
+) -> dict[str, WalkForwardEvaluation]:
+    """Evaluate teacher candidates concurrently while preserving canonical output order."""
+
+    worker_limit = 1 if max_workers is None else max_workers
+    if worker_limit < 1:
+        raise ValueError("max_workers must be at least 1")
+    worker_limit = min(worker_limit, len(candidates))
+
+    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+        return runner(
+            source_rows,
+            plan,
+            profile,
+            candidate,
+            cast(AdapterFactory, adapter_factory(profile, candidate)),
+        )
+
+    if worker_limit == 1:
+        return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
+    with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+        futures = {
+            candidate.candidate_id: executor.submit(evaluate, candidate) for candidate in candidates
+        }
+        return {candidate_id: future.result() for candidate_id, future in futures.items()}
 
 
 def _utc(value: object, field_name: str) -> datetime:
@@ -341,6 +375,7 @@ def select_provisional_teacher(
     feature_selection_definition_hash: str,
     feature_selection_execution_hash: str,
     runner: ProvisionalCandidateRunner = run_provisional_gaussian_candidate,
+    max_workers: int | None = None,
 ) -> ProvisionalTeacherEvaluation:
     """Select provisional Gaussian K causally using only the supplied TRAIN rows."""
 
@@ -372,16 +407,14 @@ def select_provisional_teacher(
         by_id[candidate_id]
         for candidate_id in randomized_order(_GAUSSIAN_CANDIDATE_IDS, scope="provisional-teacher")
     )
-    evaluations_by_id = {
-        candidate.candidate_id: runner(
-            source_rows,
-            plan,
-            profile,
-            candidate,
-            cast(AdapterFactory, adapter_factory(profile, candidate)),
-        )
-        for candidate in scheduled
-    }
+    evaluations_by_id = _evaluate_candidates(
+        source_rows,
+        plan,
+        profile,
+        scheduled,
+        runner,
+        max_workers,
+    )
     evaluations = tuple(evaluations_by_id[candidate_id] for candidate_id in _GAUSSIAN_CANDIDATE_IDS)
     aggregates = tuple(aggregate_candidate(evaluation) for evaluation in evaluations)
     selection: StatisticalChampionSelection | None

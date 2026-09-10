@@ -270,6 +270,7 @@ def select_v4_configuration(
         feature_selection_definition_hash=definition_hash,
         feature_selection_execution_hash=execution_hash,
         runner=teacher_runner if teacher_runner is not None else run_provisional_gaussian_candidate,
+        max_workers=max_workers,
     )
     teacher_reference = build_provisional_teacher_reference(teacher_evaluation)
     feature_scores = score_all_raw_features(snapshot, quality, teacher_reference)
@@ -285,6 +286,7 @@ def select_v4_configuration(
         feature_selection_definition_hash=definition_hash,
         feature_selection_execution_hash=execution_hash,
         runner=prefix_runner if prefix_runner is not None else run_prefix_gaussian_candidate,
+        max_workers=max_workers,
     )
     selected_prefix = prefix_search.evaluations[prefix_search.selected_prefix_length - 2]
     final_grid = evaluate_final_v4_grid(

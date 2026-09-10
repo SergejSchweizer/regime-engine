@@ -471,6 +471,7 @@ def run_walk_forward_candidate(
     profile: ModelProfile,
     candidate: WalkForwardCandidate,
     adapter_factory: AdapterFactory,
+    max_workers: int | None = None,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection."""
 
@@ -529,11 +530,19 @@ def run_walk_forward_candidate(
             scaler = fit_standard_scaler(train_rows, candidate.feature_order)
             scaled_train = scaler.transform(train_rows)
             scaled_test = scaler.transform(test_rows)
-            multistart = run_multistart(
-                scaled_train,
-                state_count=candidate.state_count,
-                adapter_factory=adapter_factory,
-            )
+            if max_workers is None:
+                multistart = run_multistart(
+                    scaled_train,
+                    state_count=candidate.state_count,
+                    adapter_factory=adapter_factory,
+                )
+            else:
+                multistart = run_multistart(
+                    scaled_train,
+                    state_count=candidate.state_count,
+                    adapter_factory=adapter_factory,
+                    max_workers=max_workers,
+                )
             artifact = multistart.winner.artifact
             if artifact.feature_order != candidate.feature_order:
                 raise ValueError("fitted model feature order differs from frozen resolved order")

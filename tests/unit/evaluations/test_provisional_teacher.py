@@ -178,11 +178,12 @@ def test_teacher_runs_only_gaussian_candidates_on_one_shared_prototype_contract(
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
         runner=runner,
+        max_workers=2,
     )
 
-    assert tuple(call[0] for call in calls) == tuple(
+    assert {call[0] for call in calls} == {
         f"gaussian_hmm_k{state_count}_full" for state_count in V4_PROVISIONAL_STATE_COUNTS
-    )
+    }
     assert all(call[1] == FEATURES for call in calls)
     assert all(call[2] == ("fold_001",) for call in calls)
     assert result.provisional_candidate_id == winner
