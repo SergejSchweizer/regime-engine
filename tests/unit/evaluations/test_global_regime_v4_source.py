@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd  # type: ignore[import-untyped]
+import pytest
 
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
 from market_regime_engine.contracts import SourceLineage
@@ -81,3 +82,79 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
     assert pd.isna(rows["feature_b"].iloc[0])
     assert rows["feature_b"].iloc[1] == 3.0
     assert captured["catalog"] == bound_catalog
+
+
+def test_v4_source_entrypoint_fails_closed_for_invalid_snapshot_contracts() -> None:
+    lineage = _lineage()
+    catalog = FeatureCatalogSnapshot.from_entries(
+        lineage,
+        "timestamp_m1",
+        (FeatureCatalogEntry("feature_a", 1), FeatureCatalogEntry("feature_b", 2)),
+    )
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    invalid_profile = load_profile("configs/profiles/xetra_v3.yaml")
+
+    class Source:
+        def __init__(self, result) -> None:
+            self.result = result
+
+        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+            del request
+            return self.result
+
+    valid_snapshot = FeatureSnapshot(
+        lineage,
+        catalog.feature_names,
+        (FeatureRow(START, (1.0, 2.0)),),
+    )
+    bound_catalog = catalog.with_materialization(valid_snapshot)
+
+    with pytest.raises(ValueError, match="canonical Xetra v4 profile"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source((bound_catalog, valid_snapshot)), profile=invalid_profile
+        )
+
+    mismatched_snapshot = FeatureSnapshot(
+        lineage,
+        ("feature_a",),
+        (FeatureRow(START, (1.0,)),),
+    )
+    with pytest.raises(ValueError, match="columns do not match"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source((catalog, mismatched_snapshot)), profile=profile
+        )
+
+    missing_digest = type(
+        "Snapshot",
+        (),
+        {
+            "feature_names": catalog.feature_names,
+            "materialized_feature_data_sha256": None,
+            "rows": (object(),),
+        },
+    )()
+    with pytest.raises(ValueError, match="missing its materialization digest"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source((catalog, missing_digest)), profile=profile
+        )
+
+    mismatched_digest = type(
+        "Snapshot",
+        (),
+        {
+            "feature_names": catalog.feature_names,
+            "materialized_feature_data_sha256": "b" * 64,
+            "rows": (object(),),
+        },
+    )()
+    with pytest.raises(ValueError, match="digests differ"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source((catalog, mismatched_digest)), profile=profile
+        )
+
+    empty_snapshot = FeatureSnapshot(lineage, catalog.feature_names, ())
+    empty_catalog = catalog.with_materialization(empty_snapshot)
+    with pytest.raises(ValueError, match="contains no rows"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source((empty_catalog, empty_snapshot)), profile=profile
+        )

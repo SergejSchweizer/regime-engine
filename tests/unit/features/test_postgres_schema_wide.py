@@ -137,7 +137,7 @@ def _connection(
 def test_schema_wide_request_discovers_and_unions_every_relation() -> None:
     connection = _connection()
     catalog, snapshot = PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
-        FeatureRequest.all_features()
+        FeatureRequest.all_features(start=START, end=START + timedelta(days=2))
     )
 
     assert catalog.feature_names == ("alpha", "beta")
@@ -160,6 +160,7 @@ def test_schema_wide_request_discovers_and_unions_every_relation() -> None:
     assert connection.isolation_level is IsolationLevel.REPEATABLE_READ
     assert connection.committed and connection.closed and not connection.rolled_back
     assert len(connection._cursor.executed) == 5
+    assert connection._cursor.executed[-1][1] == (START, START + timedelta(days=2))
 
 
 def test_schema_wide_catalog_and_materialization_are_order_independent() -> None:
@@ -185,6 +186,21 @@ def test_schema_wide_catalog_and_materialization_are_order_independent() -> None
         second_snapshot.materialized_feature_data_sha256
         == first_snapshot.materialized_feature_data_sha256
     )
+
+
+def test_schema_wide_materialization_preserves_explicit_database_nulls() -> None:
+    connection = _connection(
+        rows_by_relation=[
+            [(START, None)],
+            [(START, 20.0)],
+        ]
+    )
+
+    _, snapshot = PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+        FeatureRequest.all_features()
+    )
+
+    assert snapshot.rows[0].values == (None, 20.0)
 
 
 def test_schema_wide_discovery_rejects_unsupported_relation_kind() -> None:
@@ -250,3 +266,204 @@ def test_schema_wide_api_rejects_a_caller_feature_allowlist() -> None:
         PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
             FeatureRequest(("alpha",), None, None, SourceMode.FEATURE_SELECTION)
         )
+
+
+@pytest.mark.parametrize(
+    ("relations", "columns", "message"),
+    [
+        ([], _columns(), "contains no relations"),
+        ([("regime_loader", "alpha_features")], _columns(), "relation catalog shape"),
+        ([(None, "alpha_features", "r")], _columns(), "invalid text"),
+        ([("other_schema", "alpha_features", "r")], _columns(), "escaped"),
+        ([("regime_loader", "bad-relation", "r")], _columns(), "unsafe feature relation"),
+        ([("regime_loader", "alpha_features", "r")] * 2, _columns(), "duplicate relations"),
+        ([("regime_loader", "alpha_features", "r")], [], "has no columns"),
+    ],
+)
+def test_schema_wide_relation_catalog_failures(
+    relations: list[tuple[Any, ...]],
+    columns: list[tuple[Any, ...]],
+    message: str,
+) -> None:
+    connection = _connection(relations=relations, columns=columns)
+    with pytest.raises(ValueError, match=message):
+        PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+            FeatureRequest.all_features()
+        )
+    assert connection.rolled_back and connection.closed
+
+
+@pytest.mark.parametrize(
+    ("columns", "message"),
+    [
+        (_columns()[1:], "exactly one"),
+        ([*_columns(), _columns()[0]], "exactly one"),
+        (
+            [
+                *_columns()[:1],
+                (
+                    "regime_loader",
+                    "alpha_features",
+                    "r",
+                    "alpha",
+                    2,
+                    "numeric",
+                    "numeric",
+                ),
+                *_columns()[2:],
+            ],
+            "unsupported Gold feature type",
+        ),
+        (
+            [
+                *_columns()[:1],
+                (
+                    "regime_loader",
+                    "alpha_features",
+                    "r",
+                    "Bad-Feature",
+                    2,
+                    "double precision",
+                    "float8",
+                ),
+                *_columns()[2:],
+            ],
+            "unsafe feature identifier",
+        ),
+        (
+            [
+                *_columns()[:1],
+                (
+                    "regime_loader",
+                    "alpha_features",
+                    "r",
+                    "alpha",
+                    "two",
+                    "double precision",
+                    "float8",
+                ),
+                *_columns()[2:],
+            ],
+            "ordinal_position",
+        ),
+        (
+            [
+                (
+                    "regime_loader",
+                    "alpha_features",
+                    "r",
+                    "timestamp_m1",
+                    1,
+                    "timestamp without time zone",
+                    "timestamp",
+                ),
+                *_columns()[1:],
+            ],
+            "timestamp-with-time-zone",
+        ),
+        (
+            [
+                *_columns()[:-1],
+                (
+                    "regime_loader",
+                    "beta_features",
+                    "r",
+                    "alpha",
+                    2,
+                    "double precision",
+                    "float8",
+                ),
+            ],
+            "duplicate feature name",
+        ),
+    ],
+)
+def test_schema_wide_column_contract_failures(columns: list[tuple[Any, ...]], message: str) -> None:
+    connection = _connection(columns=columns)
+    with pytest.raises(ValueError, match=message):
+        PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+            FeatureRequest.all_features()
+        )
+    assert connection.rolled_back and connection.closed
+
+
+def test_schema_wide_column_catalog_shape_and_unknown_relation_fail_closed() -> None:
+    for columns, message in (
+        (
+            [
+                *_columns(),
+                ("regime_loader", "alpha_features", "r", "broken", 2, "double precision"),
+            ],
+            "column catalog shape",
+        ),
+        (
+            [
+                *_columns(),
+                ("regime_loader", "unknown", "r", "broken", 2, "double precision", "float8"),
+            ],
+            "unknown feature relation",
+        ),
+        (
+            [
+                *_columns()[:1],
+                ("regime_loader", "alpha_features", "f", "alpha", 2, "double precision", "float8"),
+                *_columns()[2:],
+            ],
+            "unsupported relation kind",
+        ),
+    ):
+        connection = _connection(columns=columns)
+        with pytest.raises(ValueError, match=message):
+            PostgresFeatureSource(
+                lambda connection=connection: connection
+            ).read_schema_wide_with_catalog(FeatureRequest.all_features())
+        assert connection.rolled_back and connection.closed
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([[(START,)], [(START + timedelta(days=1), 20.0)]], "row shape"),
+        (
+            [[(START, 1.0), (START, 2.0)], [(START + timedelta(days=1), 20.0)]],
+            "duplicate timestamp",
+        ),
+        (
+            [[(START - timedelta(days=1), 1.0)], [(START + timedelta(days=1), 20.0)]],
+            "before source bounds",
+        ),
+        (
+            [[(START, 1.0)], [(START + timedelta(days=3), 20.0)]],
+            "after source bounds",
+        ),
+        (
+            [[(START, float("inf"))], [(START + timedelta(days=1), 20.0)]],
+            "finite",
+        ),
+    ],
+)
+def test_schema_wide_row_materialization_failures(
+    rows: list[list[tuple[Any, ...]]], message: str
+) -> None:
+    connection = _connection(rows_by_relation=rows)
+    with pytest.raises(ValueError, match=message):
+        PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+            FeatureRequest.all_features()
+        )
+    assert connection.rolled_back and connection.closed
+
+
+def test_schema_wide_source_validates_runtime_mode_and_identifier() -> None:
+    connection = _connection()
+    with pytest.raises(ValueError, match="dynamic catalog mode"):
+        PostgresFeatureSource(lambda: connection, ("alpha",)).read_schema_wide_with_catalog(
+            FeatureRequest.all_features()
+        )
+    with pytest.raises(ValueError, match="safe SQL identifier"):
+        PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+            FeatureRequest.all_features(), feature_schema="bad-schema"
+        )
+    with pytest.raises(ValueError, match="registered feature names"):
+        PostgresFeatureSource(lambda: connection, ("bad-name",))
+    with pytest.raises(ValueError, match="versions"):
+        PostgresFeatureSource(lambda: connection, expected_schema_version=0)

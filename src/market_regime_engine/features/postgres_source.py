@@ -373,7 +373,10 @@ class PostgresFeatureSource:
         for schema_name, relation_name, relation_kind in sorted(relations):
             columns = sorted(
                 columns_by_relation[(schema_name, relation_name)],
-                key=lambda row: (int(row[4]), str(row[3])),
+                key=lambda row: (
+                    row[4] if isinstance(row[4], int) and not isinstance(row[4], bool) else 0,
+                    str(row[3]),
+                ),
             )
             if not columns:
                 raise ValueError(f"feature relation {schema_name}.{relation_name} has no columns")
