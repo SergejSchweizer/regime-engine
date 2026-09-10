@@ -13,7 +13,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 ## Current repository state
 
 As of 2026-09-10, the checked-out branch is
-`pr/PR-231-global-v4-hermetic-e2e-proof` at `865a4e7`, aligned with its remote
+`pr/PR-231-global-v4-hermetic-e2e-proof` at `558b24c`, aligned with its remote
 branch; `origin/main` is `03feaff`. GitHub PR #238 is open. The tracked
 worktree is clean. The PR-231 end-to-end proof is implemented and its full
 real-computation runs completed through the independent math assertions with
