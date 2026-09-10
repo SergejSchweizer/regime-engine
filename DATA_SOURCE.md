@@ -1,6 +1,6 @@
 # Regime Engine Data-Source Contract
 
-Status date: 2026-08-23
+Status date: 2026-09-10
 
 This document is authoritative for production feature-source transport, lineage, time semantics, missing-value semantics and credential boundaries.
 
@@ -58,6 +58,13 @@ fill, interpolation or carry is performed. The source returns the complete
 catalog and matrix before closing the database transaction. Its
 `materialized_feature_data_sha256` is a versioned hash of the ordered
 timestamps, columns and values/nulls and is included in the catalog identity.
+
+The v4 source entrypoint can finalize this materialized matrix through
+`FileDatasetSnapshotStore` before model work starts. The corresponding
+`FileEvaluationRunStore` binds the snapshot key to the profile, plan, code,
+lockfile, and Python identities and resumes completed outer-fold units after
+a process or container restart. The legacy v3 evaluation script does not use
+this schema-wide entrypoint and remains governed by its static feature policy.
 
 ## Dedicated least-privilege identity
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,6 +34,12 @@ from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalTeacherEvaluation,
     run_provisional_gaussian_candidate,
     select_provisional_teacher,
+)
+from market_regime_engine.evaluations.run_store import (
+    DatasetSnapshotKey,
+    DatasetSnapshotStore,
+    EvaluationRunKey,
+    EvaluationRunStore,
 )
 from market_regime_engine.evaluations.teacher_reference import (
     FrozenTeacherRefit,
@@ -423,6 +430,77 @@ def _invalid_outer_fold(
     )
 
 
+def _evaluate_outer_fold(
+    source_rows: pd.DataFrame,
+    fold: WalkForwardFold,
+    *,
+    catalog: FeatureCatalogSnapshot,
+    profile: ModelProfile,
+    build_id: str,
+    outer_runner: PrefixCandidateRunner,
+    teacher_refitter: Callable[..., FrozenTeacherRefit],
+    max_workers: int | None,
+) -> OuterFoldResult:
+    """Evaluate one outer fold; callers may persist this atomic result."""
+
+    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+    test_rows = source_rows.iloc[
+        fold.train_source_observations : fold.train_source_observations
+        + fold.test_source_observations
+    ].copy()
+    try:
+        selection = select_v4_configuration(
+            train_rows,
+            catalog=catalog,
+            profile=profile,
+            source_build_id=build_id,
+            max_workers=max_workers,
+        )
+    except (ValueError, TypeError) as exc:
+        return _invalid_outer_fold(
+            fold,
+            _fallback_configuration(catalog, build_id, fold, str(exc)),
+            f"TRAIN-only v4 selection failed: {type(exc).__name__}: {exc}",
+        )
+
+    configuration = FinalSelectedConfiguration(
+        feature_order=selection.final_candidate.feature_order,
+        candidate_id=selection.final_candidate.candidate_id,
+        state_count=selection.final_candidate.state_count,
+        model_family=selection.final_candidate.model_family,
+        selected_prefix_length=len(selection.final_candidate.feature_order),
+        feature_discovery_hash=selection.feature_discovery_hash,
+        source_build_id=build_id,
+        catalog_hash=selection.catalog_hash,
+        selection_definition_hash=selection.final_candidate.feature_selection_definition_hash,
+        selection_execution_hash=selection.final_candidate.feature_selection_execution_hash,
+    )
+    outer_source = source_rows.iloc[
+        : fold.train_source_observations + fold.test_source_observations
+    ].copy()
+    try:
+        model_evaluation = outer_runner(
+            outer_source,
+            _outer_fold_plan(fold),
+            profile,
+            selection.final_candidate,
+            cast(AdapterFactory, adapter_factory(profile, selection.final_candidate)),
+        )
+        teacher_refit = teacher_refitter(
+            train_rows,
+            test_rows,
+            reference=selection.teacher_reference,
+            profile=profile,
+        )
+        return _valid_outer_fold(fold, configuration, model_evaluation, teacher_refit)
+    except (ValueError, TypeError) as exc:
+        return _invalid_outer_fold(
+            fold,
+            configuration,
+            f"outer refit/TEST continuation failed: {type(exc).__name__}: {exc}",
+        )
+
+
 def _valid_outer_fold(
     fold: WalkForwardFold,
     configuration: FinalSelectedConfiguration,
@@ -479,11 +557,27 @@ def evaluate_global_regime_v4(
     outer_runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
     teacher_refitter: Callable[..., FrozenTeacherRefit] = refit_frozen_teacher,
     max_workers: int | None = None,
+    run_store: EvaluationRunStore | None = None,
+    run_key: EvaluationRunKey | None = None,
 ) -> AdaptiveEvaluationResult:
     """Run every outer fold with TRAIN-only adaptive selection and frozen TEST use."""
 
+    if (run_store is None) != (run_key is None):
+        raise ValueError("run_store and run_key must be supplied together")
     if not isinstance(source_rows, pd.DataFrame):
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
+    if run_store is not None and run_key is not None:
+        state = run_store.open_run(run_key)
+        if state.status == "COMPLETE":
+            payload = run_store.load_completed_run(run_key)
+            if payload is None:
+                raise ValueError("completed evaluation has no durable result payload")
+            cached = pickle.loads(payload)
+            if not isinstance(cached, AdaptiveEvaluationResult):
+                raise ValueError("durable evaluation result has an invalid type")
+            if cached.result_hash != state.root_identity_hash:
+                raise ValueError("durable evaluation result hash does not match its ledger")
+            return cached
     build_id = catalog.lineage.source_build_id if source_build_id is None else source_build_id
     if build_id != catalog.lineage.source_build_id:
         raise ValueError("global v4 source build differs from catalog lineage")
@@ -495,69 +589,61 @@ def evaluate_global_regime_v4(
     outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
     outer_results: list[OuterFoldResult] = []
     for fold in outer_plan.folds:
-        train_rows = source_rows.iloc[: fold.train_source_observations].copy()
-        test_rows = source_rows.iloc[
-            fold.train_source_observations : fold.train_source_observations
-            + fold.test_source_observations
-        ].copy()
-        try:
-            selection = select_v4_configuration(
-                train_rows,
-                catalog=catalog,
-                profile=profile,
-                source_build_id=build_id,
-                max_workers=max_workers,
-            )
-        except (ValueError, TypeError) as exc:
+        if run_store is None or run_key is None:
             outer_results.append(
-                _invalid_outer_fold(
+                _evaluate_outer_fold(
+                    source_rows,
                     fold,
-                    _fallback_configuration(catalog, build_id, fold, str(exc)),
-                    f"TRAIN-only v4 selection failed: {type(exc).__name__}: {exc}",
+                    catalog=catalog,
+                    profile=profile,
+                    build_id=build_id,
+                    outer_runner=outer_runner,
+                    teacher_refitter=teacher_refitter,
+                    max_workers=max_workers,
                 )
             )
             continue
 
-        configuration = FinalSelectedConfiguration(
-            feature_order=selection.final_candidate.feature_order,
-            candidate_id=selection.final_candidate.candidate_id,
-            state_count=selection.final_candidate.state_count,
-            model_family=selection.final_candidate.model_family,
-            selected_prefix_length=len(selection.final_candidate.feature_order),
-            feature_discovery_hash=selection.feature_discovery_hash,
-            source_build_id=build_id,
-            catalog_hash=selection.catalog_hash,
-            selection_definition_hash=selection.final_candidate.feature_selection_definition_hash,
-            selection_execution_hash=selection.final_candidate.feature_selection_execution_hash,
+        work_unit_key = f"outer-fold-{fold.fold_id}"
+        input_hash = content_hash(
+            (
+                "global_regime_v4_outer_fold",
+                run_key.key,
+                fold.fold_id,
+                fold.train_start,
+                fold.train_end,
+                fold.test_start,
+                fold.test_end,
+                fold.train_source_observations,
+                fold.test_source_observations,
+            )
         )
-        outer_source = source_rows.iloc[
-            : fold.train_source_observations + fold.test_source_observations
-        ].copy()
-        try:
-            model_evaluation = outer_runner(
-                outer_source,
-                _outer_fold_plan(fold),
-                profile,
-                selection.final_candidate,
-                cast(AdapterFactory, adapter_factory(profile, selection.final_candidate)),
-            )
-            teacher_refit = teacher_refitter(
-                train_rows,
-                test_rows,
-                reference=selection.teacher_reference,
-                profile=profile,
-            )
-            outer_results.append(
-                _valid_outer_fold(fold, configuration, model_evaluation, teacher_refit)
-            )
-        except (ValueError, TypeError) as exc:
-            outer_results.append(
-                _invalid_outer_fold(
-                    fold,
-                    configuration,
-                    f"outer refit/TEST continuation failed: {type(exc).__name__}: {exc}",
-                )
-            )
+        cached_payload = run_store.load_completed_work_unit(run_key, work_unit_key, input_hash)
+        if cached_payload is not None:
+            cached = pickle.loads(cached_payload)
+            if not isinstance(cached, OuterFoldResult) or cached.fold_index != fold.fold_index:
+                raise ValueError("cached outer-fold payload is incompatible")
+            outer_results.append(cached)
+            continue
+        if not run_store.claim_work_unit(run_key, work_unit_key, input_hash):
+            raise RuntimeError(f"outer fold work unit is currently claimed: {work_unit_key}")
+        fold_result = _evaluate_outer_fold(
+            source_rows,
+            fold,
+            catalog=catalog,
+            profile=profile,
+            build_id=build_id,
+            outer_runner=outer_runner,
+            teacher_refitter=teacher_refitter,
+            max_workers=max_workers,
+        )
+        run_store.complete_work_unit(
+            run_key,
+            work_unit_key,
+            input_hash,
+            pickle.dumps(fold_result, protocol=pickle.HIGHEST_PROTOCOL),
+        )
+        outer_results.append(fold_result)
 
     valid_folds = tuple(fold for fold in outer_results if fold.valid)
     nmi_values = tuple(
@@ -568,7 +654,7 @@ def evaluate_global_regime_v4(
     valid_count = len(valid_folds)
     valid_rate = valid_count / len(outer_results)
     latest_valid = bool(outer_results[-1].valid)
-    return AdaptiveEvaluationResult(
+    result = AdaptiveEvaluationResult(
         source_build_id=build_id,
         catalog_hash=catalog.catalog_hash,
         validation_evaluation_cutoff=cast(datetime, outer_plan.evaluation_cutoff),
@@ -587,6 +673,13 @@ def evaluate_global_regime_v4(
             else "one or more outer folds failed without reusing a prior configuration"
         ),
     )
+    if run_store is not None and run_key is not None:
+        run_store.complete_run(
+            run_key,
+            result.result_hash,
+            pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL),
+        )
+    return result
 
 
 def evaluate_global_regime_v4_from_source(
@@ -599,6 +692,12 @@ def evaluate_global_regime_v4_from_source(
     outer_runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
     teacher_refitter: Callable[..., FrozenTeacherRefit] = refit_frozen_teacher,
     max_workers: int | None = None,
+    snapshot_store: DatasetSnapshotStore | None = None,
+    run_store: EvaluationRunStore | None = None,
+    repository_commit_sha: str | None = None,
+    uv_lock_sha256: str | None = None,
+    python_version: str | None = None,
+    evaluation_contract_version: int = 1,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
 
@@ -610,6 +709,8 @@ def evaluate_global_regime_v4_from_source(
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
         raise ValueError("dynamic source evaluation requires the canonical Xetra v4 profile")
+    if (snapshot_store is None) != (run_store is None):
+        raise ValueError("snapshot_store and run_store must be supplied together")
     catalog, snapshot = source.read_schema_wide_with_catalog(
         FeatureRequest.all_features(start, end)
     )
@@ -621,6 +722,42 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source catalog and snapshot materialization digests differ")
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
+    run_key: EvaluationRunKey | None = None
+    if snapshot_store is not None and run_store is not None:
+        if repository_commit_sha is None or uv_lock_sha256 is None or python_version is None:
+            raise ValueError(
+                "durable source evaluation requires repository, lockfile and Python identities"
+            )
+        dataset_key = DatasetSnapshotKey.from_catalog(catalog)
+        snapshot_store.finalize(dataset_key, snapshot)
+        snapshot = snapshot_store.load(dataset_key)
+        timestamps = tuple(row.timestamp for row in snapshot.rows)
+        plan = plan_walk_forward(timestamps, profile.walk_forward)
+        run_key = EvaluationRunKey(
+            evaluation_id="global_regime_v4",
+            profile_id=profile.profile_id,
+            profile_config_version=profile.profile_config_version,
+            profile_hash=profile.profile_hash,
+            evaluation_contract_version=evaluation_contract_version,
+            evaluation_plan_hash=plan.plan_hash,
+            dataset_snapshot_key=dataset_key.key,
+            evaluation_cutoff=cast(datetime, plan.evaluation_cutoff),
+            repository_commit_sha=repository_commit_sha,
+            uv_lock_sha256=uv_lock_sha256,
+            python_version=python_version,
+        )
+        state = run_store.open_run(run_key)
+        if state.status == "COMPLETE":
+            cached_result_payload = run_store.load_completed_run(run_key)
+            if cached_result_payload is None:
+                raise ValueError("completed evaluation has no durable result payload")
+            cached_result = pickle.loads(cached_result_payload)
+            if (
+                not isinstance(cached_result, AdaptiveEvaluationResult)
+                or cached_result.result_hash != state.root_identity_hash
+            ):
+                raise ValueError("durable evaluation result is incompatible or corrupted")
+            return cached_result
     rows = pd.DataFrame(
         [row.values for row in snapshot.rows],
         columns=snapshot.feature_names,
@@ -634,6 +771,8 @@ def evaluate_global_regime_v4_from_source(
         outer_runner=outer_runner,
         teacher_refitter=teacher_refitter,
         max_workers=max_workers,
+        run_store=run_store,
+        run_key=run_key,
     )
 
 
