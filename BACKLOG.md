@@ -10,6 +10,14 @@ The active target is **Xetra profile configuration version 4**. The semantic-med
 
 The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audited backlog. No implementation branch for those draft IDs exists; agents must not implement them.
 
+## Current repository state
+
+As of 2026-09-10, the checked-out branch is `main` at `03feaff`, aligned with
+`origin/main`; GitHub has no open pull requests. The tracked worktree is clean.
+The untracked files under `tests/e2e/test_global_regime_v4_full_compute.py`,
+`tests/fixtures/`, and `tests/__init__.py` are deliberate PR-231 work in
+progress and are not part of `main` until their long-running proof completes.
+
 ---
 
 # 1. Canonical v4 identity
@@ -902,8 +910,8 @@ Final PR evidence:
 ### PR-254 — Make the v4 evaluation universe PostgreSQL-schema-driven
 
 - **Branch:** `pr/PR-254-pg-schema-all-feature-discovery`
-- **GitHub:** PR #236 (open)
-- **Status:** schema-wide source/catalog implementation, durable file-backed snapshot/run identity, outer-fold resume ledger and hermetic regression tests are pushed; finer-grained stage resume and the full external audit remain open dependencies.
+- **GitHub:** PR #236 (merged into `main` as `03feaff`)
+- **Status:** schema-wide source/catalog implementation, durable file-backed snapshot/run identity, outer-fold resume ledger and hermetic regression tests are merged; finer-grained stage resume and the full external audit remain open dependencies tracked below.
 
 Validated on the branch:
 
