@@ -404,6 +404,14 @@ def test_global_v4_full_compute_and_independent_math_proof(
             strict=True,
         ):
             valid = tuple(fold for fold in grid_evaluation.folds if fold.valid)
+            if not valid:
+                assert aggregate.valid_fold_count == 0
+                assert aggregate.oos_predictive_loglik_mean is None
+                assert aggregate.oos_predictive_loglik_std is None
+                assert aggregate.oos_predictive_loglik_worst_fold is None
+                assert aggregate.bic_mean is None
+                assert aggregate.aic_mean is None
+                continue
             oos = tuple(fold.oos_predictive_log_likelihood_per_observation for fold in valid)
             assert aggregate.oos_predictive_loglik_mean == pytest.approx(fmean(oos))
             assert aggregate.oos_predictive_loglik_std == pytest.approx(pstdev(oos))
