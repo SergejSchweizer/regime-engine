@@ -32,7 +32,8 @@ host:              10.10.1.3
 port:              54321
 database:          mandatory runtime value; no default
 dataset_id:        regime_features_daily
-feature table:     regime_loader.regime_features_daily
+feature schema:    regime_loader
+lineage table:     regime_loader.regime_features_daily
 sync-state table:  regime_loader_sync.gold_sync_state
 temporal key:      timestamp_m1 TIMESTAMPTZ(6)
 ```
@@ -41,13 +42,22 @@ The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstrea
 
 Feature columns are nullable `DOUBLE PRECISION`. SQL NULL is permitted by the upstream source; NaN/infinity is invalid.
 
-For global discovery v4, the engine reads `information_schema.columns` in the
-same repeatable-read transaction as sync-state and feature rows. The catalog
-must contain exactly one `timestamp_m1` column of PostgreSQL timestamp-with-time
-zone type; every other table column is a feature and must be
-`DOUBLE PRECISION`. Feature entries are ordered by `ordinal_position`, and the
-catalog snapshot hash includes the source lineage and each ordered
-name/type/ordinal triple. No feature-name allowlist is used in this mode.
+For global discovery v4, the engine enumerates every feature relation in
+`regime_loader` and reads its PostgreSQL catalog metadata in the same
+repeatable-read transaction as sync-state and feature rows. A supported
+relation must contain exactly one `timestamp_m1` column of PostgreSQL
+timestamp-with-time-zone type; every other column is a feature and must be
+`DOUBLE PRECISION`. Unsupported or malformed relations fail closed. Feature
+entries are ordered by `(schema_name, relation_name, ordinal_position,
+column_name)`, and bare feature names must be globally unique. No
+feature-name allowlist is used in this mode.
+
+When more than one valid relation exists, v4 materializes their deterministic
+full timestamp union. A missing relation observation remains SQL `NULL`; no
+fill, interpolation or carry is performed. The source returns the complete
+catalog and matrix before closing the database transaction. Its
+`materialized_feature_data_sha256` is a versioned hash of the ordered
+timestamps, columns and values/nulls and is included in the catalog identity.
 
 ## Dedicated least-privilege identity
 
@@ -67,7 +77,8 @@ Required grants only:
 
 - database `CONNECT` on the explicitly supplied serving database;
 - schema `USAGE` on `regime_loader` and `regime_loader_sync`;
-- `SELECT` on `regime_loader.regime_features_daily`;
+- `SELECT` on every current feature relation in `regime_loader` (and the
+  corresponding default privileges for future feature relations);
 - `SELECT` on `regime_loader_sync.gold_sync_state`.
 
 No writer/admin/ownership/CREATE privileges are required. The engine must never reuse the `regime-loader` writer credential.
@@ -118,15 +129,15 @@ Required semantics:
 ```text
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
   read regime_loader_sync.gold_sync_state
-  read bounded feature rows from regime_loader.regime_features_daily
+  enumerate and read every relation in the configured feature schema
   validate lineage/source bounds
 COMMIT;
 ```
 
-The dynamic v4 catalog and requested rows are materialized before the
-transaction closes. A catalog change therefore becomes visible as one new
-source snapshot; the engine does not keep a database transaction open while
-fitting or evaluating models.
+The dynamic v4 catalog and complete schema-wide rows are materialized before
+the transaction closes. A catalog or data change therefore becomes visible as
+one new source snapshot; the engine does not keep a database transaction open
+while fitting or evaluating models.
 
 The PostgreSQL transaction ends after source materialization. HMM fitting/evaluation must not hold a long-lived database transaction open.
 
@@ -178,7 +189,8 @@ For the frozen final model features, a model observation exists only where all f
 
 - UTC everywhere;
 - SQL rows ordered by `timestamp_m1` ascending;
-- only requested bounded interval and exact ordered columns;
+- v4 discovery reads every relation and exact ordered column; resolved model
+  serving may still request only its frozen feature tuple;
 - identifiers validated against the registered/profile contract before SQL construction;
 - values/bounds are parameterized;
 - no observation later than explicit `as_of` may influence that prediction;

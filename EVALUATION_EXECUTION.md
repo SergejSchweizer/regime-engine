@@ -53,6 +53,10 @@ row_count
 min_timestamp
 max_timestamp
 source_catalog_hash
+materialized_feature_data_sha256
+materialized_row_count
+materialized_min_timestamp
+materialized_max_timestamp
 ```
 
 The canonical snapshot key is:
@@ -66,6 +70,10 @@ Rules:
 - `source_build_id` and `data_sha256` are both mandatory; neither substitutes for the other.
 - `schema_version` and `feature_version` are part of identity, not informational tags.
 - `source_catalog_hash` binds exact feature names, ordinals and PostgreSQL types.
+- `materialized_feature_data_sha256` binds the exact schema-wide materialized
+  matrix, including deterministic timestamp order and explicit nulls.
+- Materialized row count and timestamp bounds bind the complete timestamp
+  union, not only the lineage of one legacy table.
 - timestamp bounds and row count are part of identity to detect inconsistent lineage.
 - all hashes use lowercase SHA-256 over canonical finite-only JSON.
 - a changed source build, data hash, schema/feature version or catalog produces a different dataset snapshot key.
