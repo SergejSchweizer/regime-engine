@@ -12,8 +12,10 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 ## Current repository state
 
-As of 2026-09-10, the checked-out branch is `main` at `03feaff`, aligned with
-`origin/main`; GitHub has no open pull requests. The tracked worktree is clean.
+As of 2026-09-10, the checked-out branch is
+`pr/PR-231-global-v4-hermetic-e2e-proof` at `fa3aea7`, aligned with its remote
+branch; `origin/main` is `03feaff`. GitHub PR #238 is open. The tracked
+worktree is clean.
 The untracked files under `tests/e2e/test_global_regime_v4_full_compute.py`,
 `tests/fixtures/`, and `tests/__init__.py` are deliberate PR-231 work in
 progress and are not part of `main` until their long-running proof completes.
