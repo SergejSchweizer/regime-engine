@@ -119,8 +119,6 @@ class FeatureCatalogSnapshot:
                 _require_utc(self.materialized_max_timestamp, "materialized_max_timestamp")
                 if self.materialized_min_timestamp > self.materialized_max_timestamp:
                     raise ValueError("materialized timestamp bounds are inverted")
-        elif self.materialized_row_count is not None:
-            raise ValueError("materialized metadata must be supplied together")
 
     @classmethod
     def from_entries(
