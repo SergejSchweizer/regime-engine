@@ -858,6 +858,7 @@ QA:
 ### PR-231 — Hermetic full-computation and independent mathematical proof
 
 - **Branch:** `pr/PR-231-global-v4-hermetic-e2e-proof`
+- **GitHub:** PR #238 (open; full real-HMM computation in progress)
 - **Depends on:** PR-230
 - **Allowed:** `tests/e2e/test_global_regime_v4_full_compute.py`, `tests/fixtures/global_regime_v4/*`
 
