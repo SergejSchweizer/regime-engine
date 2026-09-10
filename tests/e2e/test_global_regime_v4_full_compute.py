@@ -440,7 +440,7 @@ def test_global_v4_full_compute_and_independent_math_proof(
         )
 
     evidence = _evidence(fixture, result, captured)
-    tracking_uri = (tmp_path / "mlruns").as_uri()
+    tracking_uri = f"sqlite:///{(tmp_path / 'mlflow.db').resolve()}"
     tracked = track_global_v4_evaluation(
         FileMlflowTrackingPort(tracking_uri, experiment_name="global-v4-full-proof"),
         StatisticsWriter(tmp_path / "statistics"),
