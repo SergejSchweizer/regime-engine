@@ -16,6 +16,8 @@ All Markdown files in this repository are documentation sidecars governed by [`D
 - [ ] I checked for contradictions with other Markdown files.
 - [ ] A new user can follow the affected topic step by step from purpose and concepts through execution and verification.
 - [ ] Commands, paths, identifiers, versions, ports, schemas, examples, and ownership boundaries remain code-aligned.
+- [ ] All mathematical notation and equations in Markdown use GitHub-supported LaTeX syntax (`$...$` inline, `$$...$$` display) rather than ASCII/plain-text pseudo-math.
+- [ ] Every documented equation is mathematically equivalent to the current implementation, tests, and configuration it describes.
 
 If no Markdown sidecar is affected, explain why:
 
