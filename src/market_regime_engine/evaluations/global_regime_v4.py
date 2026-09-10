@@ -68,8 +68,10 @@ from market_regime_engine.feature_discovery.winners import (
 )
 from market_regime_engine.features.ports import (
     FeatureCatalogSnapshot,
+    FeatureRequest,
     FeatureRow,
     FeatureSnapshot,
+    SchemaWideFeatureSource,
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
@@ -587,6 +589,54 @@ def evaluate_global_regime_v4(
     )
 
 
+def evaluate_global_regime_v4_from_source(
+    source: SchemaWideFeatureSource,
+    *,
+    profile: ModelProfile,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    source_build_id: str | None = None,
+    outer_runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
+    teacher_refitter: Callable[..., FrozenTeacherRefit] = refit_frozen_teacher,
+    max_workers: int | None = None,
+) -> AdaptiveEvaluationResult:
+    """Capture the complete dynamic source universe and run v4 on that snapshot.
+
+    The empty feature request is intentional: the source, not the caller or a
+    profile YAML list, determines the raw evaluation universe.  The database
+    transaction is closed by the source before any clustering or HMM fitting
+    starts, so subsequent schema changes cannot affect this evaluation.
+    """
+
+    if profile.profile_id != "xetra" or profile.profile_config_version != 4:
+        raise ValueError("dynamic source evaluation requires the canonical Xetra v4 profile")
+    catalog, snapshot = source.read_schema_wide_with_catalog(
+        FeatureRequest.all_features(start, end)
+    )
+    if snapshot.feature_names != catalog.feature_names:
+        raise ValueError("dynamic source snapshot columns do not match its catalog")
+    if snapshot.materialized_feature_data_sha256 is None:
+        raise ValueError("dynamic source snapshot is missing its materialization digest")
+    if catalog.materialized_feature_data_sha256 != snapshot.materialized_feature_data_sha256:
+        raise ValueError("dynamic source catalog and snapshot materialization digests differ")
+    if not snapshot.rows:
+        raise ValueError("dynamic source snapshot contains no rows")
+    rows = pd.DataFrame(
+        [row.values for row in snapshot.rows],
+        columns=snapshot.feature_names,
+    )
+    rows.insert(0, _TIMESTAMP_COLUMN, [row.timestamp for row in snapshot.rows])
+    return evaluate_global_regime_v4(
+        rows,
+        catalog=catalog,
+        profile=profile,
+        source_build_id=source_build_id,
+        outer_runner=outer_runner,
+        teacher_refitter=teacher_refitter,
+        max_workers=max_workers,
+    )
+
+
 run_global_regime_v4 = evaluate_global_regime_v4
 evaluate_adaptive_global_regime = evaluate_global_regime_v4
 
@@ -595,6 +645,7 @@ __all__ = [
     "V4ConfigurationSelection",
     "evaluate_adaptive_global_regime",
     "evaluate_global_regime_v4",
+    "evaluate_global_regime_v4_from_source",
     "run_global_regime_v4",
     "select_v4_configuration",
 ]

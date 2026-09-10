@@ -203,7 +203,7 @@ def test_input_contract_rejects_empty_unsorted_and_malformed_rows() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         filter_outer_train_quality(
             catalog,
-            replace(snapshot, rows=()),
+            replace(snapshot, rows=(), materialized_feature_data_sha256=None),
             BASE,
             BASE,
         )
