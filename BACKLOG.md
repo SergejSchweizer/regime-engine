@@ -1,6 +1,6 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-09
+Status date: 2026-09-10
 
 This is the single implementation backlog for the global, non-semantic regime-feature discovery architecture defined by `EVALUATION.md`.
 
@@ -898,6 +898,26 @@ Final PR evidence:
 - [ ] wall-clock and peak-memory observation;
 - [ ] explicit confirmation of full source/search bounds;
 - [ ] green merge gate after evidence is attached.
+
+### PR-254 — Make the v4 evaluation universe PostgreSQL-schema-driven
+
+- **Branch:** `pr/PR-254-pg-schema-all-feature-discovery`
+- **GitHub:** PR #236 (open)
+- **Status:** schema-wide source/catalog implementation and hermetic regression tests are pushed; durable snapshot/run identity, resumable execution and full external audit remain open dependencies and this PR is not merge-ready yet.
+
+Validated on the branch:
+
+- [x] Complete supported relation/column discovery in one repeatable-read, read-only transaction.
+- [x] No feature-name allowlist on the schema-wide v4 API; deterministic full timestamp union preserves NULLs.
+- [x] Catalog/materialization identity includes canonical origins, ordered matrix digest and materialized bounds.
+- [x] v4 source entrypoint passes the complete discovered catalog into the existing evaluator.
+- [x] `ruff`, strict `mypy`, and non-E2E full suite: 593 passed, 2 expected external skips.
+
+Still open and deliberately not claimed:
+
+- [ ] Durable `DatasetSnapshotKey`/`EvaluationRunKey` integration and crash-safe resume ledger.
+- [ ] Full current-source audit and complete real-HMM schema-wide run.
+- [ ] PR-231 long-running hermetic E2E proof and its independent rerun evidence.
 
 ## Wave C — deployment, artifact compatibility and safe serving transition
 
