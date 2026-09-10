@@ -13,12 +13,13 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 ## Current repository state
 
 As of 2026-09-10, the checked-out branch is
-`pr/PR-231-global-v4-hermetic-e2e-proof` at `5dfb818`, aligned with its remote
+`pr/PR-231-global-v4-hermetic-e2e-proof` at `865a4e7`, aligned with its remote
 branch; `origin/main` is `03feaff`. GitHub PR #238 is open. The tracked
 worktree is clean. The PR-231 end-to-end proof is implemented and its full
-real-computation run is being rerun with four multistart workers after the
-first run exposed and fixed a raw-evaluation capture defect; it is not
-merge-ready until that run passes.
+real-computation runs completed through the independent math assertions with
+four multistart workers. The remaining local E2E backend assertion was fixed
+to use SQLite instead of MLflow's disabled-by-default FileStore; PR #238 is
+not merge-ready until CI validates this latest head.
 
 ---
 
