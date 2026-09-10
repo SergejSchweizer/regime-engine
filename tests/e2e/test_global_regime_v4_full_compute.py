@@ -16,6 +16,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_samples
 
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
+import market_regime_engine.feature_discovery.prefix_search as prefix_search
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
@@ -280,7 +281,9 @@ def test_global_v4_full_compute_and_independent_math_proof(
     fixture = build_synthetic_global_v4()
     profile = load_profile("configs/profiles/xetra_v4.yaml")
     captured: dict[int, object] = {}
+    captured_prefix_evaluations: dict[tuple[int, int], dict[str, object]] = {}
     original_selection = global_v4.select_v4_configuration
+    original_prefix_evaluate_candidates = prefix_search._evaluate_candidates
 
     def parallel_real_runner(frame, plan, shared_profile, candidate, candidate_adapter_factory):
         return run_walk_forward_candidate(
@@ -303,7 +306,29 @@ def test_global_v4_full_compute_and_independent_math_proof(
         captured[len(train_rows)] = selection
         return selection
 
+    def capture_prefix_evaluations(
+        source_rows,
+        plan,
+        shared_profile,
+        candidates,
+        runner,
+        max_workers,
+    ):
+        evaluations = original_prefix_evaluate_candidates(
+            source_rows,
+            plan,
+            shared_profile,
+            candidates,
+            runner,
+            max_workers,
+        )
+        captured_prefix_evaluations[(len(source_rows), len(candidates[0].feature_order))] = (
+            evaluations
+        )
+        return evaluations
+
     monkeypatch.setattr(global_v4, "select_v4_configuration", capture_selection)
+    monkeypatch.setattr(prefix_search, "_evaluate_candidates", capture_prefix_evaluations)
     result = global_v4.evaluate_global_regime_v4(
         fixture.rows,
         catalog=fixture.catalog,
@@ -343,14 +368,14 @@ def test_global_v4_full_compute_and_independent_math_proof(
         assert score.state_information_ratio == pytest.approx(expected_sir, abs=1.0e-10)
         assert score.eta_squared == pytest.approx(expected_eta, abs=1.0e-10)
 
-    for selection in captured.values():
+    for train_count, selection in captured.items():
         teacher = selection.teacher_reference
         for prefix in selection.prefix_search.evaluations:
-            candidate = next(
-                item
-                for item in prefix.candidate_evaluations
-                if item.candidate_id == prefix.candidate_id
-            )
+            if not prefix.valid:
+                continue
+            candidate = captured_prefix_evaluations[(train_count, prefix.prefix_length)][
+                prefix.candidate_id
+            ]
             candidate_timestamps = tuple(
                 timestamp
                 for fold in candidate.folds
@@ -387,12 +412,7 @@ def test_global_v4_full_compute_and_independent_math_proof(
             assert aggregate.aic_mean == pytest.approx(fmean(fold.aic for fold in valid))
 
     for fold in result.outer_folds:
-        selection = captured[
-            fold.final_configuration.source_build_id
-            and fold.final_configuration.selected_prefix_length * 0
-            + 1260
-            + (fold.fold_index - 1) * 63
-        ]
+        selection = captured[1260 + (fold.fold_index - 1) * 63]
         train = fixture.rows.iloc[: 1260 + (fold.fold_index - 1) * 63]
         test = fixture.rows.iloc[1260 + (fold.fold_index - 1) * 63 : 1260 + fold.fold_index * 63]
         teacher = refit_frozen_teacher(
@@ -431,5 +451,6 @@ def test_global_v4_full_compute_and_independent_math_proof(
     assert result.result_hash == canonical_result_hash
     assert result.result_hash == content_hash(result)
 
-    rerun_hashes = tuple(content_hash(captured[index]) for index in sorted(captured))
-    assert rerun_hashes == tuple(content_hash(captured[index]) for index in sorted(captured))
+    rerun_evidence = _evidence(fixture, result, captured)
+    assert rerun_evidence.canonical_json() == evidence.canonical_json()
+    assert rerun_evidence.evidence_hash == evidence.evidence_hash
