@@ -87,6 +87,7 @@ def test_nested_prefixes_choose_by_teacher_nmi_not_cross_dimension_likelihood() 
         teacher=teacher(rows),
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         runner=fake_runner,
+        max_workers=2,
     )
 
     assert tuple(item.prefix_length for item in result.evaluations) == (2, 3, 4)
