@@ -292,7 +292,7 @@ def test_global_v4_full_compute_and_independent_math_proof(
             profile=shared_profile,
             candidate=candidate,
             adapter_factory=candidate_adapter_factory,
-            max_workers=2,
+            max_workers=4,
         )
 
     def capture_selection(train_rows: pd.DataFrame, **kwargs: object) -> object:
