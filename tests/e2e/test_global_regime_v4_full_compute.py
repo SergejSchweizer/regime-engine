@@ -18,7 +18,6 @@ from sklearn.metrics import silhouette_samples
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
 import market_regime_engine.feature_discovery.prefix_search as prefix_search
 from market_regime_engine.contracts import SourceLineage
-from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.teacher_reference import refit_frozen_teacher
@@ -285,24 +284,8 @@ def test_global_v4_full_compute_and_independent_math_proof(
     original_selection = global_v4.select_v4_configuration
     original_prefix_evaluate_candidates = prefix_search._evaluate_candidates
 
-    def parallel_real_runner(frame, plan, shared_profile, candidate, candidate_adapter_factory):
-        return run_walk_forward_candidate(
-            frame,
-            plan=plan,
-            profile=shared_profile,
-            candidate=candidate,
-            adapter_factory=candidate_adapter_factory,
-            max_workers=None,
-        )
-
     def capture_selection(train_rows: pd.DataFrame, **kwargs: object) -> object:
-        selection = original_selection(
-            train_rows,
-            teacher_runner=parallel_real_runner,
-            prefix_runner=parallel_real_runner,
-            grid_runner=parallel_real_runner,
-            **kwargs,
-        )
+        selection = original_selection(train_rows, **kwargs)
         captured[len(train_rows)] = selection
         return selection
 
@@ -333,7 +316,6 @@ def test_global_v4_full_compute_and_independent_math_proof(
         fixture.rows,
         catalog=fixture.catalog,
         profile=profile,
-        outer_runner=parallel_real_runner,
         max_workers=None,
     )
 
