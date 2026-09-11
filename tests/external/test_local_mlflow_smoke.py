@@ -36,7 +36,12 @@ def _json_request(url: str, *, body: dict[str, object] | None = None) -> tuple[i
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
+            raw = response.read().decode("utf-8")
+            try:
+                payload: object = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = raw
+            return response.status, payload
     except urllib.error.HTTPError as exc:
         payload = json.loads(exc.read().decode("utf-8"))
         return exc.code, payload
