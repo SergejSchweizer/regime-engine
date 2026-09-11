@@ -117,8 +117,7 @@ def _evaluate_candidates(
         )
 
     use_processes = (
-        max_workers is None
-        and runner is run_prefix_gaussian_candidate
+        runner is run_prefix_gaussian_candidate
         and seed_checkpoint_factory is None
         and worker_limit > 1
     )
