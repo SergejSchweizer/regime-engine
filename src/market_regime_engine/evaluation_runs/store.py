@@ -81,6 +81,12 @@ class SQLiteEvaluationRunStore:
         self._database = self._root / "evaluation-runs.sqlite3"
         self._initialize()
 
+    @property
+    def root(self) -> Path:
+        """Return the durable directory used by this ledger."""
+
+        return self._root
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database, timeout=30.0, isolation_level=None)
         connection.row_factory = sqlite3.Row

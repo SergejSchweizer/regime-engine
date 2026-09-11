@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import pickle
+import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -92,6 +94,82 @@ from market_regime_engine.training.candidate_grid import CandidateRunner as Grid
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _MIN_OUTER_TEST_SUPPORT = 42
+
+
+@dataclass(frozen=True, slots=True)
+class _OuterProcessContext:
+    """Inherited immutable context for one durable outer-fold worker."""
+
+    source_rows: pd.DataFrame
+    catalog: FeatureCatalogSnapshot
+    profile: ModelProfile
+    build_id: str
+    outer_runner: PrefixCandidateRunner
+    teacher_refitter: Callable[..., FrozenTeacherRefit]
+    nested_max_workers: int
+    run_store_root: str
+    run_identity: EvaluationRunIdentity
+
+
+_OUTER_PROCESS_CONTEXT: _OuterProcessContext | None = None
+
+
+def _initialize_outer_process_context(context: _OuterProcessContext | None = None) -> None:
+    global _OUTER_PROCESS_CONTEXT
+    if context is not None:
+        _OUTER_PROCESS_CONTEXT = context
+    if _OUTER_PROCESS_CONTEXT is None:
+        raise RuntimeError("outer process context was not initialized")
+
+
+def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
+    """Evaluate one durable outer fold in its own interpreter.
+
+    The default production path uses process workers at the outer-fold level.
+    That keeps Python feature-discovery/scoring work outside the GIL while
+    reducing nested numerical pools to one lane per process. The eight
+    independent folds in a full run then occupy the machine globally instead
+    of competing inside one interpreter's thread pool.
+    """
+
+    context = _OUTER_PROCESS_CONTEXT
+    if context is None:
+        raise RuntimeError("outer process context was not initialized")
+    store = SQLiteEvaluationRunStore(context.run_store_root)
+    unit = WorkUnitIdentity(
+        evaluation_run_key=context.run_identity.key,
+        unit_type="outer_fold",
+        coordinates=(("fold_id", fold.fold_id),),
+        unit_parameters=(
+            ("test_source_observations", str(fold.test_source_observations)),
+            ("train_source_observations", str(fold.train_source_observations)),
+        ),
+    )
+    cached_payload = store.load_completed_work_unit(context.run_identity, unit)
+    if cached_payload is not None:
+        cached = pickle.loads(cached_payload)
+        if not isinstance(cached, OuterFoldResult) or cached.fold_index != fold.fold_index:
+            raise ValueError("cached outer-fold payload is incompatible")
+        return cached
+    if not store.claim_work_unit(context.run_identity, unit):
+        raise RuntimeError(f"outer fold work unit is currently claimed: {unit.key}")
+    fold_result = _evaluate_outer_fold(
+        context.source_rows,
+        fold,
+        catalog=context.catalog,
+        profile=context.profile,
+        build_id=context.build_id,
+        outer_runner=context.outer_runner,
+        teacher_refitter=context.teacher_refitter,
+        max_workers=context.nested_max_workers,
+        stage_checkpoint=StageCheckpoint(context.run_identity, store, fold.fold_id),
+    )
+    store.complete_work_unit(
+        context.run_identity,
+        unit,
+        pickle.dumps(fold_result, protocol=pickle.HIGHEST_PROTOCOL),
+    )
+    return fold_result
 
 
 @dataclass(frozen=True, slots=True)
@@ -779,7 +857,86 @@ def evaluate_global_regime_v4(
         )
         return fold_result
 
-    if outer_worker_limit == 1:
+    use_process_outer = (
+        run_store is not None
+        and run_identity is not None
+        and max_workers is None
+        and _evaluate_outer_fold.__module__ == __name__
+        and outer_runner is run_prefix_gaussian_candidate
+        and teacher_refitter is refit_frozen_teacher
+        and outer_worker_limit > 1
+    )
+    if use_process_outer:
+        assert run_store is not None
+        assert run_identity is not None
+        context = _OuterProcessContext(
+            source_rows=source_rows,
+            catalog=catalog,
+            profile=profile,
+            build_id=build_id,
+            outer_runner=outer_runner,
+            teacher_refitter=teacher_refitter,
+            nested_max_workers=1,
+            run_store_root=str(run_store.root),
+            run_identity=run_identity,
+        )
+        available_methods = multiprocessing.get_all_start_methods()
+        if "fork" in available_methods and threading.current_thread() is threading.main_thread():
+            _initialize_outer_process_context(context)
+            fork_context = multiprocessing.get_context("fork")
+            with ProcessPoolExecutor(
+                max_workers=outer_worker_limit,
+                mp_context=fork_context,
+                initializer=_initialize_outer_process_context,
+                initargs=(),
+            ) as process_executor:
+                futures = [
+                    process_executor.submit(_evaluate_outer_fold_process, fold)
+                    for fold in outer_plan.folds
+                ]
+                outer_results = []
+                for fold, future in zip(outer_plan.folds, futures, strict=True):
+                    fold_result = future.result()
+                    if selection_sink is not None and fold_result.valid:
+                        train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                        selection = select_v4_configuration(
+                            train_rows,
+                            catalog=catalog,
+                            profile=profile,
+                            source_build_id=build_id,
+                            max_workers=1,
+                            stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                        )
+                        selection_sink(fold.fold_index, selection)
+                    outer_results.append(fold_result)
+        else:
+            spawn_context = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=outer_worker_limit,
+                mp_context=spawn_context,
+                initializer=_initialize_outer_process_context,
+                initargs=(context,),
+            ) as process_executor:
+                futures = [
+                    process_executor.submit(_evaluate_outer_fold_process, fold)
+                    for fold in outer_plan.folds
+                ]
+                outer_results = []
+                for fold, future in zip(outer_plan.folds, futures, strict=True):
+                    fold_result = future.result()
+                    if selection_sink is not None and fold_result.valid:
+                        train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                        selection = select_v4_configuration(
+                            train_rows,
+                            catalog=catalog,
+                            profile=profile,
+                            source_build_id=build_id,
+                            max_workers=1,
+                            stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                        )
+                        selection_sink(fold.fold_index, selection)
+                    outer_results.append(fold_result)
+    elif outer_worker_limit == 1:
         outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
     else:
         with ThreadPoolExecutor(max_workers=outer_worker_limit) as executor:
@@ -797,7 +954,7 @@ def evaluate_global_regime_v4(
     valid_count = len(valid_folds)
     valid_rate = valid_count / len(outer_results)
     latest_valid = bool(outer_results[-1].valid)
-    result = AdaptiveEvaluationResult(
+    evaluation_result = AdaptiveEvaluationResult(
         source_build_id=build_id,
         catalog_hash=catalog.catalog_hash,
         validation_evaluation_cutoff=cast(datetime, outer_plan.evaluation_cutoff),
@@ -819,10 +976,10 @@ def evaluate_global_regime_v4(
     if run_store is not None and run_identity is not None:
         run_store.complete_run(
             run_identity,
-            result.result_hash,
-            pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL),
+            evaluation_result.result_hash,
+            pickle.dumps(evaluation_result, protocol=pickle.HIGHEST_PROTOCOL),
         )
-    return result
+    return evaluation_result
 
 
 def evaluate_global_regime_v4_from_source(
