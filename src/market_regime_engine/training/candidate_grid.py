@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -27,6 +26,7 @@ from market_regime_engine.profiles.resolution import (
     expected_candidate_ids,
     validate_candidate_comparison_inputs,
 )
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.adapter_factory import adapter_factory
 
 if TYPE_CHECKING:
@@ -267,13 +267,7 @@ def evaluate_candidate_grid(
     if plan.plan_hash == "" or not plan.folds:
         raise ValueError("candidate grid requires a non-empty complete walk-forward plan")
 
-    worker_limit = (
-        min(len(resolved_profile.candidates), os.cpu_count() or 1)
-        if max_workers is None
-        else max_workers
-    )
-    if worker_limit < 1:
-        raise ValueError("max_workers must be at least 1")
+    worker_limit = cpu_worker_count(max_workers, task_count=len(resolved_profile.candidates))
     scheduled_candidates = tuple(
         next(
             candidate

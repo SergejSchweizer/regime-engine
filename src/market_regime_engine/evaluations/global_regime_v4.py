@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import multiprocessing
-import os
 import pickle
 import threading
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -42,6 +41,7 @@ from market_regime_engine.evaluations.final_v4_grid import (
 from market_regime_engine.evaluations.final_v4_grid import (
     _candidates as final_candidates,
 )
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalCandidateRunner,
     ProvisionalTeacherEvaluation,
@@ -89,6 +89,7 @@ from market_regime_engine.features.ports import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import CandidateRunner as GridCandidateRunner
 
@@ -791,10 +792,8 @@ def evaluate_global_regime_v4(
     if any(current <= previous for previous, current in pairwise(timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
     outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
-    requested_workers = (os.cpu_count() or 1) if max_workers is None else max_workers
-    if requested_workers < 1:
-        raise ValueError("max_workers must be at least 1")
-    outer_worker_limit = min(len(outer_plan.folds), requested_workers)
+    requested_workers = cpu_worker_count(max_workers, task_count=len(outer_plan.folds))
+    outer_worker_limit = requested_workers
 
     def evaluate_fold(fold: WalkForwardFold) -> OuterFoldResult:
         if run_store is None or run_identity is None:
@@ -889,12 +888,9 @@ def evaluate_global_regime_v4(
         available_methods = multiprocessing.get_all_start_methods()
         if "fork" in available_methods and threading.current_thread() is threading.main_thread():
             _initialize_outer_process_context(context)
-            fork_context = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(
+            with cpu_process_pool(
                 max_workers=outer_worker_limit,
-                mp_context=fork_context,
                 initializer=_initialize_outer_process_context,
-                initargs=(),
             ) as process_executor:
                 futures = [
                     process_executor.submit(_evaluate_outer_fold_process, fold)
@@ -916,10 +912,8 @@ def evaluate_global_regime_v4(
                         selection_sink(fold.fold_index, selection)
                     outer_results.append(fold_result)
         else:
-            spawn_context = multiprocessing.get_context("spawn")
-            with ProcessPoolExecutor(
+            with cpu_process_pool(
                 max_workers=outer_worker_limit,
-                mp_context=spawn_context,
                 initializer=_initialize_outer_process_context,
                 initargs=(context,),
             ) as process_executor:

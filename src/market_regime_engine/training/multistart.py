@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import multiprocessing
-import os
 import pickle
 import threading
 import warnings
@@ -18,6 +17,7 @@ import numpy.typing as npt
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
+from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
 from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ MULTISTART_SEEDS = (11, 23, 37, 53, 71, 89, 107, 131)
 MINIMUM_VALID_STARTS = 6
 MINIMUM_SUCCESS_RATE = 0.75
 TRAIN_LOGLIK_TIE_ABS_TOLERANCE = 1e-12
-_CPU_SLOT_COUNT = os.cpu_count() or 1
+_CPU_SLOT_COUNT = available_cpu_count()
 _CPU_SLOTS = threading.BoundedSemaphore(_CPU_SLOT_COUNT)
 
 
@@ -191,10 +191,7 @@ def run_multistart(
     # There are only eight independent starts in one multistart.  Use all of
     # those lanes, while the slot reservation below bounds concurrent nested
     # multistarts across outer folds and candidate grids by host CPU count.
-    worker_limit = min(8, _CPU_SLOT_COUNT) if max_workers is None else max_workers
-    if worker_limit < 1:
-        raise ValueError("max_workers must be at least 1")
-    worker_limit = min(worker_limit, len(MULTISTART_SEEDS))
+    worker_limit = cpu_worker_count(max_workers, task_count=len(MULTISTART_SEEDS))
 
     evaluated_by_seed: dict[int, tuple[StartDiagnostic, FitResult | None]] = {}
     pending_seeds: list[int] = []

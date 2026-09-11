@@ -125,7 +125,11 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
             return _CompletedFuture(function(fold))
 
     monkeypatch.setattr(global_v4, "_evaluate_outer_fold", fake_outer_fold)
-    monkeypatch.setattr(global_v4, "ProcessPoolExecutor", _InlineProcessPool)
+    monkeypatch.setattr(
+        global_v4,
+        "cpu_process_pool",
+        lambda *, max_workers, **kwargs: _InlineProcessPool(max_workers=max_workers, **kwargs),
+    )
     first = global_v4.evaluate_global_regime_v4(
         source_rows,
         catalog=catalog,

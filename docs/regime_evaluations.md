@@ -52,10 +52,27 @@ runs the complete v4 evaluation against one read-only source snapshot.
 
 Every production evaluation and tracking entry point leaves `max_workers`
 unset by default. Candidate grids, multistart fits, prefix searches, teacher
-evaluation, and local artifact rendering then use all CPUs reported by
-`os.cpu_count()` (bounded only by the number of independent tasks). A caller
-may provide an explicit `max_workers` value for a deliberately constrained
-run or a test.
+evaluation, and local artifact rendering then use the CPUs actually available
+to the process: Linux affinity, the active cgroup CPU quota, and the number of
+independent tasks are all respected. A deployment can set
+`REGIME_CPU_WORKERS` to a deliberate benchmarked limit; an explicit
+`max_workers` value remains available for a constrained run or test.
+
+CPU-bound default evaluation work uses process pools, giving each worker an
+independent interpreter and GIL. Nested numerical lanes are set to one
+process-local lane, and `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and
+`MKL_NUM_THREADS` default to one in the cron wrappers to avoid native-library
+oversubscription. The runtime also exposes physical-core and NUMA topology for
+benchmarking, but does not pin workers to a NUMA node without measured benefit.
+
+Run the reproducible scheduler benchmark with:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/benchmark_process_parallel.py
+```
+
+The benchmark reports wall time, throughput, speedup, child CPU utilization,
+and peak RSS for 1/2/4/8/16/32 workers, physical cores, and logical CPUs.
 
 The repository test runner also uses all available CPUs by default through
 `pytest-xdist` (`-n auto` in `pyproject.toml`). Local and CI test commands
