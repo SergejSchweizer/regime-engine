@@ -302,8 +302,7 @@ def evaluate_candidate_grid(
         return runner(source_rows, plan, profile, candidate, candidate_adapter)
 
     use_processes = (
-        max_workers is None
-        and runner is _default_runner
+        runner is _default_runner
         and adapter_factory_builder is None
         and seed_checkpoint_factory is None
         and worker_limit > 1

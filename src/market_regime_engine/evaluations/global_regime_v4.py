@@ -865,7 +865,6 @@ def evaluate_global_regime_v4(
     use_process_outer = (
         run_store is not None
         and run_identity is not None
-        and max_workers is None
         and _evaluate_outer_fold.__module__ == __name__
         and outer_runner is run_prefix_gaussian_candidate
         and teacher_refitter is refit_frozen_teacher
