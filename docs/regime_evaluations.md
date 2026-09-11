@@ -48,6 +48,14 @@ The wrapper loads `.env`, reads the ignored `config.yaml` feature-source
 metadata, verifies external MLflow health, enforces a non-blocking lock, and
 runs the complete v4 evaluation against one read-only source snapshot.
 
+`REGIME_EVALUATION_CHECKPOINT_ROOT` (or its alias
+`REGIME_ENGINE_STATE_ROOT`) must point to an absolute persistent volume outside
+the checkout. The evaluation prints an immutable run key. Pass that key to
+`scripts/run_xetra_v4_evaluation.py --run-key` after an interruption to replay
+the durable snapshot and completed units without recapturing live PostgreSQL.
+Missing or corrupt snapshot/ledger state fails closed and requires a new run
+key; it is never silently rebuilt under the old identity.
+
 ## CPU parallelism
 
 Every production evaluation and tracking entry point leaves `max_workers`

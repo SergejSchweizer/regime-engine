@@ -47,6 +47,29 @@ def _sha256_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def _configured_checkpoint_root(root: Path) -> Path:
+    """Require resumable state on an explicit persistent volume."""
+
+    configured = os.environ.get("REGIME_EVALUATION_CHECKPOINT_ROOT") or os.environ.get(
+        "REGIME_ENGINE_STATE_ROOT"
+    )
+    if not configured:
+        raise RuntimeError(
+            "REGIME_EVALUATION_CHECKPOINT_ROOT or REGIME_ENGINE_STATE_ROOT must be configured"
+        )
+    checkpoint_root = Path(configured).expanduser()
+    if not checkpoint_root.is_absolute():
+        raise RuntimeError("evaluation checkpoint root must be an absolute path")
+    resolved_checkpoint_root = checkpoint_root.resolve()
+    resolved_root = root.resolve()
+    if (
+        resolved_checkpoint_root == resolved_root
+        or resolved_root in resolved_checkpoint_root.parents
+    ):
+        raise RuntimeError("evaluation checkpoint root must be outside the repository")
+    return resolved_checkpoint_root
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -70,9 +93,7 @@ def main() -> None:
             return catalog, snapshot
 
     selections: dict[int, V4ConfigurationSelection] = {}
-    checkpoint_root = Path(
-        os.environ.get("REGIME_EVALUATION_CHECKPOINT_ROOT", str(root / ".state/xetra-v4-runs"))
-    ).resolve()
+    checkpoint_root = _configured_checkpoint_root(root)
     commit = _commit(root)
     snapshot_store = ArrowDatasetSnapshotStore(checkpoint_root / "snapshots")
     run_store = SQLiteEvaluationRunStore(checkpoint_root / "runs")
