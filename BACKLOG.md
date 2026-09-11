@@ -18,8 +18,11 @@ Status date: 2026-09-11
   execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
   integration-runner oversubscription fix. Focused executor/multistart
   coverage and the full non-external suite are green.
-- **Latest CPU optimization commit:** `109f8eb` terminalizes domain-invalid
-  stage failures and adds a guarded repair path for older ledgers. The process
+- **Latest CPU optimization commit:** `d5a4da1` adds affinity/cgroup-aware
+  worker sizing, physical-core/NUMA topology discovery, NUMA-local benchmark
+  affinity, and the required process-scaling benchmark. It follows `109f8eb`,
+  which terminalizes domain-invalid stage failures and adds a guarded repair
+  path for older ledgers. The process
   scheduler from `75b9242` extends the process-based
   execution path to the default provisional-teacher, prefix-search and final
   candidate grids. Each process owns one nested numerical lane, preserving
@@ -31,10 +34,11 @@ Status date: 2026-09-11
   physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
   CPU-bound default pools use independent interpreters; native numerical
   thread pools remain capped at one thread per process. On this 88-logical / 44
-  physical-core, 2-NUMA-node host, the deterministic process benchmark measured
-  24.55, 47.83, 90.72, 155.58, 266.66 and 333.44 tasks/s at 1, 2, 4, 8, 16
-  and 32 workers respectively; physical-core (44) and all-logical (88) gave
-  317.87 and 292.89 tasks/s. Peak child RSS remained 15.7 MiB. The measured
+  physical-core, 2-NUMA-node host, the deterministic process benchmark
+  (88 tasks × 100,000 iterations) measured 54.66, 104.11, 182.18, 289.82,
+  462.14 and 484.34 tasks/s at 1, 2, 4, 8, 16 and 32 workers respectively;
+  one NUMA node, all physical cores and all logical CPUs gave 450.14, 410.70
+  and 400.09 tasks/s. Peak child RSS over the sweep was 90.7 MiB. The measured
   sweep therefore identifies 32 as the best benchmark override for this
   workload; the code keeps the default adaptive to each process allocation.
   A real 504-row Gaussian-HMM multistart profile identified hmmlearn/scipy
@@ -123,7 +127,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 As of 2026-09-11, the primary worktree is on
 `pr/PR-242-resumable-execution-follow-up` at `9830a9d`, based on
 `origin/main` at `03feaff`; the CPU optimization worktree is on
-`pr/PR-245-process-parallel-evaluation` at `3812049`. GitHub PR #239 remains
+`pr/PR-245-process-parallel-evaluation` at `d5a4da1`. GitHub PR #239 remains
 open for the resumability follow-up, PR #241 is the independent audit PR, and
 PR #242 is the CPU optimization PR. The remote integration gates and the
 authorized NAS full-data run remain pending/running respectively.
