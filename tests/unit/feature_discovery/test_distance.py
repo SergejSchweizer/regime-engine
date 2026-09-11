@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pytest
 
 from market_regime_engine.contracts import SourceLineage
@@ -15,6 +16,7 @@ from market_regime_engine.feature_discovery.distance import (
     _average_ranks,
     _clip_correlation,
     _rank_pearson_correlation,
+    _rank_pearson_correlation_array,
     compute_distance_matrix,
     global_absolute_spearman_distance,
 )
@@ -104,6 +106,14 @@ def test_average_ranks_use_average_ties_and_correlation_clipping_is_fail_closed(
         _clip_correlation(-1.0 - 2.0e-12)
     with pytest.raises(ValueError, match="finite"):
         _clip_correlation(float("nan"))
+
+
+def test_native_array_correlation_matches_reference_rank_pearson() -> None:
+    left = (1.0, 2.0, 2.0, 4.0, 5.0)
+    right = (5.0, 1.0, 3.0, 3.0, 2.0)
+    expected = _rank_pearson_correlation(left, right)
+    actual = _rank_pearson_correlation_array(np.asarray(left), np.asarray(right))
+    assert actual == pytest.approx(expected, abs=1.0e-15)
 
 
 def test_perfect_positive_and_negative_monotonic_pairs_have_exact_zero_distance() -> None:

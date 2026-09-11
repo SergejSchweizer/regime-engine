@@ -45,6 +45,11 @@ Status date: 2026-09-11
   fitting as the hot path; the same workload took 2.334, 1.197, 1.009 and
   0.907 seconds at 1, 2, 4 and 8 workers, with identical winner seed 89 and
   eight valid starts.
+- **Vectorized discovery hotspot:** profiling the 52-feature/1,449-row
+  fixture found 9.87 s of an 11.671 s distance calculation in Python ranking
+  and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
+  that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
+  deterministic ordering, and the result contract.
 - **Remote branch/PR state:** GitHub PR #239 is the resumability follow-up.
   PR #240 was closed after its branch identity failed the naming policy;
   replacement PR #241 is the independent audit PR. GitHub PR #242 contains
