@@ -38,7 +38,7 @@ def source_rows() -> pd.DataFrame:
     )
 
 
-def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory):
+def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory, **_kwargs):
     """Retain real backend fitting while avoiding 12 x 8 redundant CI fits."""
 
     result: FitResult = adapter_factory().fit(train_rows, state_count, MULTISTART_SEEDS[0])

@@ -42,7 +42,7 @@ def source_rows() -> pd.DataFrame:
     )
 
 
-def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory):
+def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory, **_kwargs):
     """Keep this integration test bounded while retaining a real HMM fit per candidate."""
 
     result: FitResult = adapter_factory().fit(train_rows, state_count, MULTISTART_SEEDS[0])

@@ -28,6 +28,7 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.feature_discovery.contracts import (
     INNER_ALLOW_PARTIAL_FINAL_TEST,
@@ -61,6 +62,29 @@ ProvisionalCandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProvisionalProcessTask:
+    """Pickle-safe immutable input for one provisional teacher candidate."""
+
+    source_rows: pd.DataFrame
+    plan: WalkForwardPlan
+    profile: ModelProfile
+    candidate: ResolvedCandidateProfile
+
+
+def _evaluate_provisional_in_process(task: _ProvisionalProcessTask) -> WalkForwardEvaluation:
+    """Run one provisional candidate in a separate interpreter."""
+
+    return run_walk_forward_candidate(
+        task.source_rows,
+        plan=task.plan,
+        profile=task.profile,
+        candidate=task.candidate,
+        adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
+        max_workers=1,
+    )
 
 
 def _evaluate_candidates(
@@ -101,11 +125,29 @@ def _evaluate_candidates(
             cast(AdapterFactory, adapter_factory(profile, candidate)),
         )
 
+    use_processes = (
+        max_workers is None
+        and runner is run_provisional_gaussian_candidate
+        and seed_checkpoint_factory is None
+        and worker_limit > 1
+    )
+    if use_processes:
+        tasks = tuple(
+            _ProvisionalProcessTask(source_rows, plan, profile, candidate)
+            for candidate in candidates
+        )
+        with cpu_process_pool(worker_limit) as executor:
+            futures = {
+                task.candidate.candidate_id: executor.submit(_evaluate_provisional_in_process, task)
+                for task in tasks
+            }
+            return {candidate_id: futures[candidate_id].result() for candidate_id in futures}
     if worker_limit == 1:
         return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
-    with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+    with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
         futures = {
-            candidate.candidate_id: executor.submit(evaluate, candidate) for candidate in candidates
+            candidate.candidate_id: thread_executor.submit(evaluate, candidate)
+            for candidate in candidates
         }
         return {candidate_id: future.result() for candidate_id, future in futures.items()}
 

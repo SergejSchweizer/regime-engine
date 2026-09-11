@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import TYPE_CHECKING, cast
@@ -23,6 +24,7 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.provisional_teacher import build_inner_walk_forward_plan
 from market_regime_engine.feature_discovery.contracts import (
     MAX_PREFIX_LENGTH,
@@ -54,6 +56,29 @@ PrefixCandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class _PrefixProcessTask:
+    """Pickle-safe immutable input for one prefix candidate."""
+
+    source_rows: pd.DataFrame
+    plan: WalkForwardPlan
+    profile: ModelProfile
+    candidate: ResolvedCandidateProfile
+
+
+def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluation:
+    """Run one prefix candidate in a separate interpreter."""
+
+    return run_walk_forward_candidate(
+        task.source_rows,
+        plan=task.plan,
+        profile=task.profile,
+        candidate=task.candidate,
+        adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
+        max_workers=1,
+    )
 
 
 def _evaluate_candidates(
@@ -94,11 +119,28 @@ def _evaluate_candidates(
             cast(AdapterFactory, adapter_factory(profile, candidate)),
         )
 
+    use_processes = (
+        max_workers is None
+        and runner is run_prefix_gaussian_candidate
+        and seed_checkpoint_factory is None
+        and worker_limit > 1
+    )
+    if use_processes:
+        tasks = tuple(
+            _PrefixProcessTask(source_rows, plan, profile, candidate) for candidate in candidates
+        )
+        with cpu_process_pool(worker_limit) as executor:
+            futures = {
+                task.candidate.candidate_id: executor.submit(_evaluate_prefix_in_process, task)
+                for task in tasks
+            }
+            return {candidate_id: futures[candidate_id].result() for candidate_id in futures}
     if worker_limit == 1:
         return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
-    with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+    with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
         futures = {
-            candidate.candidate_id: executor.submit(evaluate, candidate) for candidate in candidates
+            candidate.candidate_id: thread_executor.submit(evaluate, candidate)
+            for candidate in candidates
         }
         return {candidate_id: future.result() for candidate_id, future in futures.items()}
 
