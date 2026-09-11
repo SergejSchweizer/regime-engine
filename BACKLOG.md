@@ -5,9 +5,9 @@ Status date: 2026-09-11
 
 ## Current execution state
 
-- **Git branches:** primary `pr/PR-242-resumable-execution-follow-up`;
-  audit `pr/PR-232-independent-audit`; CPU optimization
-  `pr/PR-245-process-parallel-evaluation`
+- **Active worktree:** CPU optimization `pr/PR-245-process-parallel-evaluation`;
+  primary resumability `pr/PR-242-resumable-execution-follow-up`; audit
+  `pr/PR-232-independent-audit`
 - **Reference base:** `03feaff` (`origin/main`); local `main` contains the
   completed v4-only cleanup, durable evaluation-run migration, NAS MLflow
   package-publication boundary, stage checkpoints, all-CPU parallel defaults,
@@ -18,11 +18,12 @@ Status date: 2026-09-11
   execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
   integration-runner oversubscription fix. Focused executor/multistart
   coverage and the full non-external suite are green.
-- **Latest CPU optimization commit:** `3812049` moves default durable
-  outer-fold execution to process workers with one nested numerical lane per
-  process, preserving deterministic ordering and checkpoint recovery. Its
-  targeted global/resume/source validation is green (`14 passed`), with mypy
-  and Ruff also passing.
+- **Latest CPU optimization commit:** `75b9242` extends the process-based
+  execution path to the default provisional-teacher, prefix-search and final
+  candidate grids. Each process owns one nested numerical lane, preserving
+  deterministic ordering while avoiding GIL-bound thread pools and nested
+  process oversubscription. The durable outer-fold process path from `3812049`
+  remains enabled for checkpointed production runs.
 - **Remote branch/PR state:** GitHub PR #239 is the resumability follow-up.
   PR #240 was closed after its branch identity failed the naming policy;
   replacement PR #241 is the independent audit PR. GitHub PR #242 contains
@@ -48,10 +49,13 @@ Status date: 2026-09-11
   selection run passes (`16 passed`). Candidate
   grids, multistarts, prefix searches, teacher evaluation, final production
   refits and local tracking rendering default to all CPUs reported by
-  `os.cpu_count()`, bounded only by independent task count. Outer folds now
-  run concurrently with deterministic fold-order assembly; default HMM
-  multistarts use process workers so the CPU-bound fits are not constrained by
-  one interpreter GIL, while custom adapters retain a thread fallback. Test
+  `os.cpu_count()`, bounded only by independent task count. Outer folds and
+  default candidate grids now run in process workers with deterministic
+  result-order assembly; each nested numerical lane is one process-local lane,
+  so CPU-bound fits are not constrained by one interpreter GIL. Custom
+  adapters and explicit checkpointed nested overrides retain a controlled
+  fallback. The process-backed grid/integration validation is green (`29
+  passed`), with mypy and Ruff passing. Test
   BLAS/OpenMP pools are capped at one native thread per worker to prevent
   xdist/native oversubscription. The
   zero-legacy audit scans 569 active files and passes, and the scoped MLflow
