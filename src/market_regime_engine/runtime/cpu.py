@@ -89,6 +89,7 @@ def _cgroup_cpu_limit() -> int | None:
         elif "cpu" in controllers.split(","):
             roots.append(cgroup_mount / "cpu" / relative_path.lstrip("/"))
 
+    limits: list[int] = []
     for root in dict.fromkeys(roots):
         v2_quota_path = root / "cpu.max"
         try:
@@ -99,7 +100,7 @@ def _cgroup_cpu_limit() -> int | None:
             quota = int(raw[0])
             period = int(raw[1]) if len(raw) > 1 else 100_000
             if quota > 0 and period > 0:
-                return max(1, math.floor(quota / period))
+                limits.append(max(1, math.floor(quota / period)))
 
         quota_path = root / "cpu.cfs_quota_us"
         legacy_quota = _read_int(quota_path)
@@ -110,8 +111,8 @@ def _cgroup_cpu_limit() -> int | None:
             and legacy_quota > 0
             and legacy_period > 0
         ):
-            return max(1, math.floor(legacy_quota / legacy_period))
-    return None
+            limits.append(max(1, math.floor(legacy_quota / legacy_period)))
+    return min(limits) if limits else None
 
 
 def cpu_topology() -> CpuTopology:
