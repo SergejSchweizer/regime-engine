@@ -18,7 +18,7 @@ Status date: 2026-09-11
   execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
   integration-runner oversubscription fix. Focused executor/multistart
   coverage and the full non-external suite are green.
-- **Latest CPU optimization commit:** `a1d373f` moves default durable
+- **Latest CPU optimization commit:** `6245762` moves default durable
   outer-fold execution to process workers with one nested numerical lane per
   process, preserving deterministic ordering and checkpoint recovery. Its
   targeted global/resume/source validation is green (`14 passed`), with mypy
