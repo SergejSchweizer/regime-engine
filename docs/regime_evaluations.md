@@ -74,6 +74,11 @@ PYTHONPATH=src .venv/bin/python scripts/benchmark_process_parallel.py
 The benchmark reports wall time, throughput, speedup, child CPU utilization,
 and peak RSS for 1/2/4/8/16/32 workers, physical cores, and logical CPUs.
 
+The global Spearman distance stage also uses native array ranking and dot
+products for its pairwise arithmetic. On the 52-feature/1,449-row fixture,
+the measured distance stage fell from 11.671 s to 0.139 s (about 84x), while
+retaining pairwise missing-value handling and the canonical result contract.
+
 The repository test runner also uses all available CPUs by default through
 `pytest-xdist` (`-n auto` in `pyproject.toml`). Local and CI test commands
 therefore share the same parallel default; an explicit `-n` remains an

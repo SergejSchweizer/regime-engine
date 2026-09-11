@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from math import fsum, isfinite, sqrt
 
+import numpy as np
+from scipy.stats import rankdata  # type: ignore[import-untyped]
+
 from market_regime_engine.feature_discovery.contracts import (
     MIN_PAIRWISE_OBSERVATIONS,
     RHO_CLIP_TOLERANCE,
@@ -61,6 +64,29 @@ def _rank_pearson_correlation(left: tuple[float, ...], right: tuple[float, ...])
         left_value * right_value
         for left_value, right_value in zip(left_centered, right_centered, strict=True)
     ) / sqrt(left_ss * right_ss)
+    return _clip_correlation(correlation)
+
+
+def _rank_pearson_correlation_array(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    left_ranks: np.ndarray | None = None,
+    right_ranks: np.ndarray | None = None,
+) -> float:
+    """Compute one pair in native array code after pairwise support filtering."""
+
+    if left.size != right.size or left.size < 2:
+        raise ValueError("Spearman pair requires equal inputs with at least two observations")
+    resolved_left_ranks = rankdata(left, method="average") if left_ranks is None else left_ranks
+    resolved_right_ranks = rankdata(right, method="average") if right_ranks is None else right_ranks
+    left_centered = resolved_left_ranks - np.mean(resolved_left_ranks)
+    right_centered = resolved_right_ranks - np.mean(resolved_right_ranks)
+    left_ss = float(np.dot(left_centered, left_centered))
+    right_ss = float(np.dot(right_centered, right_centered))
+    if left_ss <= 0.0 or right_ss <= 0.0:
+        raise ValueError("Spearman correlation is undefined for a constant feature pair")
+    correlation = float(np.dot(left_centered, right_centered) / sqrt(left_ss * right_ss))
     return _clip_correlation(correlation)
 
 
@@ -129,24 +155,32 @@ def global_absolute_spearman_distance(
     rows = _validate_snapshot(snapshot, quality)
     all_feature_names = tuple(item.feature_name for item in quality.features)
     eligible_names = quality.eligible_features
-    eligible_indices = tuple(all_feature_names.index(name) for name in eligible_names)
+    feature_positions = {name: index for index, name in enumerate(all_feature_names)}
+    eligible_indices = tuple(feature_positions[name] for name in eligible_names)
     if len(eligible_indices) < 2:
         raise ValueError("distance calculation requires at least two eligible features")
 
-    columns = tuple(tuple(row[index] for row in rows) for index in eligible_indices)
-    size = len(columns)
+    matrix = np.asarray(
+        [
+            [np.nan if row[index] is None else row[index] for index in eligible_indices]
+            for row in rows
+        ],
+        dtype=np.float64,
+    )
+    size = matrix.shape[1]
+    missing = np.isnan(matrix).any(axis=0)
+    full_ranks = tuple(
+        None if missing[index] else rankdata(matrix[:, index], method="average")
+        for index in range(size)
+    )
     distances = [[0.0 for _ in range(size)] for _ in range(size)]
     supports = [[0 for _ in range(size)] for _ in range(size)]
     correlations = [[0.0 for _ in range(size)] for _ in range(size)]
 
     for left_index in range(size):
         for right_index in range(left_index, size):
-            paired = tuple(
-                (left, right)
-                for left, right in zip(columns[left_index], columns[right_index], strict=True)
-                if left is not None and right is not None
-            )
-            support = len(paired)
+            valid = ~np.isnan(matrix[:, left_index]) & ~np.isnan(matrix[:, right_index])
+            support = int(np.count_nonzero(valid))
             supports[left_index][right_index] = support
             supports[right_index][left_index] = support
             if support < MIN_PAIRWISE_OBSERVATIONS:
@@ -159,9 +193,17 @@ def global_absolute_spearman_distance(
                 correlation = 1.0
                 distance = 0.0
             else:
-                left_values = tuple(pair[0] for pair in paired)
-                right_values = tuple(pair[1] for pair in paired)
-                correlation = _rank_pearson_correlation(left_values, right_values)
+                left_values = matrix[valid, left_index]
+                right_values = matrix[valid, right_index]
+                if not missing[left_index] and not missing[right_index]:
+                    correlation = _rank_pearson_correlation_array(
+                        left_values,
+                        right_values,
+                        left_ranks=full_ranks[left_index],
+                        right_ranks=full_ranks[right_index],
+                    )
+                else:
+                    correlation = _rank_pearson_correlation_array(left_values, right_values)
                 distance = 1.0 - abs(correlation)
                 if distance < 0.0 and distance >= -RHO_CLIP_TOLERANCE:
                     distance = 0.0
