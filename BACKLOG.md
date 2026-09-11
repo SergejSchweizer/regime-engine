@@ -18,7 +18,7 @@ Status date: 2026-09-11
   execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
   integration-runner oversubscription fix. Focused executor/multistart
   coverage and the full non-external suite are green.
-- **Latest CPU optimization commit:** `6245762` moves default durable
+- **Latest CPU optimization commit:** `3812049` moves default durable
   outer-fold execution to process workers with one nested numerical lane per
   process, preserving deterministic ordering and checkpoint recovery. Its
   targeted global/resume/source validation is green (`14 passed`), with mypy
@@ -37,9 +37,9 @@ Status date: 2026-09-11
   uses the fresh CPU-optimized state root
   `/home/dev_regime/regime-evaluation-checkpoints-v2` and run key
   `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. It is
-  `RUNNING`; the latest observation has 3,291 completed, 102 active, and 74
+  `RUNNING`; the latest observation has 6,486 completed, 114 active, and 151
   pending durable work units. Its 88 child processes are using approximately
-  7,452% aggregate CPU (about 85 of the 88 available cores). Tracking remains
+  5,585% aggregate CPU (about 64 of the 88 available cores). Tracking remains
   after numerical computation completes.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
@@ -102,7 +102,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 As of 2026-09-11, the primary worktree is on
 `pr/PR-242-resumable-execution-follow-up` at `9830a9d`, based on
 `origin/main` at `03feaff`; the CPU optimization worktree is on
-`pr/PR-245-process-parallel-evaluation` at `a1d373f`. GitHub PR #239 remains
+`pr/PR-245-process-parallel-evaluation` at `3812049`. GitHub PR #239 remains
 open for the resumability follow-up, PR #241 is the independent audit PR, and
 PR #242 is the CPU optimization PR. The remote integration gates and the
 authorized NAS full-data run remain pending/running respectively.
