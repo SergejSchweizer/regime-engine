@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-from concurrent.futures import ProcessPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from hashlib import sha256
@@ -24,6 +22,7 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardFoldResult,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.mlflow_support.metric_catalog import (
     METRIC_CATALOG_VERSION,
     validate_metric_points,
@@ -48,6 +47,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_transition_heatmap,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,11 +606,7 @@ def _prepare_plot_entries(
 ) -> tuple[dict[str, tuple[PlotManifestEntry, ...]], tuple[PlotManifestEntry, ...]]:
     """Render independent plot work concurrently while preserving artifact order."""
 
-    worker_limit = (
-        min(len(evaluations), os.cpu_count() or 1) if max_workers is None else max_workers
-    )
-    if worker_limit < 1:
-        raise ValueError("max_workers must be at least 1")
+    worker_limit = cpu_worker_count(max_workers, task_count=len(evaluations))
     parent_plot_types = (
         "candidate_comparison",
         "candidate_oos_gap_heatmap",
@@ -625,7 +621,7 @@ def _prepare_plot_entries(
             for plot_type in parent_plot_types
         ]
     else:
-        with ProcessPoolExecutor(max_workers=worker_limit) as executor:
+        with cpu_process_pool(worker_limit) as executor:
             candidate_futures = [
                 executor.submit(_render_candidate_artifacts, evaluation, plan, root)
                 for evaluation in evaluations

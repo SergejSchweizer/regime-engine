@@ -26,6 +26,21 @@ Status date: 2026-09-11
   deterministic ordering while avoiding GIL-bound thread pools and nested
   process oversubscription. The durable outer-fold process path from `3812049`
   remains enabled for checkpointed production runs.
+- **Current CPU topology/performance implementation:** the runtime now sizes
+  workers from Linux process affinity and the active cgroup quota, exposes
+  physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
+  CPU-bound default pools use independent interpreters; native numerical
+  thread pools remain capped at one thread per process. On this 88-logical / 44
+  physical-core, 2-NUMA-node host, the deterministic process benchmark measured
+  24.55, 47.83, 90.72, 155.58, 266.66 and 333.44 tasks/s at 1, 2, 4, 8, 16
+  and 32 workers respectively; physical-core (44) and all-logical (88) gave
+  317.87 and 292.89 tasks/s. Peak child RSS remained 15.7 MiB. The measured
+  sweep therefore identifies 32 as the best benchmark override for this
+  workload; the code keeps the default adaptive to each process allocation.
+  A real 504-row Gaussian-HMM multistart profile identified hmmlearn/scipy
+  fitting as the hot path; the same workload took 2.334, 1.197, 1.009 and
+  0.907 seconds at 1, 2, 4 and 8 workers, with identical winner seed 89 and
+  eight valid starts.
 - **Remote branch/PR state:** GitHub PR #239 is the resumability follow-up.
   PR #240 was closed after its branch identity failed the naming policy;
   replacement PR #241 is the independent audit PR. GitHub PR #242 contains
@@ -49,8 +64,8 @@ Status date: 2026-09-11
   passed, 2 skipped` for opt-in external checks); the latest focused MLflow/v4
   selection run passes (`16 passed`). Candidate
   grids, multistarts, prefix searches, teacher evaluation, final production
-  refits and local tracking rendering default to all CPUs reported by
-  `os.cpu_count()`, bounded only by independent task count. Outer folds and
+  refits and local tracking rendering default to affinity/cgroup-aware CPU
+  capacity, bounded by independent task count. Outer folds and
   default candidate grids now run in process workers with deterministic
   result-order assembly; each nested numerical lane is one process-local lane,
   so CPU-bound fits are not constrained by one interpreter GIL. Custom

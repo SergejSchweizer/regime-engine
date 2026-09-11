@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -44,6 +43,7 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import (
     CandidateAggregate,
@@ -98,10 +98,7 @@ def _evaluate_candidates(
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate teacher candidates concurrently while preserving canonical output order."""
 
-    worker_limit = (os.cpu_count() or 1) if max_workers is None else max_workers
-    if worker_limit < 1:
-        raise ValueError("max_workers must be at least 1")
-    worker_limit = min(worker_limit, len(candidates))
+    worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
 
     def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
         if seed_checkpoint_factory is not None and runner is run_provisional_gaussian_candidate:
