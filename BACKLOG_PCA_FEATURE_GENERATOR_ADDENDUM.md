@@ -1,244 +1,267 @@
-# PCA Feature Generator Backlog Addendum
+# Regime Engine — PCA Feature Generator Backlog Addendum
 
-This addendum defines the implementation backlog for introducing Principal Component Analysis (PCA) as a leakage-safe feature generator in `regime-engine`. PCA-generated component time series are added to the ordinary feature universe and, after generation, are subject to the same downstream selection, freezing, train-only scaling, HMM fitting, walk-forward OOS evaluation, MLflow tracking, and production-serving contracts as all other candidate features.
+Status date: 2026-09-11
 
-## Design principles
+This addendum extends the canonical `BACKLOG.md` with a new PCA feature-generation wave for the active Xetra v4 architecture. It does **not** replace the raw-feature discovery path. PCA is introduced only as an additional, leakage-safe feature generator whose component time series are appended to the same feature universe as raw features and then undergo the same downstream feature-selection, scaling, HMM, OOS, packaging and serving procedures.
 
-- PCA is a **feature generator**, not a privileged alternative model input path.
-- PCA source features are standardized using TRAIN-only statistics before PCA fitting.
-- The retained PCA dimension is the smallest `k` whose cumulative explained-variance ratio is at least **0.90**.
-- No additional eigenvalue cutoff (for example, `lambda > 1`) is imposed by default.
-- PCA fitting, component-count selection, and transformations must be leakage-safe and reproducible.
-- Generated components `PC1 ... PCk` are appended to the feature universe and subsequently compete with raw features under the ordinary feature-selection pipeline.
-- PCA features that survive feature selection are normalized by the existing per-fold TRAIN-only `StandardScaler` exactly like retained raw features before HMM fitting.
-- PCA metadata, source feature order, standardization parameters, loadings, eigenvalues, explained-variance ratios, cumulative explained variance, and selected `k` must be immutable and auditable.
-- Missing or non-finite values must not be silently imputed.
+The planning IDs below continue the repository backlog namespace after PR-254.
 
 ---
 
-## PR-PCA-01 — PCA contracts and deterministic TRAIN-only transformer
+# 1. Canonical PCA feature-generation contract
 
-**Goal:** Introduce the core PCA domain contracts and deterministic numerical implementation without wiring PCA into feature discovery yet.
+The design target is:
 
-**Scope**
-- Add a dedicated PCA preprocessing/feature-generation module.
-- Define an immutable PCA artifact containing at minimum:
-  - ordered PCA source feature names,
-  - TRAIN-only source means and standard deviations,
-  - component loading matrix,
-  - eigenvalues,
-  - explained-variance ratios,
-  - cumulative explained-variance ratios,
-  - retained component count `k`,
-  - variance target (`0.90`),
-  - deterministic serialization/hash identity.
-- Fit source standardization exclusively on the supplied TRAIN matrix.
-- Fit PCA exclusively on the standardized TRAIN matrix.
-- Select the smallest `k` satisfying cumulative explained variance `>= 0.90`.
-- Provide deterministic transform methods for TRAIN, TEST/OOS, replay, and latest observations using the frozen artifact.
-- Reject empty matrices, duplicate feature names, NaN/inf values, zero/near-zero variance source features, and dimension/order mismatches.
-- Resolve PCA sign indeterminacy deterministically so repeated fits to identical input produce the same serialized component orientation.
+```text
+validated raw feature universe
+        |
+        +--> raw features -----------------------------+
+        |                                              |
+        +--> TRAIN-only source standardization         |
+              -> PCA                                   |
+              -> smallest k with cumulative EVR >= .90|
+              -> pca_pc_001 ... pca_pc_k --------------+
+                                                       |
+                                             combined feature universe
+                                                       |
+                                             existing v4 discovery /
+                                             scoring / selection
+                                                       |
+                                             retained raw + PC tuple
+                                                       |
+                                             existing per-fold TRAIN-only
+                                             StandardScaler
+                                                       |
+                                             HMM / OOS inference
+```
 
-**Acceptance criteria**
-- Unit tests verify exact TRAIN-only statistics and no use of OOS observations during fitting.
-- Unit tests verify `k = min{m : cumulative_EVR[m] >= 0.90}`.
-- Repeated fits on identical data produce byte-stable/canonical artifact serialization.
-- Transforming OOS data never refits source scaling or PCA.
-- Numerical reconstruction checks validate the component scores against the stored loadings.
+Pinned rules:
 
----
+- PCA is a **feature generator**, not a privileged HMM input path.
+- PCA source features are standardized with TRAIN-only mean/std before PCA fitting.
+- The PCA source standardization uses population variance (`ddof=0`) consistently with existing scaling conventions unless a later contract PR explicitly changes it.
+- Retained PCA dimension is the smallest `k` satisfying cumulative explained-variance ratio `>= 0.90`.
+- No default secondary Kaiser/eigenvalue cutoff such as `lambda > 1` is applied.
+- Generated PCs are ordinary candidate features after generation. They receive no automatic retention bonus.
+- Raw-vs-PC and PC-vs-PC redundancy is handled by the same downstream v4 discovery/selection logic where mathematically applicable.
+- A selected PC is subsequently normalized by the existing per-fold TRAIN-only `StandardScaler` exactly like a selected raw feature before HMM fitting.
+- No missing-value imputation, interpolation, carry-forward/backfill, or OOS-informed normalization is allowed.
+- PCA source order, means, scales, loadings, eigenvalues, EVRs, cumulative EVRs, retained `k`, sign convention, fit cutoff and artifact hash are immutable/auditable.
+- PCA sign ambiguity must be resolved deterministically so identical inputs produce identical component orientation and artifact bytes.
+- Within one adaptive v4 selection run, PC identity must be stable. PCA may not be independently refit on every inner fold in a way that makes `pca_pc_003` represent a different direction from fold to fold.
 
-## PR-PCA-02 — PCA source-universe policy and complete-case eligibility
+## Leakage-safe fit scope
 
-**Goal:** Define exactly which raw features are allowed to feed PCA and make the policy consistent with existing data-quality and no-imputation rules.
+For an outer TRAIN selection run, derive and freeze the PCA artifact from the **earliest admissible inner TRAIN window** before any inner TEST observation is consulted. Use that frozen PCA artifact to transform all later rows within that outer-selection run. This keeps PC identities stable across the inner walk-forward and prevents inner-TEST covariance information from entering the PCA basis.
 
-**Scope**
-- Add configuration for PCA generation, including `enabled`, `variance_target: 0.90`, and source-universe policy.
-- Reuse existing feature-quality/eligibility evidence where appropriate rather than bypassing it.
-- Define deterministic ordering of PCA source features.
-- Apply PCA only to eligible numeric, finite TRAIN observations.
-- Preserve the project's complete-case/no-silent-imputation behavior.
-- Persist the rejected source features and reasons in the PCA artifact/evaluation evidence.
-- Ensure feature discovery and PCA generation use only data available at the applicable TRAIN cutoff.
-
-**Acceptance criteria**
-- PCA cannot consume future observations or metadata unavailable at the TRAIN cutoff.
-- PCA cannot silently fill missing values.
-- Source-feature inclusion/exclusion is reproducible and auditable.
-- Tests cover missingness, near-zero variance, duplicate columns, nonnumeric data, and unstable source ordering.
+Across different outer folds, PCA artifacts may differ because the entire v4 selection procedure is rerun TRAIN-only inside every outer fold. This is consistent with current `outer_fold_local` evaluation semantics. Deployment selection likewise produces and freezes its own PCA artifact as part of the selected production configuration.
 
 ---
 
-## PR-PCA-03 — Generate `PC1 ... PCk` and append them to the feature universe
+# 2. Wave E — PCA feature generation and feature-universe integration
 
-**Goal:** Make PCA components first-class generated features in the same candidate universe as raw features.
+## PR-255 — Define deterministic PCA artifact and TRAIN-only transformer
 
-**Scope**
-- Materialize deterministic component feature names such as `pca_pc_001`, `pca_pc_002`, ... `pca_pc_k`.
-- Attach provenance metadata to every generated PC:
-  - PCA artifact/hash,
-  - component index,
-  - eigenvalue,
-  - individual EVR,
-  - cumulative EVR,
-  - source feature set/hash,
-  - fit cutoff.
-- Append PCA feature time series to the feature universe rather than sending them directly to the HMM.
-- Ensure generated PCs have the same observation clock/length semantics as ordinary features for every transformed row for which the PCA source vector is complete.
-- Expose generated PCs through the existing feature contracts/catalog interfaces used downstream.
+- **Branch:** `pr/PR-255-pca-train-only-transformer`
+- **Depends on:** PR-241, PR-254
+- **Allowed:** new `src/market_regime_engine/feature_generation/*` or `src/market_regime_engine/preprocessing/pca.py`, directly corresponding contracts/tests, minimal exports only.
 
-**Acceptance criteria**
-- A TRAIN matrix with `T` usable rows yields `T x k` PCA scores.
-- PC features are queryable/identifiable like ordinary candidate features.
-- No downstream stage needs a PCA-specific shortcut merely to read component values.
-- Provenance allows any PC value to be traced back to the frozen PCA artifact and source universe.
+Acceptance:
+
+- [ ] Add immutable PCA artifact with ordered source features, source means/stds, loadings, eigenvalues, EVRs, cumulative EVRs, retained `k`, `variance_target=0.90`, sign convention, fit bounds/cutoff and canonical hash.
+- [ ] Reuse or exactly match existing population-variance standardization semantics for PCA source normalization.
+- [ ] Fit source scaler and PCA only on explicitly supplied TRAIN rows.
+- [ ] Select `k = min{m : cumulative_EVR_m >= 0.90}` with deterministic numeric tolerance.
+- [ ] No separate `lambda > 1` / Kaiser rule.
+- [ ] Transform future rows using the frozen artifact only; no hidden refit.
+- [ ] Deterministically orient component signs, e.g. by forcing the largest-absolute loading to be positive with canonical-ordinal tie-break.
+- [ ] Reject NaN/Inf, duplicate source names, invalid dimensions, empty input and source variance `<=1e-12`.
+- [ ] Canonical serialization is byte-stable for identical input.
+
+QA:
+
+- [ ] Exact numerical comparison with an independent PCA/SVD reference fixture.
+- [ ] Future-row perturbation cannot change an already fitted PCA artifact.
+- [ ] Repeated fit on identical bytes produces identical hash/loadings/signs.
+- [ ] Component-score reconstruction from stored source scaler + loadings is exact within pinned tolerance.
+
+## PR-256 — Define the PCA source-universe policy and frozen fit clock
+
+- **Branch:** `pr/PR-256-pca-source-universe-clock`
+- **Depends on:** PR-255
+- **Allowed:** v4 feature catalog/quality contracts, PCA feature-generation contracts, profile config, directly corresponding tests/docs.
+
+Acceptance:
+
+- [ ] Define which structurally valid raw Gold features may be PCA sources; no hidden hand-maintained semantic allowlist.
+- [ ] Reuse v4 quality evidence where possible: numeric source contract, TRAIN-only coverage, finite values and population variance.
+- [ ] Preserve PostgreSQL/canonical feature ordinal as PCA source ordering.
+- [ ] Pin the PCA fit sample for each outer-selection run to the earliest admissible inner TRAIN window.
+- [ ] Freeze source feature tuple, scaler, PCA basis and retained `k` for the complete enclosing selection run.
+- [ ] Persist excluded PCA source features and exclusion reasons.
+- [ ] No imputation or future-data covariance information.
+- [ ] Define deployment-selection PCA fit scope consistently with the same selection function rather than adding an ad-hoc production-only path.
+
+QA:
+
+- [ ] Inner-TEST and outer-TEST perturbation cannot change the earlier PCA artifact.
+- [ ] Source-column reordering is either canonicalized to ordinal order or fails explicitly; it never silently changes PCA identity.
+- [ ] Missingness/near-zero-variance/nonnumeric source cases are fail-closed and auditable.
+
+## PR-257 — Materialize `pca_pc_001 ... pca_pc_k` as first-class generated features
+
+- **Branch:** `pr/PR-257-pca-generated-feature-universe`
+- **Depends on:** PR-256
+- **Allowed:** feature-generation/catalog contracts, feature discovery input adapters, directly corresponding tests.
+
+Acceptance:
+
+- [ ] Generate deterministic feature names `pca_pc_001 ... pca_pc_k`.
+- [ ] For `T` transformable timestamps, output exactly a `T x k` component-score matrix on the same timestamp clock.
+- [ ] Attach provenance per PC: component index, eigenvalue, EVR, cumulative EVR, PCA artifact hash, PCA source hash and fit cutoff.
+- [ ] Append PCs to the ordinary v4 candidate universe alongside raw features.
+- [ ] Generated PCs do not bypass quality, distance, clustering, feature scoring, winner selection or final feature-count rules.
+- [ ] Feature contracts distinguish `origin=raw` vs `origin=pca` without allowing origin to affect statistical ranking except where required for provenance/transform reconstruction.
+- [ ] PCA-disabled configuration reproduces the prior raw-only candidate universe exactly.
+
+QA:
+
+- [ ] Feature-catalog/unit tests prove stable names/order/provenance.
+- [ ] No downstream consumer needs a separate PCA-only read path to access PC observations.
+
+## PR-258 — Integrate PCs into global v4 distance, clustering and regime-feature selection
+
+- **Branch:** `pr/PR-258-pca-v4-discovery-selection`
+- **Depends on:** PR-257, PR-223, PR-224, PR-226, PR-227
+- **Allowed:** v4 distance/clustering/scoring/winner/selection modules and directly corresponding tests.
+
+Acceptance:
+
+- [ ] Raw and generated PC candidates enter one combined non-semantic universe.
+- [ ] Absolute-Spearman distance is computed for raw-raw, raw-PC and PC-PC pairs using the existing TRAIN-only support contract.
+- [ ] Average-linkage clustering, silhouette M selection, temporary prototype selection, state-information scoring, eta diagnostic, cluster-winner selection and L-prefix search apply without a special PCA bonus.
+- [ ] Multiple PCs may survive when justified; zero PCs may survive when redundant/uninformative.
+- [ ] PCA components are not placed in one artificial semantic `PCA` group/medoid because v4 is non-semantic.
+- [ ] Existing `M* <= 12` and final `L* <= 8` safety bounds remain authoritative unless a separate parameter-count contract proves a change is safe.
+- [ ] Ranking ties remain deterministic and use canonical combined-feature ordinal.
+- [ ] PC origin metadata is preserved through final selected configuration.
+
+QA:
+
+- [ ] Synthetic cases: raw wins over redundant PC; PC wins over redundant raw; multiple orthogonal PCs survive; all PCs rejected.
+- [ ] PCA-disabled v4 golden result remains unchanged.
+
+## PR-259 — Carry frozen PCA artifacts through inner/outer walk-forward and existing HMM scaling
+
+- **Branch:** `pr/PR-259-pca-walk-forward-scaling`
+- **Depends on:** PR-258, PR-228
+- **Allowed:** v4 evaluation/walk-forward composition, `preprocessing/scaling.py` only for integration if required, corresponding tests.
+
+Acceptance:
+
+- [ ] Every outer TRAIN selection run uses exactly one frozen PCA artifact derived before its inner TEST observations.
+- [ ] All raw + PC selected feature tuples then use the existing per-fold TRAIN-only `StandardScaler` before HMM fitting.
+- [ ] Clearly separate two transformations: PCA-source standardization used to construct PCs vs final HMM observation standardization applied to retained raw + PC features.
+- [ ] No selected PC is exempt from the existing HMM scaler.
+- [ ] Outer TEST uses the PCA artifact frozen before outer TEST plus the HMM scaler fitted on outer TRAIN only.
+- [ ] Fold/evaluation evidence records the PCA artifact hash and final HMM scaler artifact.
+- [ ] State-alignment/reference-scaler logic continues to operate on the final HMM observation coordinates without silently mixing PCA-source and HMM scalers.
+
+QA:
+
+- [ ] Explicit leakage tests for PCA fit stats/loadings/k and HMM scaler stats.
+- [ ] Offline TRAIN/TEST transformation is reproducible from persisted artifacts only.
+- [ ] Future TEST perturbation affects scores/inference but not prior PCA or TRAIN-scaler artifacts.
+
+## PR-260 — Package PCA lineage for final refit, registry, latest and replay serving
+
+- **Branch:** `pr/PR-260-pca-production-artifact-serving`
+- **Depends on:** PR-259, PR-234, PR-235, PR-236
+- **Allowed:** production artifact/package, final refit integration, latest/replay serving, directly corresponding tests.
+
+Acceptance:
+
+- [ ] Final selected configuration carries the frozen PCA artifact whenever any selected feature has `origin=pca`.
+- [ ] Production refit does not silently refit PCA into a new basis after feature selection.
+- [ ] Model package contains enough information to regenerate every selected PC from raw/source observations without external fitting state.
+- [ ] Latest/replay validates exact PCA source feature order/hash and fails closed on missing/non-finite required sources.
+- [ ] PCA source transformation -> PC generation -> final HMM scaler -> HMM inference is identical offline vs serving.
+- [ ] Raw-only legacy/v4 models remain loadable and require no PCA artifact.
+- [ ] State IDs remain model-version-local.
+
+QA:
+
+- [ ] Package round trip for raw-only and mixed raw+PC models.
+- [ ] Serving/replay numerical parity with offline evaluation fixture.
+- [ ] Missing/corrupt PCA artifact/hash mismatch fails closed.
+
+## PR-261 — Add MLflow PCA diagnostics and raw-only vs raw+PCA OOS comparison
+
+- **Branch:** `pr/PR-261-pca-mlflow-oos-evaluation`
+- **Depends on:** PR-259, PR-260, PR-230
+- **Allowed:** MLflow/evaluation tracking, plots/reports, PCA-specific evaluation orchestration, corresponding tests.
+
+Acceptance:
+
+- [ ] Log PCA source count, retained `k`, source/PCA artifact hash and fit cutoff.
+- [ ] Log per-PC eigenvalue, EVR, cumulative EVR and whether the PC survives downstream selection.
+- [ ] Log loading matrix and top absolute raw-feature contributors per PC as artifacts.
+- [ ] Add scree/eigenvalue and cumulative-EVR plots.
+- [ ] Compare two otherwise matched policies: raw-only v4 vs raw+PCA feature universe with 90% cumulative EVR generation.
+- [ ] Hold source build, walk-forward plan, model grid, seeds, gates and evaluation clocks fixed where required for comparability.
+- [ ] Compare outer valid-fold rate, soft regime NMI mean/std/worst, selection stability, occupancy/state-duration/switch diagnostics, entropy/confidence, state-signature drift and fold-local OOS PLL diagnostics.
+- [ ] PCA is not automatically promoted because it exists; evidence determines whether it is useful.
+
+QA:
+
+- [ ] MLflow run can answer which raw features created each selected PC, why `k` was chosen and whether PCA improved OOS policy evidence.
+- [ ] Tracking does not recompute or mutate PCA artifacts.
+
+## PR-262 — End-to-end PCA rollout, configuration and documentation closure
+
+- **Branch:** `pr/PR-262-pca-feature-generator-e2e-docs`
+- **Depends on:** PR-261
+- **Allowed:** profile/config examples, `README.md`, `ARCHITECTURE.md`, `EVALUATION.md`, relevant operations/evaluation docs, E2E tests.
+
+Acceptance:
+
+- [ ] Add explicit PCA feature-generator configuration with default/off policy chosen deliberately and documented.
+- [ ] Document the 90% cumulative-EVR threshold and absence of a default eigenvalue/Kaiser cutoff.
+- [ ] Document earliest-inner-TRAIN PCA fitting, frozen within-selection component identity and outer-fold-local PCA refits.
+- [ ] Document the two standardization layers and why selected PCs still use the existing final HMM `StandardScaler`.
+- [ ] Document that PCs enter the same non-semantic v4 candidate universe and may be selected or rejected like any raw feature.
+- [ ] Add full E2E proof: source snapshot -> PCA artifact -> generated feature universe -> v4 discovery/selection -> raw+PC final tuple -> HMM scaler -> HMM -> outer OOS -> deployment selection -> package -> latest/replay.
+- [ ] PCA-disabled regression proves raw-only behavior remains byte/statistically unchanged where the existing golden contract requires it.
+- [ ] Full merge gate and coverage threshold pass.
+
+QA:
+
+- [ ] Hermetic E2E plus independent rerun evidence.
+- [ ] Documentation formulas/flow match executable contracts.
 
 ---
 
-## PR-PCA-04 — Integrate PCA features into ordinary feature selection
+# 3. PCA wave execution graph
 
-**Goal:** Ensure generated PCs compete with raw features under the same downstream feature-selection principles.
+```mermaid
+flowchart TD
+    P255[255 PCA artifact + transformer] --> P256[256 source universe + fit clock]
+    P256 --> P257[257 generated PC feature universe]
+    P257 --> P258[258 global v4 discovery + selection]
+    P258 --> P259[259 nested WF + HMM scaling]
+    P259 --> P260[260 package + serving]
+    P259 --> P261[261 MLflow + OOS comparison]
+    P260 --> P261
+    P261 --> P262[262 E2E + docs]
+```
 
-**Scope**
-- Add PCA features to the combined candidate feature universe after PCA generation.
-- Do **not** create a privileged rule that automatically retains all PCs.
-- Ensure raw semantic-block reduction does not collapse all PCA components into a single artificial `PCA` medoid.
-- Refactor the selection flow, if necessary, so semantic raw-feature reduction and PCA generation feed a common downstream selection/correlation/stability stage.
-- Apply existing cross-feature redundancy/correlation policy to raw-vs-PC and PC-vs-PC candidates where mathematically appropriate.
-- Preserve final feature-dimension constraints and deterministic tie-breaking.
-- Record whether each selected feature is raw or PCA-generated.
+Recommended execution order:
 
-**Acceptance criteria**
-- Multiple PCs can survive when justified; all PCs can also be rejected.
-- PC inclusion is determined by the same selection evidence/constraints that govern the common candidate pool, not by explained variance alone.
-- Tests cover raw-vs-PC redundancy, PC-vs-PC redundancy, tie-breaking, and final dimension caps.
-- Existing raw-only behavior remains unchanged when PCA generation is disabled.
+```text
+PR-255 -> PR-256 -> PR-257 -> PR-258 -> PR-259
+                                      -> PR-260
+                                      -> PR-261
+PR-260 + PR-261 -> PR-262
+```
 
----
-
-## PR-PCA-05 — Walk-forward PCA lifecycle and leakage guards
-
-**Goal:** Make PCA generation fully compatible with the existing walk-forward OOS architecture.
-
-**Scope**
-- Define the PCA fit/refit policy explicitly for walk-forward folds.
-- At each allowed fit point, estimate PCA source normalization and loadings from TRAIN only.
-- Transform TEST/OOS using the frozen TRAIN PCA artifact.
-- Prevent `fit_transform` or equivalent operations on combined TRAIN+TEST data.
-- Ensure PCA component-count selection from the 90% EVR target is TRAIN-only.
-- Add explicit leakage assertions/tests for means, variances, covariance structure, loadings, eigenvalues, and `k`.
-- Preserve deterministic component identities/orientation within each frozen PCA artifact.
-
-**Acceptance criteria**
-- Perturbing future/OOS observations cannot change the PCA artifact fitted for an earlier TRAIN window.
-- OOS scores change when OOS inputs change, but PCA loadings/source scaling do not.
-- All fold outputs record the exact PCA artifact/hash used.
-- Walk-forward runs are reproducible under identical source data/configuration.
-
----
-
-## PR-PCA-06 — Apply existing HMM feature normalization to selected PCA features
-
-**Goal:** Treat PCA-generated features exactly like retained raw features once they reach the HMM observation matrix.
-
-**Scope**
-- Keep the existing HMM `StandardScaler` behavior unchanged: fit per fold on retained TRAIN observations using population variance (`ddof=0`) and apply the same scaler to TEST/OOS.
-- Ensure selected PCA features pass through that same scaler together with selected raw features.
-- Clearly separate:
-  1. PCA-source standardization used to construct PCs, and
-  2. downstream HMM feature standardization applied to the final retained feature matrix.
-- Persist both transformation layers in model/evaluation evidence.
-
-**Acceptance criteria**
-- A retained PC is not exempt from the normal HMM scaler.
-- HMM scaling parameters are estimated only from fold TRAIN rows.
-- Serving/replay reconstructs both preprocessing layers exactly.
-- Tests prove identical downstream scaling semantics for raw and PCA-generated retained features.
-
----
-
-## PR-PCA-07 — Model packaging, serving, replay, and latest inference
-
-**Goal:** Make PCA-generated features production-safe and reproducible outside offline evaluation.
-
-**Scope**
-- Extend model package/artifact contracts to include the PCA artifact(s) required by a selected model.
-- Ensure `latest`, replay, OOS serving, and production refit can regenerate required PC values from raw/source features.
-- Validate exact source feature order and PCA artifact hash before inference.
-- Fail closed when a required PCA source feature is missing/non-finite rather than silently substituting values.
-- Preserve backward compatibility for models with no PCA-generated selected features.
-
-**Acceptance criteria**
-- Offline and serving transformations are numerically identical for identical source rows.
-- A packaged model containing PC features can be loaded without refitting PCA.
-- A model package contains all information necessary to reconstruct selected PCs deterministically.
-- Legacy/raw-only models remain loadable and unchanged.
-
----
-
-## PR-PCA-08 — MLflow tracking, diagnostics, and explainability
-
-**Goal:** Make PCA generation transparent in experiments and production evidence.
-
-**Scope**
-- Log PCA configuration and artifact identity to MLflow.
-- Log per-component:
-  - eigenvalue,
-  - EVR,
-  - cumulative EVR,
-  - retained/not-retained by the 90% generation threshold,
-  - selected/not-selected by downstream feature selection.
-- Log the PCA loading matrix as an artifact/table.
-- Add plots for scree/eigenvalue curve and cumulative explained variance.
-- Add a loading-contribution report showing the highest absolute raw-feature loadings per PC.
-- Track source-universe size, generated PC count, and final selected PC count.
-
-**Acceptance criteria**
-- An MLflow run can answer: which raw features generated each PC, why `k` was chosen, and which PCs ultimately reached the HMM.
-- Diagnostic plots/artifacts are reproducible from stored evidence.
-- Tracking does not alter model behavior or introduce hidden recomputation.
-
----
-
-## PR-PCA-09 — Comparative OOS evaluation: raw-only vs raw+PCA universe
-
-**Goal:** Quantify whether PCA feature generation improves regime modeling rather than assuming that it does.
-
-**Scope**
-- Add an evaluation path that compares at least:
-  - baseline raw-feature universe,
-  - raw + PCA-generated feature universe using cumulative EVR `>= 0.90`.
-- Keep walk-forward splits, model-family grid, random seeds, feature caps, and evaluation clocks comparable.
-- Compare OOS predictive log-likelihood per observation, AIC/BIC where applicable, occupancy stability, state-duration diagnostics, switches/year, entropy/confidence, state-signature drift, and feature-selection stability.
-- Report the number and identity of PCA features selected in each candidate/fold or frozen-selection definition.
-
-**Acceptance criteria**
-- PCA is not promoted by default merely because it exists.
-- Evidence clearly shows whether PCA improves OOS regime quality/stability and at what dimensional cost.
-- Results are tracked in MLflow and included in evaluation reports.
-
----
-
-## PR-PCA-10 — Documentation, configuration, migration, and regression coverage
-
-**Goal:** Finish the PCA feature-generator rollout with explicit contracts and operational documentation.
-
-**Scope**
-- Update `ARCHITECTURE.md`, `README.md`, evaluation documentation, profile/config examples, and feature-selection documentation.
-- Document the two-stage standardization semantics and the 90% cumulative-EVR generation threshold.
-- Document why generated PCs enter the ordinary feature universe instead of bypassing feature selection.
-- Document leakage constraints and complete-case behavior.
-- Add regression tests ensuring PCA-disabled profiles reproduce prior raw-only outputs.
-- Add end-to-end coverage from source rows -> PCA generation -> feature universe -> selection -> HMM scaling -> HMM -> OOS inference -> packaging/serving.
-
-**Acceptance criteria**
-- PCA can be enabled/disabled by explicit configuration.
-- PCA-disabled results remain backward compatible.
-- Documentation matches executable contracts and tests.
-- CI covers the complete PCA path and leakage-sensitive invariants.
-
-## Recommended merge order
-
-`PR-PCA-01 -> PR-PCA-02 -> PR-PCA-03 -> PR-PCA-04 -> PR-PCA-05 -> PR-PCA-06 -> PR-PCA-07 -> PR-PCA-08 -> PR-PCA-09 -> PR-PCA-10`
-
-PRs 07 and 08 may proceed in parallel after PRs 01-06 are stable; PR-09 depends on the end-to-end evaluation path and PR-10 should close the rollout.
+The key invariant across all PRs is: **PCA creates additional candidate features; it does not create a second selection/modeling pipeline. Once generated, PC features enter the same feature universe and are treated like the rest of the features.**
