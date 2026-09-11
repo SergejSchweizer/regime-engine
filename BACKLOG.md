@@ -37,10 +37,10 @@ Status date: 2026-09-11
   uses the fresh CPU-optimized state root
   `/home/dev_regime/regime-evaluation-checkpoints-v2` and run key
   `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. It is
-  `RUNNING`; the latest observation has 636 completed and 103 active durable
-  work units. Its 88 child processes are using approximately 7,795% aggregate
-  CPU (about 78 of the 88 available cores). Tracking remains after numerical
-  computation completes.
+  `RUNNING`; the latest observation has 3,291 completed, 102 active, and 74
+  pending durable work units. Its 88 child processes are using approximately
+  7,452% aggregate CPU (about 85 of the 88 available cores). Tracking remains
+  after numerical computation completes.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
