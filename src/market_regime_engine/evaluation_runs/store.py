@@ -438,6 +438,59 @@ class SQLiteEvaluationRunStore:
             )
             connection.commit()
 
+    def terminalize_pending_stage_units_for_invalid_outer_fold(
+        self,
+        identity: EvaluationRunIdentity,
+        fold_id: str,
+        reason: str,
+    ) -> int:
+        """Safely repair old stage ledgers after an invalid outer fold.
+
+        Early resumable-run versions recorded an invalid outer-fold payload but
+        left the stage that caused the domain rejection pending.  This method
+        only transitions pending ``v4_stage`` units in the named fold scope,
+        never running or completed units, and records the same deterministic
+        domain-invalid reason for each repaired unit.
+        """
+
+        if not fold_id or fold_id.strip() != fold_id or "/" in fold_id:
+            raise ValueError("fold_id must be a non-empty path-safe identifier")
+        if not reason or reason.strip() != reason:
+            raise ValueError("domain-invalid reason must be non-empty and trimmed")
+        payload = canonical_json({"status": WorkUnitStatus.DOMAIN_INVALID.value, "reason": reason})
+        payload_hash = _digest(payload, "domain-invalid payload")
+        prefix = f"v4_stage/scope={fold_id}/stage="
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = connection.execute(
+                "SELECT * FROM runs WHERE run_key = ?", (identity.key,)
+            ).fetchone()
+            if run is None:
+                raise ValueError("evaluation run ledger is missing")
+            self._check_identity(run, identity)
+            rows = connection.execute(
+                """
+                SELECT work_unit_key, status FROM work_units
+                WHERE run_key=? AND work_unit_key LIKE ?
+                """,
+                (identity.key, prefix + "%"),
+            ).fetchall()
+            if any(WorkUnitStatus(row["status"]) is WorkUnitStatus.RUNNING for row in rows):
+                connection.rollback()
+                raise RuntimeError(f"stage work unit remains claimed for outer fold {fold_id}")
+            updated = connection.execute(
+                """
+                UPDATE work_units
+                SET status='DOMAIN_INVALID', payload=?, payload_hash=?,
+                    lease_owner=NULL, lease_expires_at=NULL, failure_json=NULL,
+                    updated_at=?
+                WHERE run_key=? AND work_unit_key LIKE ? AND status='PENDING'
+                """,
+                (payload, payload_hash, _utc_now().isoformat(), identity.key, prefix + "%"),
+            ).rowcount
+            connection.commit()
+        return int(updated)
+
     def complete_run(
         self,
         identity: EvaluationRunIdentity,

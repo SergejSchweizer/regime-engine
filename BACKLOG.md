@@ -18,7 +18,9 @@ Status date: 2026-09-11
   execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
   integration-runner oversubscription fix. Focused executor/multistart
   coverage and the full non-external suite are green.
-- **Latest CPU optimization commit:** `75b9242` extends the process-based
+- **Latest CPU optimization commit:** `109f8eb` terminalizes domain-invalid
+  stage failures and adds a guarded repair path for older ledgers. The process
+  scheduler from `75b9242` extends the process-based
   execution path to the default provisional-teacher, prefix-search and final
   candidate grids. Each process owns one nested numerical lane, preserving
   deterministic ordering while avoiding GIL-bound thread pools and nested
@@ -37,11 +39,10 @@ Status date: 2026-09-11
   `regime-xetra` model version exists there yet. The authorized live full run
   uses the fresh CPU-optimized state root
   `/home/dev_regime/regime-evaluation-checkpoints-v2` and run key
-  `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. It is
-  `RUNNING`; the latest observation has 6,486 completed, 114 active, and 151
-  pending durable work units. Its 88 child processes are using approximately
-  5,585% aggregate CPU (about 64 of the 88 available cores). Tracking remains
-  after numerical computation completes.
+  `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. The
+  run is now `COMPLETE` after a guarded repair converted its 246 stale pending
+  stage units to `DOMAIN_INVALID`; it has 9,581 complete and 246 domain-invalid
+  units, with zero valid folds and therefore no production-eligibility claim.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -55,7 +56,8 @@ Status date: 2026-09-11
   so CPU-bound fits are not constrained by one interpreter GIL. Custom
   adapters and explicit checkpointed nested overrides retain a controlled
   fallback. The process-backed grid/integration validation is green (`29
-  passed`), with mypy and Ruff passing. Test
+  passed`), with mypy and Ruff passing. Stage-invalid terminalization and
+  ledger-repair tests pass. Test
   BLAS/OpenMP pools are capped at one native thread per worker to prevent
   xdist/native oversubscription. The
   zero-legacy audit scans 569 active files and passes, and the scoped MLflow
