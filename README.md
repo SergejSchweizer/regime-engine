@@ -52,8 +52,22 @@ alternate MLflow URIs. The feature PostgreSQL remains external at
 Run the complete Xetra v4 evaluation as one cron-safe command:
 
 ```bash
+export REGIME_EVALUATION_CHECKPOINT_ROOT=/volume2/docker/mlflow/evaluation-checkpoints
 ./scripts/run_xetra_v4_cron.sh
 ```
+
+The checkpoint root is mandatory, absolute, and must be outside the checkout.
+The run prints its immutable `evaluation_run_key`; after an interruption, use
+that key to resume without rereading live PostgreSQL:
+
+```bash
+REGIME_EVALUATION_CHECKPOINT_ROOT=/volume2/docker/mlflow/evaluation-checkpoints \
+  .venv/bin/python scripts/run_xetra_v4_evaluation.py --run-key <evaluation_run_key>
+```
+
+If the Arrow snapshot or SQLite ledger is missing or corrupt, the command
+fails closed. Do not delete or replace either under the old run key; capture a
+new source snapshot and start a new run.
 
 ## Statistical lifecycle
 
