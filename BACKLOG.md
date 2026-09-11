@@ -34,10 +34,13 @@ Status date: 2026-09-11
   `CONNECT` to that role. External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; no `regime-engine-evaluation` experiment or
   `regime-xetra` model version exists there yet. The authorized live full run
-  uses run key
-  `21bb255c34c8e97ea7a6b0cfa85d7c0b6ff6fc57ae95d28de4e31e48f28c417e` and is
-  still `RUNNING` with 88 active outer-fold units; tracking occurs only after
-  numerical computation completes.
+  uses the fresh CPU-optimized state root
+  `/home/dev_regime/regime-evaluation-checkpoints-v2` and run key
+  `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. It is
+  `RUNNING`; the latest observation has 636 completed and 103 active durable
+  work units. Its 88 child processes are using approximately 7,795% aggregate
+  CPU (about 78 of the 88 available cores). Tracking remains after numerical
+  computation completes.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
