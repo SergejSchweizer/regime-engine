@@ -101,7 +101,31 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         configuration = global_v4._fallback_configuration(catalog, "build-1", fold, "test")
         return global_v4._invalid_outer_fold(fold, configuration, "synthetic test invalidity")
 
+    fake_outer_fold.__module__ = global_v4.__name__
+    process_pool_worker_counts: list[int] = []
+
+    class _CompletedFuture:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class _InlineProcessPool:
+        def __init__(self, *, max_workers: int, **_kwargs: object) -> None:
+            process_pool_worker_counts.append(max_workers)
+
+        def __enter__(self) -> _InlineProcessPool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function, fold):
+            return _CompletedFuture(function(fold))
+
     monkeypatch.setattr(global_v4, "_evaluate_outer_fold", fake_outer_fold)
+    monkeypatch.setattr(global_v4, "ProcessPoolExecutor", _InlineProcessPool)
     first = global_v4.evaluate_global_regime_v4(
         source_rows,
         catalog=catalog,
@@ -110,6 +134,7 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         run_identity=run_identity,
     )
     assert sorted(calls) == [1, 2]
+    assert process_pool_worker_counts == [2]
 
     second = global_v4.evaluate_global_regime_v4(
         source_rows,
