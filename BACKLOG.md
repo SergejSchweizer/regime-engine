@@ -5,25 +5,39 @@ Status date: 2026-09-11
 
 ## Current execution state
 
-- **Git branch:** `pr/PR-242-resumable-execution-follow-up`
+- **Git branches:** primary `pr/PR-242-resumable-execution-follow-up`;
+  audit `pr/PR-232-independent-audit`; CPU optimization
+  `pr/PR-245-process-parallel-evaluation`
 - **Reference base:** `03feaff` (`origin/main`); local `main` contains the
   completed v4-only cleanup, durable evaluation-run migration, NAS MLflow
   package-publication boundary, stage checkpoints, all-CPU parallel defaults,
   and the MLflow Model Metrics projection work.
-- **Latest local commit:** `1373fb9` completes the resumable v4 execution
+- **Latest primary commit:** `9830a9d` completes the resumable v4 execution
   follow-up on top of `origin/main`, including durable state-root validation,
   source-free resume, seed-level checkpointing and concurrency-safe duplicate
-  execution. Focused executor/multistart coverage and the full non-external
-  suite are green; the working tree is clean.
-- **Remote branch cleanup:** the historical PR-231 branch was deleted after
-  PR #238 was superseded and closed. GitHub PR #239 is the remaining open
-  resumability follow-up; its remote branch is the current branch.
+  execution, NAS PostgreSQL timestamp-precision compatibility, and the CI
+  integration-runner oversubscription fix. Focused executor/multistart
+  coverage and the full non-external suite are green.
+- **Latest CPU optimization commit:** `a1d373f` moves default durable
+  outer-fold execution to process workers with one nested numerical lane per
+  process, preserving deterministic ordering and checkpoint recovery. Its
+  targeted global/resume/source validation is green (`14 passed`), with mypy
+  and Ruff also passing.
+- **Remote branch/PR state:** GitHub PR #239 is the resumability follow-up.
+  PR #240 was closed after its branch identity failed the naming policy;
+  replacement PR #241 is the independent audit PR. GitHub PR #242 contains
+  the process-parallel CPU fix. The obsolete PR-231 remote branch was deleted.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
   `regime_loader.regime_features_daily`; the verified live lineage contract is
   schema version 4 / feature version 3. `xetra_loader` exists but denies
   `CONNECT` to that role. External MLflow health responds `OK` at
-  `http://10.10.1.3:5000`; no `regime-xetra` model version exists there yet.
+  `http://10.10.1.3:5000`; no `regime-engine-evaluation` experiment or
+  `regime-xetra` model version exists there yet. The authorized live full run
+  uses run key
+  `21bb255c34c8e97ea7a6b0cfa85d7c0b6ff6fc57ae95d28de4e31e48f28c417e` and is
+  still `RUNNING` with 88 active outer-fold units; tracking occurs only after
+  numerical computation completes.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -82,11 +96,13 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 ## Current repository state
 
-As of 2026-09-11, the checked-out branch is
-`pr/PR-242-resumable-execution-follow-up`, based on `origin/main` at
-`03feaff`; the tracked worktree is clean. GitHub PR #239 remains open for the
-resumability follow-up. PR-231's corrected full-compute proof passes locally,
-while its remote integration gate remains pending.
+As of 2026-09-11, the primary worktree is on
+`pr/PR-242-resumable-execution-follow-up` at `9830a9d`, based on
+`origin/main` at `03feaff`; the CPU optimization worktree is on
+`pr/PR-245-process-parallel-evaluation` at `a1d373f`. GitHub PR #239 remains
+open for the resumability follow-up, PR #241 is the independent audit PR, and
+PR #242 is the CPU optimization PR. The remote integration gates and the
+authorized NAS full-data run remain pending/running respectively.
 
 ---
 
