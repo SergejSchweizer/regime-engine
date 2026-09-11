@@ -26,10 +26,17 @@ def _cpu_kernel(iterations: int) -> int:
     return value
 
 
-def _run(workers: int, *, tasks: int, iterations: int) -> dict[str, float | int]:
+def _run(
+    workers: int,
+    *,
+    tasks: int,
+    iterations: int,
+    label: str,
+    cpu_affinity: tuple[int, ...] | None = None,
+) -> dict[str, float | int | str]:
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter()
-    with cpu_process_pool(workers) as executor:
+    with cpu_process_pool(workers, cpu_affinity=cpu_affinity) as executor:
         futures: list[Future[int]] = [
             executor.submit(_cpu_kernel, iterations) for _ in range(tasks)
         ]
@@ -38,6 +45,7 @@ def _run(workers: int, *, tasks: int, iterations: int) -> dict[str, float | int]
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     child_cpu_seconds = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
     return {
+        "configuration": label,
         "workers": workers,
         "tasks": tasks,
         "iterations_per_task": iterations,
@@ -56,26 +64,41 @@ def _run(workers: int, *, tasks: int, iterations: int) -> dict[str, float | int]
 def main() -> None:
     topology = cpu_topology()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workers", default="1,2,4,8,16,32,physical,logical")
+    parser.add_argument("--workers", default="1,2,4,8,16,32,numa0,physical,logical")
     parser.add_argument("--tasks", type=int, default=max(32, topology.logical_cpu_count))
     parser.add_argument("--iterations", type=int, default=500_000)
     args = parser.parse_args()
     if args.tasks < 1 or args.iterations < 1:
         parser.error("--tasks and --iterations must be positive")
 
-    requested: list[int] = []
+    requested: list[tuple[str, int, tuple[int, ...] | None]] = []
     for value in args.workers.split(","):
-        if value == "physical":
-            requested.append(topology.physical_core_count)
+        if value.startswith("numa"):
+            node_id = int(value.removeprefix("numa"))
+            node_cpus = next(
+                (cpus for candidate_id, cpus in topology.numa_nodes if candidate_id == node_id),
+                (),
+            )
+            if not node_cpus:
+                parser.error(f"NUMA node {node_id} is not available to this process")
+            requested.append((value, len(node_cpus), node_cpus))
+        elif value == "physical":
+            requested.append((value, topology.physical_core_count, None))
         elif value == "logical":
-            requested.append(topology.logical_cpu_count)
+            requested.append((value, topology.logical_cpu_count, None))
         else:
-            requested.append(int(value))
+            requested.append((value, int(value), None))
     unique_workers = tuple(dict.fromkeys(requested))
-    baseline: dict[str, float | int] | None = None
-    records: list[dict[str, float | int]] = []
-    for workers in unique_workers:
-        record = _run(workers, tasks=args.tasks, iterations=args.iterations)
+    baseline: dict[str, float | int | str] | None = None
+    records: list[dict[str, float | int | str]] = []
+    for label, workers, cpu_affinity in unique_workers:
+        record = _run(
+            workers,
+            tasks=args.tasks,
+            iterations=args.iterations,
+            label=label,
+            cpu_affinity=cpu_affinity,
+        )
         if baseline is None:
             baseline = record
         record["speedup_vs_first"] = float(baseline["wall_seconds"]) / float(record["wall_seconds"])
