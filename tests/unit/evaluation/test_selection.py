@@ -39,11 +39,27 @@ def fold() -> WalkForwardFoldResult:
     )
 
 
-def evaluation(k: int) -> WalkForwardEvaluation:
+EXPECTED_CANDIDATE_IDS = (
+    "gaussian_hmm_k2_full",
+    "gaussian_hmm_k3_full",
+    "gaussian_hmm_k4_full",
+    "gaussian_hmm_k5_full",
+    "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k3_m2_full",
+    "gmm_hmm_k4_m2_full",
+    "gmm_hmm_k5_m2_full",
+    "student_t_hmm_k2_full",
+    "student_t_hmm_k3_full",
+    "student_t_hmm_k4_full",
+    "student_t_hmm_k5_full",
+)
+
+
+def evaluation(k: int, candidate_id: str | None = None) -> WalkForwardEvaluation:
     return WalkForwardEvaluation(
         profile_id="xetra",
-        profile_config_version=1,
-        candidate_id=f"gaussian_hmm_k{k}_full",
+        profile_config_version=4,
+        candidate_id=candidate_id or f"gaussian_hmm_k{k}_full",
         state_count=k,
         source_build_id="build-1",
         feature_order=("f0",),
@@ -58,6 +74,7 @@ def evaluation(k: int) -> WalkForwardEvaluation:
 def aggregate(
     k: int,
     *,
+    candidate_id: str | None = None,
     mean: float = -1.0,
     std: float = 0.2,
     worst: float = -1.5,
@@ -68,7 +85,7 @@ def aggregate(
     valid = 10 if rate == 1.0 else 7
     planned = 10
     return CandidateAggregate(
-        candidate_id=f"gaussian_hmm_k{k}_full",
+        candidate_id=candidate_id or f"gaussian_hmm_k{k}_full",
         state_count=k,
         planned_fold_count=planned,
         valid_fold_count=valid,
@@ -85,21 +102,35 @@ def aggregate(
 
 
 def grid(items: tuple[CandidateAggregate, ...]) -> CandidateGridEvaluation:
+    if tuple(item.candidate_id for item in items) != EXPECTED_CANDIDATE_IDS:
+        raise AssertionError("grid fixtures must use the complete v4 candidate universe")
     return CandidateGridEvaluation(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         source_build_id="build-1",
         feature_order=("f0",),
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluations=tuple(evaluation(k) for k in (2, 3, 4)),
+        evaluations=tuple(evaluation(item.state_count, item.candidate_id) for item in items),
         aggregates=items,
     )
 
 
 def base() -> tuple[CandidateAggregate, ...]:
-    return tuple(aggregate(k) for k in (2, 3, 4))
+    gaussian = tuple(aggregate(k) for k in (2, 3, 4, 5))
+    other = tuple(
+        aggregate(
+            int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),
+            candidate_id=candidate_id,
+            mean=-2.0,
+            worst=-2.5,
+            bic=200.0,
+            aic=190.0,
+        )
+        for candidate_id in EXPECTED_CANDIDATE_IDS[4:]
+    )
+    return gaussian + other
 
 
 def with_candidate(
@@ -107,7 +138,10 @@ def with_candidate(
     k: int,
     **changes: float,
 ) -> tuple[CandidateAggregate, ...]:
-    return tuple(replace(item, **changes) if item.state_count == k else item for item in items)
+    candidate_id = f"gaussian_hmm_k{k}_full"
+    return tuple(
+        replace(item, **changes) if item.candidate_id == candidate_id else item for item in items
+    )
 
 
 def champion(items: tuple[CandidateAggregate, ...]) -> str:
@@ -210,8 +244,8 @@ def test_hard_gate_rejects_candidate_below_80_percent_and_records_reason() -> No
 def test_zero_eligible_candidates_fails_closed() -> None:
     rejected = tuple(
         CandidateAggregate(
-            candidate_id=f"gaussian_hmm_k{k}_full",
-            state_count=k,
+            candidate_id=candidate_id,
+            state_count=int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),
             planned_fold_count=10,
             valid_fold_count=0,
             invalid_fold_count=10,
@@ -224,7 +258,7 @@ def test_zero_eligible_candidates_fails_closed() -> None:
             bic_mean=None,
             aic_mean=None,
         )
-        for k in (2, 3, 4)
+        for candidate_id in EXPECTED_CANDIDATE_IDS
     )
     with pytest.raises(ValueError, match="no candidate passes"):
         select_statistical_champion(grid(rejected))
@@ -390,7 +424,7 @@ def test_zero_valid_candidate_aggregate_rejects_scores() -> None:
 
 def test_candidate_grid_contract_guards_profile_order_and_shared_lineage() -> None:
     valid = grid(base())
-    with pytest.raises(ValueError, match="xetra"):
+    with pytest.raises(ValueError, match="Xetra v4"):
         replace(valid, profile_id="other")
     with pytest.raises(ValueError, match="evaluations must be ordered"):
         replace(valid, evaluations=tuple(reversed(valid.evaluations)))

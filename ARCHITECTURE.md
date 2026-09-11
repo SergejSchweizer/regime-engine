@@ -2,7 +2,7 @@
 
 ## Canonical identity
 
-Repository `SergejSchweizer/regime-engine` ships Python distribution `market-regime-engine`, import package `market_regime_engine`, MLflow app entry point `regime-engine`, public profile `xetra` config version `1`, registered model `regime-xetra`, and production alias `champion`.
+Repository `SergejSchweizer/regime-engine` ships Python distribution `market-regime-engine`, import package `market_regime_engine`, MLflow app entry point `regime-engine`, public profile `xetra` config version `4`, registered model `regime-xetra`, and production alias `champion`.
 
 ## Ownership boundary
 
@@ -15,7 +15,7 @@ regime-loader
   -> portfell / future consumers
 ```
 
-The engine is statistical only. ETF/portfolio returns, weights, Sharpe, Sortino, Calmar, drawdown, Expected Shortfall, transaction costs, trading labels, and profitability never influence feature selection or statistical champion ranking.
+The engine is statistical only. ETF/portfolio returns, weights, Sharpe, Sortino, Calmar, drawdown, Expected Shortfall, transaction costs, trading labels, and profitability never influence feature discovery or statistical champion ranking.
 
 Input lineage has `data_time_semantics=current_vintage_observation_day`. Walk-forward evaluation is causal and split-leak-free with respect to that current-vintage observation sequence; it does not claim historical provider-release-time/vintage safety.
 
@@ -30,28 +30,19 @@ Production exposes exactly one MLflow 3.15.1 HTTP service on `10.10.1.3:5000`:
 - `GET /regime-engine/v1/profiles/{profile_id}/oos-builds/{build_id}`;
 - `GET /regime-engine/v1/health`.
 
-There is no standalone FastAPI/Uvicorn service, `mlflow models serve`, port 5001, reverse proxy, or Prometheus exporter. MLflow custom apps are Flask/WSGI and the deployment forces Gunicorn `gthread` workers.
+There is no standalone FastAPI/Uvicorn service, `mlflow models serve`, reverse proxy, or Prometheus exporter. MLflow custom apps are Flask/WSGI and are hosted by the existing external MLflow service.
 
-Compose contains exactly `mlflow` and private `mlflow-postgres`. Only `mlflow` publishes `5000:5000`. Feature PostgreSQL is external and uses a dedicated read-only trusted-LAN `"regime-engine"` role with explicit plaintext `sslmode=disable`; feature credentials and MLflow-backend credentials use separate environment namespaces.
-
-## Local-only application image
-
-The deployment host has a local checkout and uses its local Unix-socket Docker daemon. The repository-owned image is built locally as `regime-engine-mlflow:local` and is never pushed to or pulled from an application registry.
-
-Production build and startup are deliberately separate:
-
-```bash
-docker compose build --pull mlflow
-docker compose up -d --no-build
-```
-
-`compose.yaml` owns the production contract. It declares `build`, `image: regime-engine-mlflow:local`, and `pull_policy: never` for the app service. Startup fails if the local image is absent rather than silently pulling it. Operator/model-cycle commands run through `docker compose exec -T mlflow ...`.
+Feature PostgreSQL is external and uses a dedicated read-only trusted-LAN
+`"regime-engine"` role with explicit plaintext `sslmode=disable`. MLflow
+tracking, registry, artifacts, and the profile API are provided by the existing
+service at `http://10.10.1.3:5000`. This repository owns no MLflow or PostgreSQL
+Compose services and no application image.
 
 ## Statistical lifecycle
 
-The Xetra profile selects features only from first-fold TRAIN data, evaluates exactly K=2/K=3/K=4 full-covariance Gaussian HMM candidates in expanding walk-forward folds, and chooses a statistical champion using the deterministic ranking in `EVALUATION.md`.
+The Xetra profile discovers the complete PostgreSQL feature schema from first-fold TRAIN data, evaluates the exact 12-candidate v4 grid in expanding walk-forward folds, and chooses a statistical champion using the deterministic ranking in `EVALUATION.md`.
 
-No walk-forward fold model is registered. After selection, a mandatory fresh final production refit uses the frozen features and all eligible source observations through the exact evaluation cutoff, aligns state IDs to the last valid winning-K fold, and persists the inference origin, trained-through timestamp, and terminal filtered probabilities. Only this final-refit artifact can become a `regime-xetra` model version and be assigned `challenger`/`champion`.
+No walk-forward fold model is registered. After selection, a mandatory fresh final production refit uses the frozen deployment selection and all eligible source observations through the deployment cutoff, canonicalizes state IDs within the new model version, and persists the inference origin, trained-through timestamp, and terminal filtered probabilities. Only this final-refit artifact can become a `regime-xetra` model version and be assigned `challenger`/`champion`.
 
 Latest and fixed-model replay are causal forward-filter operations. Replay start is never a new HMM initial condition. Walk-forward OOS prediction builds remain immutable and are retrieved by explicit build ID; fixed-model replay is never substituted for OOS evidence.
 

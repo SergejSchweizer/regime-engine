@@ -15,14 +15,14 @@ class ProfileModelTarget:
     def __post_init__(self) -> None:
         if not self.profile_id or not self.model_name or not self.production_alias:
             raise ValueError("profile model target identity fields cannot be empty")
-        if self.profile_config_version < 1:
-            raise ValueError("profile config version must be positive")
+        if self.profile_config_version != 4:
+            raise ValueError("only Xetra profile configuration version 4 is supported")
 
 
 DEFAULT_PROFILE_TARGETS = (
     ProfileModelTarget(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         model_name="regime-xetra",
         production_alias="champion",
     ),

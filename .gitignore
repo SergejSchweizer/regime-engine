@@ -38,6 +38,7 @@ mlartifacts/
 mlflow/
 
 # Local engine output and generated prediction data
+.state/
 artifacts/
 predictions/
 output/

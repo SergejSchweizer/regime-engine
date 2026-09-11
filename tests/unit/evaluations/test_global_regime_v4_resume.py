@@ -9,11 +9,11 @@ import pandas as pd  # type: ignore[import-untyped]
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold
-from market_regime_engine.evaluations.run_store import (
-    DatasetSnapshotKey,
-    EvaluationRunKey,
-    FileEvaluationRunStore,
+from market_regime_engine.evaluation_runs.contracts import (
+    DatasetSnapshotIdentity,
+    EvaluationRunIdentity,
 )
+from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.features.ports import (
     FeatureCatalogEntry,
     FeatureCatalogSnapshot,
@@ -76,8 +76,8 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
     plan = SimpleNamespace(plan_hash="b" * 64, evaluation_cutoff=timestamps[-1], folds=folds)
     monkeypatch.setattr(global_v4, "plan_walk_forward", lambda *_args: plan)
     profile = load_profile("configs/profiles/xetra_v4.yaml")
-    dataset_key = DatasetSnapshotKey.from_catalog(catalog)
-    run_key = EvaluationRunKey(
+    dataset_key = DatasetSnapshotIdentity.from_catalog(catalog)
+    run_identity = EvaluationRunIdentity(
         evaluation_id="global_regime_v4",
         profile_id="xetra",
         profile_config_version=4,
@@ -90,8 +90,8 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         uv_lock_sha256="d" * 64,
         python_version="3.14.7",
     )
-    store = FileEvaluationRunStore(tmp_path / "runs")
-    store.open_run(run_key)
+    store = SQLiteEvaluationRunStore(tmp_path / "runs")
+    store.open_run(run_identity)
     calls: list[int] = []
 
     def fake_outer_fold(*args, **kwargs):
@@ -107,16 +107,16 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         catalog=catalog,
         profile=profile,
         run_store=store,
-        run_key=run_key,
+        run_identity=run_identity,
     )
-    assert calls == [1, 2]
+    assert sorted(calls) == [1, 2]
 
     second = global_v4.evaluate_global_regime_v4(
         source_rows,
         catalog=catalog,
         profile=profile,
         run_store=store,
-        run_key=run_key,
+        run_identity=run_identity,
     )
     assert second == first
-    assert calls == [1, 2]
+    assert sorted(calls) == [1, 2]

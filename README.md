@@ -10,8 +10,8 @@ The MVP is a statistical regime service built around full-covariance Gaussian HM
 - MLflow: **3.15.1**
 - Gaussian HMM backend: **hmmlearn 0.3.3**
 - public profile: `xetra`
-- profile config version: `1`
-- feature-selection policy: `xetra_semantic_medoid_v1`
+- profile config version: `4`
+- feature-discovery policy: `xetra_global_regime_v4`
 - registered model: `regime-xetra`
 - production alias: `champion`
 - prediction contract: `RegimePrediction.v1`
@@ -37,33 +37,38 @@ password-file path. The file must never contain a password or DSN.
 
 After features are frozen, only rows where every selected feature is finite and non-null are HMM observations. Missing rows stay as gap evidence and do not create extra transition powers.
 
-## One-port MLflow service
+## External MLflow service
 
-Production has one public service at `http://10.10.1.3:5000`. The same MLflow process serves standard MLflow routes and the profile API. There is no standalone FastAPI/Uvicorn server, no `mlflow models serve`, no `:5001`, no reverse proxy, and no Prometheus endpoint.
+Production uses the existing MLflow service at `http://10.10.1.3:5000`. The same
+service provides standard MLflow tracking, registry, artifacts, and the
+`regime-engine` profile API. There is no repository-owned MLflow container,
+Compose file, local MLflow PostgreSQL backend, standalone FastAPI/Uvicorn
+server, reverse proxy, or second serving port.
 
-The production Compose deployment contains exactly `mlflow` and private `mlflow-postgres`. The repository application image is local-only and is built and started explicitly:
+The lifecycle/evaluation commands default to this endpoint and reject local or
+alternate MLflow URIs. The feature PostgreSQL remains external at
+`10.10.1.3:54321` and is accessed through the read-only `regime-engine` role.
+
+Run the complete Xetra v4 evaluation as one cron-safe command:
 
 ```bash
-docker compose build --pull mlflow
-docker compose up -d --no-build
+./scripts/run_xetra_v4_cron.sh
 ```
-
-The custom image is `regime-engine-mlflow:local` with `pull_policy: never`; it is not published to an application registry. Operator/model-cycle commands run inside the local service with `docker compose exec -T mlflow ...`.
-
-Use [the local deployment guide](docs/deployment.md) for the required build,
-start, verification, and resource-budget sequence. Backup, restore, explicit
-database migration, and backend/feature-secret rotation are documented in
-[the operations guide](docs/ops/backup_restore.md). Normal startup never
-performs a migration or an implicit application-image build.
 
 ## Statistical lifecycle
 
-Feature selection uses first-fold TRAIN only. K=2/K=3/K=4 full-covariance Gaussian HMM candidates are compared by the deterministic walk-forward contract in `EVALUATION.md`. No ETF/portfolio/trading metric participates in feature selection or model ranking.
+Feature discovery and candidate selection use outer-fold TRAIN data only. The v4 contract evaluates the dynamic source catalog, Gaussian K2-K5, two-mixture GMM-HMM K2-K5, and Student-t K2-K5 candidates using the deterministic walk-forward contract in `EVALUATION.md`. No ETF/portfolio/trading metric participates in discovery or model ranking.
 
-A walk-forward fold model is never registered for production. After a statistical champion is selected, the winning K is fit again from scratch on all eligible current-vintage observations through the exact evaluation cutoff; only this final-refit artifact may become a `regime-xetra` version and later receive the `challenger`/`champion` alias.
+A walk-forward fold model is never registered for production. After a
+production-eligible statistical evaluation, deployment selection is rerun once
+on the complete source through its maximum, then the selected HMM is fit again
+from scratch on all eligible current-vintage observations through that
+deployment cutoff. The package is uploaded to NAS MLflow and registered using a
+remote `runs:/...` URI; only this final-refit artifact may become a
+`regime-xetra` version. Registration can update `challenger` only; `champion`
+promotion remains an explicit operator action.
 
-Xetra v3's independent multivariate, medoid-univariate, and delta-univariate
-workflow is documented in [docs/regime_evaluations.md](docs/regime_evaluations.md).
+The complete v4 workflow is documented in [docs/regime_evaluations.md](docs/regime_evaluations.md).
 
 ## Contract ownership
 
@@ -74,7 +79,6 @@ workflow is documented in [docs/regime_evaluations.md](docs/regime_evaluations.m
 - `PLOT_STYLE.md`: diagnostic plot presentation
 - `ARCHITECTURE.md`: durable architecture overview
 - `docs/model_lifecycle.md`: lifecycle and serving continuation
-- `docs/deployment.md`: exact local two-service Compose operations
-- `docs/ops/backup_restore.md`: verified backup/restore, migration, and secret rotation
+- `docs/model_lifecycle_operations.md`: external MLflow lifecycle operations
 
 Consumer portfolio/economic evaluation belongs downstream and is deliberately outside this repository.

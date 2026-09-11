@@ -28,7 +28,7 @@ def artifact() -> ProductionModelArtifact:
     features = ("f0",)
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -40,7 +40,11 @@ def artifact() -> ProductionModelArtifact:
         feature_selection_definition_hash="b" * 64,
         feature_selection_execution_hash="c" * 64,
         evaluation_plan_hash="d" * 64,
-        evaluation_cutoff=BASE + timedelta(days=5),
+        validation_evaluation_cutoff=BASE + timedelta(days=5),
+        deployment_selection_cutoff=BASE + timedelta(days=6),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=features,
         scaler=StandardScalerArtifact(features, (0.0,), (1.0,), (1.0,)),
         hmm=GaussianHMMArtifact(

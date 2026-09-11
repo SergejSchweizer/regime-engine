@@ -17,10 +17,21 @@ from market_regime_engine.feature_discovery.contracts import (
     FinalSelectedConfiguration,
     OuterFoldResult,
 )
-from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
+from market_regime_engine.mlflow_support.tracking import (
+    FileMlflowTrackingPort,
+    _safe_logged_model_name,
+)
 
 HASH = "a" * 64
 START = datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def test_logged_model_name_encoding_preserves_logical_key_without_mlflow_delimiters() -> None:
+    logical = "global_regime_v4:run/outer_fold_001.candidate"
+    encoded = _safe_logged_model_name(logical)
+
+    assert encoded == "global_regime_v4_x3a_run_x2f_outer_fold_001_x2e_candidate"
+    assert all(character.isalnum() or character in "_-" for character in encoded)
 
 
 class RecordingPort:

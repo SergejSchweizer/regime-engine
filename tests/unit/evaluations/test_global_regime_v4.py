@@ -85,7 +85,6 @@ def _candidate(catalog: FeatureCatalogSnapshot) -> ResolvedCandidateProfile:
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
         original_feature_universe=catalog.feature_names,
-        preliminary_medoids=(),
         feature_contract_version=4,
     )
 
@@ -480,7 +479,7 @@ def test_outer_policy_passes_only_train_rows_to_each_selection(
         ),
     )
 
-    assert seen_lengths == [1260, 1323, 1386]
+    assert sorted(seen_lengths) == [1260, 1323, 1386]
     assert len(result.outer_folds) == 3
     assert result.valid_fold_count == 3
     assert result.production_eligible is True

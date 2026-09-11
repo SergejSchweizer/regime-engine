@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,7 @@ def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
     features = ("f0",)
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -32,7 +33,11 @@ def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        validation_evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        deployment_selection_cutoff=datetime(2026, 8, 21, tzinfo=UTC),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=features,
         scaler=StandardScalerArtifact(features, (0.0,), (1.0,), (1.0,)),
         hmm=GaussianHMMArtifact(
@@ -162,7 +167,7 @@ def test_mlflow_run_package_loader_prefers_unambiguous_local_artifact(
 
 def test_profile_registry_is_data_driven_and_version_checked() -> None:
     registry = ProfileRegistry()
-    xetra = registry.resolve("xetra", 1)
+    xetra = registry.resolve("xetra", 4)
     assert (xetra.model_name, xetra.production_alias) == ("regime-xetra", "champion")
     with pytest.raises(KeyError, match="unknown public profile"):
         registry.resolve("crypto")
@@ -172,7 +177,7 @@ def test_profile_registry_is_data_driven_and_version_checked() -> None:
     future = ProfileRegistry(
         (
             xetra,
-            ProfileModelTarget("crypto", 1, "regime-crypto", "champion"),
+            ProfileModelTarget("crypto", 4, "regime-crypto", "champion"),
         )
     )
     assert future.resolve("crypto").model_name == "regime-crypto"
@@ -302,9 +307,9 @@ def test_invalid_new_champion_fails_without_falling_back_or_relabelling() -> Non
     assert registry.alias_calls == 2
     assert registry.package_calls[-1] == "2"
 
-    with resolver.resolve("xetra", exact_version="1") as old_exact:
-        assert old_exact.exact_version == "1"
-        assert old_exact.artifact.source_build_id == "good"
+    with resolver.resolve("xetra", exact_version="1") as explicit_version:
+        assert explicit_version.exact_version == "1"
+        assert explicit_version.artifact.source_build_id == "good"
 
 
 def test_resolver_validates_alias_identity_and_configuration() -> None:
@@ -325,7 +330,16 @@ def test_resolver_validates_alias_identity_and_configuration() -> None:
     def wrong_version_loader(_: str) -> ProductionModelArtifact:
         return artifact()
 
-    custom = ProfileRegistry((ProfileModelTarget("xetra", 2, "regime-xetra", "champion"),))
+    custom = ProfileRegistry(
+        (
+            SimpleNamespace(
+                profile_id="xetra",
+                profile_config_version=99,
+                model_name="regime-xetra",
+                production_alias="champion",
+            ),
+        )
+    )
     with pytest.raises(ValueError, match="configuration version differs"):
         ModelResolver(
             FakeRegistry(),

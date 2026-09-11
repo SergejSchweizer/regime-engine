@@ -26,7 +26,7 @@ from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import align_first_fold
 
-PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
+PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 
 
 def source_rows(row_count: int = 1323) -> pd.DataFrame:
@@ -51,7 +51,6 @@ def candidate() -> ResolvedCandidateProfile:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         original_feature_universe=tuple(f"f{index}" for index in range(48)),
-        preliminary_medoids=tuple(f"f{index}" for index in range(8)),
     )
 
 
@@ -89,7 +88,7 @@ def evaluation(folds: tuple[WalkForwardFoldResult, ...] | None = None) -> WalkFo
         folds = (invalid_fold(),)
     return WalkForwardEvaluation(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
         source_build_id="build-1",
@@ -134,7 +133,7 @@ def test_evaluation_contract_failures_are_explicit() -> None:
     baseline = evaluation()
     assert baseline.valid_folds == ()
     assert baseline.valid_fold_rate == 0.0
-    with pytest.raises(ValueError, match="xetra"):
+    with pytest.raises(ValueError, match="Xetra v4"):
         replace(baseline, profile_id="other")
     with pytest.raises(ValueError, match="K2/K3/K4/K5"):
         replace(baseline, state_count=6, candidate_id="gaussian_hmm_k6_full")
@@ -212,7 +211,7 @@ def test_runner_rejects_wrong_profile_and_empty_plan_before_fitting() -> None:
     profile = load_profile(PROFILE_CONFIG)
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     wrong_profile = replace(profile, profile_id="other")
-    with pytest.raises(ValueError, match="supports xetra"):
+    with pytest.raises(ValueError, match="Xetra v4"):
         run_walk_forward_candidate(
             rows,
             plan=plan,
@@ -241,12 +240,24 @@ def test_runner_rejects_invalid_v4_lineage_and_unknown_family_before_adapter_wor
         calls += 1
         return object()
 
+    invalid = SimpleNamespace(
+        candidate_id="gaussian_hmm_k2_full",
+        model_family="gaussian_hmm",
+        state_count=2,
+        mixture_count=1,
+        feature_order=("f0", "f1"),
+        feature_dimension=2,
+        source_build_id="build-1",
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        feature_contract_version=3,
+    )
     with pytest.raises(ValueError, match="contract version 4"):
         run_walk_forward_candidate(
             rows,
             plan=plan,
             profile=profile,
-            candidate=candidate(),
+            candidate=invalid,  # type: ignore[arg-type]
             adapter_factory=adapter_factory,  # type: ignore[arg-type]
         )
     unknown = SimpleNamespace(
@@ -259,6 +270,7 @@ def test_runner_rejects_invalid_v4_lineage_and_unknown_family_before_adapter_wor
         source_build_id="build-1",
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
+        feature_contract_version=4,
     )
     with pytest.raises(ValueError, match="model family"):
         run_walk_forward_candidate(

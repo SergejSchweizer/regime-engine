@@ -7,11 +7,11 @@ The production alias `champion` is distinct from the statistical champion chosen
 1. Bind one current-vintage source build and its exact lineage.
 2. Build the deterministic expanding walk-forward plan.
 3. Select/freeze the Xetra feature subset using first-fold TRAIN rows only.
-4. Evaluate K=2/K=3/K=4 full-covariance candidates with causal TEST likelihood continuation and persistent state alignment.
+4. Evaluate the exact v4 candidate universe: Gaussian HMM K2-K5, two-mixture GMM-HMM K2-K5, and Student-t HMM K2-K5, with causal TEST likelihood continuation and persistent state alignment.
 5. Apply hard gates and deterministic statistical ranking.
-6. Refit the winning K from scratch on the complete-case source sequence through the exact final evaluation cutoff using a fresh full-sample scaler and the exact eight-seed multistart policy.
-7. Align final-refit states to the last valid evaluation fold of the winning K and persist `inference_origin_timestamp`, `trained_through_timestamp`, and terminal filtered probabilities.
-8. Register only that final-refit artifact as a version of `regime-xetra`.
+6. Require the completed evaluation to pass the v4 production gates, then run the shared deployment selector once on all rows through the source maximum.
+7. Refit the frozen candidate from scratch on the complete-case source sequence through the deployment-selection cutoff using a fresh scaler and the exact eight-seed multistart policy.
+8. Upload the immutable package to `http://10.10.1.3:5000` and register it with a remote `runs:/...` URI as a version of `regime-xetra`.
 
 Walk-forward OOS evidence is immutable and is not rewritten by final refit.
 

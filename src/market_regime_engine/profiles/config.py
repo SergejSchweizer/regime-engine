@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from hashlib import sha256
-from math import isclose
 from typing import Any
 
 from market_regime_engine.feature_discovery.contracts import (
@@ -71,39 +70,6 @@ from market_regime_engine.feature_discovery.contracts import (
     V4_SOURCE_NAN_INF_POLICY,
     V4_TEMPORARY_PROTOTYPE_METHOD,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class FeatureSelectionConfig:
-    policy_id: str | None
-    static_features: tuple[str, ...]
-    within_block_method: str
-    cross_block_method: str
-    minimum_feature_coverage: float
-    minimum_nonzero_variance: float
-    minimum_block_complete_observations: int
-    maximum_cross_block_abs_spearman: float
-    numeric_tie_abs_tolerance: float
-
-    def __post_init__(self) -> None:
-        if (self.policy_id is None) == (len(self.static_features) == 0):
-            raise ValueError("exactly one of policy_id or static_features must be configured")
-        if len(set(self.static_features)) != len(self.static_features):
-            raise ValueError("static_features contains duplicates")
-        if self.within_block_method != "absolute_spearman_medoid":
-            raise ValueError("unsupported within-block feature-selection method")
-        if self.cross_block_method != "absolute_spearman_prune":
-            raise ValueError("unsupported cross-block feature-selection method")
-        if not 0.0 < self.minimum_feature_coverage <= 1.0:
-            raise ValueError("minimum_feature_coverage must be in (0, 1]")
-        if self.minimum_nonzero_variance <= 0.0:
-            raise ValueError("minimum_nonzero_variance must be positive")
-        if self.minimum_block_complete_observations < 1:
-            raise ValueError("minimum_block_complete_observations must be positive")
-        if not 0.0 < self.maximum_cross_block_abs_spearman < 1.0:
-            raise ValueError("maximum_cross_block_abs_spearman must be in (0, 1)")
-        if self.numeric_tie_abs_tolerance <= 0.0:
-            raise ValueError("numeric_tie_abs_tolerance must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,8 +395,7 @@ class ModelProfile:
     walk_forward: WalkForwardConfig
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
-    feature_selection: FeatureSelectionConfig | None = None
-    feature_discovery: FeatureDiscoveryConfig | None = None
+    feature_discovery: FeatureDiscoveryConfig
     gmm_hmms: tuple[GMMHMMConfig, ...] = ()
     student_t_hmm: StudentTHMMConfig | None = None
 
@@ -445,58 +410,25 @@ class ModelProfile:
             value = getattr(self, field_name)
             if not value or value.strip() != value:
                 raise ValueError(f"{field_name} must be a non-empty trimmed string")
-        if self.profile_config_version < 1:
-            raise ValueError("profile_config_version must be positive")
+        if self.profile_config_version != 4:
+            raise ValueError("only Xetra profile configuration version 4 is supported")
         if self.production_alias != "champion" or self.challenger_alias != "challenger":
             raise ValueError("registry aliases must be champion/challenger")
-        if (self.feature_selection is None) == (self.feature_discovery is None):
-            raise ValueError(
-                "configure exactly one of legacy feature_selection or feature_discovery"
-            )
         gmm_identities = tuple(
             (candidate.state_count, candidate.mixture_count) for candidate in self.gmm_hmms
         )
         if len(set(gmm_identities)) != len(gmm_identities):
             raise ValueError("GMM-HMM candidates must be unique by state and mixture count")
-        if self.profile_config_version == 1:
-            if self.feature_selection is None:
-                raise ValueError("xetra v1 requires legacy feature_selection")
-            if self.gaussian_hmm.candidate_states != (2, 3, 4):
-                raise ValueError("xetra v1 Gaussian candidates must be exactly K=2,3,4")
-            if self.gmm_hmms or self.student_t_hmm is not None:
-                raise ValueError("xetra v1 supports only its immutable Gaussian candidate set")
-        elif self.profile_config_version in (2, 3):
-            if self.feature_selection is None:
-                raise ValueError("xetra v2/v3 require legacy feature_selection")
-            expected_policy = f"xetra_semantic_medoid_v{self.profile_config_version}"
-            if self.feature_selection.policy_id != expected_policy:
-                raise ValueError("Xetra profile version and feature-selection policy differ")
-            if self.gaussian_hmm.candidate_states != (2, 3, 4, 5):
-                raise ValueError("Xetra v2/v3 Gaussian candidates must be exactly K=2,3,4,5")
-            expected_gmm = ((2, 2), (3, 2), (4, 2), (5, 2))
-            if gmm_identities != expected_gmm:
-                raise ValueError("Xetra v2/v3 GMM candidates must be exactly K2-K5 with M=2")
-            if self.student_t_hmm is None:
-                raise ValueError("Xetra v2/v3 requires the Student-t K2-K5 candidate family")
-        elif self.profile_config_version == 4:
-            if self.feature_discovery is None:
-                raise ValueError("xetra v4 requires dedicated feature_discovery")
-            if self.gaussian_hmm.candidate_states != (2, 3, 4, 5):
-                raise ValueError("xetra v4 Gaussian candidates must be exactly K=2,3,4,5")
-            expected_gmm = ((2, 2), (3, 2), (4, 2), (5, 2))
-            if gmm_identities != expected_gmm:
-                raise ValueError("xetra v4 GMM candidates must be exactly K2-K5 with M=2")
-            if self.student_t_hmm is None:
-                raise ValueError("xetra v4 requires the Student-t K2-K5 candidate family")
-        else:
-            raise ValueError("unsupported Xetra profile configuration version")
+        if self.gaussian_hmm.candidate_states != (2, 3, 4, 5):
+            raise ValueError("Xetra v4 Gaussian candidates must be exactly K=2,3,4,5")
+        expected_gmm = ((2, 2), (3, 2), (4, 2), (5, 2))
+        if gmm_identities != expected_gmm:
+            raise ValueError("Xetra v4 GMM candidates must be exactly K2-K5 with M=2")
+        if self.student_t_hmm is None:
+            raise ValueError("Xetra v4 requires the Student-t K2-K5 candidate family")
 
     def canonical_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        if self.feature_selection is None:
-            payload.pop("feature_selection", None)
-        if self.feature_discovery is None:
-            payload.pop("feature_discovery", None)
         return payload
 
     @property
@@ -505,57 +437,3 @@ class ModelProfile:
             self.canonical_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True
         ).encode("utf-8")
         return sha256(payload).hexdigest()
-
-
-def assert_xetra_v1_pins(profile: ModelProfile) -> None:
-    """Fail closed unless every evaluation-contract constant is exactly pinned."""
-    if profile.feature_selection is None:
-        raise ValueError("xetra v1 pin audit requires legacy feature_selection")
-    fs = profile.feature_selection
-    wf = profile.walk_forward
-    hmm = profile.gaussian_hmm
-    gates = profile.gates
-    exact = {
-        "profile_id": profile.profile_id == "xetra",
-        "profile_config_version": profile.profile_config_version == 1,
-        "registered_model": profile.registered_model == "regime-xetra",
-        "policy_id": fs.policy_id == "xetra_semantic_medoid_v1",
-        "coverage": fs.minimum_feature_coverage == 0.90,
-        "variance": fs.minimum_nonzero_variance == 1e-12,
-        "block_rows": fs.minimum_block_complete_observations == 504,
-        "cross_block": fs.maximum_cross_block_abs_spearman == 0.85,
-        "feature_tie": fs.numeric_tie_abs_tolerance == 1e-12,
-        "min_source_train": wf.minimum_train_source_observations == 1260,
-        "test_rows": wf.test_source_observations == 63,
-        "step_rows": wf.step_source_observations == 63,
-        "no_partial": wf.allow_partial_final_test is False,
-        "model_train": wf.minimum_model_train_observations == 504,
-        "model_test": wf.minimum_model_test_observations == 42,
-        "ranking_tie": wf.ranking_abs_tolerance == 1e-12,
-        "gaussian_candidates": hmm.candidate_states == (2, 3, 4),
-        "seeds": hmm.seeds == (11, 23, 37, 53, 71, 89, 107, 131),
-        "valid_starts": hmm.minimum_valid_starts == 6,
-        "success_rate": hmm.minimum_multistart_success_rate == 0.75,
-        "n_iter": hmm.n_iter == 1000,
-        "tol": hmm.tol == 1e-4,
-        "min_covar": hmm.min_covar == 1e-6,
-        "startprob_prior": hmm.startprob_prior == 1.0,
-        "transmat_prior": hmm.transmat_prior == 1.0,
-        "means_prior": hmm.means_prior == 0.0,
-        "means_weight": hmm.means_weight == 0.0,
-        "covars_prior": hmm.covars_prior == 0.01,
-        "covars_weight": hmm.covars_weight == 1.0,
-        "hard_occ": gates.minimum_train_hard_occupancy == 0.03,
-        "soft_occ": gates.minimum_train_soft_occupancy == 0.05,
-        "valid_fold_rate": gates.candidate_minimum_valid_fold_rate == 0.80,
-        "confidence": gates.low_confidence_threshold == 0.60,
-        "alignment": gates.state_alignment_ambiguity_abs_tolerance == 1e-10,
-        "asymmetry": gates.covariance_asymmetry_abs_tolerance == 1e-10,
-        "normalization": gates.probability_normalization_abs_tolerance == 1e-10,
-        "min_variance": gates.minimum_covariance_diagonal_variance == 1e-12,
-    }
-    failures = [name for name, matches in exact.items() if not matches]
-    if failures:
-        raise ValueError(f"xetra v1 profile differs from pinned evaluation contract: {failures}")
-    if not isclose(hmm.minimum_valid_starts / len(hmm.seeds), 0.75, abs_tol=0.0):
-        raise ValueError("xetra v1 multistart minimum is not exactly 6/8")

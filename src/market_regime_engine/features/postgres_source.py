@@ -68,8 +68,8 @@ class PostgresFeatureSource:
         connect: Callable[[], ConnectionLike],
         registered_feature_names: Iterable[str] | None = None,
         *,
-        expected_schema_version: int = 2,
-        expected_feature_version: int = 1,
+        expected_schema_version: int = 4,
+        expected_feature_version: int = 3,
     ) -> None:
         self._connect = connect
         self._registered = frozenset(registered_feature_names or ())
@@ -269,11 +269,10 @@ class PostgresFeatureSource:
         if len(timestamp_columns) != 1:
             raise ValueError("feature table must contain exactly one timestamp_m1 column")
         timestamp = timestamp_columns[0]
-        if (
-            len(timestamp) < 4
-            or timestamp[2] != "timestamp with time zone"
-            or timestamp[3] != "timestamptz"
-        ):
+        # information_schema reports the stable PostgreSQL base type in
+        # ``udt_name`` while its display type may include an explicit
+        # precision, such as timestamp(6) with time zone on the NAS.
+        if len(timestamp) < 4 or timestamp[3] != "timestamptz":
             raise ValueError("timestamp_m1 must be PostgreSQL timestamp-with-time-zone")
         entries: list[FeatureCatalogEntry] = []
         for row in columns:
@@ -387,7 +386,9 @@ class PostgresFeatureSource:
                     "timestamp_m1 column"
                 )
             timestamp = timestamp_columns[0]
-            if timestamp[5] != "timestamp with time zone" or timestamp[6] != "timestamptz":
+            # format_type includes declared precision; typname is the stable
+            # timestamp-with-time-zone identity we require.
+            if timestamp[6] != "timestamptz":
                 raise ValueError(
                     f"{schema_name}.{relation_name}.timestamp_m1 must be PostgreSQL "
                     "timestamp-with-time-zone"

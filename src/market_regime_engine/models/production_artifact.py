@@ -34,7 +34,11 @@ class ProductionModelArtifact:
     feature_selection_definition_hash: str
     feature_selection_execution_hash: str
     evaluation_plan_hash: str
-    evaluation_cutoff: datetime
+    validation_evaluation_cutoff: datetime
+    deployment_selection_cutoff: datetime
+    validation_evidence_hash: str
+    source_catalog_hash: str
+    state_identity_scope: str
     feature_order: tuple[str, ...]
     scaler: StandardScalerArtifact
     hmm: GaussianHMMArtifact
@@ -46,8 +50,8 @@ class ProductionModelArtifact:
     skipped_incomplete_observation_count: int
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2}:
-            raise ValueError("production artifact requires a supported xetra profile configuration")
+        if self.profile_id != "xetra" or self.profile_config_version != 4:
+            raise ValueError("production artifact requires the Xetra v4 profile configuration")
         if self.registered_model != "regime-xetra":
             raise ValueError("production artifact registered model must be exactly regime-xetra")
         if self.state_count not in (2, 3, 4, 5):
@@ -81,19 +85,26 @@ class ProductionModelArtifact:
             "feature_selection_definition_hash",
             "feature_selection_execution_hash",
             "evaluation_plan_hash",
+            "validation_evidence_hash",
+            "source_catalog_hash",
         ):
             if len(getattr(self, field_name)) != 64:
                 raise ValueError(f"{field_name} must contain a SHA-256 digest")
         for field_name in (
-            "evaluation_cutoff",
+            "validation_evaluation_cutoff",
+            "deployment_selection_cutoff",
             "inference_origin_timestamp",
             "trained_through_timestamp",
         ):
             _require_utc(getattr(self, field_name), field_name)
         if self.inference_origin_timestamp > self.trained_through_timestamp:
             raise ValueError("inference origin cannot be after trained-through timestamp")
-        if self.trained_through_timestamp > self.evaluation_cutoff:
-            raise ValueError("trained-through timestamp cannot exceed evaluation cutoff")
+        if self.validation_evaluation_cutoff >= self.deployment_selection_cutoff:
+            raise ValueError("deployment selection cutoff must be after validation cutoff")
+        if self.trained_through_timestamp > self.deployment_selection_cutoff:
+            raise ValueError("trained-through timestamp cannot exceed deployment selection cutoff")
+        if self.state_identity_scope != "model_version_local":
+            raise ValueError("production artifact state identity must be model_version_local")
         if self.retained_observation_count < 504:
             raise ValueError("production refit requires at least 504 retained observations")
         if self.skipped_incomplete_observation_count < 0:

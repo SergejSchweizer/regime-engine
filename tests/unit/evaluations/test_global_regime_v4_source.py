@@ -9,7 +9,8 @@ import pytest
 
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
 from market_regime_engine.contracts import SourceLineage
-from market_regime_engine.evaluations.run_store import DatasetSnapshotKey, EvaluationRunState
+from market_regime_engine.evaluation_runs.contracts import DatasetSnapshotIdentity
+from market_regime_engine.evaluation_runs.store import EvaluationRunState
 from market_regime_engine.features.ports import (
     FeatureCatalogEntry,
     FeatureCatalogSnapshot,
@@ -77,7 +78,7 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
     assert result == "evaluated"
     assert source.request is not None
     assert source.request.feature_names == ()
-    assert source.request.mode.value == "feature_selection"
+    assert source.request.mode.value == "schema_discovery"
     rows = captured["rows"]
     assert isinstance(rows, pd.DataFrame)
     assert tuple(rows.columns) == ("timestamp_m1", "feature_a", "feature_b")
@@ -95,7 +96,7 @@ def test_v4_source_entrypoint_fails_closed_for_invalid_snapshot_contracts() -> N
         (FeatureCatalogEntry("feature_a", 1), FeatureCatalogEntry("feature_b", 2)),
     )
     profile = load_profile("configs/profiles/xetra_v4.yaml")
-    invalid_profile = load_profile("configs/profiles/xetra_v3.yaml")
+    invalid_profile = SimpleNamespace(profile_id="xetra", profile_config_version=99)
 
     class Source:
         def __init__(self, result) -> None:
@@ -188,12 +189,19 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
 
     class SnapshotStore:
         def __init__(self) -> None:
-            self.finalized: tuple[DatasetSnapshotKey, FeatureSnapshot] | None = None
+            self.finalized: tuple[DatasetSnapshotIdentity, FeatureSnapshot] | None = None
 
-        def finalize(self, key: DatasetSnapshotKey, value: FeatureSnapshot) -> None:
+        def finalize(
+            self,
+            key: DatasetSnapshotIdentity,
+            value: FeatureSnapshot,
+            *,
+            catalog: FeatureCatalogSnapshot | None = None,
+        ) -> None:
+            del catalog
             self.finalized = key, value
 
-        def load(self, key: DatasetSnapshotKey) -> FeatureSnapshot:
+        def load(self, key: DatasetSnapshotIdentity) -> FeatureSnapshot:
             assert self.finalized is not None
             assert self.finalized[0] == key
             return self.finalized[1]
@@ -207,16 +215,16 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
             self.opened = key
             return EvaluationRunState(key.key, key.dataset_snapshot_key, "RUNNING", None, 0)
 
-        def load_completed_work_unit(self, key, work_unit_key, input_hash):
-            del key, work_unit_key, input_hash
+        def load_completed_work_unit(self, key, unit):
+            del key, unit
             return None
 
-        def claim_work_unit(self, key, work_unit_key, input_hash):
-            del key, work_unit_key, input_hash
+        def claim_work_unit(self, key, unit):
+            del key, unit
             return True
 
-        def complete_work_unit(self, key, work_unit_key, input_hash, payload):
-            del key, work_unit_key, input_hash, payload
+        def complete_work_unit(self, key, unit, payload):
+            del key, unit, payload
 
         def complete_run(self, key, root_identity_hash, payload):
             self.completed = key, root_identity_hash, payload
@@ -260,10 +268,10 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
     assert isinstance(result, Result)
     assert snapshot_store.finalized is not None
     assert run_store.opened is not None
-    expected_dataset_key = DatasetSnapshotKey.from_catalog(bound_catalog)
+    expected_dataset_key = DatasetSnapshotIdentity.from_catalog(bound_catalog)
     assert run_store.opened.dataset_snapshot_key == expected_dataset_key.key
     assert captured["run_store"] is run_store
-    assert captured["run_key"] == run_store.opened
+    assert captured["run_identity"] == run_store.opened
 
 
 def test_v4_source_entrypoint_returns_a_completed_durable_run(monkeypatch) -> None:
@@ -287,8 +295,8 @@ def test_v4_source_entrypoint_returns_a_completed_durable_run(monkeypatch) -> No
             return bound_catalog, snapshot
 
     class SnapshotStore:
-        def finalize(self, key, value):
-            del key, value
+        def finalize(self, key, value, *, catalog=None):
+            del key, value, catalog
 
         def load(self, key):
             del key

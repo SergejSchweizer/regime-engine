@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -24,6 +25,12 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardFoldResult,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.mlflow_support.metric_catalog import (
+    METRIC_CATALOG_VERSION,
+    MetricDefinition,
+    require_metric_definition,
+)
+from market_regime_engine.mlflow_support.ports import MetricPoint
 
 PNG_DPI = 180
 WIDE_FIGSIZE = (10.0, 5.5)
@@ -89,6 +96,130 @@ class PlotManifestEntry:
 
     def as_json_dict(self) -> dict[str, object]:
         return cast(dict[str, object], asdict(self))
+
+
+def _comparison_identity(definition: MetricDefinition, tags: Mapping[str, str]) -> tuple[str, ...]:
+    """Return the tag identity that bounds a metric's valid comparison domain."""
+
+    required = [
+        "regime_engine.dataset_snapshot_key",
+        "regime_engine.evaluation_plan_hash",
+    ]
+    if definition.comparison_domain == "same_feature_vector_source_plan":
+        required.extend(
+            [
+                "regime_engine.feature_order_sha256",
+                "regime_engine.feature_dimension",
+            ]
+        )
+    elif definition.comparison_domain == "fold_local_only":
+        required.append("regime_engine.outer_fold_id")
+    values = tuple(tags.get(key, "") for key in required)
+    if any(not value for value in values):
+        raise ValueError(
+            f"metric {definition.key} requires complete comparison-domain tags: {required}"
+        )
+    return values
+
+
+def validate_model_metric_comparison(
+    metric_key: str,
+    model_metric_points: Mapping[str, Sequence[MetricPoint]],
+    model_tags: Mapping[str, Mapping[str, str]],
+) -> MetricDefinition:
+    """Validate a Model-Metrics-only comparison without recomputing evaluation data."""
+
+    definition = require_metric_definition(metric_key)
+    if not definition.model_metrics_visible:
+        raise ValueError(f"metric {metric_key} is evidence-only and cannot be plotted")
+    if not model_metric_points:
+        raise ValueError("model metric comparison requires at least one LoggedModel")
+    identities: set[tuple[str, ...]] = set()
+    for model_id, points in sorted(model_metric_points.items()):
+        if not model_id or model_id not in model_tags:
+            raise ValueError(f"missing tags for LoggedModel {model_id!r}")
+        identity = _comparison_identity(definition, model_tags[model_id])
+        identities.add(identity)
+        seen_steps: set[int] = set()
+        for point in points:
+            if point.key != metric_key:
+                raise ValueError(f"LoggedModel {model_id} contains a different metric key")
+            if point.step in seen_steps:
+                raise ValueError(f"duplicate Model Metrics step {metric_key}@{point.step}")
+            seen_steps.add(point.step)
+        if not points:
+            raise ValueError(f"LoggedModel {model_id} has no points for {metric_key}")
+    if len(identities) != 1:
+        raise ValueError(
+            f"LoggedModels violate the {definition.comparison_domain} comparison domain"
+        )
+    return definition
+
+
+def render_model_metric_comparison(
+    metric_key: str,
+    model_metric_points: Mapping[str, Sequence[MetricPoint]],
+    model_tags: Mapping[str, Mapping[str, str]],
+    output_dir: str | Path,
+) -> PlotManifestEntry:
+    """Render a comparison directly from LoggedModel metric histories.
+
+    The function accepts only metric points and LoggedModel tags. It does not
+    accept evaluation objects, source rows, fitted models or evidence files.
+    """
+
+    definition = validate_model_metric_comparison(metric_key, model_metric_points, model_tags)
+    ordered = tuple(sorted(model_metric_points.items()))
+    fig, ax = plt.subplots(figsize=COMPARISON_FIGSIZE)
+    for model_id, points in ordered:
+        history = tuple(sorted(points, key=lambda point: point.step))
+        ax.plot(
+            [point.step for point in history],
+            [point.value for point in history],
+            marker="o",
+            linewidth=1.5,
+            label=model_id,
+        )
+    ax.set_title(f"{definition.human_label} — LoggedModel comparison")
+    ax.set_xlabel(definition.step_semantics)
+    ax.set_ylabel(f"{definition.human_label} ({definition.unit})")
+    ax.grid(True, alpha=0.25)
+    ax.legend(title="LoggedModel")
+    safe_key = metric_key.replace("/", "_").replace(" ", "_")
+    base = Path(output_dir) / "model_metrics" / safe_key
+    png_path = _save_figure(fig, base)
+    payload = {
+        "metric_key": metric_key,
+        "catalog_version": METRIC_CATALOG_VERSION,
+        "models": {
+            model_id: {
+                "tags": dict(sorted(model_tags[model_id].items())),
+                "points": [
+                    {
+                        "step": point.step,
+                        "timestamp_ms": point.timestamp_ms,
+                        "value": point.value,
+                    }
+                    for point in sorted(points, key=lambda item: item.step)
+                ],
+            }
+            for model_id, points in ordered
+        },
+    }
+    return PlotManifestEntry(
+        png_path=str(png_path),
+        plot_type="model_metric_comparison",
+        candidate_id=metric_key,
+        fold_id=None,
+        source_metric_keys=(metric_key,),
+        x_axis_field="step",
+        x_axis_label=definition.step_semantics,
+        y_axis_label=f"{definition.human_label} ({definition.unit})",
+        legend_entries=tuple(model_id for model_id, _points in ordered),
+        image_dimensions_inches=COMPARISON_FIGSIZE,
+        dpi=PNG_DPI,
+        source_artifact_hash=_canonical_hash(payload),
+    )
 
 
 def _canonical_hash(payload: object) -> str:
@@ -885,7 +1016,10 @@ def render_candidate_oos_gap_heatmap(
 
     ordered = _ordered_candidate_oos_values(evaluations, plan, statistical_champion_candidate_id)
     matrix = np.asarray([values for _, values, _ in ordered], dtype=np.float64)
-    best_by_fold = np.nanmax(matrix, axis=0)
+    finite_by_fold = np.any(np.isfinite(matrix), axis=0)
+    best_by_fold = np.full(matrix.shape[1], np.nan, dtype=np.float64)
+    if np.any(finite_by_fold):
+        best_by_fold[finite_by_fold] = np.max(matrix[:, finite_by_fold], axis=0)
     gaps = matrix - best_by_fold
     finite_gaps = gaps[np.isfinite(gaps)]
     minimum = min(float(np.min(finite_gaps)), -1e-6) if finite_gaps.size else -1.0

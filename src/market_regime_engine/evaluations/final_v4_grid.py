@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -28,6 +30,9 @@ from market_regime_engine.training.candidate_grid import (
     _default_runner,
     evaluate_candidate_grid,
 )
+
+if TYPE_CHECKING:
+    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _GAUSSIAN_IDS = tuple(f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4, 5))
@@ -151,7 +156,6 @@ def _candidates(
                 feature_selection_definition_hash=feature_selection_definition_hash,
                 feature_selection_execution_hash=feature_selection_execution_hash,
                 original_feature_universe=original_feature_universe,
-                preliminary_medoids=(),
                 model_family=model_family,
                 mixture_count=mixture_count,
                 feature_contract_version=4,
@@ -173,6 +177,7 @@ def evaluate_final_v4_grid(
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
     runner: CandidateRunner | None = None,
     max_workers: int | None = None,
+    seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
 ) -> FinalV4GridEvaluation:
     """Run the exact final 12 candidates and apply statistical ranking once."""
 
@@ -201,7 +206,6 @@ def evaluate_final_v4_grid(
         registered_model=profile.registered_model,
         source_build_id=source_build_id,
         original_feature_universe=universe,
-        preliminary_medoids=(),
         final_features=feature_order,
         feature_selection_definition_hash=definition_hash,
         feature_selection_execution_hash=execution_hash,
@@ -215,6 +219,7 @@ def evaluate_final_v4_grid(
         adapter_factory_builder=adapter_factory_builder,
         runner=_default_runner if runner is None else runner,
         max_workers=max_workers,
+        seed_checkpoint_factory=seed_checkpoint_factory,
     )
     reason: str | None
     try:

@@ -65,8 +65,8 @@ def loader_fixture() -> tuple[tuple[Any, ...], tuple[tuple[Any, ...], ...]]:
     lineage = (
         "loader-build-42",
         "a" * 64,
-        2,
-        1,
+        4,
+        3,
         3,
         start,
         end,
@@ -89,7 +89,7 @@ def test_loader_shaped_fixture_preserves_lineage_nulls_and_read_only_snapshot_li
             feature_names=("feature_a", "feature_b"),
             start=lineage[5],
             end=lineage[6],
-            mode=SourceMode.FEATURE_SELECTION,
+            mode=SourceMode.SCHEMA_DISCOVERY,
         )
     )
     assert snapshot.lineage.source_build_id == "loader-build-42"

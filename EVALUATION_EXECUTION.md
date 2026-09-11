@@ -2,7 +2,8 @@
 
 Status date: 2026-09-10
 
-This document is an authoritative cross-cutting execution contract for **all evaluation workflows** in `regime-engine`, including legacy compatibility evaluations while they remain callable, Xetra v4 inner/outer evaluations, full-source audit evaluations, deployment-selection evaluations, and future evaluation families.
+This document is an authoritative cross-cutting execution contract for the active
+Xetra v4 evaluation, audit, deployment-selection, and lifecycle workflows.
 
 The statistical contract remains defined by `EVALUATION.md`. This document defines how an evaluation is bound to data and code, how work is committed durably, and how an interrupted run resumes without silently changing its dataset or recomputing already completed work.
 
@@ -94,11 +95,12 @@ After the durable snapshot is finalized:
 
 If the durable snapshot bytes are missing or fail their persisted file/content hash, the run fails closed. It must not reconstruct the old run from a newer live dataset.
 
-The current implementation provides this contract through
-`FileDatasetSnapshotStore`. It writes a canonical `snapshot.json` plus a
-separate manifest containing the payload hash, uses an exclusive filesystem
-lock, flushes payload and directory metadata, and refuses partial, corrupted,
-or changed bytes. `DatasetSnapshotKey.from_catalog(...)` binds the source
+The canonical implementation is
+`market_regime_engine.evaluation_runs.ArrowDatasetSnapshotStore`. It writes a
+PyArrow IPC file plus a manifest containing the Arrow-file SHA-256, exact
+serialized Arrow schema, row count, timestamp bounds and dataset identity. It
+uses temp-write -> flush/fsync -> atomic rename and refuses partial, corrupted,
+or changed bytes. `DatasetSnapshotIdentity.from_catalog(...)` binds the source
 lineage, discovered catalog, materialized matrix hash, row count, and bounds.
 
 ```mermaid
@@ -195,7 +197,10 @@ MLflow operational metadata may differ only where the tracking backend itself re
 
 Evaluation progress must live in a durable store outside process memory.
 
-The first implementation should use a simple repository-owned `EvaluationRunStore` protocol with one crash-safe persistent backend. The backend must provide transactional compare-and-set semantics for work-unit state and must survive process/container restart on a mounted persistent volume.
+The implementation uses `SQLiteEvaluationRunStore`, a repository-owned
+SQLite backend with transactional compare-and-set semantics for work-unit
+state. It survives process/container restart when its explicitly configured
+root is on a persistent mounted volume.
 
 The run store records at least:
 
@@ -216,19 +221,10 @@ created/updated operational timestamps
 
 Canonical statistical payloads remain separate from operational lease/timestamp metadata.
 
-The current implementation is `FileEvaluationRunStore`. Its JSON ledger is
-stored below the caller-selected persistent root and is updated under an
-exclusive filesystem lock with atomic replacement. Completed work-unit
-payloads and the final result payload are stored separately and verified by
-their hashes. A work unit with an expired lease can be claimed again; a
-completed unit or completed run is immutable. The v4 outer evaluator uses one
-ledger unit per outer fold, so a restart reuses completed folds and claims
-only the remaining folds.
-
 The finer-grained quality, distance, clustering, teacher-candidate, prefix,
-and final-grid units listed below remain a follow-up integration point. Until
-those units are ledger-backed as well, the implementation must not claim
-full stage-level resume coverage.
+and final-grid units listed below are represented by
+`EvaluationWorkGraph`; integration into the outer evaluator remains required
+before the full stage-level resume claim is closed.
 
 ### 5.1 Work-unit state machine
 
@@ -282,7 +278,10 @@ deployment selection
 full-source audit verification stages
 ```
 
-For multistart HMM work, the target design checkpoints each deterministic seed fit as an optional finer-grained child unit so that a crash after six of eight completed seeds does not force those six fits to run again. If seed-level checkpointing is not implemented in the first resumability PR, candidate/fold-level checkpointing is the minimum accepted granularity and seed-level checkpointing remains explicit technical debt with a dedicated backlog item.
+For multistart HMM work, `HMMSeedCheckpoint` checkpoints each deterministic
+seed fit as a child unit so that a crash after six of eight completed seeds
+does not force those six fits to run again. The remaining requirement is to
+thread this context through every v4 candidate/fold runner.
 
 A work-unit key must be structural and deterministic, for example:
 

@@ -108,8 +108,8 @@ def lineage_row() -> tuple[Any, ...]:
     return (
         "build-7",
         "a" * 64,
-        2,
-        1,
+        4,
+        3,
         2,
         NOW,
         NOW.replace(day=25),
@@ -124,7 +124,7 @@ def test_selection_mode_preserves_nulls_and_snapshot_transaction() -> None:
     )
     connection = FakeConnection(cursor)
     source = PostgresFeatureSource(lambda: connection, ("f1", "f2"))
-    snapshot = source.read(FeatureRequest(("f2", "f1"), None, None, SourceMode.FEATURE_SELECTION))
+    snapshot = source.read(FeatureRequest(("f2", "f1"), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert snapshot.feature_names == ("f2", "f1")
     assert snapshot.rows[0].values == (1.0, None)
     assert snapshot.skipped_incomplete_row_count == 0
@@ -159,7 +159,7 @@ def test_unregistered_identifier_is_rejected_before_connection() -> None:
 
     source = PostgresFeatureSource(connect, ("f1",))
     with pytest.raises(ValueError, match="unregistered"):
-        source.read(FeatureRequest(("f1;DROP",), None, None, SourceMode.FEATURE_SELECTION))
+        source.read(FeatureRequest(("f1;DROP",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert called is False
 
 
@@ -169,7 +169,7 @@ def test_incompatible_source_schema_version_fails_closed() -> None:
     connection = FakeConnection(FakeCursor(tuple(values), []))
     source = PostgresFeatureSource(lambda: connection, ("f1",))
     with pytest.raises(ValueError, match="schema_version"):
-        source.read(FeatureRequest(("f1",), None, None, SourceMode.FEATURE_SELECTION))
+        source.read(FeatureRequest(("f1",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
 
 
@@ -182,7 +182,7 @@ def test_nonfinite_and_non_monotonic_rows_fail_closed_and_rollback() -> None:
         connection = FakeConnection(cursor)
         source = PostgresFeatureSource(lambda connection=connection: connection, ("f1",))
         with pytest.raises(ValueError, match=match):
-            source.read(FeatureRequest(("f1",), None, None, SourceMode.FEATURE_SELECTION))
+            source.read(FeatureRequest(("f1",), None, None, SourceMode.SCHEMA_DISCOVERY))
         assert connection.rolled_back and connection.closed
 
 
@@ -212,7 +212,7 @@ def test_dynamic_catalog_full_and_subset_requests_use_the_expected_columns() -> 
     subset_connection = FakeConnection(subset_cursor)
     subset_catalog, subset_snapshot = PostgresFeatureSource(
         lambda: subset_connection
-    ).read_with_catalog(FeatureRequest(("f2",), None, None, SourceMode.FEATURE_SELECTION))
+    ).read_with_catalog(FeatureRequest(("f2",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert subset_catalog.feature_names == ("f1", "f2")
     assert subset_snapshot.feature_names == ("f2",)
     assert subset_catalog.materialized_feature_data_sha256 is None
@@ -308,7 +308,7 @@ def test_lineage_contract_failures_are_explicit(row: tuple[Any, ...] | None, mes
         ),
     ],
 )
-def test_legacy_catalog_contract_failures_are_explicit(
+def test_schema_catalog_contract_failures_are_explicit(
     columns: list[tuple[Any, ...]], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):

@@ -1,53 +1,21 @@
-"""Resolve one frozen selected-feature contract shared by all Gaussian candidates."""
+"""Resolve the single supported Xetra v4 candidate contract."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from market_regime_engine.feature_discovery.contracts import FINAL_CANDIDATE_IDS
-from market_regime_engine.feature_selection.contracts import (
-    FeatureSelectionPolicy,
-    FeatureSelectionResult,
-)
 from market_regime_engine.profiles.config import ModelProfile
 
 EXPECTED_XETRA_CANDIDATE_STATES = (2, 3, 4, 5)
-_V1_CANDIDATE_IDS = (
-    "gaussian_hmm_k2_full",
-    "gaussian_hmm_k3_full",
-    "gaussian_hmm_k4_full",
-)
-_V2_CANDIDATE_IDS = (
-    "gaussian_hmm_k2_full",
-    "gaussian_hmm_k3_full",
-    "gaussian_hmm_k4_full",
-    "gaussian_hmm_k5_full",
-    "gmm_hmm_k2_m2_full",
-    "gmm_hmm_k3_m2_full",
-    "gmm_hmm_k4_m2_full",
-    "gmm_hmm_k5_m2_full",
-    "student_t_hmm_k2_full",
-    "student_t_hmm_k3_full",
-    "student_t_hmm_k4_full",
-    "student_t_hmm_k5_full",
-)
-_V3_CANDIDATE_IDS = _V2_CANDIDATE_IDS
-EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION = {
-    1: _V1_CANDIDATE_IDS,
-    2: _V2_CANDIDATE_IDS,
-    3: _V3_CANDIDATE_IDS,
-    4: FINAL_CANDIDATE_IDS,
-}
-_PROFILE_CONTRACTS = {1: (48, 8), 2: (48, 8), 3: (61, 8), 4: (None, 0)}
 
 
-def expected_candidate_ids(profile_config_version: int) -> tuple[str, ...]:
-    """Return the immutable ordered candidate universe for one public profile version."""
+def expected_candidate_ids(profile_config_version: int = 4) -> tuple[str, ...]:
+    """Return the immutable v4 candidate universe."""
 
-    try:
-        return EXPECTED_CANDIDATE_IDS_BY_PROFILE_VERSION[profile_config_version]
-    except KeyError as error:
-        raise ValueError("unsupported Xetra profile configuration") from error
+    if profile_config_version != 4:
+        raise ValueError("only Xetra profile configuration version 4 is supported")
+    return FINAL_CANDIDATE_IDS
 
 
 def _require_lower_sha256(value: str, field_name: str) -> None:
@@ -57,7 +25,7 @@ def _require_lower_sha256(value: str, field_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedCandidateProfile:
-    """Candidate-local view over one immutable shared feature-selection contract."""
+    """Candidate-local view over one immutable v4 feature-discovery contract."""
 
     candidate_id: str
     state_count: int
@@ -68,12 +36,13 @@ class ResolvedCandidateProfile:
     feature_selection_definition_hash: str
     feature_selection_execution_hash: str
     original_feature_universe: tuple[str, ...]
-    preliminary_medoids: tuple[str, ...]
     model_family: str = "gaussian_hmm"
     mixture_count: int = 1
-    feature_contract_version: int = 1
+    feature_contract_version: int = 4
 
     def __post_init__(self) -> None:
+        if self.feature_contract_version != 4:
+            raise ValueError("only feature-discovery contract version 4 is supported")
         if self.state_count not in EXPECTED_XETRA_CANDIDATE_STATES:
             raise ValueError("resolved Xetra candidate state count must be one of 2, 3, 4, 5")
         expected_id = (
@@ -85,18 +54,14 @@ class ResolvedCandidateProfile:
             raise ValueError(f"candidate_id must be exactly {expected_id}")
         if self.model_family == "gaussian_hmm" and self.mixture_count != 1:
             raise ValueError("Gaussian HMM candidate must have exactly one mixture")
-        if self.model_family == "gmm_hmm" and (
-            self.state_count not in (2, 3, 4, 5) or self.mixture_count != 2
-        ):
-            raise ValueError("GMM-HMM candidate must be K=2, K=3, K=4, or K=5 with two mixtures")
+        if self.model_family == "gmm_hmm" and self.mixture_count != 2:
+            raise ValueError("GMM-HMM candidate must have exactly two mixtures")
         if self.model_family == "student_t_hmm" and self.mixture_count != 1:
             raise ValueError("Student-t HMM candidate must have one emission per state")
         if self.model_family not in {"gaussian_hmm", "gmm_hmm", "student_t_hmm"}:
             raise ValueError("candidate model_family is unsupported")
-        if self.feature_contract_version not in (1, 4):
-            raise ValueError("resolved candidate feature contract version is unsupported")
         if self.covariance_type != "full":
-            raise ValueError("resolved Gaussian candidate covariance_type must be full")
+            raise ValueError("resolved candidate covariance_type must be full")
         if not self.feature_order or len(set(self.feature_order)) != len(self.feature_order):
             raise ValueError("resolved feature_order must be non-empty and duplicate-free")
         if self.feature_dimension != len(self.feature_order):
@@ -104,102 +69,60 @@ class ResolvedCandidateProfile:
         if not self.source_build_id or self.source_build_id.strip() != self.source_build_id:
             raise ValueError("source_build_id must be a non-empty trimmed string")
         _require_lower_sha256(
-            self.feature_selection_definition_hash,
-            "feature_selection_definition_hash",
+            self.feature_selection_definition_hash, "feature_selection_definition_hash"
         )
         _require_lower_sha256(
-            self.feature_selection_execution_hash,
-            "feature_selection_execution_hash",
+            self.feature_selection_execution_hash, "feature_selection_execution_hash"
         )
-        expected_universe = len(self.original_feature_universe)
-        if self.feature_contract_version == 4:
-            if (
-                not self.original_feature_universe
-                or len(set(self.original_feature_universe)) != expected_universe
-                or self.preliminary_medoids
-            ):
-                raise ValueError(
-                    "v4 candidates require a dynamic universe and no legacy preliminary medoids"
-                )
-            universe = set(self.original_feature_universe)
-            if any(feature not in universe for feature in self.feature_order):
-                raise ValueError("v4 final feature_order must belong to the dynamic universe")
-            return
-        expected_medoids = 8
-        if (
-            expected_universe not in {48, 61}
-            or len(set(self.original_feature_universe)) != expected_universe
+        if not self.original_feature_universe or len(set(self.original_feature_universe)) != len(
+            self.original_feature_universe
         ):
-            raise ValueError(
-                "original Xetra feature universe must contain exactly 48 or 61 unique features"
-            )
-        if (
-            len(self.preliminary_medoids) != expected_medoids
-            or len(set(self.preliminary_medoids)) != expected_medoids
-        ):
-            raise ValueError("preliminary medoids must contain exactly eight unique features")
+            raise ValueError("v4 candidates require a dynamic feature universe")
         universe = set(self.original_feature_universe)
-        if any(feature not in universe for feature in self.preliminary_medoids):
-            raise ValueError(
-                "every preliminary medoid must belong to the original feature universe"
-            )
-        medoids = set(self.preliminary_medoids)
-        if any(feature not in medoids for feature in self.feature_order):
-            raise ValueError("final feature_order must be a subset of preliminary medoids")
-        expected_order = tuple(
-            feature for feature in self.preliminary_medoids if feature in set(self.feature_order)
-        )
-        if self.feature_order != expected_order:
-            raise ValueError("final feature_order must preserve preliminary-medoid order")
+        if any(feature not in universe for feature in self.feature_order):
+            raise ValueError("v4 final feature_order must belong to the dynamic universe")
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedSelectedFeatureProfile:
-    """Profile identity plus the frozen feature contract used by every candidate."""
+    """Profile identity plus the frozen v4 feature contract used by every candidate."""
 
     profile_id: str
     profile_config_version: int
     registered_model: str
     source_build_id: str
     original_feature_universe: tuple[str, ...]
-    preliminary_medoids: tuple[str, ...]
     final_features: tuple[str, ...]
     feature_selection_definition_hash: str
     feature_selection_execution_hash: str
     candidates: tuple[ResolvedCandidateProfile, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in _PROFILE_CONTRACTS:
-            raise ValueError("resolved public profile must use a supported xetra configuration")
+        if self.profile_id != "xetra" or self.profile_config_version != 4:
+            raise ValueError("resolved public profile must use Xetra v4")
         if self.registered_model != "regime-xetra":
             raise ValueError("resolved Xetra registered model must be regime-xetra")
         if not self.source_build_id or self.source_build_id.strip() != self.source_build_id:
             raise ValueError("source_build_id must be a non-empty trimmed string")
         _require_lower_sha256(
-            self.feature_selection_definition_hash,
-            "feature_selection_definition_hash",
+            self.feature_selection_definition_hash, "feature_selection_definition_hash"
         )
         _require_lower_sha256(
-            self.feature_selection_execution_hash,
-            "feature_selection_execution_hash",
+            self.feature_selection_execution_hash, "feature_selection_execution_hash"
         )
         if not self.original_feature_universe or len(set(self.original_feature_universe)) != len(
             self.original_feature_universe
         ):
-            raise ValueError("resolved feature universe must be non-empty and duplicate-free")
+            raise ValueError("v4 resolved profiles require a dynamic feature universe")
+        if not self.final_features or len(set(self.final_features)) != len(self.final_features):
+            raise ValueError("resolved final features must be non-empty and duplicate-free")
         if any(feature not in self.original_feature_universe for feature in self.final_features):
             raise ValueError("resolved final features must belong to the source universe")
-        if self.profile_config_version == 4 and self.preliminary_medoids:
-            raise ValueError("v4 resolved profiles cannot carry legacy preliminary medoids")
-        validate_candidate_comparison_inputs(
-            self.candidates,
-            profile_config_version=self.profile_config_version,
-        )
+        validate_candidate_comparison_inputs(self.candidates, profile_config_version=4)
         first = self.candidates[0]
         expected_shared = (
             first.source_build_id,
             first.original_feature_universe,
-            first.preliminary_medoids,
             first.feature_order,
             first.feature_selection_definition_hash,
             first.feature_selection_execution_hash,
@@ -207,7 +130,6 @@ class ResolvedSelectedFeatureProfile:
         actual_shared = (
             self.source_build_id,
             self.original_feature_universe,
-            self.preliminary_medoids,
             self.final_features,
             self.feature_selection_definition_hash,
             self.feature_selection_execution_hash,
@@ -224,7 +146,6 @@ def _candidate_shared_contract(candidate: ResolvedCandidateProfile) -> tuple[obj
         candidate.feature_selection_definition_hash,
         candidate.feature_selection_execution_hash,
         candidate.original_feature_universe,
-        candidate.preliminary_medoids,
         candidate.feature_contract_version,
     )
 
@@ -232,151 +153,16 @@ def _candidate_shared_contract(candidate: ResolvedCandidateProfile) -> tuple[obj
 def validate_candidate_comparison_inputs(
     candidates: tuple[ResolvedCandidateProfile, ...],
     *,
-    profile_config_version: int,
+    profile_config_version: int = 4,
 ) -> None:
-    """Fail before comparison unless all configured candidates share one feature contract."""
+    """Fail before comparison unless all configured candidates share one v4 contract."""
 
-    candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
     expected_ids = expected_candidate_ids(profile_config_version)
-    if candidate_ids != expected_ids:
-        raise ValueError("candidate comparison IDs/order do not match the configured Xetra grid")
+    if tuple(candidate.candidate_id for candidate in candidates) != expected_ids:
+        raise ValueError("candidate comparison IDs/order do not match the v4 candidate grid")
     shared = _candidate_shared_contract(candidates[0])
     if any(_candidate_shared_contract(candidate) != shared for candidate in candidates[1:]):
-        raise ValueError(
-            "K2/K3/K4/K5 candidates must share exact feature order, dimension, source build, "
-            "selection hashes, original universe, and preliminary medoids"
-        )
-
-
-def _validate_selection_against_policy(
-    policy: FeatureSelectionPolicy,
-    selection: FeatureSelectionResult,
-) -> None:
-    if policy.policy_id != selection.policy_id:
-        raise ValueError("feature-selection policy/result policy_id mismatch")
-    policy_versions = {
-        "xetra_semantic_medoid_v1": 1,
-        "xetra_semantic_medoid_v2": 2,
-        "xetra_semantic_medoid_v3": 3,
-    }
-    try:
-        policy_version = policy_versions[policy.policy_id]
-    except KeyError as error:
-        raise ValueError("unsupported Xetra feature-selection policy") from error
-    expected_universe, _ = _PROFILE_CONTRACTS[policy_version]
-    if len(policy.feature_universe) != expected_universe:
-        raise ValueError("Xetra feature-selection policy has an invalid feature-universe size")
-    evidence = selection.evidence
-    if tuple(block.block_id for block in evidence.block_evidence) != tuple(
-        block.block_id for block in policy.blocks
-    ):
-        raise ValueError("selection block evidence must preserve canonical policy block order")
-    for policy_block, evidence_block in zip(policy.blocks, evidence.block_evidence, strict=True):
-        if evidence_block.winner not in policy_block.features:
-            raise ValueError("each preliminary medoid must belong to its canonical semantic block")
-    if evidence.preliminary_medoids != tuple(block.winner for block in evidence.block_evidence):
-        raise ValueError("selection preliminary medoids do not match block evidence")
-    if selection.final_features != evidence.final_features:
-        raise ValueError("selection final features do not match immutable evidence")
-
-
-def resolve_selected_feature_profile(
-    profile: ModelProfile,
-    policy: FeatureSelectionPolicy,
-    selection: FeatureSelectionResult,
-    *,
-    source_build_id: str,
-) -> ResolvedSelectedFeatureProfile:
-    """Bind the frozen first-TRAIN selection to every configured Gaussian candidate."""
-
-    if profile.profile_id != "xetra" or profile.profile_config_version not in _PROFILE_CONTRACTS:
-        raise ValueError("only supported public xetra profile configurations are allowed")
-    legacy_feature_selection = profile.feature_selection
-    if legacy_feature_selection is None:
-        raise ValueError("legacy feature resolution requires feature_selection")
-    if legacy_feature_selection.policy_id != policy.policy_id:
-        raise ValueError("model profile feature-selection policy_id mismatch")
-    if legacy_feature_selection.static_features:
-        raise ValueError("selected-feature profile cannot also configure static features")
-    expected_gaussian_states = (
-        (2, 3, 4) if profile.profile_config_version == 1 else EXPECTED_XETRA_CANDIDATE_STATES
-    )
-    if profile.gaussian_hmm.candidate_states != expected_gaussian_states:
-        expected_label = "/".join(f"K{state_count}" for state_count in expected_gaussian_states)
-        raise ValueError(f"Xetra Gaussian candidate states must be exactly {expected_label}")
-    if profile.gaussian_hmm.covariance_type != "full":
-        raise ValueError("Xetra Gaussian candidates must use full covariance")
-    if not source_build_id or source_build_id.strip() != source_build_id:
-        raise ValueError("source_build_id must be a non-empty trimmed string")
-
-    _validate_selection_against_policy(policy, selection)
-    gaussian_candidates = tuple(
-        ResolvedCandidateProfile(
-            candidate_id=f"gaussian_hmm_k{state_count}_full",
-            state_count=state_count,
-            covariance_type="full",
-            feature_order=selection.final_features,
-            feature_dimension=len(selection.final_features),
-            source_build_id=source_build_id,
-            feature_selection_definition_hash=selection.feature_selection_definition_hash,
-            feature_selection_execution_hash=selection.feature_selection_execution_hash,
-            original_feature_universe=policy.feature_universe,
-            preliminary_medoids=selection.evidence.preliminary_medoids,
-        )
-        for state_count in profile.gaussian_hmm.candidate_states
-    )
-    gmm_candidates = tuple(
-        ResolvedCandidateProfile(
-            candidate_id=f"gmm_hmm_k{gmm_hmm.state_count}_m{gmm_hmm.mixture_count}_full",
-            state_count=gmm_hmm.state_count,
-            covariance_type=gmm_hmm.covariance_type,
-            feature_order=selection.final_features,
-            feature_dimension=len(selection.final_features),
-            source_build_id=source_build_id,
-            feature_selection_definition_hash=selection.feature_selection_definition_hash,
-            feature_selection_execution_hash=selection.feature_selection_execution_hash,
-            original_feature_universe=policy.feature_universe,
-            preliminary_medoids=selection.evidence.preliminary_medoids,
-            model_family="gmm_hmm",
-            mixture_count=gmm_hmm.mixture_count,
-        )
-        for gmm_hmm in profile.gmm_hmms
-    )
-    student_candidates: tuple[ResolvedCandidateProfile, ...] = ()
-    if profile.student_t_hmm is not None:
-        student_candidates = tuple(
-            ResolvedCandidateProfile(
-                candidate_id=f"student_t_hmm_k{state_count}_full",
-                state_count=state_count,
-                covariance_type="full",
-                feature_order=selection.final_features,
-                feature_dimension=len(selection.final_features),
-                source_build_id=source_build_id,
-                feature_selection_definition_hash=selection.feature_selection_definition_hash,
-                feature_selection_execution_hash=selection.feature_selection_execution_hash,
-                original_feature_universe=policy.feature_universe,
-                preliminary_medoids=selection.evidence.preliminary_medoids,
-                model_family="student_t_hmm",
-            )
-            for state_count in profile.student_t_hmm.candidate_states
-        )
-    candidates = (*gaussian_candidates, *gmm_candidates, *student_candidates)
-    validate_candidate_comparison_inputs(
-        candidates,
-        profile_config_version=profile.profile_config_version,
-    )
-    return ResolvedSelectedFeatureProfile(
-        profile_id=profile.profile_id,
-        profile_config_version=profile.profile_config_version,
-        registered_model=profile.registered_model,
-        source_build_id=source_build_id,
-        original_feature_universe=policy.feature_universe,
-        preliminary_medoids=selection.evidence.preliminary_medoids,
-        final_features=selection.final_features,
-        feature_selection_definition_hash=selection.feature_selection_definition_hash,
-        feature_selection_execution_hash=selection.feature_selection_execution_hash,
-        candidates=candidates,
-    )
+        raise ValueError("all candidates must share the exact v4 feature contract")
 
 
 def resolve_global_feature_profile(
@@ -388,17 +174,10 @@ def resolve_global_feature_profile(
     feature_discovery_definition_hash: str,
     feature_discovery_execution_hash: str,
 ) -> ResolvedSelectedFeatureProfile:
-    """Resolve v4 candidates from a dynamic global-discovery result.
-
-    Unlike the legacy resolver this function accepts any catalog-sized universe,
-    carries no semantic blocks or medoid list, and binds the exact selected
-    feature tuple to all twelve final candidates.
-    """
+    """Bind one v4 global-discovery result to the complete candidate universe."""
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
-        raise ValueError("global feature resolution requires Xetra profile version 4")
-    if profile.feature_selection is not None or profile.feature_discovery is None:
-        raise ValueError("v4 global resolution cannot use legacy feature_selection")
+        raise ValueError("global feature resolution requires Xetra v4")
     if not source_build_id or source_build_id.strip() != source_build_id:
         raise ValueError("source_build_id must be a non-empty trimmed string")
     if not original_feature_universe or len(set(original_feature_universe)) != len(
@@ -428,34 +207,27 @@ def resolve_global_feature_profile(
             feature_selection_definition_hash=feature_discovery_definition_hash,
             feature_selection_execution_hash=feature_discovery_execution_hash,
             original_feature_universe=original_feature_universe,
-            preliminary_medoids=(),
             model_family=model_family,
             mixture_count=mixture_count,
-            feature_contract_version=4,
         )
 
     candidates = (
+        *(candidate(f"gaussian_hmm_k{k}_full", k) for k in EXPECTED_XETRA_CANDIDATE_STATES),
         *(
-            candidate(f"gaussian_hmm_k{state_count}_full", state_count)
-            for state_count in (2, 3, 4, 5)
+            candidate(f"gmm_hmm_k{k}_m2_full", k, "gmm_hmm", 2)
+            for k in EXPECTED_XETRA_CANDIDATE_STATES
         ),
         *(
-            candidate(f"gmm_hmm_k{state_count}_m2_full", state_count, "gmm_hmm", 2)
-            for state_count in (2, 3, 4, 5)
-        ),
-        *(
-            candidate(f"student_t_hmm_k{state_count}_full", state_count, "student_t_hmm")
-            for state_count in (2, 3, 4, 5)
+            candidate(f"student_t_hmm_k{k}_full", k, "student_t_hmm")
+            for k in EXPECTED_XETRA_CANDIDATE_STATES
         ),
     )
-    validate_candidate_comparison_inputs(candidates, profile_config_version=4)
     return ResolvedSelectedFeatureProfile(
         profile_id="xetra",
         profile_config_version=4,
         registered_model=profile.registered_model,
         source_build_id=source_build_id,
         original_feature_universe=original_feature_universe,
-        preliminary_medoids=(),
         final_features=final_features,
         feature_selection_definition_hash=feature_discovery_definition_hash,
         feature_selection_execution_hash=feature_discovery_execution_hash,

@@ -32,8 +32,8 @@ class SchemaCursor:
         return (
             "build-schema-1",
             "a" * 64,
-            2,
-            1,
+            4,
+            3,
             2,
             START,
             START + timedelta(days=2),
@@ -163,6 +163,26 @@ def test_schema_wide_request_discovers_and_unions_every_relation() -> None:
     assert connection._cursor.executed[-1][1] == (START, START + timedelta(days=2))
 
 
+def test_schema_wide_accepts_explicit_postgres_timestamp_precision() -> None:
+    columns = _columns()
+    columns[0] = (
+        "regime_loader",
+        "alpha_features",
+        "r",
+        "timestamp_m1",
+        1,
+        "timestamp(6) with time zone",
+        "timestamptz",
+    )
+    connection = _connection(columns=columns)
+    catalog, snapshot = PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
+        FeatureRequest.all_features()
+    )
+
+    assert catalog.feature_names == ("alpha", "beta")
+    assert snapshot.rows[0].timestamp == START
+
+
 def test_schema_wide_catalog_and_materialization_are_order_independent() -> None:
     first = _connection()
     second = _connection(
@@ -264,7 +284,7 @@ def test_schema_wide_api_rejects_a_caller_feature_allowlist() -> None:
     connection = _connection()
     with pytest.raises(ValueError, match="does not accept a feature allowlist"):
         PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
-            FeatureRequest(("alpha",), None, None, SourceMode.FEATURE_SELECTION)
+            FeatureRequest(("alpha",), None, None, SourceMode.SCHEMA_DISCOVERY)
         )
 
 

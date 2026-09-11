@@ -37,15 +37,38 @@ from market_regime_engine.training.candidate_grid import (
     evaluate_candidate_grid,
 )
 
-PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
+PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 FEATURES = ("f0", "f1")
 UNIVERSE = tuple(f"f{index}" for index in range(48))
-MEDOIDS = tuple(f"f{index}" for index in range(8))
+
+EXPECTED_CANDIDATE_IDS = (
+    "gaussian_hmm_k2_full",
+    "gaussian_hmm_k3_full",
+    "gaussian_hmm_k4_full",
+    "gaussian_hmm_k5_full",
+    "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k3_m2_full",
+    "gmm_hmm_k4_m2_full",
+    "gmm_hmm_k5_m2_full",
+    "student_t_hmm_k2_full",
+    "student_t_hmm_k3_full",
+    "student_t_hmm_k4_full",
+    "student_t_hmm_k5_full",
+)
 
 
-def candidate(state_count: int) -> ResolvedCandidateProfile:
+def candidate(
+    state_count: int,
+    model_family: str = "gaussian_hmm",
+    mixture_count: int = 1,
+) -> ResolvedCandidateProfile:
+    candidate_id = (
+        f"gmm_hmm_k{state_count}_m{mixture_count}_full"
+        if model_family == "gmm_hmm"
+        else f"{model_family}_k{state_count}_full"
+    )
     return ResolvedCandidateProfile(
-        candidate_id=f"gaussian_hmm_k{state_count}_full",
+        candidate_id=candidate_id,
         state_count=state_count,
         covariance_type="full",
         feature_order=FEATURES,
@@ -54,22 +77,26 @@ def candidate(state_count: int) -> ResolvedCandidateProfile:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         original_feature_universe=UNIVERSE,
-        preliminary_medoids=MEDOIDS,
+        model_family=model_family,
+        mixture_count=mixture_count,
     )
 
 
 def resolved_profile() -> ResolvedSelectedFeatureProfile:
     return ResolvedSelectedFeatureProfile(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         source_build_id="build-1",
         original_feature_universe=UNIVERSE,
-        preliminary_medoids=MEDOIDS,
         final_features=FEATURES,
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        candidates=tuple(candidate(k) for k in (2, 3, 4)),
+        candidates=(
+            *(candidate(k) for k in (2, 3, 4, 5)),
+            *(candidate(k, "gmm_hmm", 2) for k in (2, 3, 4, 5)),
+            *(candidate(k, "student_t_hmm") for k in (2, 3, 4, 5)),
+        ),
     )
 
 
@@ -222,19 +249,12 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         resolved_profile=resolved_profile(),
         adapter_factory_builder=lambda item: DeterministicAdapter,
         runner=runner,
+        max_workers=1,
     )
-    assert sorted(call[0] for call in calls) == [
-        "gaussian_hmm_k2_full",
-        "gaussian_hmm_k3_full",
-        "gaussian_hmm_k4_full",
-    ]
+    assert sorted(call[0] for call in calls) == sorted(EXPECTED_CANDIDATE_IDS)
     assert all(call[1] == FEATURES and call[2] == "build-1" for call in calls)
     aggregate_ids = tuple(item.candidate_id for item in result.aggregates)
-    assert aggregate_ids == (
-        "gaussian_hmm_k2_full",
-        "gaussian_hmm_k3_full",
-        "gaussian_hmm_k4_full",
-    )
+    assert aggregate_ids == EXPECTED_CANDIDATE_IDS
     assert all(item.valid_fold_rate == 1.0 for item in result.aggregates)
     assert result.evaluation_plan_hash == plan.plan_hash
 
@@ -254,10 +274,14 @@ def test_grid_default_adapter_factory_and_profile_derived_model_families() -> No
         profile=profile,
         resolved_profile=resolved_profile(),
         runner=runner,
+        max_workers=1,
     )
 
-    assert all(isinstance(factory(), HmmlearnGaussianHMMAdapter) for factory in factories)
-    student_profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    built = tuple(factory() for factory in factories)
+    assert sum(type(item) is HmmlearnGaussianHMMAdapter for item in built) == 4
+    assert sum(type(item) is HmmlearnGMMHMMAdapter for item in built) == 4
+    assert sum(type(item) is StudentTHMMAdapter for item in built) == 4
+    student_profile = load_profile(Path("configs/profiles/xetra_v4.yaml"))
     student = _default_adapter_builder(
         student_profile,
         replace(
@@ -280,7 +304,7 @@ def test_grid_default_adapter_factory_and_profile_derived_model_families() -> No
     assert isinstance(gmm, HmmlearnGMMHMMAdapter)
 
 
-def test_grid_rejects_an_unexpected_extra_candidate_for_v1() -> None:
+def test_grid_rejects_an_unexpected_extra_candidate() -> None:
     resolved = resolved_profile()
     gmm_candidate = replace(
         candidate(2),
@@ -311,6 +335,7 @@ def test_grid_fails_closed_on_runner_contract_drift() -> None:
             profile=profile,
             resolved_profile=resolved_profile(),
             runner=bad_order,
+            max_workers=1,
         )
 
     def wrong_plan(rows, shared_plan, shared_profile, item, adapter_factory):
@@ -329,6 +354,7 @@ def test_grid_fails_closed_on_runner_contract_drift() -> None:
             profile=profile,
             resolved_profile=resolved_profile(),
             runner=wrong_plan,
+            max_workers=1,
         )
 
 
@@ -352,60 +378,8 @@ def test_aggregate_contract_validates_counts_gate_and_finite_metrics() -> None:
     assert CANDIDATE_VALID_FOLD_RATE_GATE == 0.80
 
 
-def test_candidate_grid_contract_accepts_profile_version_3() -> None:
-    ids = (
-        "gaussian_hmm_k2_full",
-        "gaussian_hmm_k3_full",
-        "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
-        "gmm_hmm_k2_m2_full",
-        "gmm_hmm_k3_m2_full",
-        "gmm_hmm_k4_m2_full",
-        "gmm_hmm_k5_m2_full",
-        "student_t_hmm_k2_full",
-        "student_t_hmm_k3_full",
-        "student_t_hmm_k4_full",
-        "student_t_hmm_k5_full",
-    )
-    base, _, _ = base_evaluation()
-    evaluations = tuple(
-        replace(
-            base,
-            candidate_id=candidate_id,
-            state_count=int(candidate_id.split("_k", 1)[1].split("_", 1)[0]),
-        )
-        for candidate_id in ids
-    )
-    aggregates = tuple(aggregate_candidate(item) for item in evaluations)
-    grid = CandidateGridEvaluation(
-        profile_id="xetra",
-        profile_config_version=3,
-        source_build_id=base.source_build_id,
-        feature_order=base.feature_order,
-        feature_selection_definition_hash=base.feature_selection_definition_hash,
-        feature_selection_execution_hash=base.feature_selection_execution_hash,
-        evaluation_plan_hash=base.evaluation_plan_hash,
-        evaluations=evaluations,
-        aggregates=aggregates,
-    )
-    assert tuple(item.candidate_id for item in grid.evaluations) == ids
-
-
 def test_candidate_grid_contract_accepts_the_exact_full_v4_candidate_universe() -> None:
-    ids = (
-        "gaussian_hmm_k2_full",
-        "gaussian_hmm_k3_full",
-        "gaussian_hmm_k4_full",
-        "gaussian_hmm_k5_full",
-        "gmm_hmm_k2_m2_full",
-        "gmm_hmm_k3_m2_full",
-        "gmm_hmm_k4_m2_full",
-        "gmm_hmm_k5_m2_full",
-        "student_t_hmm_k2_full",
-        "student_t_hmm_k3_full",
-        "student_t_hmm_k4_full",
-        "student_t_hmm_k5_full",
-    )
+    ids = EXPECTED_CANDIDATE_IDS
     base, _, _ = base_evaluation()
     evaluations = tuple(
         replace(

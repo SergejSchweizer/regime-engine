@@ -23,7 +23,7 @@ def artifact() -> ProductionModelArtifact:
     feature_order = ("f0", "f1")
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -35,7 +35,11 @@ def artifact() -> ProductionModelArtifact:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        validation_evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        deployment_selection_cutoff=datetime(2026, 8, 21, tzinfo=UTC),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=feature_order,
         scaler=StandardScalerArtifact(
             feature_order=feature_order,
@@ -203,6 +207,6 @@ def test_package_loader_rejects_runtime_version_drift(tmp_path) -> None:
 
 
 def test_only_final_refit_artifact_type_is_accepted() -> None:
-    with pytest.raises(TypeError, match="PR-063"):
+    with pytest.raises(TypeError, match="v4"):
         production_artifact_json(object())  # type: ignore[arg-type]
     assert replace(artifact(), winning_seed=131).winning_seed == 131

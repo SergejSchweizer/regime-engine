@@ -11,7 +11,7 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 
-PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v1"
+PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v4"
 PACKAGE_DATA_FILE = "production_model.json"
 MLMODEL_FILE = "MLmodel"
 
@@ -78,11 +78,11 @@ def production_artifact_payload(artifact: ProductionModelArtifact) -> dict[str, 
     """Return the complete JSON-safe production contract without secret/source-table data."""
 
     if type(artifact) is not ProductionModelArtifact:
-        raise TypeError("only PR-063 ProductionModelArtifact objects can be packaged")
+        raise TypeError("only v4 ProductionModelArtifact objects can be packaged")
     return {
         "candidate_id": artifact.candidate_id,
         "data_time_semantics": artifact.data_time_semantics,
-        "evaluation_cutoff": _timestamp(artifact.evaluation_cutoff),
+        "deployment_selection_cutoff": _timestamp(artifact.deployment_selection_cutoff),
         "evaluation_plan_hash": artifact.evaluation_plan_hash,
         "feature_order": list(artifact.feature_order),
         "feature_selection_definition_hash": artifact.feature_selection_definition_hash,
@@ -98,13 +98,17 @@ def production_artifact_payload(artifact: ProductionModelArtifact) -> dict[str, 
         "skipped_incomplete_observation_count": artifact.skipped_incomplete_observation_count,
         "source_build_id": artifact.source_build_id,
         "source_data_sha256": artifact.source_data_sha256,
+        "source_catalog_hash": artifact.source_catalog_hash,
         "source_feature_version": artifact.source_feature_version,
         "source_schema_version": artifact.source_schema_version,
         "state_count": artifact.state_count,
+        "state_identity_scope": artifact.state_identity_scope,
         "terminal_filtered_probabilities_hex": [
             _hex(value) for value in artifact.terminal_filtered_probabilities
         ],
         "trained_through_timestamp": _timestamp(artifact.trained_through_timestamp),
+        "validation_evaluation_cutoff": _timestamp(artifact.validation_evaluation_cutoff),
+        "validation_evidence_hash": artifact.validation_evidence_hash,
         "winning_seed": artifact.winning_seed,
     }
 
@@ -124,7 +128,7 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     expected = {
         "candidate_id",
         "data_time_semantics",
-        "evaluation_cutoff",
+        "deployment_selection_cutoff",
         "evaluation_plan_hash",
         "feature_order",
         "feature_selection_definition_hash",
@@ -140,11 +144,15 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         "skipped_incomplete_observation_count",
         "source_build_id",
         "source_data_sha256",
+        "source_catalog_hash",
         "source_feature_version",
         "source_schema_version",
         "state_count",
+        "state_identity_scope",
         "terminal_filtered_probabilities_hex",
         "trained_through_timestamp",
+        "validation_evaluation_cutoff",
+        "validation_evidence_hash",
         "winning_seed",
     }
     if set(payload) != expected:
@@ -229,7 +237,11 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         feature_selection_definition_hash=str(payload["feature_selection_definition_hash"]),
         feature_selection_execution_hash=str(payload["feature_selection_execution_hash"]),
         evaluation_plan_hash=str(payload["evaluation_plan_hash"]),
-        evaluation_cutoff=_parse_timestamp(str(payload["evaluation_cutoff"])),
+        validation_evaluation_cutoff=_parse_timestamp(str(payload["validation_evaluation_cutoff"])),
+        deployment_selection_cutoff=_parse_timestamp(str(payload["deployment_selection_cutoff"])),
+        validation_evidence_hash=str(payload["validation_evidence_hash"]),
+        source_catalog_hash=str(payload["source_catalog_hash"]),
+        state_identity_scope=str(payload["state_identity_scope"]),
         feature_order=tuple(payload["feature_order"]),
         scaler=scaler,
         hmm=hmm,

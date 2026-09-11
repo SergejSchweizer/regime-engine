@@ -100,7 +100,7 @@ def artifact() -> ProductionModelArtifact:
     features = ("f0", "f1")
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -112,7 +112,11 @@ def artifact() -> ProductionModelArtifact:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        validation_evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        deployment_selection_cutoff=datetime(2026, 8, 21, tzinfo=UTC),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=features,
         scaler=StandardScalerArtifact(
             feature_order=features,
@@ -159,15 +163,21 @@ def test_registers_only_matching_final_refit_package(tmp_path) -> None:
     client = FakeRegistryClient()
     registry = MlflowModelRegistry(client)
     package = save_production_package(artifact(), tmp_path / "package")
-    registered = registry.register_production_model(artifact(), package)
+    registered = registry.register_production_model(
+        artifact(), package, package_source_uri="runs:/run-1/production-package"
+    )
     assert registered.model_name == "regime-xetra"
     assert registered.exact_version == "1"
-    assert registry.get_model_package_uri("regime-xetra", "1") == package.resolve().as_uri()
+    assert registry.get_model_package_uri("regime-xetra", "1") == ("runs:/run-1/production-package")
     assert "regime-xetra" in client.models
 
     with pytest.raises(ValueError, match="differs"):
-        registry.register_production_model(replace(artifact(), winning_seed=23), package)
-    with pytest.raises(TypeError, match="PR-063"):
+        registry.register_production_model(
+            replace(artifact(), winning_seed=23),
+            package,
+            package_source_uri="runs:/run-1/production-package",
+        )
+    with pytest.raises(TypeError, match="v4"):
         registry.register_production_model(object(), package)  # type: ignore[arg-type]
 
 
@@ -188,10 +198,16 @@ def test_compare_and_swap_alias_is_fail_closed_and_audited(tmp_path) -> None:
     client = FakeRegistryClient()
     registry = MlflowModelRegistry(client)
     first_package = save_production_package(artifact(), tmp_path / "one")
-    first = registry.register_production_model(artifact(), first_package)
+    first = registry.register_production_model(
+        artifact(), first_package, package_source_uri="runs:/run-1/production-package"
+    )
     second_artifact = replace(artifact(), source_build_id="build-2")
     second_package = save_production_package(second_artifact, tmp_path / "two")
-    second = registry.register_production_model(second_artifact, second_package)
+    second = registry.register_production_model(
+        second_artifact,
+        second_package,
+        package_source_uri="runs:/run-2/production-package",
+    )
 
     assert registry.compare_and_swap_alias(
         model_name="regime-xetra",
@@ -252,9 +268,12 @@ def test_registry_contract_dataclasses_fail_closed() -> None:
     assert '"changed":true' in audit().canonical_json()
 
 
-def test_registry_rejects_unknown_model_alias_and_invalid_inputs() -> None:
+def test_registry_rejects_unknown_model_alias_and_invalid_inputs(tmp_path) -> None:
     client = FakeRegistryClient()
     registry = MlflowModelRegistry(client)
+    package = save_production_package(artifact(), tmp_path / "registry-package")
+    with pytest.raises(ValueError, match="remote MLflow runs"):
+        registry.register_production_model(artifact(), package)
     with pytest.raises(ValueError, match="regime-xetra"):
         registry.resolve_alias("other", "champion")
     with pytest.raises(ValueError, match="challenger/champion"):

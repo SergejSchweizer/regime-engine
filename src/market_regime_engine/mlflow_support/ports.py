@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 from typing import Protocol
 
 
@@ -31,6 +32,8 @@ class MetricPoint:
     def __post_init__(self) -> None:
         if not self.key:
             raise ValueError("metric key cannot be empty")
+        if not isfinite(self.value):
+            raise ValueError("metric value must be finite")
         if self.step < 0 or self.timestamp_ms < 0:
             raise ValueError("metric step/timestamp cannot be negative")
 
@@ -52,6 +55,8 @@ class TrackingPort(Protocol):
     ) -> str: ...
 
     def log_model_metric_points(self, model_id: str, points: tuple[MetricPoint, ...]) -> None: ...
+
+    def get_model_metric_points(self, model_id: str) -> tuple[MetricPoint, ...]: ...
 
     def log_model_artifacts(self, model_id: str, local_dir: str) -> None: ...
 

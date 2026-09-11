@@ -14,7 +14,7 @@ Status date: 2026-08-24
 - Xetra registered model: `regime-xetra`
 - production MLflow alias: `champion`
 
-Do not substitute legacy `xetra_cross_asset_v1` as the public profile ID or `engine-champion` as a serving alias.
+The only supported public profile is `xetra` and the production serving alias is `champion`.
 
 ## PR naming
 
@@ -103,13 +103,13 @@ Weak implementation agents do not rewrite contract-owner files unless their PR e
 
 Production features come from the external `regime-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `regime-engine`. Direct upstream Parquet is not the production source.
 
-Production serving is one MLflow service at `http://10.10.1.3:5000`, extended by the `regime-engine` MLflow Flask app and explicitly run through Gunicorn. There is no separate FastAPI/Uvicorn application, model-serving port 5001, reverse proxy, or Prometheus exposure.
+Production serving is the existing external MLflow service at `http://10.10.1.3:5000`, extended by the `regime-engine` MLflow Flask app. This repository does not define or run a local MLflow/PostgreSQL Compose deployment. There is no separate FastAPI/Uvicorn application, reverse proxy, or Prometheus exposure.
 
 ## Required tests
 
 Push/merge required tests are hermetic. Only explicitly marked `external_service` smoke tests may contact:
 
 - feature PostgreSQL `10.10.1.3:54321`;
-- MLflow `http://10.10.1.3:5000`.
+- External MLflow `http://10.10.1.3:5000`.
 
 Those external tests are opt-in and excluded from required gates.

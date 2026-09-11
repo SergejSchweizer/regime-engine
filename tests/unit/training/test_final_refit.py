@@ -11,6 +11,10 @@ import pytest
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.feature_discovery.contracts import (
+    DeploymentSelection,
+    FinalSelectedConfiguration,
+)
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.gaussian_hmm import (
@@ -29,7 +33,7 @@ from market_regime_engine.training.final_refit import (
     final_production_refit,
 )
 
-PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
+PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 FEATURES = ("f0", "f1")
 
 
@@ -44,7 +48,6 @@ def candidate() -> ResolvedCandidateProfile:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         original_feature_universe=tuple(f"f{index}" for index in range(48)),
-        preliminary_medoids=tuple(f"f{index}" for index in range(8)),
     )
 
 
@@ -102,7 +105,7 @@ def test_default_adapter_builder_derives_student_t_settings_and_rejects_missing_
     with pytest.raises(ValueError, match="active model profile"):
         _default_adapter_builder(None, student_candidate)()
 
-    profile = load_profile(Path("configs/profiles/xetra_v2.yaml"))
+    profile = load_profile(Path("configs/profiles/xetra_v4.yaml"))
     student = _default_adapter_builder(profile, student_candidate)()
     assert isinstance(student, StudentTHMMAdapter)
     assert student.settings.maximum_nu == profile.student_t_hmm.maximum_nu
@@ -189,15 +192,39 @@ def winning_evaluation(rows: pd.DataFrame):
     )
 
 
+def deployment_selection(rows: pd.DataFrame, evaluation) -> DeploymentSelection:
+    return DeploymentSelection(
+        source_build_id="build-1",
+        source_catalog_hash="f" * 64,
+        validation_evaluation_cutoff=evaluation.evaluation_cutoff,
+        deployment_selection_cutoff=rows["timestamp_m1"].iloc[-1],
+        configuration=FinalSelectedConfiguration(
+            feature_order=FEATURES,
+            candidate_id="gaussian_hmm_k2_full",
+            state_count=2,
+            model_family="gaussian_hmm",
+            selected_prefix_length=len(FEATURES),
+            feature_discovery_hash="a" * 64,
+            source_build_id="build-1",
+            catalog_hash="f" * 64,
+            selection_definition_hash="a" * 64,
+            selection_execution_hash="b" * 64,
+            state_identity_scope="model_version_local",
+        ),
+        discovery_hash="a" * 64,
+    )
+
+
 def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> None:
-    rows = source_rows()
+    rows = source_rows(1324)
     rows.loc[len(rows) - 1, "f0"] = np.nan
-    evaluation = winning_evaluation(rows)
+    evaluation = winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
     result = final_production_refit(
         rows,
         lineage=lineage(rows),
         candidate=candidate(),
         winning_evaluation=evaluation,
+        deployment_selection=deployment_selection(rows, evaluation),
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     assert result.registered_model == "regime-xetra"
@@ -205,24 +232,27 @@ def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> N
     assert result.feature_order == FEATURES
     assert result.source_build_id == "build-1"
     assert result.source_data_sha256 == "d" * 64
-    assert result.retained_observation_count == 1322
+    assert result.retained_observation_count == 1323
     assert result.skipped_incomplete_observation_count == 1
     assert result.inference_origin_timestamp == rows["timestamp_m1"].iloc[0]
     assert result.trained_through_timestamp == rows["timestamp_m1"].iloc[-2]
-    assert result.trained_through_timestamp < result.evaluation_cutoff
+    assert result.trained_through_timestamp < result.deployment_selection_cutoff
+    assert len(result.validation_evidence_hash) == 64
+    assert result.source_catalog_hash == "f" * 64
     assert sum(result.terminal_filtered_probabilities) == pytest.approx(1.0)
     assert result.winning_seed == 11
     assert result.hmm.feature_order == result.scaler.feature_order == FEATURES
 
 
 def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
-    rows = source_rows()
-    evaluation = winning_evaluation(rows)
+    rows = source_rows(1324)
+    evaluation = winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
     baseline = final_production_refit(
         rows,
         lineage=lineage(rows),
         candidate=candidate(),
         winning_evaluation=evaluation,
+        deployment_selection=deployment_selection(rows, evaluation),
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     future = rows.copy()
@@ -237,6 +267,7 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
         lineage=lineage(future),
         candidate=candidate(),
         winning_evaluation=evaluation,
+        deployment_selection=deployment_selection(rows, evaluation),
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     assert changed.scaler == baseline.scaler
@@ -246,14 +277,15 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
 
 
 def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
-    rows = source_rows()
-    evaluation = winning_evaluation(rows)
+    rows = source_rows(1324)
+    evaluation = winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
     with pytest.raises(ValueError, match="statistical champion"):
         final_production_refit(
             rows,
             lineage=lineage(rows),
             candidate=replace(candidate(), candidate_id="gaussian_hmm_k3_full", state_count=3),
             winning_evaluation=evaluation,
+            deployment_selection=deployment_selection(rows, evaluation),
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
     with pytest.raises(ValueError, match="source lineage"):
@@ -262,6 +294,7 @@ def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
             lineage=replace(lineage(rows), source_build_id="other-build"),
             candidate=candidate(),
             winning_evaluation=evaluation,
+            deployment_selection=deployment_selection(rows, evaluation),
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
     drifted = replace(candidate(), feature_selection_execution_hash="c" * 64)
@@ -271,6 +304,7 @@ def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
             lineage=lineage(rows),
             candidate=drifted,
             winning_evaluation=evaluation,
+            deployment_selection=deployment_selection(rows, evaluation),
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
 

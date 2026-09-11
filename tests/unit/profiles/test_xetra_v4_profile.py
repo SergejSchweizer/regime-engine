@@ -31,7 +31,6 @@ def test_v4_uses_a_dedicated_explicit_discovery_contract() -> None:
     profile = load_profile(PROFILE)
     assert profile.profile_id == "xetra"
     assert profile.profile_config_version == 4
-    assert profile.feature_selection is None
     assert profile.feature_discovery is not None
     assert profile.feature_discovery.final_candidate_ids == FINAL_CANDIDATE_IDS
     assert profile.feature_discovery.maximum_prefix_length == 8
@@ -81,28 +80,16 @@ def test_v4_explicit_fields_match_the_shared_contract_inventory() -> None:
             assert actual == expected
 
 
-def test_v4_one_field_mutation_and_legacy_v1_v3_separation_fail_closed() -> None:
+def test_v4_one_field_mutation_and_missing_discovery_fail_closed() -> None:
     raw = _raw()
     _discovery(raw)["maximum_prefix_length"] = 9
     with pytest.raises(ValueError, match="maximum_prefix_length"):
         load_profile_mapping(raw)
 
     raw = _raw()
-    legacy_raw = yaml.safe_load(Path("configs/profiles/xetra_v1.yaml").read_text(encoding="utf-8"))
-    assert isinstance(legacy_raw, dict)
-    raw["feature_selection"] = legacy_raw["feature_selection"]
-    with pytest.raises(ValueError, match="exactly one"):
-        load_profile_mapping(raw)
-
-    raw = _raw()
     del raw["feature_discovery"]
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ValueError, match="feature_discovery"):
         load_profile_mapping(raw)
-
-    for version in (1, 2, 3):
-        legacy = load_profile(Path(f"configs/profiles/xetra_v{version}.yaml"))
-        assert legacy.feature_selection is not None
-        assert legacy.feature_discovery is None
 
 
 def test_feature_discovery_config_is_frozen_and_rejects_non_contract_values() -> None:

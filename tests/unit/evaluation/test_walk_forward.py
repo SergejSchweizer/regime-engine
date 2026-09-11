@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -8,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import market_regime_engine.evaluation.walk_forward as walk_forward
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.inference.filtering import causal_filter
@@ -15,8 +15,13 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.training.multistart import (
+    MULTISTART_SEEDS,
+    MultistartResult,
+    StartDiagnostic,
+)
 
-PROFILE_CONFIG = Path("configs/profiles/xetra_v1.yaml")
+PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 
 
 def candidate() -> ResolvedCandidateProfile:
@@ -30,23 +35,6 @@ def candidate() -> ResolvedCandidateProfile:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         original_feature_universe=tuple(f"f{index}" for index in range(48)),
-        preliminary_medoids=tuple(f"f{index}" for index in range(8)),
-    )
-
-
-def v4_candidate() -> ResolvedCandidateProfile:
-    return ResolvedCandidateProfile(
-        candidate_id="gaussian_hmm_k2_full",
-        state_count=2,
-        covariance_type="full",
-        feature_order=("f0", "f1"),
-        feature_dimension=2,
-        source_build_id="build-1",
-        feature_selection_definition_hash="a" * 64,
-        feature_selection_execution_hash="b" * 64,
-        original_feature_universe=tuple(f"f{index}" for index in range(12)),
-        preliminary_medoids=(),
-        feature_contract_version=4,
     )
 
 
@@ -118,18 +106,6 @@ def evaluate(rows: pd.DataFrame):
     )
 
 
-def evaluate_v4(rows: pd.DataFrame):
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
-    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
-    return run_walk_forward_candidate(
-        rows,
-        plan=plan,
-        profile=profile,
-        candidate=v4_candidate(),
-        adapter_factory=DeterministicAdapter,
-    )
-
-
 def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment() -> None:
     result = evaluate(source_rows(1386))
     assert len(result.folds) == 2
@@ -150,26 +126,54 @@ def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment()
     assert min(first.train_soft_occupancy or ()) >= 0.05
 
 
-def test_walk_forward_evaluation_accepts_xetra_v2_and_v3() -> None:
+def test_walk_forward_evaluation_uses_the_v4_contract() -> None:
     result = evaluate(source_rows(1323))
-    v2 = replace(result, profile_config_version=2)
-    v3 = replace(result, profile_config_version=3)
-    assert v2.profile_config_version == 2
-    assert v3.profile_config_version == 3
+    assert result.profile_config_version == 4
+    assert result.candidate_id == "gaussian_hmm_k2_full"
+    assert result.feature_order == ("f0", "f1")
 
 
-def test_v4_structural_candidate_reuses_the_same_runner_evidence_without_legacy_assumptions() -> (
-    None
-):
-    rows = source_rows(1323)
-    legacy = evaluate(rows)
-    v4 = evaluate_v4(rows)
+def test_seed_checkpoint_factory_is_forwarded_to_each_fold(monkeypatch) -> None:
+    checkpoint_folds: list[str] = []
 
-    assert v4.profile_config_version == 4
-    assert v4.candidate_id == "gaussian_hmm_k2_full"
-    assert v4.feature_order == ("f0", "f1")
-    assert v4.folds == legacy.folds
-    assert v4.alignment_reference_scaler == legacy.alignment_reference_scaler
+    def fake_run_multistart(
+        train_rows: object,
+        *,
+        state_count: int,
+        adapter_factory,
+        checkpoint=None,
+    ) -> MultistartResult:
+        assert checkpoint is not None
+        checkpoint_folds.append(checkpoint.fold_id)
+        result = adapter_factory().fit(train_rows, state_count, MULTISTART_SEEDS[0])
+        diagnostics = tuple(
+            StartDiagnostic(
+                seed=seed,
+                success=True,
+                converged=True,
+                iterations=result.iterations,
+                train_log_likelihood=result.train_log_likelihood,
+                artifact=result.artifact,
+                failure_reason=None,
+            )
+            for seed in MULTISTART_SEEDS
+        )
+        return MultistartResult(state_count=state_count, winner=result, diagnostics=diagnostics)
+
+    monkeypatch.setattr(walk_forward, "run_multistart", fake_run_multistart)
+    result = run_walk_forward_candidate(
+        source_rows(1323),
+        plan=plan_walk_forward(
+            tuple(source_rows(1323)["timestamp_m1"]), load_profile(PROFILE_CONFIG).walk_forward
+        ),
+        profile=load_profile(PROFILE_CONFIG),
+        candidate=candidate(),
+        adapter_factory=DeterministicAdapter,
+        seed_checkpoint_factory=lambda fold_id: type("Checkpoint", (), {"fold_id": fold_id})(),
+    )
+
+    assert result.valid_fold_rate == 1.0
+    assert checkpoint_folds == ["fold_001"]
 
 
 def test_source_windowing_precedes_complete_case_filtering_and_records_gaps() -> None:
