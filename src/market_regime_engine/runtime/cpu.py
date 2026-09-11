@@ -103,15 +103,10 @@ def _cgroup_cpu_limit() -> int | None:
                 limits.append(max(1, math.floor(quota / period)))
 
         quota_path = root / "cpu.cfs_quota_us"
-        legacy_quota = _read_int(quota_path)
-        legacy_period = _read_int(root / "cpu.cfs_period_us")
-        if (
-            legacy_quota is not None
-            and legacy_period is not None
-            and legacy_quota > 0
-            and legacy_period > 0
-        ):
-            limits.append(max(1, math.floor(legacy_quota / legacy_period)))
+        v1_quota = _read_int(quota_path)
+        v1_period = _read_int(root / "cpu.cfs_period_us")
+        if v1_quota is not None and v1_period is not None and v1_quota > 0 and v1_period > 0:
+            limits.append(max(1, math.floor(v1_quota / v1_period)))
     return min(limits) if limits else None
 
 
