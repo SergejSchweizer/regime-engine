@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import isfinite
 from statistics import fmean, pstdev
+from typing import TYPE_CHECKING
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -27,16 +28,10 @@ from market_regime_engine.profiles.resolution import (
 )
 from market_regime_engine.training.adapter_factory import adapter_factory
 
-SUPPORTED_CANDIDATE_IDS = frozenset(
-    candidate_id
-    for candidate_ids in (
-        expected_candidate_ids(1),
-        expected_candidate_ids(2),
-        expected_candidate_ids(3),
-        expected_candidate_ids(4),
-    )
-    for candidate_id in candidate_ids
-)
+if TYPE_CHECKING:
+    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
+
+SUPPORTED_CANDIDATE_IDS = frozenset(expected_candidate_ids())
 CANDIDATE_VALID_FOLD_RATE_GATE = 0.80
 RANKING_ABS_TOLERANCE = 1e-12
 
@@ -45,6 +40,7 @@ CandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+SeedCheckpointFactory = Callable[[str, str, int], "HMMSeedCheckpoint"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +107,9 @@ class CandidateGridEvaluation:
     aggregates: tuple[CandidateAggregate, ...]
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3, 4}:
-            raise ValueError("candidate grid requires a supported xetra profile configuration")
-        expected_ids = expected_candidate_ids(self.profile_config_version)
+        if self.profile_id != "xetra" or self.profile_config_version != 4:
+            raise ValueError("candidate grid requires the Xetra v4 profile")
+        expected_ids = expected_candidate_ids()
         if tuple(item.candidate_id for item in self.evaluations) != expected_ids:
             raise ValueError(
                 "candidate grid evaluations must be ordered by configured candidate ID"
@@ -211,6 +207,7 @@ def _default_runner(
     profile: ModelProfile,
     candidate: ResolvedCandidateProfile,
     adapter_factory: AdapterFactory,
+    seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
 ) -> WalkForwardEvaluation:
     return run_walk_forward_candidate(
         source_rows,
@@ -218,6 +215,7 @@ def _default_runner(
         profile=profile,
         candidate=candidate,
         adapter_factory=adapter_factory,
+        seed_checkpoint_factory=seed_checkpoint_factory,
     )
 
 
@@ -230,6 +228,7 @@ def evaluate_candidate_grid(
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
     runner: CandidateRunner = _default_runner,
     max_workers: int | None = None,
+    seed_checkpoint_factory: SeedCheckpointFactory | None = None,
 ) -> CandidateGridEvaluation:
     """Evaluate K2/K3/K4/K5 concurrently against one frozen source/fold/feature contract."""
 
@@ -262,41 +261,36 @@ def evaluate_candidate_grid(
             scope="candidate-grid:" + ",".join(resolved_profile.final_features),
         )
     )
-    if worker_limit == 1:
-        evaluations = tuple(
-            runner(
+
+    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+        candidate_adapter = (
+            _default_adapter_builder(profile, candidate)
+            if adapter_factory_builder is None
+            else adapter_factory_builder(candidate)
+        )
+        if seed_checkpoint_factory is not None and runner is _default_runner:
+            return _default_runner(
                 source_rows,
                 plan,
                 profile,
                 candidate,
-                (
-                    _default_adapter_builder(profile, candidate)
-                    if adapter_factory_builder is None
-                    else adapter_factory_builder(candidate)
+                candidate_adapter,
+                seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
+                    candidate.candidate_id,
+                    fold_id,
+                    candidate.state_count,
                 ),
             )
-            for candidate in scheduled_candidates
-        )
+        return runner(source_rows, plan, profile, candidate, candidate_adapter)
+
+    if worker_limit == 1:
+        evaluations = tuple(evaluate(candidate) for candidate in scheduled_candidates)
     else:
         with ThreadPoolExecutor(max_workers=worker_limit) as executor:
-            futures = [
-                executor.submit(
-                    runner,
-                    source_rows,
-                    plan,
-                    profile,
-                    candidate,
-                    (
-                        _default_adapter_builder(profile, candidate)
-                        if adapter_factory_builder is None
-                        else adapter_factory_builder(candidate)
-                    ),
-                )
-                for candidate in scheduled_candidates
-            ]
+            futures = [executor.submit(evaluate, candidate) for candidate in scheduled_candidates]
             evaluations = tuple(future.result() for future in futures)
     by_candidate_id = {item.candidate_id: item for item in evaluations}
-    expected_ids = expected_candidate_ids(profile.profile_config_version)
+    expected_ids = expected_candidate_ids()
     if set(by_candidate_id) != set(expected_ids) or len(by_candidate_id) != len(evaluations):
         raise ValueError("candidate runner returned unexpected candidate identities/order")
     evaluations = tuple(

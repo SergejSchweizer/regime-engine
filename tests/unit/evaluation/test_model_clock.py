@@ -29,7 +29,7 @@ def _rows(count: int = 1386) -> pd.DataFrame:
 
 
 def _plan(rows: pd.DataFrame):
-    profile = load_profile("configs/profiles/xetra_v1.yaml")
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
     return plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
 
 

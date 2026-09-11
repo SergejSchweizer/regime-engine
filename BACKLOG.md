@@ -1,14 +1,92 @@
+
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-10
+Status date: 2026-09-11
+
+## Current execution state
+
+- **Git branch:** `pr/PR-242-resumable-execution-follow-up`
+- **Reference base:** `03feaff` (`origin/main`); local `main` contains the
+  completed v4-only cleanup, durable evaluation-run migration, NAS MLflow
+  package-publication boundary, stage checkpoints, all-CPU parallel defaults,
+  and the MLflow Model Metrics projection work.
+- **Latest local commit:** `1373fb9` completes the resumable v4 execution
+  follow-up on top of `origin/main`, including durable state-root validation,
+  source-free resume, seed-level checkpointing and concurrency-safe duplicate
+  execution. Focused executor/multistart coverage and the full non-external
+  suite are green; the working tree is clean.
+- **Remote branch cleanup:** the historical PR-231 branch was deleted after
+  PR #238 was superseded and closed. GitHub PR #239 is the remaining open
+  resumability follow-up; its remote branch is the current branch.
+- **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
+  `regime-engine` read-only credential for database `postgres` and exposes
+  `regime_loader.regime_features_daily`; the verified live lineage contract is
+  schema version 4 / feature version 3. `xetra_loader` exists but denies
+  `CONNECT` to that role. External MLflow health responds `OK` at
+  `http://10.10.1.3:5000`; no `regime-xetra` model version exists there yet.
+- **Latest verification:** durable-run, source-resume, stage-checkpoint,
+  registry, MLflow settings, and v4 tracking tests pass; Ruff and
+  `git diff --check` pass. The full non-E2E suite previously passed (`445
+  passed, 2 skipped` for opt-in external checks); the latest focused MLflow/v4
+  selection run passes (`16 passed`). Candidate
+  grids, multistarts, prefix searches, teacher evaluation, final production
+  refits and local tracking rendering default to all CPUs reported by
+  `os.cpu_count()`, bounded only by independent task count. Outer folds now
+  run concurrently with deterministic fold-order assembly; default HMM
+  multistarts use process workers so the CPU-bound fits are not constrained by
+  one interpreter GIL, while custom adapters retain a thread fallback. Test
+  BLAS/OpenMP pools are capped at one native thread per worker to prevent
+  xdist/native oversubscription. The
+  zero-legacy audit scans 569 active files and passes, and the scoped MLflow
+  cleanup tests pass (`5 passed`). NAS MLflow access is authorized and its
+  `/health` endpoint returns `200 OK`; the evaluation experiment and
+  `regime-xetra` registered model are currently absent. No production objects
+  have been deleted. The full non-external suite passes under `pytest -n auto`
+  (`458 passed, 2 skipped`). The corrected hermetic full-computation proof
+  passed locally with real HMM fitting, independent mathematical checks,
+  MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
+  (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
+  must still complete the same long-running proof.
+  Pytest now uses `pytest-xdist -n auto` by default, so test files are
+  distributed across all available CPUs in local and CI runs. The latest
+  stale full run reached 450 passed and 8 fixture failures caused by the live
+  lineage-version change before it was interrupted; those fixtures now pass
+  in a focused rerun. The corrected full proof above is the required fresh
+  real-computation run. `mypy` now passes
+  all 112 source files; Ruff and the focused MLflow/export/audit checks pass.
+  The repository description is now set on GitHub to the scientific v4/MLflow
+  description requested by the user.
+
+## User-directed superseding decisions
+
+- Only Xetra v4 is active. Legacy v1-v3 evaluation, package, and serving
+  compatibility is retired; historical acceptance text below is superseded
+  where it requests backward compatibility.
+- HMM production packages must be uploaded to the external NAS MLflow service
+  at `http://10.10.1.3:5000` and registered with a remote `runs:/...` URI.
+  Local MLflow/file-store registration is not a production fallback.
+- Docker/Compose MLflow and PostgreSQL services are not part of this project;
+  the feature PostgreSQL and MLflow services remain external dependencies.
+- Parallel production work uses every available CPU by default. Explicit
+  `max_workers` values remain a deliberate operator/test override only.
 
 This is the single implementation backlog for the global, non-semantic regime-feature discovery architecture defined by `EVALUATION.md`.
 
-The active target is **Xetra profile configuration version 4**. The semantic-medoid v1-v3 evaluation path is compatibility-only until its explicit retirement near the end of this backlog. It must not receive new statistical behavior.
+The active target is **Xetra profile configuration version 4**. The former
+semantic-medoid v1-v3 evaluation path is retired; Git history is the archive
+and it must not receive new statistical behavior.
 
 > **PR-ID namespace:** `PR-210`, `PR-211`, ... below are repository planning IDs used in branch/commit names. They are not required to equal GitHub's numeric pull-request number. The branch name is the canonical implementation identity.
 
 The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audited backlog. No implementation branch for those draft IDs exists; agents must not implement them.
+
+## Current repository state
+
+As of 2026-09-11, the checked-out branch is
+`pr/PR-242-resumable-execution-follow-up`, based on `origin/main` at
+`03feaff`; the tracked worktree is clean. GitHub PR #239 remains open for the
+resumability follow-up. PR-231's corrected full-compute proof passes locally,
+while its remote integration gate remains pending.
 
 ---
 
@@ -599,7 +677,7 @@ QA:
 - **Branch:** `pr/PR-219-v4-walk-forward-candidate-protocol`
 - **Depends on:** PR-211
 - **Allowed:** `src/market_regime_engine/evaluation/walk_forward.py`, `tests/unit/evaluation/test_walk_forward.py`, `tests/unit/evaluation/test_walk_forward_validation.py`
-- **Status:** complete; GitHub PR #207 merged to `main`. Legacy-preservation language below is superseded by the zero-legacy addendum merged in GitHub PR #227.
+- **Status:** complete; GitHub PR #207 merged to `main`. Legacy-preservation language below is superseded by the consolidated zero-legacy section in this file.
 
 Acceptance:
 
@@ -845,7 +923,15 @@ Acceptance:
 
 QA:
 
-- [ ] File-backed MLflow hierarchy/artifact parity; plot source hash determinism; full PR-228 synthetic run tracked.
+- [x] File-backed MLflow hierarchy/artifact parity; plot source hash determinism; full PR-228 synthetic run tracked.
+
+Implementation evidence update (2026-09-11): the focused plotting suite covers
+all candidate/fold and EM renderers, including unavailable candidates and
+invalid-input rejection (`8 passed` with warnings promoted to errors). The
+file-backed tracking suite verifies parent/outer-fold hierarchy, canonical
+evidence/statistics hashes, artifact paths and fail-closed plot errors. The
+hermetic full-computation proof generated the complete tracked plot manifest
+and finished all parent/outer-fold runs successfully.
 
 ### PR-231 — Hermetic full-computation and independent mathematical proof
 
@@ -855,20 +941,32 @@ QA:
 
 Acceptance:
 
-- [ ] >=3 complete outer folds and >=50 features including redundant positive/negative pairs, ties, missingness, variance-only regime signal, singleton candidate, prototype-not-winner and one infeasible prefix.
-- [ ] No mock of correlation, clustering, HMM fit/filter, scoring, agreement, prefix/final grid or Outer TEST math.
+- [x] >=3 complete outer folds and >=50 features including redundant positive/negative pairs, ties, missingness, variance-only regime signal, singleton candidate, prototype-not-winner and one infeasible prefix.
+- [x] No mock of correlation, clustering, HMM fit/filter, scoring, agreement, prefix/final grid or Outer TEST math.
 - [ ] Assert complete golden N/M*/memberships/prototypes/K/teacher/scores/winners/L*/candidate/outer NMI/validity/stability/hashes.
 - [ ] Rerun canonical evidence byte-identically.
 - [ ] Future mutation and semantic-label randomization leave prior statistical results unchanged.
 
 Independent proof must separately recompute from primitives:
 
-- [ ] every first-fold Spearman distance;
-- [ ] complete merge/cut/silhouette evidence;
-- [ ] every state-information-ratio and eta² score;
-- [ ] every prefix soft NMI;
+- [x] every first-fold Spearman distance;
+- [x] complete merge/cut/silhouette evidence;
+- [x] every state-information-ratio and eta² score;
+- [x] every valid prefix soft NMI;
 - [ ] selected Gaussian/GMM/Student-t TRAIN/OOS likelihood parity;
-- [ ] outer final-vs-teacher soft NMI.
+- [x] outer final-vs-teacher soft NMI.
+
+Implementation evidence update (2026-09-11): the hermetic fixture contains 52
+features and 1,449 observations, and the real-compute proof exercises at least
+three outer folds. Independent NumPy/SciPy recomputation covers the first-fold
+distance, clustering/silhouette curve, feature scores, valid-prefix soft NMI,
+candidate aggregate formulas and outer teacher agreement. The corrected full
+proof passed locally with real HMM computation, MLflow tracking and plot
+generation (`1 passed in 974.60s`), producing 14 tracked plot artifacts. The
+remote integration gate still needs to complete this long-running lane.
+Golden constant snapshots, process-independent rerun proof, future-mutation
+rerun, semantic-label impact proof and selected Gaussian/GMM/Student-t
+TRAIN/OOS likelihood parity remain open acceptance work.
 
 ### PR-232 — Full current-Xetra computation and external math audit
 
@@ -902,8 +1000,8 @@ Final PR evidence:
 ### PR-254 — Make the v4 evaluation universe PostgreSQL-schema-driven
 
 - **Branch:** `pr/PR-254-pg-schema-all-feature-discovery`
-- **GitHub:** PR #236 (open)
-- **Status:** schema-wide source/catalog implementation, durable file-backed snapshot/run identity, outer-fold resume ledger and hermetic regression tests are pushed; finer-grained stage resume and the full external audit remain open dependencies.
+- **GitHub:** PR #236 (merged into `main` as `03feaff`)
+- **Status:** schema-wide source/catalog implementation, durable file-backed snapshot/run identity, outer-fold resume ledger and hermetic regression tests are merged; finer-grained stage resume and the full external audit remain open dependencies tracked below.
 
 Validated on the branch:
 
@@ -919,6 +1017,12 @@ Still open and deliberately not claimed:
 - [ ] Ledger integration for every inner discovery, teacher-candidate, prefix, final-grid and outer-test stage.
 - [ ] Full current-source audit and complete real-HMM schema-wide run.
 - [ ] PR-231 long-running hermetic E2E proof and its independent rerun evidence.
+
+Additional execution-layer evidence (2026-09-11): a resumed run can now load
+its catalog and Arrow snapshot by immutable run key without recapturing live
+PostgreSQL; the global evaluator reconstructs cached fold selections from
+durable stage checkpoints for tracking replay. Full inner-stage/seed ledger
+coverage and the external current-source audit remain open.
 
 ## Wave C — deployment, artifact compatibility and safe serving transition
 
@@ -942,6 +1046,12 @@ QA:
 - [ ] Spy proves exact shared selection function used.
 - [ ] Same TRAIN input through outer helper vs deployment wrapper yields identical configuration hash.
 - [ ] Real full synthetic selection through latest source row.
+
+Implementation evidence update (2026-09-11): deployment selection now fails
+closed on validation/catalog drift, non-monotonic source rows and a selector
+that returns a different source/catalog identity. The focused deployment
+selection contract suite is green (`3 passed`). Production-eligibility
+dependency on the completed PR-232 audit remains open.
 
 ### PR-234 — Version production artifact/package for v4 while preserving legacy loads
 
@@ -1223,10 +1333,10 @@ V4 is complete only when:
 - outer production-eligibility gates pass on hermetic and current full-source runs;
 - final production selection reruns on the full current source after policy validation rather than copying the last outer fold;
 - production artifacts distinguish validation cutoff from deployment/training cutoff;
-- old production package versions remain loadable through v4 transition;
-- public alias resolution survives legacy -> v4 promotion and rollback without changing route or restarting service;
+- only the v4 production package schema is loadable;
+- public alias resolution supports v4 promotion and v4-to-v4 rollback without changing route or restarting service;
 - v4 cycles register challenger only;
-- semantic evaluation/config/code paths are removed only after compatibility proof;
+- semantic evaluation/config/code paths are absent from the active repository;
 - independent formula oracles and full computation prove every numerical kernel;
 - required hermetic coverage remains >=90%.
 
@@ -1244,4 +1354,1123 @@ Detailed historical implementation remains in Git/merged PR history and is not r
 | `PR-207`–`PR-209` | reserved for planning/audit namespace; do not implement |
 | `PR-210` onward | active audited v4 implementation backlog |
 
-The semantic v1-v3 evaluation architecture is historical. Immutable legacy production packages remain supported through explicit compatibility code until their model versions are no longer operationally required.
+The semantic v1-v3 evaluation architecture and its production package formats
+are historical. They are not active capabilities; Git history is the archive.
+
+
+---
+
+
+## Consolidated backlog section: Dataset-pinned, idempotent and resumable evaluations
+
+### Backlog Addendum — Dataset-Pinned, Idempotent and Resumable Evaluations
+
+Status date: 2026-09-09
+
+This consolidated section amends the earlier backlog requirements. `EVALUATION_EXECUTION.md` is the authoritative execution contract.
+
+The following requirements are mandatory for **all evaluation entry points**. They are not optional operational polish and must land before the complete v4 outer evaluation is considered production-ready.
+
+---
+
+## A. Cross-cutting dependency changes
+
+The following active PRs gain additional requirements:
+
+- `PR-210`: add dataset snapshot/run/work-unit identities and canonical hashes from `EVALUATION_EXECUTION.md`.
+- `PR-212`/`PR-213`: dynamic source capture must produce one durable immutable dataset snapshot before statistical work.
+- `PR-219`: candidate/fold runner must be callable as deterministic checkpointable work.
+- `PR-221`: provisional HMM work must checkpoint by K/inner-fold and, after PR-244, by seed.
+- `PR-226`: prefix search must checkpoint every L/K/inner-fold child computation.
+- `PR-227`: final grid must checkpoint every model/inner-fold child computation.
+- `PR-228`: **add dependencies PR-242, PR-243 and PR-244**. Outer policy must execute through the resumable DAG and must never read live Gold after snapshot finalization.
+- `PR-229`: evidence schema must include dataset snapshot key, evaluation run key, work-unit input/payload hashes and resume provenance.
+- `PR-230`: MLflow is replayed from durable completed units; tracking outages must not erase statistical progress.
+- `PR-231`: forced-crash/resume equivalence is mandatory.
+- `PR-232`: full current-Xetra run must support stop/restart without source recapture or loss of completed HMM work.
+- `PR-233`: deployment selection is a deterministic resumable work unit bound to the already pinned dataset snapshot.
+- `PR-237`: evaluate -> deployment select -> refit -> register challenger is logically idempotent end to end; duplicate model registration is forbidden.
+- `PR-241`: document operator resume commands, run keys, snapshot keys and corruption/failure recovery.
+
+---
+
+## B. New prerequisite implementation PRs
+
+### PR-242 — Durable dataset snapshot and evaluation-run store
+
+- **Branch:** `pr/PR-242-evaluation-run-store`
+- **Depends on:** PR-210, PR-212, PR-213
+- **Allowed:** `src/market_regime_engine/evaluation_runs/__init__.py`, `src/market_regime_engine/evaluation_runs/contracts.py`, `src/market_regime_engine/evaluation_runs/snapshot.py`, `src/market_regime_engine/evaluation_runs/store.py`, `tests/unit/evaluation_runs/test_contracts.py`, `tests/unit/evaluation_runs/test_snapshot.py`, `tests/integration/evaluation_runs/test_store.py`, persistent-volume configuration directly required by these files
+
+### Purpose
+
+Create the smallest durable execution substrate that guarantees immutable dataset pinning and crash-safe work-unit state.
+
+### Acceptance
+
+- [ ] Implement canonical `DatasetSnapshotIdentity`, `EvaluationRunIdentity`, `WorkUnitIdentity` using the fields pinned by `EVALUATION_EXECUTION.md`.
+- [ ] `dataset_snapshot_key` includes source dataset/build/data hash, schema/feature versions, data-time semantics, row count, timestamp bounds and source catalog hash.
+- [ ] `evaluation_run_key` includes dataset key, evaluation/profile/plan/cutoff identity, repository commit SHA, `uv.lock` SHA-256 and Python version.
+- [ ] Capture exact ordered source rows once and persist them as an immutable **PyArrow IPC** snapshot under a durable state root before model computation.
+- [ ] Snapshot manifest stores Arrow-file SHA-256, exact Arrow schema, row count, first/last timestamp and dataset snapshot key.
+- [ ] Snapshot creation is temp-write -> flush/fsync -> atomic rename; an incomplete temp file is never a valid snapshot.
+- [ ] Restart validates manifest and file hash before returning rows.
+- [ ] Missing/corrupt snapshot fails closed and never rereads current live Gold under the old run key.
+- [ ] Implement a transactional SQLite run ledger using Python stdlib `sqlite3`; no new external service is required.
+- [ ] SQLite schema has immutable run identity plus `(run_key, work_unit_key)` uniqueness, input hash, status, payload bytes/hash, attempt count and lease metadata.
+- [ ] Work-unit statuses are exactly `PENDING`, `RUNNING`, `COMPLETE`, `DOMAIN_INVALID`.
+- [ ] `COMPLETE` and `DOMAIN_INVALID` are immutable terminal outcomes.
+- [ ] Unit completion writes canonical payload bytes/hash and terminal state in one transaction.
+- [ ] Claims use atomic compare-and-set; only one active owner can hold one unit.
+- [ ] Expired `RUNNING` leases are reclaimable; completion itself never expires.
+- [ ] A second completion with a different payload hash is a hard integrity failure.
+- [ ] Operational timestamps/lease owner are excluded from statistical hashes.
+- [x] State root must be explicitly configured on a persistent mounted volume in deployment; ephemeral container paths fail startup for resumable production evaluation.
+
+Implementation evidence update (2026-09-11): the v4 lifecycle backend now
+requires an absolute state root from `REGIME_ENGINE_STATE_ROOT` or
+`REGIME_EVALUATION_CHECKPOINT_ROOT`, rejects paths inside the repository, and
+loads `.env` from the cron-safe model-cycle entry point. Six focused lifecycle
+and script tests pass.
+
+### QA
+
+- [ ] Independent canonical-JSON/hash oracle for dataset/run/unit identities.
+- [ ] Exact Arrow snapshot round trip for timestamps, NULLs and Float64 bit patterns.
+- [ ] Source mutation after snapshot creation cannot affect rows returned by restart.
+- [ ] Corrupt one snapshot byte and prove restart fails rather than rereads source.
+- [ ] Kill process after payload write but before ledger commit; restart safely recomputes only that unit.
+- [ ] Kill process after ledger commit; restart reuses unit and performs zero computation.
+- [ ] Two concurrent claimers cannot own the same unit.
+- [ ] Stale lease reclaim test.
+- [ ] `DOMAIN_INVALID` remains terminal across repeated invocations.
+- [ ] SQLite transaction/crash test leaves no false `COMPLETE` unit.
+
+Implementation evidence update (2026-09-11): snapshot manifests now persist the
+canonical dataset identity and complete feature catalog, and the SQLite ledger
+can reload an immutable `EvaluationRunIdentity` by run key. Snapshot restart
+tests prove catalog/identity round-trip, corruption failure and exact Arrow
+payload preservation. Explicit source-free CLI resume is now available via
+`scripts/run_xetra_v4_evaluation.py --run-key <sha256>`. Process-kill fault
+injection and deployment-volume startup enforcement remain open.
+
+---
+
+### PR-243 — Deterministic resumable evaluation DAG executor
+
+- **Branch:** `pr/PR-243-resumable-evaluation-dag`
+- **Depends on:** PR-242
+- **Allowed:** `src/market_regime_engine/evaluation_runs/executor.py`, `src/market_regime_engine/evaluation_runs/graph.py`, `tests/unit/evaluation_runs/test_graph.py`, `tests/integration/evaluation_runs/test_executor.py`
+
+### Purpose
+
+Provide one generic executor that reconstructs the expected deterministic work graph and executes only missing/reclaimable units.
+
+### Acceptance
+
+- [ ] Work graph is deterministic from `EvaluationRunIdentity`; mapping order, filesystem order, thread completion and MLflow IDs cannot change keys.
+- [ ] Every unit has a canonical structural key and `work_unit_input_hash` over run key, coordinates, exact parent payload hashes and unit parameters.
+- [ ] `COMPLETE` + matching input/payload hash is reused without invoking compute function.
+- [ ] `DOMAIN_INVALID` + matching input hash is reused as terminal invalid evidence.
+- [ ] Completed unit with changed input hash fails closed; it is never overwritten.
+- [ ] Stale `RUNNING` unit is reclaimed after lease expiry.
+- [ ] Failed technical attempt records operational failure metadata but leaves statistical unit reclaimable.
+- [ ] Executor supports deterministic child units for outer fold, inner fold, prefix L, candidate ID and seed coordinates.
+- [ ] Final run is marked complete only after every required unit is terminal and root evidence hash is committed.
+- [ ] Invoking a completed run performs zero compute callbacks and returns the same root evidence hash.
+- [ ] Concurrent duplicate invocation cannot create two logical runs or contradictory unit outputs.
+- [ ] No dependency on MLflow.
+
+### QA
+
+- [ ] Synthetic DAG with >=100 units, random executor interruption points and repeated restarts completes with each logical unit committed exactly once.
+- [ ] Uninterrupted vs interrupted/resumed root payload is byte-identical.
+- [ ] Parent payload mutation under same child key is detected.
+- [ ] Executor restart with changed repository/profile/plan/dataset identity refuses old run and creates/requires a distinct run key.
+- [ ] Concurrency stress test with two executors produces one consistent ledger.
+
+Implementation evidence update (2026-09-11): the executor now waits behind a
+live work-unit lease and reuses the committed terminal payload, so concurrent
+duplicate invocations cannot run the same callback or create conflicting root
+evidence. The focused executor/store suite is green (`14 passed` across
+`tests/unit/evaluation_runs` and `tests/integration/evaluation_runs/test_executor.py`),
+including a spawned two-process duplicate invocation and deterministic
+120-unit interruption/restart coverage. Randomized interruption and
+filesystem/crash-boundary proof remain open.
+
+---
+
+### PR-244 — Seed-level resumable HMM multistart
+
+- **Branch:** `pr/PR-244-resumable-multistart-seeds`
+- **Depends on:** PR-219, PR-242, PR-243
+- **Allowed:** `src/market_regime_engine/training/multistart.py`, `src/market_regime_engine/evaluation_runs/hmm_units.py`, `tests/unit/training/test_multistart.py`, `tests/integration/evaluation_runs/test_resumable_multistart.py`
+
+### Purpose
+
+Avoid losing completed expensive HMM fits when interruption occurs inside an eight-seed multistart candidate/fold evaluation.
+
+### Acceptance
+
+- [ ] Existing `run_multistart` numerical/statistical behavior remains byte/metric compatible when no checkpoint context is supplied.
+- [ ] Resumable path creates deterministic child unit per `(candidate, fold, seed)`.
+- [ ] Completed seed fit persists all downstream-required fitted artifact/likelihood/convergence evidence with canonical payload hash.
+- [ ] Restart executes only missing/reclaimable seeds; completed seeds are never refit.
+- [ ] Winner selection occurs only after all eight seed units are terminal and uses the existing deterministic multistart winner rule unchanged.
+- [ ] Deterministic failed/invalid seed outcome is cached; infrastructure interruption is retryable.
+- [ ] Seed scheduling/completion order cannot change winner/evidence.
+- [ ] Different data/profile/candidate/fold/code identity yields different child input hashes and cannot reuse an old fit.
+
+### QA
+
+- [ ] Interrupt after seeds 1, 3 and 6; restart proves exactly the remaining seeds fit and final winner equals uninterrupted golden run.
+- [ ] Run two workers on the same candidate/fold and prove no seed is committed twice with conflicting bytes.
+- [ ] Existing Gaussian/GMM/Student-t multistart golden evidence remains unchanged.
+- [ ] Independent fit/filter likelihood parity remains green for reused and newly computed seed artifacts.
+
+Implementation evidence update (2026-09-11): process-backed multistart now
+persists each completed seed as futures finish, including successful futures
+observed before an infrastructure interruption; seed order remains canonical
+for winner selection. The production walk-forward path now receives a durable
+candidate/fold seed-checkpoint factory from the resumable v4 stage ledger and
+forwards it through provisional teacher, prefix search and final-grid
+evaluation. Concurrent duplicate seed writers now wait behind live leases and
+reuse one canonical terminal payload. Focused multistart/resume tests pass
+(`10 passed`), the walk-forward checkpoint handoff test passes, and the three
+real-compute candidate-stage smoke tests pass (`3 passed`). The full
+process-backed interruption matrix and filesystem/crash-boundary proof remain
+open.
+
+---
+
+## C. Required resume granularity in v4 orchestration
+
+After PR-244, the minimum durable graph for one outer fold is:
+
+```mermaid
+flowchart TD
+    A[Outer TRAIN quality] --> B[Distance]
+    B --> C[Clustering M*]
+    C --> D[Prototypes]
+    D --> E[Clock preflight]
+    E --> F[Teacher K x inner fold x seed units]
+    F --> G[Teacher reference]
+    G --> H[All-feature scoring]
+    H --> I[Cluster winners]
+    I --> J[Prefix L x K x inner fold x seed units]
+    J --> K[Select L*]
+    K --> L[Final candidate x inner fold x seed units]
+    L --> M[Final model selection]
+    M --> N[Outer TRAIN final/teacher refits]
+    N --> O[Outer TEST result]
+```
+
+A process restart may recompute a currently interrupted individual seed fit, but it must not recompute any already completed seed, candidate/fold result, prefix, outer-fold stage, or prior outer fold.
+
+---
+
+## D. Program-level acceptance added to BACKLOG definition of done
+
+V4 is not complete until:
+
+- every evaluation exposes exact `dataset_snapshot_key` and `evaluation_run_key`;
+- exact source rows are durably persisted before statistical work and survive restart;
+- no resume path rereads a newer live Gold table under an old run identity;
+- same completed run key is a statistical no-op;
+- all expensive HMM multistart work is resumable at seed granularity;
+- interrupted and uninterrupted hermetic runs have identical final evidence bytes;
+- current-Xetra full evaluation can be intentionally terminated and resumed multiple times without changing dataset/result or redoing completed expensive units;
+- MLflow outage/restart cannot erase statistical progress;
+- recurring challenger lifecycle is idempotent through registration and cannot create duplicate model versions for one already-registered artifact hash.
+
+
+---
+
+
+## Consolidated backlog section: Zero-legacy architecture
+
+### Regime Engine — Zero-Legacy Backlog Addendum
+
+Status date: 2026-09-09
+
+This consolidated section is mandatory and overrides every earlier backlog acceptance item that requires backward compatibility with Xetra v1-v3, legacy semantic-medoid evaluations, old production-package bytes, old profile resolution, or rollback to legacy model versions.
+
+Read with the other consolidated sections in this `BACKLOG.md`, `LEGACY_REMOVAL.md`, `EVALUATION.md`, `EVALUATION_EXECUTION.md`, and `MLFLOW_MODEL_METRICS.md`.
+
+## A. Cross-cutting rule
+
+No implementation PR may add or preserve code solely to support legacy behavior. If an existing acceptance item says “preserve v1-v3 behavior”, “legacy package remains loadable”, “rollback to legacy remains functional”, or equivalent, this section replaces it with the v4-only requirement below.
+
+Generic HMM/filter/math code may be reused if v4 actively uses it. Compatibility branches, legacy schemas, old CLI surfaces, old fixtures and old serialization tests are not reusable requirements.
+
+## B. Amendments to existing active PRs
+
+### PR-211 — v4 profile only
+
+Replace all backward-compatibility acceptance with:
+
+- [ ] `xetra_v4.yaml` is the only active Xetra evaluation profile after cutover.
+- [ ] New profile/config contracts do not include semantic-block fields or dual legacy/v4 modes.
+- [ ] Do not add tests that require v1-v3 profile loading to remain behavior-identical.
+- [ ] Any shared profile parser refactor must be driven only by the v4 contract.
+- [ ] Legacy profile files are removed by PR-239; no new dependency may be introduced on them.
+
+### PR-219 — v4 walk-forward protocol only
+
+Replace “preserve v1-v3 behavior” requirements with:
+
+- [ ] Reuse only generic numerical runner behavior required by v4.
+- [ ] Remove version branches, medoid cardinality assumptions and compatibility adapters from touched code when they are not required by v4.
+- [ ] Tests compare v4 numerical behavior to independent mathematical evidence, not to legacy golden objects.
+- [ ] No legacy candidate protocol is a supported public contract after PR-240.
+
+### PR-220 — same-feature ranking without legacy API preservation
+
+- [ ] Extract one v4/generic same-feature ranking kernel.
+- [ ] Legacy wrapper retention is not required; if a wrapper exists only for removed evaluations, delete it in PR-240.
+- [ ] Golden QA must verify mathematical/ranking invariants rather than old serialized return shapes.
+
+### PR-234 — replace “production package v2 with legacy loads” by one v4-only package
+
+PR-234 is now **v4 production package only**.
+
+Acceptance:
+
+- [ ] Define exactly one supported production artifact/package schema used by v4.
+- [ ] Remove/avoid any v1 package parser, version-dispatch compatibility reader, legacy serializer or old-byte fixture.
+- [ ] Package contains the v4 validation cutoff, deployment cutoff, evidence hashes, catalog hash, discovery hash and model-version-local state scope.
+- [ ] Unsupported schema versions fail before payload decoding beyond minimal version identification.
+- [ ] No test requires old package bytes to load.
+- [ ] Package round trip is proven for Gaussian, GMM-HMM and Student-t v4 models only.
+
+QA:
+
+- [ ] v4 exact-byte/canonical-hash round trip.
+- [ ] malformed/unknown schema rejection.
+- [ ] repository search proves no compatibility reader was introduced.
+
+### PR-236 — v4-only public model resolver
+
+Replace legacy alias-transition requirements with:
+
+- [ ] Public `xetra` route resolves only v4-compatible artifacts.
+- [ ] Resolver does not contain profile-version branches for v1-v3.
+- [ ] Exact-version request to an unsupported legacy artifact fails closed.
+- [ ] Cache contains no compatibility parsing/fallback behavior.
+- [ ] Failed v4 alias target must fail; it may not silently serve an older legacy target.
+
+QA:
+
+- [ ] v4 version A -> v4 version B -> v4 version A alias sequence without restart.
+- [ ] synthetic legacy package/version is rejected, not loaded.
+
+### PR-237 — recurring model cycle becomes v4-only
+
+- [ ] Evaluate/select/refit/package/register only v4.
+- [ ] No legacy evaluator or serializer may be selected by configuration.
+- [ ] Existing aliases may be observed only for safe initial cutover; once cutover completes, only v4 targets are valid.
+- [ ] No automatic fallback to old champion if a new v4 cycle fails; current valid v4 champion remains unchanged.
+
+### PR-238 — replace legacy promotion/rollback proof with v4 activation and v4-to-v4 rollback
+
+PR-238 is renamed conceptually to **v4 activation and v4-only rollback proof**.
+
+Acceptance:
+
+- [ ] Initial activation changes the public champion to the audited v4 model.
+- [ ] Immediately validate public latest/replay/model-resolution against v4.
+- [ ] Create/retain at least two valid v4 model versions for rollback proof.
+- [ ] Prove CAS rollback v4-A -> v4-B -> v4-A.
+- [ ] No rollback target may be v1-v3 or use a legacy package schema.
+- [ ] After v4 activation proof, emit the exact legacy MLflow object inventory consumed by PR-252.
+
+### PR-239 — delete all legacy configs and entry points, with no serving exception
+
+Strengthen acceptance:
+
+- [ ] Delete Xetra v1-v3 profile/config YAMLs and semantic-medoid feature-selection YAMLs.
+- [ ] Delete CLI/evaluation/profile-resolution entry points for old evaluation versions.
+- [ ] Remove legacy enums/constants/config validators used only by old profiles.
+- [ ] Remove environment/config examples for legacy paths.
+- [ ] No exception is made for serving old packages.
+- [ ] `rg` over `configs`, CLI/profile source and tests shows no active v1-v3 evaluation path.
+
+### PR-240 — delete all legacy implementation code and compatibility tests
+
+Strengthen acceptance:
+
+- [ ] Delete semantic selector implementation and old medoid/delta orchestration.
+- [ ] Delete legacy production package readers/writers and compatibility branches not already removed by PR-234.
+- [ ] Delete legacy serving resolver branches and old-version cache behavior not required by v4.
+- [ ] Delete old tracking/plot helpers used only by removed evaluations.
+- [ ] Delete compatibility fixtures, golden package bytes, old snapshots and tests whose only purpose is backward compatibility.
+- [ ] Move genuinely generic v4-used math to neutral modules before deleting legacy-named modules.
+- [ ] No `legacy_*`, `compat_*`, `deprecated_*`, or `old_*` archive modules are allowed.
+- [ ] Full v4 hermetic evidence remains unchanged after deletion.
+
+### PR-241 — documentation becomes v4-only
+
+Strengthen acceptance:
+
+- [ ] Remove instructions for running, serving, replaying, migrating or rolling back to v1-v3.
+- [ ] Remove legacy package/API/profile examples.
+- [ ] Document v4-to-v4 rollback only.
+- [ ] Git history is the only archive reference; active docs do not contain migration compatibility instructions.
+- [ ] Historical PR-ID tables may remain only as planning history and must not describe an active capability.
+
+### PR-246 — historical MLflow purge scope is expanded
+
+PR-246 still performs the pre-cutover purge of historical evaluation/tracking objects, but the earlier permanent exemption for legacy registered production model versions is removed from the overall program.
+
+- [ ] Pre-cutover PR-246 deletes all historical evaluation/tracking results without jeopardizing the currently serving model before v4 activation.
+- [ ] It also inventories every legacy registered model version/alias that remains temporarily because production has not yet cut over.
+- [ ] That inventory becomes the deterministic input to PR-252.
+- [ ] No untracked “keep forever for rollback” exception exists.
+
+### PR-250 — MLflow completeness audit must be legacy-aware
+
+Add:
+
+- [ ] Verify historical evaluation/tracking namespace is zero after PR-246.
+- [ ] Verify every newly emitted regime-engine evaluation/model comparison follows v4 Model Metrics contract.
+- [ ] Record any temporarily retained pre-v4 registered production model IDs as explicit pending-deletion items for PR-252.
+
+## C. New atomic PRs
+
+### PR-252 — Purge all remaining legacy registered MLflow model versions and aliases
+
+- **Branch:** `pr/PR-252-purge-legacy-registered-models`
+- **Depends on:** PR-238, PR-246, PR-250
+- **Allowed:** `src/market_regime_engine/commands/*`, `src/market_regime_engine/mlflow_support/*cleanup*`, `scripts/*mlflow*cleanup*`, `tests/unit/mlflow_support/*cleanup*`, `tests/external/*mlflow*cleanup*`, `docs/qa/mlflow_legacy_model_purge.md`
+
+Acceptance:
+
+- [ ] Require proof that the public champion resolves successfully to an audited v4 production package before destructive action.
+- [ ] Consume the deterministic legacy-model inventory from PR-238/246/250; do not rediscover scope by broad name pattern alone.
+- [ ] Dry-run is default and lists every legacy registered model version, alias, source run/artifact and deletion order.
+- [ ] Delete all regime-engine registered model versions using unsupported v1-v3/legacy package contracts.
+- [ ] Delete legacy aliases or retarget surviving canonical aliases only to v4 as specified by the active lifecycle.
+- [ ] Remove model artifacts/runs that become orphaned and are in the exact approved regime-engine legacy scope.
+- [ ] Preserve unrelated projects and all accepted v4 objects.
+- [ ] Handle MLflow soft-delete/permanent-cleanup semantics explicitly.
+- [ ] Second invocation is an idempotent zero-change success.
+- [ ] Post-delete query proves zero legacy regime-engine registered model versions and zero legacy aliases.
+- [ ] Public v4 latest/replay/serve checks pass after deletion.
+
+QA:
+
+- [ ] File-backed MLflow fixture with legacy + two v4 versions + unrelated project proves exact deletion scope.
+- [ ] Crash injection at each deletion boundary and resume from manifest.
+- [ ] External production proof records object IDs, pre/post counts and zero legacy survivors.
+
+### PR-253 — Repository and runtime zero-legacy audit
+
+- **Branch:** `pr/PR-253-zero-legacy-final-audit`
+- **Depends on:** PR-240, PR-241, PR-252, PR-232, PR-250
+- **Allowed:** `scripts/verify_zero_legacy.py`, `tests/e2e/test_zero_legacy.py`, `docs/qa/zero_legacy_audit.md`, `.github/workflows/*` only if a permanent denylist gate is added
+
+Acceptance:
+
+- [ ] Traverse source, configs, tests, fixtures, scripts, docs and package metadata for legacy identifiers/contracts defined in `LEGACY_REMOVAL.md`.
+- [ ] Build an import graph and prove no active module depends on removed semantic/legacy modules.
+- [ ] Inspect CLI help/profile resolution and prove only active v4 evaluation path exists.
+- [ ] Attempt to load representative legacy profile/package/evaluation IDs and prove fail-closed unsupported behavior without legacy payload decoding.
+- [ ] Query production MLflow and prove zero legacy regime-engine evaluation runs, LoggedModels, registered model versions and aliases.
+- [ ] Verify only v4 model package(s) are servable.
+- [ ] Execute full hermetic v4 evaluation, current-Xetra audit verifier, resumability test, Model Metrics completeness test, v4 production package round-trip, and v4-to-v4 rollback proof.
+- [ ] Add a permanent CI denylist/check preventing reintroduction of legacy source/config/test artifacts.
+- [ ] No allowlist for active source/config/tests. Historical planning prose may be narrowly allowlisted by exact path + exact token.
+
+Final evidence:
+
+- [ ] zero legacy source/config/test/script matches;
+- [ ] zero legacy imports;
+- [ ] zero legacy MLflow objects;
+- [ ] zero unsupported compatibility branches in serving/package code;
+- [ ] all v4 end-to-end gates green;
+- [ ] exact command transcript and repository commit SHA.
+
+## D. Revised dependency tail
+
+```mermaid
+flowchart TD
+    P232[232 full Xetra audit] --> P233[233 deployment selection]
+    P233 --> P235[235 v4 refit]
+    P234[234 v4-only package] --> P235
+    P234 --> P236[236 v4-only resolver]
+    P230[230 Model Metrics tracking] --> P237[237 v4 model cycle]
+    P235 --> P237
+    P236 --> P237
+    P237 --> P238[238 v4 activation + v4 rollback]
+    P246[246 purge old evaluation tracking] --> P250[250 Model Metrics audit]
+    P238 --> P252[252 purge legacy registered models]
+    P246 --> P252
+    P250 --> P252
+    P238 --> P239[239 delete legacy configs/entrypoints]
+    P239 --> P240[240 delete legacy code/tests]
+    P240 --> P241[241 v4-only docs]
+    P241 --> P253[253 zero-legacy audit]
+    P240 --> P253
+    P252 --> P253
+    P232 --> P253
+    P250 --> P253
+```
+
+## E. Program-level definition of done amendment
+
+Replace every compatibility-oriented final condition in earlier backlogs with:
+
+- v4 is the only active statistical/evaluation architecture;
+- v4 is the only supported production package/serving contract;
+- rollback is v4-to-v4 only;
+- all legacy evaluation/tracking results are deleted;
+- all legacy registered regime-engine model versions/aliases are deleted after v4 activation;
+- all legacy source/config/tests/fixtures/scripts are deleted;
+- all compatibility-only code paths are deleted;
+- active documentation is v4-only;
+- the permanent zero-legacy CI audit prevents reintroduction;
+- Git history, not runtime compatibility code, is the archive.
+
+
+---
+
+
+## Consolidated backlog section: MLflow model metrics
+
+### Regime Engine — MLflow Model Metrics Backlog Addendum
+
+Status date: 2026-09-09
+
+This consolidated section is mandatory for the active v4 backlog and must be read together with `MLFLOW_MODEL_METRICS.md`, `EVALUATION.md`, and `EVALUATION_EXECUTION.md`.
+
+The user-facing objective is simple:
+
+- start the new architecture with a clean MLflow evaluation namespace;
+- put all legitimate model comparisons in MLflow **Model Metrics**;
+- track every numerically meaningful model/evaluation diagnostic so new comparison plots can be added without rerunning models;
+- preserve dataset pinning, idempotency and resume correctness.
+
+---
+
+## A. Cross-cutting amendments to the active backlog
+
+The following requirements override narrower MLflow/tracking wording in earlier planning:
+
+1. PR-230 may not implement a hand-selected metric subset. It must consume the central metric catalog introduced below.
+2. Every candidate in provisional, prefix and final grids must have a LoggedModel projection with Model Metrics.
+3. Cross-dimensional/cross-fold metrics must preserve the comparison-domain restrictions from `EVALUATION.md`; UI placement never makes an invalid comparison valid.
+4. PR-231 and PR-232 must verify MLflow model-metric completeness in addition to mathematical evidence.
+5. PR-237 model cycles must reuse the idempotent metric-export ledger from the consolidated execution section.
+6. No accepted v4 evaluation may coexist with stale historical evaluation/model-comparison results after the one-time reset is declared complete.
+
+---
+
+# B. New atomic PRs
+
+## PR-246 — One-time purge of historical MLflow evaluation results
+
+- **Branch:** `pr/PR-246-purge-legacy-mlflow-evaluations`
+- **Depends on:** PR-245
+- **Allowed:** `src/market_regime_engine/commands/*`, `src/market_regime_engine/mlflow_support/*cleanup*`, `scripts/*mlflow*cleanup*`, `tests/unit/mlflow_support/*cleanup*`, `tests/external/*mlflow*cleanup*`, `docs/qa/mlflow_reset.md`
+
+Acceptance:
+
+- [ ] Implement one explicit destructive command for the production MLflow URI pinned by repository settings.
+- [ ] Scope includes all historical regime-engine evaluation runs, nested runs, evaluation-only LoggedModels, feature-selection/model-comparison histories and their artifacts.
+- [ ] Do **not** delete registered production model versions/aliases required for serving or rollback.
+- [ ] Dry-run is mandatory by default and emits exact machine-readable deletion manifest.
+- [ ] Destructive execution requires an explicit confirmation flag/token and exact expected tracking URI.
+- [ ] Delete in deterministic dependency-safe order; handle already-deleted objects as no-op.
+- [ ] Invoke/guide the backend-supported permanent cleanup/GC step required to remove soft-deleted run artifacts.
+- [ ] Post-delete verification re-queries every targeted object class and requires zero survivors.
+- [ ] Second destructive invocation against clean namespace succeeds with zero changes.
+- [ ] Store deletion manifest + proof outside MLflow evaluation namespace under `docs/qa/`.
+- [ ] Command cannot delete unrelated MLflow experiments/models.
+
+QA:
+
+- [ ] File-backed MLflow fixture containing unrelated experiment + legacy regime runs + LoggedModels proves only targeted objects disappear.
+- [ ] Idempotent second run proof.
+- [ ] Failure during deletion is resumable from deterministic manifest and does not broaden scope.
+- [ ] External production execution records pre/post counts, object IDs, exit codes, and final zero-survivor proof before v4 tracking is accepted.
+
+## PR-247 — Central versioned metric catalog and exhaustive metric extraction
+
+- **Branch:** `pr/PR-247-model-metric-catalog`
+- **Depends on:** PR-245, PR-242, PR-243
+- **Allowed:** `src/market_regime_engine/mlflow_support/metric_catalog.py`, `src/market_regime_engine/mlflow_support/ports.py`, `src/market_regime_engine/evaluation_statistics/*`, corresponding tests
+
+Acceptance:
+
+- [ ] Define immutable versioned metric metadata: key, label, description, unit, direction, value kind, scope, step semantics, aggregation, comparison domain, source formula/field, Model-Metrics visibility.
+- [ ] Catalog includes every numerical candidate/fold/seed/teacher/prefix/outer metric required by `MLFLOW_MODEL_METRICS.md` when the corresponding source value exists.
+- [ ] Build one generic extractor from completed evaluation evidence/contracts to canonical metric points.
+- [ ] Preserve exact primitive histories and aggregates; no rounding.
+- [ ] A schema/reflection completeness test fails when a new numerical evaluation field is introduced without explicit catalog classification.
+- [ ] Numeric evidence that is intentionally not a model metric must be explicitly catalogued as evidence-only with rationale.
+- [ ] Stable metric keys cannot silently change meaning.
+- [ ] No rendering, MLflow network, HMM fit or statistical recomputation.
+
+QA:
+
+- [ ] Exhaustive synthetic evidence dossier maps every numerical field exactly once.
+- [ ] Independent primitive aggregate calculations verify mean/pstdev/min/max/median/count where emitted.
+- [ ] Mutation test adding an unclassified numeric field fails.
+- [ ] Comparison-domain matrix rejects illegal cross-dimension likelihood semantics.
+
+## PR-248 — LoggedModel-first Model Metrics projection for every candidate
+
+- **Branch:** `pr/PR-248-model-metrics-projection`
+- **Depends on:** PR-244, PR-247
+- **Allowed:** `src/market_regime_engine/mlflow_support/evaluation_tracking.py`, `src/market_regime_engine/mlflow_support/tracking.py`, `src/market_regime_engine/mlflow_support/ports.py`, corresponding tests
+
+Acceptance:
+
+- [ ] Every provisional K candidate, every prefix statistical winner/final comparable candidate, and every final 12-grid candidate receives exactly one logical LoggedModel projection in its valid comparison scope.
+- [ ] LoggedModel tags bind exact dataset snapshot key, evaluation run key, profile version, plan hash, candidate identity, feature-order hash/dimension and fold/scope identity.
+- [ ] Every catalogued comparison-ready metric is emitted via `log_model_metric_points(model_id, ...)`.
+- [ ] Run-level metrics may mirror operational status but model comparison cannot depend on run metrics.
+- [ ] Existing artifact plots remain evidence mirrors only.
+- [ ] Model Metrics contains likelihood, information criteria, multistart, EM, occupancy/entropy, state/transition, numerical-conditioning, teacher-agreement and dimensionality metrics whenever defined.
+- [ ] Metric histories use deterministic canonical steps.
+- [ ] Cross-dimension likelihood keys are never emitted into a comparison scope that implies comparability.
+
+QA:
+
+- [ ] File-backed MLflow test enumerates LoggedModels and proves exact metric-key completeness against PR-247 catalog.
+- [ ] Metric values/steps match immutable local evidence byte-for-byte/numerically exactly.
+- [ ] Candidate order/thread completion order cannot alter model metric payload.
+
+## PR-249 — Idempotent/resumable MLflow metric export and generic comparison plots
+
+- **Branch:** `pr/PR-249-resumable-model-metric-plots`
+- **Depends on:** PR-243, PR-247, PR-248
+- **Allowed:** `src/market_regime_engine/mlflow_support/*`, `src/market_regime_engine/evaluations/plots.py`, `PLOT_STYLE.md`, corresponding tests
+
+Acceptance:
+
+- [ ] Persist deterministic model-metric batch identity in the durable evaluation ledger.
+- [ ] Resume reconciles MLflow metric history by exact `(model logical key, metric key, step, value)` and appends only missing points.
+- [ ] Existing same key/step with a different value fails closed.
+- [ ] Forced partial-batch crash then resume produces no duplicate metric points and exactly the same final histories as uninterrupted run.
+- [ ] Generic comparison plotting takes metric key + compatible LoggedModel selection and reads Model Metrics only.
+- [ ] New plot over an existing metric requires no HMM/evaluation recomputation or bespoke evidence parser.
+- [ ] Plotter rejects model sets that violate catalog comparison domain.
+- [ ] Existing comparison plots are migrated to generic model-metric inputs where applicable.
+- [ ] PNG/JSON plot artifacts are optional mirrors; Model Metrics remains authoritative.
+
+QA:
+
+- [ ] Crash injection after every metric-write boundary.
+- [ ] Exact uninterrupted-vs-resumed metric-history equality.
+- [ ] Add a new test plot using an already-catalogued metric without modifying evaluation code.
+- [ ] Cross-dimension PLL plot attempt fails; soft-NMI plot succeeds.
+
+## PR-250 — Full MLflow Model Metrics completeness audit
+
+- **Branch:** `pr/PR-250-model-metrics-full-audit`
+- **Depends on:** PR-246, PR-249, PR-231, PR-260
+- **Allowed:** `tests/e2e/*mlflow*`, `scripts/verify_mlflow_model_metrics.py`, `docs/qa/mlflow_model_metrics.md`
+
+Acceptance:
+
+- [ ] Begin from verified clean historical evaluation namespace.
+- [ ] Run the complete hermetic v4 evaluation with real HMM computation and tracking enabled.
+- [ ] Verify every expected LoggedModel exists exactly once.
+- [ ] Verify every finite catalogued numerical metric/history point exists in Model Metrics exactly once with exact value/step.
+- [ ] Verify no unknown/unclassified metric keys are emitted.
+- [ ] Verify comparison-domain metadata for all models/metrics.
+- [ ] Verify artifact comparison plots can be regenerated solely from Model Metrics + catalog.
+- [ ] Kill/restart the tracked evaluation mid-run and prove exact final MLflow metric parity with uninterrupted run.
+- [ ] Full current-Xetra audit in PR-232 must run the same completeness verifier before acceptance.
+
+Final proof records:
+
+- [ ] historical reset zero-survivor proof;
+- [ ] model count by evaluation scope;
+- [ ] metric key count and point count per LoggedModel;
+- [ ] missing/duplicate/conflicting point counts all exactly zero;
+- [ ] comparison-domain violations exactly zero;
+- [ ] resumed-vs-uninterrupted differences exactly zero.
+
+---
+
+# B.1 Metric-family implementation PRs
+
+The following PRs are intentionally small and can run in parallel after their
+listed prerequisites. Each family owns separate source/test files; no two
+parallel PRs may edit the central catalog or the shared projection until
+PR-260. They implement the statistics required by the supplied HMM plot
+families; they do not modify the stock MLflow server or its UI. All numeric
+values must use standard MLflow Model Metrics. Strings, matrices, raw series,
+labels, formulas and lineage remain standard params/tags/artifacts.
+
+## PR-255 — Fit quality and information-criterion statistics
+
+- **Branch:** `pr/PR-255-mlflow-fit-quality-metrics`
+- **Depends on:** PR-247, PR-248
+- **Parallel group:** A; may run in parallel with PR-256, PR-257, PR-258 and PR-259
+- **Allowed:** `src/market_regime_engine/evaluations/fit_quality_metrics.py`, `src/market_regime_engine/mlflow_support/fit_quality_projection.py`, corresponding unit/integration tests
+
+Acceptance:
+
+- [ ] Emit per-candidate/per-fold `train_loglik_total`, `train_loglik_per_obs`, `oos_predictive_loglik_total`, and `oos_predictive_loglik_per_obs`.
+- [ ] Emit AIC, BIC and HQC using the exact parameter-count and retained-observation formulas from `EVALUATION.md`; never compare likelihoods across different feature vectors.
+- [ ] Emit valid/invalid/planned fold counts and rates plus mean, population standard deviation, minimum, maximum, median and observation count whenever the source population exists.
+- [ ] Emit the full K/model-family history needed for log-likelihood and information-criterion-vs-state-count plots.
+- [ ] Record metric units, direction, scope, step semantics, aggregation and comparison domain in family-local declarations consumed by the central catalog.
+- [ ] Provide the family-local metric-definition declarations for PR-260 to register; do not edit the central catalog in this PR.
+- [ ] All values are unrounded, finite, dataset-pinned and written through standard MLflow Model Metrics APIs.
+- [ ] No custom MLflow server route, UI code, database migration or metric-name alias is introduced.
+
+QA:
+
+- [ ] Independent reference formulas reproduce every emitted AIC/BIC/HQC and normalized likelihood value.
+- [ ] Synthetic K2-K5 Gaussian, GMM-HMM and Student-t fixtures prove exact model-family/state-count histories.
+- [ ] Different feature-vector dimensions are rejected for likelihood/AIC/BIC/HQC comparison.
+- [ ] NaN/Inf, zero-observation, wrong-parameter-count and changed-formula mutations fail closed.
+- [ ] Stock MLflow 3.15.1 file-backed integration test reads the values through `MlflowClient` and verifies steps/timestamps exactly.
+
+## PR-256 — State posterior, Viterbi, transition and emission statistics
+
+- **Branch:** `pr/PR-256-mlflow-state-diagnostics`
+- **Depends on:** PR-247, PR-248
+- **Parallel group:** A; may run in parallel with PR-255, PR-257, PR-258 and PR-259
+- **Allowed:** `src/market_regime_engine/evaluations/state_diagnostics_metrics.py`, `src/market_regime_engine/mlflow_support/state_diagnostics_projection.py`, corresponding tests
+
+Acceptance:
+
+- [ ] Emit timestamped filtered posterior histories `P(state=k|observations)` and deterministic Viterbi state histories with explicit state-index and step semantics.
+- [ ] Emit train/OOS hard and soft occupancy, posterior mean/std, entropy, confidence, low-confidence count/rate and expected dominant-state duration per state.
+- [ ] Emit every aligned transition probability `T[i,j]`, self-transition probability, transition-row entropy and transition-matrix row-sum diagnostics.
+- [ ] Emit aligned state emission means, variances, full covariance elements, covariance eigenvalue/conditioning diagnostics and finite-positive-definiteness status.
+- [ ] Persist persistent-to-fitted state mapping and model-local state identity as tags/artifacts; never imply cross-model economic state identity.
+- [ ] Preserve raw posterior/Viterbi histories as model metrics where size permits and as canonical parquet/JSON artifacts otherwise; both representations must be hash-bound.
+- [ ] State-indexed metrics remain fold/model-local and cannot enter an invalid cross-model comparison domain.
+- [ ] Provide the family-local metric-definition declarations for PR-260 to register; do not edit the central catalog in this PR.
+
+QA:
+
+- [ ] Independent NumPy reference verifies posterior row sums, Viterbi argmax, occupancies, entropy, durations, transition rows and covariance diagnostics.
+- [ ] Permuting fitted state labels produces identical aligned metrics and a different raw mapping artifact only.
+- [ ] Transition matrices with invalid rows, negative probabilities, non-positive covariance eigenvalues and malformed posterior rows fail closed.
+- [ ] At least one real Gaussian, GMM-HMM and Student-t fixture verifies family-specific emission evidence.
+- [ ] Stock MLflow 3.15.1 integration test retrieves representative histories and artifacts without custom endpoints.
+
+## PR-257 — Rolling out-of-sample forecasts, innovations and error metrics
+
+- **Branch:** `pr/PR-257-mlflow-predictive-metrics`
+- **Depends on:** PR-247, PR-248, PR-254
+- **Parallel group:** B; may run in parallel with PR-258 and PR-259 after the shared target contract is accepted
+- **Allowed:** `src/market_regime_engine/evaluations/predictive_metrics.py`, `src/market_regime_engine/mlflow_support/predictive_projection.py`, corresponding tests
+
+Acceptance:
+
+- [ ] Define the forecast target, target timestamp, horizon units, information boundary, missing-target policy and scaling semantics before emitting any forecast metric.
+- [ ] Emit one-step and configured multi-step predicted-vs-actual histories with target timestamps and fold/rolling-window identity.
+- [ ] Emit residual/innovation histories and distributions plus RMSE, MAE, MAPE only when the target makes MAPE mathematically valid; otherwise emit an explicit reason.
+- [ ] Emit rolling/out-of-sample R² or another explicitly approved scale-free metric with its exact formula and comparison domain.
+- [ ] Forecasts must use only information available at prediction time; no future target, state, scaler or model-selection leakage.
+- [ ] Forecast metrics are separate from latent-state posterior metrics and cannot be substituted for OOS predictive log likelihood.
+- [ ] Use only standard MLflow metrics/tags/artifacts; no server-side custom plot implementation.
+- [ ] Provide the family-local metric-definition declarations for PR-260 to register; do not edit the central catalog in this PR.
+
+QA:
+
+- [ ] Independent hand-computed fixture verifies one-step alignment, multi-step horizon alignment, residuals, RMSE, MAE, MAPE and R².
+- [ ] Future-target mutation cannot alter any earlier forecast, residual or metric point.
+- [ ] Boundary tests cover zero targets, negative targets, missing targets, calendar gaps, incomplete horizons and fold boundaries.
+- [ ] Leakage spy proves future rows/targets are unavailable to forecast construction and scaling.
+- [ ] Stock MLflow 3.15.1 integration test verifies metric history and target-series artifact parity.
+
+## PR-258 — Optional labeled-state classification quality
+
+- **Branch:** `pr/PR-258-mlflow-labeled-state-quality`
+- **Depends on:** PR-247, PR-248
+- **Parallel group:** B; may run in parallel with PR-257 and PR-259
+- **Allowed:** `src/market_regime_engine/evaluations/state_classification_metrics.py`, `src/market_regime_engine/mlflow_support/classification_projection.py`, corresponding tests
+
+Acceptance:
+
+- [ ] Treat labels as optional external evaluation data; absence of labels produces an explicit `not_available` evidence status and no fabricated score.
+- [ ] Define label identity, timestamp alignment, label vocabulary, unknown-label policy and whether state IDs are remapped before scoring.
+- [ ] Emit confusion matrix counts/artifact plus ARI, NMI, accuracy/purity only under their declared label/state comparison domains.
+- [ ] Preserve both hard Viterbi and clearly named soft-assignment variants where mathematically defined.
+- [ ] Do not use labeled-state metrics for unsupervised model selection unless a separate approved policy explicitly enables them.
+- [ ] Provide the family-local metric-definition declarations for PR-260 to register; do not edit the central catalog in this PR.
+
+QA:
+
+- [ ] Independent reference verifies confusion matrix, ARI, NMI and purity on perfect, random, permuted and partially missing labels.
+- [ ] State-label permutation invariance is proven where the metric claims it.
+- [ ] Unknown, duplicate, shifted and future labels fail closed or follow the documented policy exactly.
+- [ ] No-label evaluation produces no numeric placeholder and remains queryable as an explicit unavailable status.
+- [ ] Stock MLflow 3.15.1 integration test verifies labeled metrics are isolated from unsupervised candidate ranking.
+
+## PR-259 — Backtest and trading-performance statistics
+
+- **Branch:** `pr/PR-259-mlflow-backtest-metrics`
+- **Depends on:** PR-247, PR-248, PR-254
+- **Parallel group:** B; may run in parallel with PR-257 and PR-258 after the backtest data contract is approved
+- **Allowed:** `src/market_regime_engine/evaluations/backtest_metrics.py`, `src/market_regime_engine/mlflow_support/backtest_projection.py`, corresponding tests
+
+Acceptance:
+
+- [ ] Define the strategy mapping from model output to position, execution timing, transaction costs, slippage, leverage, turnover, cash handling, benchmark, risk-free rate and allowed instruments.
+- [ ] Emit cumulative/net return, volatility, Sharpe/Sortino, maximum drawdown, Calmar, hit rate, turnover, cost and exposure histories/aggregates with exact formulas and annualization conventions.
+- [ ] Separate train/validation/OOS/backtest windows and record the data snapshot and execution boundary for each.
+- [ ] Prevent look-ahead through state probabilities, labels, returns, signal timing, model selection and benchmark construction.
+- [ ] Keep trading metrics outside statistical HMM model selection unless an explicit downstream policy approves them.
+- [ ] All comparisons include the benchmark and cost assumptions in tags/artifacts; no claim is made from a chart alone.
+- [ ] Provide the family-local metric-definition declarations for PR-260 to register; do not edit the central catalog in this PR.
+
+QA:
+
+- [ ] Independent event-by-event backtest reference reproduces positions, costs, returns, Sharpe and drawdown exactly.
+- [ ] Zero-cost and high-cost fixtures, flat/constant-return fixtures, missing-price fixtures and turnover edge cases are covered.
+- [ ] One-period signal shift test proves no same-period look-ahead.
+- [ ] Future-return mutation cannot change earlier backtest results.
+- [ ] Stock MLflow 3.15.1 integration test verifies model-metric histories plus immutable assumptions artifact.
+
+## PR-260 — Nine-plot metric-family integration matrix
+
+- **Branch:** `pr/PR-260-mlflow-nine-plot-integration`
+- **Depends on:** PR-249, PR-255, PR-256, PR-257, PR-258, PR-259
+- **Parallel group:** C; starts after all metric-family PRs
+- **Allowed:** `src/market_regime_engine/mlflow_support/metric_catalog.py`, `src/market_regime_engine/mlflow_support/model_metrics.py`, `src/market_regime_engine/mlflow_support/plot_data.py`, `src/market_regime_engine/evaluations/plots.py`, `tests/unit/mlflow_support/*`, `tests/integration/mlflow_support/*`, `docs/qa/mlflow_model_metrics.md`
+
+Acceptance:
+
+- [ ] Publish a nine-plot acceptance matrix mapping each requested plot to its exact source metric keys/artifacts, x/y fields, units, direction, scope and comparison domain.
+- [ ] Plot 1 uses comparable train/test likelihood histories; plot 2 uses AIC/BIC/HQC; plot 3 uses posterior/Viterbi histories; plot 4 uses observation/emission-fit data; plot 5 uses residual/innovation data; plot 6 uses rolling OOS errors; plot 7 uses optional labels; plot 8 uses dwell/transition statistics; plot 9 uses the approved backtest contract.
+- [ ] Generic plot-data builders query standard MLflow Model Metrics and artifacts only; no model fitting, source reread or bespoke per-plot parser is allowed.
+- [ ] Unsupported data produces a visible unavailable status with a reason rather than an empty or invented plot.
+- [ ] Plot generation is deterministic and includes the exact LoggedModel IDs, metric catalog version and source hashes used.
+- [ ] Cross-family, cross-feature-vector, cross-fold and state-identity restrictions are enforced before plotting.
+
+QA:
+
+- [ ] File-backed stock MLflow fixture contains all nine metric families and regenerates every supported plot-data payload exactly.
+- [ ] A missing metric, conflicting metric step/value, incompatible model set and unknown metric key each fail with a precise diagnostic.
+- [ ] Independent plot-data verifier recomputes source hashes and confirms no evaluation recomputation occurred.
+- [ ] Golden output test covers all supported plots and explicit unavailable outputs for missing labels/forecast/backtest contracts.
+- [ ] MLflow 3.15.1 HTTP smoke test verifies the same behavior through the standard tracking server.
+
+# C. Dependency amendments
+
+The active dependency graph is amended as follows:
+
+```mermaid
+flowchart TD
+    P245[245 MLflow contract] --> P246[246 purge legacy MLflow]
+    P245 --> P247[247 metric catalog]
+    P242[242 durable run store] --> P247
+    P243[243 resumable DAG] --> P247
+    P244[244 resumable multistart] --> P248[248 Model Metrics projection]
+    P247 --> P248
+    P243 --> P249[249 resumable metric export + plots]
+    P247 --> P249
+    P248 --> P249
+    P246 --> P250[250 full MLflow audit]
+    P249 --> P250
+    P231[231 hermetic v4 proof] --> P250
+    P247 --> P255[255 fit quality metrics]
+    P248 --> P255
+    P247 --> P256[256 state diagnostics]
+    P248 --> P256
+    P247 --> P257[257 predictive metrics]
+    P248 --> P257
+    P254[254 schema-wide feature discovery] --> P257
+    P247 --> P258[258 labeled state quality]
+    P248 --> P258
+    P247 --> P259[259 backtest metrics]
+    P248 --> P259
+    P254 --> P259
+    P249 --> P260[260 nine-plot integration]
+    P255 --> P260
+    P256 --> P260
+    P257 --> P260
+    P258 --> P260
+    P259 --> P260
+    P260 --> P250
+    P249 --> P230[230 v4 MLflow hierarchy/tracking]
+    P250 --> P232[232 full current-Xetra audit]
+    P249 --> P237[237 recurring challenger cycle]
+```
+
+Operational rule: **do not run the destructive production MLflow reset until PR-246 itself is implemented, reviewed, dry-run manifest is verified, and production serving dependencies are proven outside the deletion scope.**
+
+---
+
+# D. Definition of done
+
+The MLflow redesign is complete only when:
+
+- historical regime-engine evaluation/tracking results are gone and the deletion proof shows zero survivors;
+- operational registered production models needed for serving/rollback remain intact;
+- every candidate model comparison is visible through LoggedModel Model Metrics;
+- every numerically meaningful evaluation diagnostic is centrally classified and emitted when defined;
+- raw histories and aggregates are both retained;
+- future comparison plots can consume the metric catalog + Model Metrics without recomputing the evaluation;
+- invalid cross-dimension/cross-fold comparisons remain impossible;
+- metric emission is dataset-pinned, idempotent and resumable;
+- forced crashes create neither duplicate nor conflicting metric histories;
+- hermetic and current-Xetra audits prove completeness mathematically and operationally.
+
+
+---
+
+
+## Consolidated backlog section: PostgreSQL schema-wide feature discovery
+
+### Regime Engine — PostgreSQL Schema-Wide Feature Discovery Backlog Addendum
+
+Status date: 2026-09-09
+
+This consolidated section is mandatory for the active v4 backlog. It strengthens the existing dynamic PostgreSQL catalog work so that a new feature becomes part of the next evaluation automatically, without a source-code/configuration allowlist and without manually editing the evaluation profile.
+
+The operational requirement is:
+
+> **Every feature that exists in the configured PostgreSQL feature schema at the moment a new immutable dataset snapshot is captured must automatically enter the v4 evaluation candidate universe.**
+
+The current production feature schema is `regime_loader`; `regime_loader_sync` is lineage/control metadata and is not a feature schema.
+
+This requirement is stronger than merely being able to query a newly added column. The complete evaluation orchestration must consume the discovered catalog as its candidate universe.
+
+---
+
+# A. Canonical semantics
+
+## A.1 Feature schema is authoritative
+
+The configured feature schema is a dedicated feature namespace. Discovery must inspect PostgreSQL catalog metadata inside the same `REPEATABLE READ READ ONLY` transaction used to capture the dataset snapshot.
+
+A relation in the configured feature schema is a valid feature relation only if it satisfies the feature-relation contract:
+
+- ordinary table or supported read-only view/materialized view type explicitly permitted by the implementation contract;
+- exactly one `timestamp_m1` column;
+- `timestamp_m1` is PostgreSQL timestamp-with-time-zone;
+- every other column is PostgreSQL `DOUBLE PRECISION`;
+- every non-timestamp column name is a safe SQL identifier;
+- timestamps are unique within the relation;
+- at least one non-timestamp feature column exists.
+
+The feature schema is treated fail-closed. The implementation may not silently ignore an unexpected ordinary relation in the configured feature schema. If a relation does not satisfy the declared feature-relation contract, snapshot acquisition fails with the offending relation/column identified. This prevents a new feature-bearing relation from being omitted because an agent forgot to update an allowlist.
+
+`regime_loader_sync` remains outside this scope because it is a different schema.
+
+## A.2 All discovered features enter the candidate universe
+
+For one pinned snapshot:
+
+```text
+postgres feature schema
+        |
+        v
+catalog every feature relation
+        |
+        v
+catalog every non-timestamp DOUBLE PRECISION column
+        |
+        v
+materialize exact schema-wide feature snapshot
+        |
+        v
+catalog.feature_names
+        |
+        v
+v4 quality filter
+        |
+        v
+ALL surviving features -> global clustering/scoring/evaluation
+```
+
+No layer between catalog capture and the v4 quality filter may supply a narrower manually configured feature list.
+
+A feature can leave the statistical candidate universe only through an explicit v4 statistical validity rule such as coverage, variance, finite-value, pair-support, model-clock or later selection logic. It may not disappear because it was absent from a Python tuple, YAML list, semantic group, constructor argument, cached feature list, SQL SELECT list, or previously trained model.
+
+## A.3 Canonical ordering and identity
+
+Relation order is deterministic and independent of PostgreSQL physical OIDs or discovery timing.
+
+Canonical order:
+
+```text
+(schema_name, relation_name, ordinal_position, column_name)
+```
+
+Feature names must be globally unique across the configured feature schema if the public feature identity remains the bare column name. Duplicate bare feature names across two relations fail closed and report both fully-qualified origins. The implementation must not silently overwrite, suffix, or select one duplicate.
+
+The schema catalog hash includes, in exact canonical order:
+
+```text
+schema_name
+relation_name
+relation_kind
+column_name
+ordinal_position
+data_type
+udt_name
+```
+
+Therefore adding, removing, renaming, moving or changing the type of a feature changes the catalog hash.
+
+## A.4 Schema-wide row materialization
+
+If the feature schema contains more than one valid feature relation, materialization forms one deterministic timestamp-indexed feature matrix.
+
+Required semantics:
+
+- read every relation inside the same PostgreSQL snapshot transaction;
+- preserve each relation's exact `timestamp_m1` values;
+- combine relations by timestamp using deterministic full timestamp union semantics;
+- absence of a feature observation on a timestamp remains SQL-NULL/`None`; no fill/interpolation/carry is allowed;
+- output timestamps are unique and strictly ascending;
+- output columns follow the canonical catalog order;
+- no HMM/model code runs while the database transaction is open.
+
+The resulting materialized snapshot, not a live later query, is the sole data source for the evaluation and all restart/resume work.
+
+## A.5 Dataset pinning must cover the whole schema-wide snapshot
+
+Existing upstream lineage remains mandatory, but table-specific upstream `data_sha256` is insufficient to prove identity if future features can be spread across multiple feature relations.
+
+The schema-wide snapshot therefore adds an engine-owned canonical materialization digest:
+
+```text
+materialized_feature_data_sha256 =
+    SHA256(canonical serialization of ordered timestamps + ordered feature values/nulls)
+```
+
+The canonical `DatasetSnapshotKey` used by resumable evaluation must include at least:
+
+```text
+upstream source_build_id
+upstream data_sha256
+schema_version
+feature_version
+source_catalog_hash
+materialized_feature_data_sha256
+materialized_row_count
+materialized_min_timestamp
+materialized_max_timestamp
+```
+
+Thus any new relation, feature column, timestamp or feature value changes the next snapshot/run identity even if upstream lineage metadata has not yet learned how to describe multiple feature relations.
+
+The exact binary/text canonicalization used for the materialization digest must be versioned and independently tested; Python `repr`, locale-dependent formatting and unordered mappings are forbidden.
+
+## A.6 Snapshot isolation and restart behavior
+
+A schema change after the snapshot transaction begins must not alter the running evaluation.
+
+Example:
+
+```text
+Run A starts -> captures features {A,B,C,D}
+DB adds feature E
+Run A continues/restarts -> still uses pinned {A,B,C,D} snapshot
+Run B starts later -> captures {A,B,C,D,E}
+```
+
+`Run B` receives a different `source_catalog_hash`, `materialized_feature_data_sha256` and `EvaluationRunKey`.
+
+The resumable executor must never attach feature E to Run A during restart.
+
+---
+
+# B. New atomic implementation PR
+
+## PR-254 — Make the v4 evaluation universe PostgreSQL-schema-driven
+
+- **Branch:** `pr/PR-254-pg-schema-all-feature-discovery`
+- **Depends on:** dynamic catalog/source foundation (PR-212/PR-213), durable snapshot/run identity foundation (PR-242/PR-243), and the canonical v4 contracts already merged before implementation starts.
+- **Allowed:** `DATA_SOURCE.md`, `EVALUATION_EXECUTION.md`, `src/market_regime_engine/features/ports.py`, `src/market_regime_engine/features/postgres_source.py`, `src/market_regime_engine/evaluation_execution/*`, `src/market_regime_engine/evaluations/global_regime_v4.py`, narrowly corresponding source/orchestration tests and external audit tests.
+
+### Acceptance
+
+- [ ] Replace the final table-only discovery assumption with configured **feature-schema** discovery for v4.
+- [ ] Discover the complete relation/column catalog from PostgreSQL metadata inside the same `REPEATABLE READ READ ONLY` source transaction.
+- [ ] Do not use a feature-name allowlist, semantic group list, static Python tuple, YAML feature list or prior-model feature set to define the v4 raw candidate universe.
+- [ ] Fail closed if any ordinary relation in the configured feature schema violates the feature-relation contract; never silently omit an unexpected relation.
+- [ ] Canonical relation/feature order is exactly `(schema_name, relation_name, ordinal_position, column_name)`.
+- [ ] Require globally unique bare feature names across the schema; duplicates fail with both qualified origins.
+- [ ] Add one source API that captures **catalog + all discovered feature rows** without the caller first supplying feature names. The caller may bound timestamps but may not narrow the raw discovery universe.
+- [ ] If multiple valid feature relations exist, combine them by deterministic full timestamp union; retain NULLs and forbid fill/interpolation/carry.
+- [ ] Validate output timestamps unique/strictly ascending and output width/order exactly equal to the captured schema catalog.
+- [ ] Calculate versioned `materialized_feature_data_sha256` from the complete canonical materialized matrix.
+- [ ] Add schema-wide materialized row count/min/max plus materialization digest to dataset snapshot identity and therefore to `EvaluationRunKey`.
+- [ ] `select_v4_configuration(...)` and outer/deployment evaluation consume the exact complete discovered catalog. They may reject features only via explicit statistical quality/selection rules.
+- [ ] Adding a valid feature column requires **zero regime-engine code/config edits** before it appears in the next evaluation's quality-filter input.
+- [ ] Adding a new valid feature relation in the configured schema requires **zero regime-engine code/config edits** before all of its features appear in the next evaluation.
+- [ ] Removing/renaming/type-changing a feature changes catalog/snapshot/run identity and never reuses a stale cached request.
+- [ ] Schema changes after Run A's source snapshot do not change Run A, including after process restart; they appear only in a newly keyed Run B.
+- [ ] Resolved production-model inference remains allowed to request only its frozen final feature tuple; schema-wide discovery is mandatory specifically for evaluation/discovery snapshot acquisition.
+- [ ] No long-lived PostgreSQL transaction during clustering/HMM fitting.
+- [ ] No backward-compatibility/table-only v4 fallback remains after this PR.
+
+### QA — catalog and SQL contract
+
+- [ ] Hermetic PostgreSQL-shaped fixture starts with one feature relation and proves every non-timestamp `DOUBLE PRECISION` column is discovered in exact canonical order.
+- [ ] Add one new feature column with no engine/config change; next snapshot contains it and its quality-filter invocation records it.
+- [ ] Add a second valid feature relation with two features; next snapshot contains both automatically.
+- [ ] Add an invalid relation/invalid non-feature column in the feature schema; acquisition fails closed instead of silently ignoring it.
+- [ ] Duplicate bare feature name across two relations fails with both qualified origins.
+- [ ] Wrong timestamp type, missing timestamp, unsafe identifier, zero-feature relation and unsupported numeric/non-numeric types all fail closed.
+- [ ] SQL uses identifier-safe composition only; values/bounds remain parameterized.
+
+### QA — schema-wide materialization mathematics
+
+- [ ] Independent reference implementation performs the timestamp full union on at least three relations with partially non-overlapping calendars and proves every output timestamp/value/NULL exactly.
+- [ ] Reference implementation independently serializes the complete ordered matrix and reproduces `materialized_feature_data_sha256` exactly.
+- [ ] Row-count/min/max evidence is independently recomputed from the materialized timestamp union.
+- [ ] Relation enumeration order, DB cursor return order and Python mapping insertion order cannot alter catalog hash or materialization digest.
+
+### QA — evaluation integration
+
+- [ ] Spy/contract test proves the v4 quality filter receives exactly the complete catalog feature tuple; no subset parameter exists on the discovery path.
+- [ ] At least 50 synthetic discovered features flow through quality -> distance -> clustering -> teacher/scoring pipeline without a feature allowlist.
+- [ ] Add feature 51 only in the database fixture; rerun and prove it appears automatically in raw-candidate evidence and, if statistically eligible, in global distance/scoring evidence.
+- [ ] A feature failing coverage/variance remains visible in raw catalog/quality evidence and is rejected for the documented statistical reason rather than disappearing upstream.
+
+### QA — dataset pinning, idempotency and resume
+
+- [ ] Start Run A, capture snapshot, then mutate schema by adding a feature before killing the process. Resume Run A and prove byte-identical catalog/data/evaluation work units to the pre-mutation pinned snapshot.
+- [ ] Start Run B after mutation; prove a different catalog hash, materialization digest, DatasetSnapshotKey and EvaluationRunKey and automatic inclusion of the new feature.
+- [ ] Forced crash after catalog capture, after relation 1 materialization, after relation N materialization and after durable snapshot commit resumes without mixed-vintage rows or duplicate work.
+- [ ] Re-invoking the same dataset/evaluation identity returns/reuses the same completed logical evaluation.
+
+### QA — full computation proof
+
+- [ ] Run a complete hermetic v4 evaluation from schema discovery through final outer evidence with real HMM computation; no source/catalog/model math mocks.
+- [ ] Repeat from the same pinned snapshot and prove canonical statistical output hashes identical.
+- [ ] Run the current PostgreSQL external audit and report discovered relation count, raw feature count, eligible feature count, exact catalog hash and exact materialization digest.
+- [ ] Independent audit queries PostgreSQL catalog directly and proves the evaluation raw feature set equals the complete valid feature set in the configured feature schema at the pinned snapshot.
+- [ ] Final zero-legacy/runtime audit (PR-253 or its successor) must include a denylist/assertion that no v4 evaluation path contains static feature-name inventories.
+
+---
+
+# C. Dependency amendments
+
+PR-254 is a required dependency before the v4 orchestration/current-source audit can be considered complete.
+
+```mermaid
+flowchart TD
+    P212[212 catalog contracts] --> P213[213 PostgreSQL dynamic source]
+    P242[242 durable snapshot/run store] --> P254[254 schema-wide all-feature discovery]
+    P243[243 resumable executor] --> P254
+    P213 --> P254
+    P254 --> P228[228 adaptive outer policy / successor]
+    P254 --> P232[232 current-Xetra full audit / successor]
+    P254 --> P253[253 final zero-legacy audit / successor]
+```
+
+If PR-228 or PR-232 has already merged when PR-254 is implemented, PR-254 must update/re-run their corresponding orchestration/audit paths rather than treating the old table-only behavior as accepted compatibility.
+
+---
+
+# D. Definition of done
+
+This requirement is complete only when a developer can add a new valid PostgreSQL feature to the configured feature schema, publish the new database state, make **no regime-engine code or configuration change**, start the next evaluation, and observe that feature in the pinned raw catalog and quality-filter evidence automatically.
+
+The only legitimate reasons for that feature not to reach the HMM candidate set are explicit statistical validity/selection decisions recorded by the evaluation itself.

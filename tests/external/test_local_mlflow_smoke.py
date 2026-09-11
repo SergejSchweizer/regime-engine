@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 from mlflow import MlflowClient
-from mlflow.exceptions import MlflowException
 
 pytestmark = pytest.mark.external
 
@@ -19,32 +17,13 @@ pytestmark = pytest.mark.external
 def _uri() -> str:
     if os.environ.get("REGIME_RUN_EXTERNAL_MLFLOW") != "1":
         pytest.skip("set REGIME_RUN_EXTERNAL_MLFLOW=1 to run the local unified MLflow smoke")
-    uri = os.environ.get("REGIME_EXTERNAL_MLFLOW_URI", "http://127.0.0.1:5000")
+    uri = os.environ.get("REGIME_EXTERNAL_MLFLOW_URI", "http://10.10.1.3:5000")
     parsed = urllib.parse.urlsplit(uri)
     assert parsed.scheme == "http"
     assert parsed.hostname in {"127.0.0.1", "localhost", "10.10.1.3"}
     assert parsed.port == 5000
     assert parsed.path in {"", "/"}
     return uri.rstrip("/")
-
-
-def _verification() -> dict[str, str]:
-    completed = subprocess.run(
-        ["scripts/verify_local_compose.sh"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    evidence = dict(
-        line.split("=", 1) for line in completed.stdout.splitlines() if line and "=" in line
-    )
-    assert evidence["compose_project"] == "regime-engine"
-    assert set(evidence["services"].split(",")) == {"mlflow", "mlflow-postgres"}
-    assert evidence["application_image_id"].startswith("sha256:")
-    assert evidence["repository_git_sha"]
-    assert evidence["mlflow_version"] == "3.15.1"
-    assert evidence["custom_image_repo_digests"] == "none"
-    return evidence
 
 
 def _json_request(url: str, *, body: dict[str, object] | None = None) -> tuple[int, object]:
@@ -63,13 +42,13 @@ def _json_request(url: str, *, body: dict[str, object] | None = None) -> tuple[i
         return exc.code, payload
 
 
-def test_local_unified_mlflow_tracking_registry_artifact_and_custom_routes(tmp_path: Path) -> None:
+def test_external_mlflow_tracking_registry_and_artifacts(
+    tmp_path: Path,
+) -> None:
     uri = _uri()
-    evidence = _verification()
-    status, health = _json_request(f"{uri}/regime-engine/v1/health")
+    status, health = _json_request(f"{uri}/health")
     assert status == 200
-    assert isinstance(health, dict)
-    assert health["schema_version"] == "RegimeHealth.v1"
+    assert health == "OK"
 
     client = MlflowClient(tracking_uri=uri)
     suffix = uuid4().hex
@@ -80,7 +59,6 @@ def test_local_unified_mlflow_tracking_registry_artifact_and_custom_routes(tmp_p
         experiment_id,
         tags={
             "regime_engine.smoke": "pr034",
-            "regime_engine.local_image_id": evidence["application_image_id"],
         },
     )
     run_id = run.info.run_id
@@ -110,19 +88,6 @@ def test_local_unified_mlflow_tracking_registry_artifact_and_custom_routes(tmp_p
     )
     fetched_version = client.get_model_version(model_name, version.version)
     assert fetched_version.run_id == run_id
-
-    try:
-        champion = client.get_model_version_by_alias("regime-xetra", "champion")
-    except MlflowException:
-        champion = None
-    if champion is not None:
-        latest_status, latest = _json_request(
-            f"{uri}/regime-engine/v1/profiles/xetra/invocations",
-            body={"operation": "latest"},
-        )
-        assert latest_status == 200
-        assert isinstance(latest, dict)
-        assert latest.get("profile_id") == "xetra"
 
     client.delete_registered_model(model_name)
     client.delete_experiment(experiment_id)

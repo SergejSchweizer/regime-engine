@@ -22,6 +22,23 @@ def test_one_port_mlflow_settings_are_exact() -> None:
         )
 
 
+def test_environment_settings_cannot_redirect_model_registration() -> None:
+    assert MLflowSettings.from_environment({}).tracking_uri == PRODUCTION_MLFLOW_URI
+    assert (
+        MLflowSettings.from_environment({"MLFLOW_TRACKING_URI": PRODUCTION_MLFLOW_URI}).registry_uri
+        == PRODUCTION_MLFLOW_URI
+    )
+    with pytest.raises(ValueError, match=r"exactly http://10\.10\.1\.3:5000"):
+        MLflowSettings.from_environment({"MLFLOW_TRACKING_URI": "file:///tmp/mlruns"})
+    with pytest.raises(ValueError, match="same one-port"):
+        MLflowSettings.from_environment(
+            {
+                "MLFLOW_TRACKING_URI": PRODUCTION_MLFLOW_URI,
+                "MLFLOW_REGISTRY_URI": "http://127.0.0.1:5000",
+            }
+        )
+
+
 def test_alias_resolution_contract_returns_exact_immutable_version() -> None:
     resolved = ResolvedModelVersion(
         model_name="regime-xetra",

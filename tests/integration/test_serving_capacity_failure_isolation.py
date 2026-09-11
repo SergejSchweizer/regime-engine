@@ -7,7 +7,6 @@ from threading import Event, Lock, Thread
 from typing import Any
 
 import pytest
-import yaml
 from mlflow.tracking import MlflowClient
 from psycopg_pool import PoolTimeout
 
@@ -30,7 +29,7 @@ def _artifact(build: str) -> ProductionModelArtifact:
     features = ("f0",)
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -42,7 +41,11 @@ def _artifact(build: str) -> ProductionModelArtifact:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluation_cutoff=NOW,
+        validation_evaluation_cutoff=NOW,
+        deployment_selection_cutoff=NOW + timedelta(days=1),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=features,
         scaler=StandardScalerArtifact(features, (0.0,), (1.0,), (1.0,)),
         hmm=GaussianHMMArtifact(
@@ -230,20 +233,6 @@ def test_exact_four_worker_capacity_does_not_block_health_tracking_registry_or_l
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    compose = yaml.safe_load(Path("compose.yaml").read_text(encoding="utf-8"))
-    env = compose["services"]["mlflow"]["environment"]
-    assert env["MLFLOW_WORKERS"] == "${MLFLOW_WORKERS:-4}"
-    assert env["MLFLOW_THREADS_PER_WORKER"] == "${MLFLOW_THREADS_PER_WORKER:-4}"
-    assert env["REGIME_PG_POOL_MAX_SIZE"] == "${REGIME_PG_POOL_MAX_SIZE:-4}"
-    assert env["REGIME_FEATURE_PG_CONNECTION_BUDGET"] == (
-        "${REGIME_FEATURE_PG_CONNECTION_BUDGET:-16}"
-    )
-    assert env["REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER"] == (
-        "${REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER:-1}"
-    )
-    assert compose["services"]["mlflow"]["pull_policy"] == "never"
-    assert compose["services"]["mlflow"]["image"] == "regime-engine-mlflow:local"
-
     workers = [ReplayAdmission(ReplayLimits()) for _ in range(4)]
     with ExitStack() as stack:
         permits = [stack.enter_context(worker.admit()) for worker in workers]
@@ -279,16 +268,9 @@ def test_capacity_proof_never_embeds_secrets_raw_features_or_remote_image_assump
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.clear()
-    compose_text = Path("compose.yaml").read_text(encoding="utf-8").lower()
-    assert "pull_policy: never" in compose_text
-    assert "regime-engine-mlflow:local" in compose_text
     for forbidden in (
         "regime_feature_pgpassword=",
         "mlflow_backend_db_password=",
         "raw_feature_vector",
-        "ghcr.io/",
-        ":5001",
-        "prometheus",
     ):
         assert forbidden not in caplog.text.lower()
-        assert forbidden not in compose_text

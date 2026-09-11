@@ -12,7 +12,7 @@ All Markdown files in this repository are documentation sidecars governed by [`D
 
 - [ ] I identified every Markdown sidecar affected by this change.
 - [ ] Affected Markdown reflects the resulting codebase, configuration, schemas, workflows, and runtime contracts.
-- [ ] Planned, deprecated, historical, and compatibility-only behavior is clearly distinguished from current implemented behavior.
+- [ ] Planned and historical behavior is clearly distinguished from current implemented behavior.
 - [ ] I checked for contradictions with other Markdown files.
 - [ ] A new user can follow the affected topic step by step from purpose and concepts through execution and verification.
 - [ ] Commands, paths, identifiers, versions, ports, schemas, examples, and ownership boundaries remain code-aligned.

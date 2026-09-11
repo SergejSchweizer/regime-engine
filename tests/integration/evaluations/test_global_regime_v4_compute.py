@@ -78,7 +78,6 @@ def _candidate(catalog: FeatureCatalogSnapshot) -> ResolvedCandidateProfile:
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
         original_feature_universe=catalog.feature_names,
-        preliminary_medoids=(),
         feature_contract_version=4,
     )
 

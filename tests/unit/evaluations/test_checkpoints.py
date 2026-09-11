@@ -15,7 +15,7 @@ def test_checkpoint_reuses_only_identical_model_scope(tmp_path: Path) -> None:
         return {"calls": calls}
 
     arguments = {
-        "evaluation_id": "medoid_univariate",
+        "evaluation_id": "global_regime_v4",
         "feature_order": ("vix_level",),
         "candidate_id": "gaussian_hmm_k2_full",
     }
@@ -28,7 +28,7 @@ def test_checkpoint_reuses_only_identical_model_scope(tmp_path: Path) -> None:
 
 def test_checkpoint_fingerprint_isolates_code_and_dataset_versions(tmp_path: Path) -> None:
     arguments = {
-        "evaluation_id": "medoid_multivariate",
+        "evaluation_id": "global_regime_v4",
         "feature_order": ("vix_level",),
         "candidate_id": "gaussian_hmm_k2_full",
     }

@@ -1,23 +1,17 @@
-"""Fail-closed MLflow tracking with immutable local statistics mirrors."""
+"""MLflow tracking for the canonical Xetra v4 evaluation."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import asdict, dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from math import isfinite
 from pathlib import Path
+from typing import cast
 
-import matplotlib
-import numpy as np
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
+from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan, plan_walk_forward
 from market_regime_engine.evaluation_statistics.contracts import (
     GLOBAL_V4_EVALUATION_ID,
     GlobalV4Evidence,
@@ -26,57 +20,69 @@ from market_regime_engine.evaluation_statistics.contracts import (
     Status,
 )
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
-from market_regime_engine.evaluations.contracts import EvaluationId, FeatureSpec
-from market_regime_engine.evaluations.delta1_univariate import Delta1UnivariateEvaluation
 from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
-from market_regime_engine.evaluations.medoid_multivariate import MedoidMultivariateEvaluation
-from market_regime_engine.evaluations.medoid_univariate import MedoidUnivariateEvaluation
 from market_regime_engine.evaluations.plots import render_global_v4_diagnostics
-from market_regime_engine.evaluations.univariate_grid import UnivariateFeatureGrid
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
     FinalSelectedConfiguration,
     OuterFoldResult,
 )
-from market_regime_engine.mlflow_support.plots import (
-    EMCandidateConvergence,
-    render_em_convergence,
-    render_em_convergence_comparison,
-    summarize_em_convergence,
+from market_regime_engine.features.ports import FeatureCatalogSnapshot, FeatureSnapshot
+from market_regime_engine.mlflow_support.metric_catalog import METRIC_CATALOG_VERSION
+from market_regime_engine.mlflow_support.metric_export import MetricExportLedger
+from market_regime_engine.mlflow_support.model_metrics import (
+    model_metric_points,
+    outer_selection_metric_points,
 )
-from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
-from market_regime_engine.training.candidate_grid import CandidateAggregate, CandidateGridEvaluation
+from market_regime_engine.mlflow_support.ports import TrackingPort
+from market_regime_engine.mlflow_support.tracking import _project_candidate_logged_model
+from market_regime_engine.profiles.config import ModelProfile
 
-EvaluationResult = (
-    MedoidMultivariateEvaluation | MedoidUnivariateEvaluation | Delta1UnivariateEvaluation
-)
 PayloadEmitter = Callable[[str, Path], None]
-_PERFORMANCE_METRICS: tuple[tuple[str, str], ...] = (
-    ("train_loglik_per_obs", "TRAIN log likelihood per observation"),
-    ("oos_predictive_loglik_per_obs", "OOS predictive log likelihood per observation"),
-    ("aic_per_train_obs", "AIC per TRAIN observation"),
-    ("bic_per_train_obs", "BIC per TRAIN observation"),
-    ("multistart_success_rate", "Multistart success rate"),
-)
 
 
-@dataclass(frozen=True, slots=True)
-class EvaluationTrackingResult:
-    parent_run_id: str
-    feature_run_ids: tuple[tuple[str, str], ...]
-    candidate_run_ids: tuple[tuple[str, str], ...]
-    statistics_root: str
-
-
-@dataclass(frozen=True, slots=True)
 class GlobalV4TrackingResult:
-    """Tracked global-v4 parent and fold children with immutable local mirrors."""
+    """Tracked v4 parent and outer-fold children with immutable local mirrors."""
 
-    parent_run_id: str
-    outer_fold_run_ids: tuple[tuple[str, str], ...]
-    statistics_root: str
-    global_evidence_hash: str
-    plot_manifest_path: str
+    def __init__(
+        self,
+        parent_run_id: str,
+        outer_fold_run_ids: tuple[tuple[str, str], ...],
+        statistics_root: str,
+        global_evidence_hash: str,
+        plot_manifest_path: str,
+        logged_model_ids: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        self.parent_run_id = parent_run_id
+        self.outer_fold_run_ids = outer_fold_run_ids
+        self.statistics_root = statistics_root
+        self.global_evidence_hash = global_evidence_hash
+        self.plot_manifest_path = plot_manifest_path
+        self.logged_model_ids = logged_model_ids
+
+
+def _running_statistics(
+    run_name: str,
+    run_type: RunType,
+    evidence: dict[str, object],
+) -> RunStatistics:
+    return RunStatistics(
+        GLOBAL_V4_EVALUATION_ID,
+        "pending",
+        run_type,
+        run_name,
+        Status.RUNNING,
+        datetime.now(UTC),
+        evidence=evidence,
+    )
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def track_statistics_run(
@@ -88,7 +94,7 @@ def track_statistics_run(
     parent_run_id: str | None = None,
     payload_emitter: PayloadEmitter | None = None,
 ) -> tuple[str, str]:
-    """Create one MLflow run, emit payloads, then finalize its immutable local mirror."""
+    """Create one MLflow run and finalize its immutable local statistics dossier."""
 
     if statistics.status is not Status.RUNNING:
         raise ValueError("statistics tracking requires an initial RUNNING dossier")
@@ -117,441 +123,20 @@ def track_statistics_run(
                 "code": type(exc).__name__,
                 "reason": "evaluation tracking payload/finalization failed",
             }
-            failed = replace(
-                started,
-                status=Status.FAILED,
-                ended_at=datetime.now(UTC),
-                evidence=failed_evidence,
-            )
             with suppress(BaseException):
-                writer.finalize(failed)
+                writer.finalize(
+                    replace(
+                        started,
+                        status=Status.FAILED,
+                        ended_at=datetime.now(UTC),
+                        evidence=failed_evidence,
+                    )
+                )
         port.fail_run(run_id)
         raise
 
 
-def _running_statistics(
-    evaluation_id: EvaluationId | str,
-    run_type: RunType,
-    run_name: str,
-    evidence: dict[str, object],
-) -> RunStatistics:
-    return RunStatistics(
-        evaluation_id,
-        "pending",
-        run_type,
-        run_name,
-        Status.RUNNING,
-        datetime.now(UTC),
-        evidence=evidence,
-    )
-
-
-def _candidate_evidence(
-    grid: CandidateGridEvaluation,
-    candidate_id: str,
-    *,
-    include_optimization: bool = False,
-) -> dict[str, object]:
-    aggregate = next(item for item in grid.aggregates if item.candidate_id == candidate_id)
-    evaluation = next(item for item in grid.evaluations if item.candidate_id == candidate_id)
-    evidence: dict[str, object] = {
-        "identity": {"candidate_id": candidate_id},
-        "lineage": {
-            "source_build_id": grid.source_build_id,
-            "evaluation_plan_hash": grid.evaluation_plan_hash,
-            "feature_selection_definition_hash": grid.feature_selection_definition_hash,
-            "feature_selection_execution_hash": grid.feature_selection_execution_hash,
-        },
-        "input": {"feature_order": grid.feature_order},
-        "model": {"state_count": evaluation.state_count},
-        "folds": {
-            "planned_count": len(evaluation.folds),
-            "valid_count": len(evaluation.valid_folds),
-        },
-        "aggregate": asdict(aggregate),
-    }
-    if include_optimization:
-        summary = summarize_em_convergence(evaluation)
-        evidence["optimization"] = {
-            "em_convergence": summary.as_json_dict(),
-        }
-    return evidence
-
-
-def _metric_history(evaluation: WalkForwardEvaluation, metric_key: str) -> tuple[float | None, ...]:
-    values: list[float | None] = []
-    for fold in evaluation.folds:
-        if not fold.valid:
-            values.append(None)
-            continue
-        if metric_key == "train_loglik_per_obs":
-            value = fold.train_log_likelihood
-            count = fold.train_model_observation_count
-            value = None if value is None else value / count
-        elif metric_key == "oos_predictive_loglik_per_obs":
-            value = fold.oos_predictive_log_likelihood_per_observation
-        elif metric_key == "aic_per_train_obs":
-            value = None if fold.aic is None else fold.aic / fold.train_model_observation_count
-        elif metric_key == "bic_per_train_obs":
-            value = None if fold.bic is None else fold.bic / fold.train_model_observation_count
-        elif metric_key == "multistart_success_rate":
-            value = fold.multistart_success_rate
-        else:
-            raise ValueError(f"unsupported model-metrics performance history: {metric_key}")
-        if value is not None and not isfinite(value):
-            raise ValueError(f"{metric_key} history values must be finite")
-        values.append(value)
-    return tuple(values)
-
-
-def _write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _render_performance_history(
-    evaluation: WalkForwardEvaluation,
-    metric_key: str,
-    label: str,
-    output_path: Path,
-) -> tuple[Path, tuple[float | None, ...]]:
-    """Render a fold-indexed history without altering evaluation statistics."""
-
-    values = _metric_history(evaluation, metric_key)
-    x_values = np.arange(1, len(values) + 1, dtype=np.int64)
-    y_values = np.asarray([np.nan if value is None else value for value in values])
-    figure, axis = plt.subplots(figsize=(10.0, 5.5))
-    axis.plot(x_values, y_values, marker="o", label=evaluation.candidate_id)
-    axis.set_title(f"{label} — {evaluation.candidate_id}")
-    axis.set_xlabel("Walk-forward fold")
-    axis.set_ylabel(label)
-    axis.grid(True, alpha=0.25)
-    axis.legend()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
-    figure.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close(figure)
-    return output_path, values
-
-
-def _render_oos_comparison(grid: CandidateGridEvaluation, output_path: Path) -> Path:
-    figure, axis = plt.subplots(figsize=(11.0, 8.0))
-    for evaluation in grid.evaluations:
-        values = _metric_history(evaluation, "oos_predictive_loglik_per_obs")
-        axis.plot(
-            np.arange(1, len(values) + 1, dtype=np.int64),
-            np.asarray([np.nan if value is None else value for value in values]),
-            marker="o",
-            label=evaluation.candidate_id,
-        )
-    axis.set_title(f"OOS predictive log likelihood comparison — {grid.feature_order[0]}")
-    axis.set_xlabel("Walk-forward fold")
-    axis.set_ylabel("OOS predictive log likelihood per observation")
-    axis.grid(True, alpha=0.25)
-    axis.legend(title="Canonical candidate order")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
-    figure.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close(figure)
-    return output_path
-
-
-def _render_train_refit_comparison(
-    grid: CandidateGridEvaluation,
-    output_path: Path,
-) -> Path:
-    """Compare normalized TRAIN likelihood over the dynamic candidate set."""
-    figure, axis = plt.subplots(figsize=(13.0, 8.0))
-    for evaluation in grid.evaluations:
-        values = _metric_history(evaluation, "train_loglik_per_obs")
-        axis.plot(
-            np.arange(1, len(values) + 1, dtype=np.int64),
-            np.asarray([np.nan if value is None else value for value in values]),
-            marker="o",
-            linewidth=1.5,
-            markersize=3.5,
-            label=evaluation.candidate_id,
-        )
-    axis.set_title(f"TRAIN log-likelihood per refit — {grid.feature_order[0]}")
-    axis.set_xlabel("Walk-forward refit / fold")
-    axis.set_ylabel("TRAIN log-likelihood per observation")
-    axis.grid(True, alpha=0.25)
-    axis.legend(title="Candidate model", fontsize="small")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
-    figure.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close(figure)
-    return output_path
-
-
-def _render_train_refit_comparison_all_features(
-    grids: tuple[CandidateGridEvaluation, ...],
-    output_path: Path,
-) -> Path:
-    """Compare TRAIN likelihood across every feature and dynamic candidate."""
-    figure, axis = plt.subplots(figsize=(16.0, 10.0))
-    labels_seen: set[str] = set()
-    for grid in grids:
-        for evaluation in grid.evaluations:
-            values = _metric_history(evaluation, "train_loglik_per_obs")
-            label = evaluation.candidate_id
-            axis.plot(
-                np.arange(1, len(values) + 1, dtype=np.int64),
-                np.asarray([np.nan if value is None else value for value in values]),
-                alpha=0.28,
-                linewidth=1.0,
-                label=label if label not in labels_seen else "_nolegend_",
-            )
-            labels_seen.add(label)
-    axis.set_title("TRAIN log-likelihood per refit — all Delta1 features and models")
-    axis.set_xlabel("Walk-forward refit / fold")
-    axis.set_ylabel("TRAIN log-likelihood per observation")
-    axis.grid(True, alpha=0.25)
-    axis.legend(title="Candidate model (all feature lines shown)", fontsize="small")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
-    figure.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close(figure)
-    return output_path
-
-
-def _em_metric_points(summary: EMCandidateConvergence) -> tuple[MetricPoint, ...]:
-    if not summary.available:
-        return ()
-    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
-    return tuple(
-        MetricPoint(
-            key="model_metrics.em_convergence.train_loglik_per_obs_median",
-            value=value,
-            step=iteration,
-            timestamp_ms=timestamp_ms,
-        )
-        for iteration, value in zip(summary.iterations, summary.median, strict=True)
-    )
-
-
-def _model_metric_points(
-    evaluation: WalkForwardEvaluation,
-    aggregate: object | None,
-) -> tuple[MetricPoint, ...]:
-    """Return scalar summaries plus fold histories for MLflow's Model Metrics view."""
-    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
-    points: list[MetricPoint] = []
-    if aggregate is not None:
-        for key, attribute in (
-            ("oos_predictive_loglik_per_obs_mean", "oos_predictive_loglik_mean"),
-            ("oos_predictive_loglik_per_obs_std", "oos_predictive_loglik_std"),
-            (
-                "oos_predictive_loglik_per_obs_worst_fold",
-                "oos_predictive_loglik_worst_fold",
-            ),
-            ("bic_per_train_obs_mean", "bic_mean"),
-            ("aic_per_train_obs_mean", "aic_mean"),
-        ):
-            value = getattr(aggregate, attribute)
-            if value is not None and isfinite(value):
-                points.append(MetricPoint(key=key, value=value, step=0, timestamp_ms=timestamp_ms))
-    for step, value in enumerate(_metric_history(evaluation, "train_loglik_per_obs"), start=1):
-        if value is not None:
-            points.append(
-                MetricPoint(
-                    key="train_loglik_per_refit",
-                    value=value,
-                    step=step,
-                    timestamp_ms=timestamp_ms,
-                )
-            )
-    points.extend(_em_metric_points(summarize_em_convergence(evaluation)))
-    return tuple(points)
-
-
-def _emit_delta_model_metrics(
-    port: TrackingPort,
-    feature_run_id: str,
-    directory: Path,
-    grid: CandidateGridEvaluation,
-) -> None:
-    """Emit the delta1-only feature-run namespace before it can be finalized."""
-
-    feature_name = grid.feature_order[0]
-    root = directory / "model_metrics"
-    candidates: list[dict[str, object]] = []
-    for evaluation in grid.evaluations:
-        aggregate = next(
-            (
-                item
-                for item in getattr(grid, "aggregates", ())
-                if item.candidate_id == evaluation.candidate_id
-            ),
-            None,
-        )
-        candidate_root = root / "models" / evaluation.candidate_id
-        model_id = port.create_logged_model(
-            name=f"delta1_{feature_name}_{evaluation.candidate_id}",
-            source_run_id=feature_run_id,
-            model_type="hmm",
-            tags={
-                "evaluation_id": EvaluationId.DELTA1_UNIVARIATE.value,
-                "feature_name": feature_name,
-                "candidate_id": evaluation.candidate_id,
-            },
-        )
-        performance: list[dict[str, object]] = []
-        for metric_key, label in _PERFORMANCE_METRICS:
-            path, values = _render_performance_history(
-                evaluation,
-                metric_key,
-                label,
-                candidate_root / "performance" / f"{metric_key}.png",
-            )
-            destination = f"model_metrics/models/{evaluation.candidate_id}/performance"
-            port.log_artifact(feature_run_id, str(path), destination)
-            performance.append(
-                {
-                    "metric_key": metric_key,
-                    "artifact_path": f"{destination}/{path.name}",
-                    "source_hash": sha256(repr(values).encode()).hexdigest(),
-                }
-            )
-        em_entry, summary = render_em_convergence(evaluation, feature_name, root / "models")
-        em_destination = f"model_metrics/models/{evaluation.candidate_id}/optimization"
-        port.log_artifact(feature_run_id, em_entry.png_path, em_destination)
-        port.log_artifact(feature_run_id, em_entry.svg_path, em_destination)
-        try:
-            port.log_model_metric_points(model_id, _model_metric_points(evaluation, aggregate))
-            port.log_model_artifacts(model_id, str(candidate_root))
-            port.finalize_logged_model(model_id)
-        except BaseException:
-            with suppress(BaseException):
-                port.finalize_logged_model(model_id, failed=True)
-            raise
-        candidates.append(
-            {
-                "candidate_id": evaluation.candidate_id,
-                "availability": "available" if summary.available else "unavailable",
-                "unavailable_reason": summary.unavailable_reason,
-                "performance": performance,
-                "em_convergence": {
-                    "artifact_path": f"{em_destination}/{Path(em_entry.png_path).name}",
-                    "source_hash": em_entry.source_artifact_hash,
-                },
-            }
-        )
-    comparison_root = root / "comparisons"
-    oos_path = _render_oos_comparison(
-        grid, comparison_root / "oos_predictive_loglik_per_obs_all_models.png"
-    )
-    port.log_artifact(
-        feature_run_id,
-        str(oos_path),
-        "model_metrics/comparisons",
-    )
-    train_path = _render_train_refit_comparison(
-        grid, comparison_root / "train_loglik_per_refit_all_models.png"
-    )
-    port.log_artifact(feature_run_id, str(train_path), "model_metrics/comparisons")
-    em_entry, _ = render_em_convergence_comparison(grid.evaluations, feature_name, comparison_root)
-    port.log_artifact(feature_run_id, em_entry.png_path, "model_metrics/comparisons")
-    port.log_artifact(feature_run_id, em_entry.svg_path, "model_metrics/comparisons")
-    manifest_path = root / "manifest.json"
-    _write_json(
-        manifest_path,
-        {
-            "feature_name": feature_name,
-            "candidate_ids": [item.candidate_id for item in grid.evaluations],
-            "candidates": candidates,
-            "comparisons": {
-                "oos_predictive_loglik_per_obs_all_models": (
-                    "model_metrics/comparisons/oos_predictive_loglik_per_obs_all_models.png"
-                ),
-                "train_loglik_per_refit_all_models": (
-                    "model_metrics/comparisons/train_loglik_per_refit_all_models.png"
-                ),
-                "em_convergence_all_models": (
-                    "model_metrics/comparisons/em_convergence_all_models.png"
-                ),
-            },
-        },
-    )
-    port.log_artifact(feature_run_id, str(manifest_path), "model_metrics")
-
-
-def _emit_delta_parent_comparison(
-    port: TrackingPort,
-    parent_run_id: str,
-    directory: Path,
-    grids: tuple[CandidateGridEvaluation, ...],
-) -> None:
-    comparison_root = directory / "model_metrics" / "comparisons"
-    plot_path = _render_train_refit_comparison_all_features(
-        grids,
-        comparison_root / "train_loglik_per_refit_all_features_all_models.png",
-    )
-    port.log_artifact(parent_run_id, str(plot_path), "model_metrics/comparisons")
-    model_id = port.create_logged_model(
-        name="delta1_univariate_comparison",
-        source_run_id=parent_run_id,
-        model_type="comparison",
-        tags={
-            "evaluation_id": EvaluationId.DELTA1_UNIVARIATE.value,
-            "comparison_scope": "all_features_all_models",
-        },
-    )
-    try:
-        port.log_model_artifacts(model_id, str(comparison_root))
-        port.finalize_logged_model(model_id)
-    except BaseException:
-        with suppress(BaseException):
-            port.finalize_logged_model(model_id, failed=True)
-        raise
-
-
-def _delta_feature_payload(port: TrackingPort, grid: CandidateGridEvaluation) -> PayloadEmitter:
-    def emit(run_id: str, directory: Path) -> None:
-        _emit_delta_model_metrics(port, run_id, directory, grid)
-
-    return emit
-
-
-def _delta_candidate_payload(
-    port: TrackingPort, candidate: WalkForwardEvaluation
-) -> PayloadEmitter:
-    def emit(run_id: str, _directory: Path) -> None:
-        port.log_metric_points(run_id, _em_metric_points(summarize_em_convergence(candidate)))
-
-    return emit
-
-
-def _track_grid(
-    port: TrackingPort,
-    writer: StatisticsWriter,
-    grid: CandidateGridEvaluation,
-    parent_run_id: str,
-) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        (
-            candidate.candidate_id,
-            track_statistics_run(
-                port,
-                writer,
-                run_name=candidate.candidate_id,
-                parent_run_id=parent_run_id,
-                statistics=_running_statistics(
-                    EvaluationId.MEDOID_MULTIVARIATE,
-                    RunType.CANDIDATE,
-                    candidate.candidate_id,
-                    _candidate_evidence(grid, candidate.candidate_id),
-                ),
-            )[0],
-        )
-        for candidate in grid.evaluations
-    )
-
-
-def _v4_configuration_record(configuration: FinalSelectedConfiguration) -> dict[str, object]:
+def _configuration_record(configuration: FinalSelectedConfiguration) -> dict[str, object]:
     return {
         "feature_order": list(configuration.feature_order),
         "candidate_id": configuration.candidate_id,
@@ -567,27 +152,28 @@ def _v4_configuration_record(configuration: FinalSelectedConfiguration) -> dict[
     }
 
 
-def _v4_aggregate_record(aggregate: CandidateAggregate) -> dict[str, object]:
+def _aggregate_record(aggregate: object) -> dict[str, object]:
     return {
-        "candidate_id": aggregate.candidate_id,
-        "state_count": aggregate.state_count,
-        "planned_fold_count": aggregate.planned_fold_count,
-        "valid_fold_count": aggregate.valid_fold_count,
-        "invalid_fold_count": aggregate.invalid_fold_count,
-        "valid_fold_rate": aggregate.valid_fold_rate,
-        "passes_valid_fold_rate_gate": aggregate.passes_valid_fold_rate_gate,
-        "oos_predictive_loglik_mean": aggregate.oos_predictive_loglik_mean,
-        "oos_predictive_loglik_std": aggregate.oos_predictive_loglik_std,
-        "oos_predictive_loglik_worst_fold": aggregate.oos_predictive_loglik_worst_fold,
-        "oos_predictive_loglik_best_fold": aggregate.oos_predictive_loglik_best_fold,
-        "bic_mean": aggregate.bic_mean,
-        "aic_mean": aggregate.aic_mean,
+        name: getattr(aggregate, name)
+        for name in (
+            "candidate_id",
+            "state_count",
+            "planned_fold_count",
+            "valid_fold_count",
+            "invalid_fold_count",
+            "valid_fold_rate",
+            "passes_valid_fold_rate_gate",
+            "oos_predictive_loglik_mean",
+            "oos_predictive_loglik_std",
+            "oos_predictive_loglik_worst_fold",
+            "oos_predictive_loglik_best_fold",
+            "bic_mean",
+            "aic_mean",
+        )
     }
 
 
-def _v4_outer_record(fold: OuterFoldResult) -> dict[str, object]:
-    """Persist fold outcome primitives, but no model binary or OOS probability rows."""
-
+def _outer_record(fold: OuterFoldResult) -> dict[str, object]:
     return {
         "fold_id": f"outer_fold_{fold.fold_index:03d}",
         "fold_index": fold.fold_index,
@@ -595,7 +181,7 @@ def _v4_outer_record(fold: OuterFoldResult) -> dict[str, object]:
         "train_end": fold.train_end.isoformat(),
         "test_start": fold.test_start.isoformat(),
         "test_end": fold.test_end.isoformat(),
-        "final_configuration": _v4_configuration_record(fold.final_configuration),
+        "final_configuration": _configuration_record(fold.final_configuration),
         "oos_predictive_loglik_per_observation": fold.oos_predictive_loglik_per_observation,
         "state_identity": fold.state_identity,
         "teacher_reference_hash": fold.teacher_reference_hash,
@@ -606,25 +192,17 @@ def _v4_outer_record(fold: OuterFoldResult) -> dict[str, object]:
     }
 
 
-def _v4_selected_fold_evidence(
+def _selected_fold_evidence(
     fold: OuterFoldResult,
     selection: V4ConfigurationSelection,
 ) -> dict[str, object]:
-    """Return complete fold-local v4 evidence in JSON primitives only.
-
-    This is intentionally a compact, model-binary-free mirror of every
-    TRAIN-only decision.  Prefix likelihood aggregates are retained in their
-    exact local candidate records only; no cross-prefix likelihood ranking is
-    constructed here or in the plots.
-    """
-
-    quality = selection.quality
-    teacher = selection.teacher_evaluation
-    teacher_reference = selection.teacher_reference
     final_grid = selection.final_grid
     final_selection = final_grid.selection
     if final_selection is None:
         raise ValueError("tracked global v4 selection requires a final-grid champion")
+    quality = selection.quality
+    teacher = selection.teacher_evaluation
+    reference = selection.teacher_reference
     return {
         "identity": {
             "evaluation_id": GLOBAL_V4_EVALUATION_ID,
@@ -637,8 +215,8 @@ def _v4_selected_fold_evidence(
             "quality_result_hash": quality.result_hash,
             "distance_matrix_hash": selection.distance.matrix_hash,
             "cluster_solution_hash": selection.clusters.solution_hash,
-            "teacher_reference_hash": teacher_reference.reference_hash,
-            "inner_plan_hash": teacher_reference.inner_plan_hash,
+            "teacher_reference_hash": reference.reference_hash,
+            "inner_plan_hash": reference.inner_plan_hash,
             "final_grid_plan_hash": final_grid.candidate_grid.evaluation_plan_hash,
         },
         "input": {
@@ -694,12 +272,12 @@ def _v4_selected_fold_evidence(
             "mean_distances": [list(item) for item in selection.prototypes.mean_distances],
         },
         "teacher": {
-            "candidate_id": teacher_reference.candidate_id,
-            "state_count": teacher_reference.state_count,
-            "reference_hash": teacher_reference.reference_hash,
-            "prototype_features": list(teacher_reference.prototype_features),
-            "valid_inner_fold_ids": list(teacher_reference.valid_inner_fold_ids),
-            "inner_plan_hash": teacher_reference.inner_plan_hash,
+            "candidate_id": reference.candidate_id,
+            "state_count": reference.state_count,
+            "reference_hash": reference.reference_hash,
+            "prototype_features": list(reference.prototype_features),
+            "valid_inner_fold_ids": list(reference.valid_inner_fold_ids),
+            "inner_plan_hash": reference.inner_plan_hash,
             "selection_candidate_id": teacher.provisional_candidate_id,
             "selection_state_count": teacher.provisional_state_count,
             "selection_no_reason": teacher.no_selection_reason,
@@ -750,33 +328,30 @@ def _v4_selected_fold_evidence(
             "feature_order": list(final_grid.candidate_grid.feature_order),
             "evaluation_plan_hash": final_grid.candidate_grid.evaluation_plan_hash,
             "candidate_aggregates": [
-                _v4_aggregate_record(item) for item in final_grid.candidate_grid.aggregates
+                _aggregate_record(item) for item in final_grid.candidate_grid.aggregates
             ],
             "champion_candidate_id": final_selection.champion_candidate_id,
             "champion_state_count": final_selection.champion_state_count,
             "ranked_candidate_ids": list(final_selection.ranked_candidate_ids),
         },
-        "outer_folds": [_v4_outer_record(fold)],
+        "outer_folds": [_outer_record(fold)],
         "agreement": {
             "outer_teacher_final_soft_nmi": fold.outer_teacher_final_soft_nmi,
             "outer_shared_timestamp_count": fold.outer_shared_timestamp_count,
             "teacher_reference_hash": fold.teacher_reference_hash,
         },
-        "validity": {
-            "valid": fold.valid,
-            "failure_reason": fold.failure_reason,
-        },
+        "validity": {"valid": fold.valid, "failure_reason": fold.failure_reason},
         "stability": {"adjacent_cluster_membership_jaccard": []},
     }
 
 
-def _v4_failed_fold_evidence(fold: OuterFoldResult) -> dict[str, object]:
+def _failed_fold_evidence(fold: OuterFoldResult) -> dict[str, object]:
     return {
         "identity": {
             "evaluation_id": GLOBAL_V4_EVALUATION_ID,
             "outer_fold_id": f"outer_fold_{fold.fold_index:03d}",
         },
-        "outer_folds": [_v4_outer_record(fold)],
+        "outer_folds": [_outer_record(fold)],
         "validity": {"valid": False, "failure_reason": fold.failure_reason},
         "failure": {
             "code": "OuterFoldFailure",
@@ -785,7 +360,125 @@ def _v4_failed_fold_evidence(fold: OuterFoldResult) -> dict[str, object]:
     }
 
 
-def _validate_global_v4_tracking_inputs(
+def build_global_v4_evidence(
+    result: AdaptiveEvaluationResult,
+    *,
+    catalog: FeatureCatalogSnapshot,
+    snapshot: FeatureSnapshot,
+    profile: ModelProfile,
+    selections: Mapping[int, V4ConfigurationSelection],
+    repository_commit_sha: str,
+) -> GlobalV4Evidence:
+    """Build the complete model-binary-free evidence bundle for one v4 run."""
+
+    if result.source_build_id != catalog.lineage.source_build_id:
+        raise ValueError("global v4 evidence source build differs from catalog lineage")
+    if result.catalog_hash != catalog.catalog_hash:
+        raise ValueError("global v4 evidence catalog differs from result")
+    if snapshot.lineage != catalog.lineage:
+        raise ValueError("global v4 evidence snapshot lineage differs from catalog")
+    if snapshot.feature_names != catalog.feature_names:
+        raise ValueError("global v4 evidence snapshot columns differ from catalog")
+    if not repository_commit_sha or repository_commit_sha.strip() != repository_commit_sha:
+        raise ValueError("repository commit identity must be non-empty and trimmed")
+    outer_plan = plan_walk_forward(
+        tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
+    )
+    fold_evidence = tuple(
+        (
+            _selected_fold_evidence(fold, selections[fold.fold_index])
+            if fold.fold_index in selections
+            else _failed_fold_evidence(fold)
+        )
+        for fold in result.outer_folds
+    )
+    selected = tuple(
+        item for item in fold_evidence if "quality" in item and "feature_scores" in item
+    )
+    failures = tuple(
+        {
+            "fold_index": fold.fold_index,
+            "reason": fold.failure_reason or "outer fold did not complete",
+        }
+        for fold in result.outer_folds
+        if not fold.valid
+    )
+    return GlobalV4Evidence(
+        source_build_id=result.source_build_id,
+        source_data_hash=catalog.lineage.data_sha256,
+        catalog_hash=catalog.catalog_hash,
+        profile_hash=profile.profile_hash,
+        repository_hash=sha256(repository_commit_sha.encode("utf-8")).hexdigest(),
+        outer_plan_hash=outer_plan.plan_hash,
+        evidence={
+            "identity": {
+                "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+                "policy_id": "xetra_global_regime_v4",
+                "profile_id": profile.profile_id,
+                "profile_config_version": profile.profile_config_version,
+                "outer_fold_count": len(result.outer_folds),
+            },
+            "lineage": {
+                "source_build_id": result.source_build_id,
+                "source_dataset": catalog.lineage.source_dataset,
+                "source_table": catalog.lineage.source_table,
+                "source_data_sha256": catalog.lineage.data_sha256,
+                "source_catalog_hash": catalog.catalog_hash,
+                "materialized_feature_data_sha256": snapshot.materialized_feature_data_sha256,
+                "repository_commit_sha": repository_commit_sha,
+            },
+            "input": {
+                "feature_order": list(catalog.feature_names),
+                "source_row_count": len(snapshot.rows),
+                "source_min_timestamp": snapshot.rows[0].timestamp.isoformat(),
+                "source_max_timestamp": snapshot.rows[-1].timestamp.isoformat(),
+                "data_time_semantics": catalog.lineage.data_time_semantics,
+            },
+            "quality": {"folds": [item["quality"] for item in selected]},
+            "distance": {"folds": [item["distance"] for item in selected]},
+            "clustering": {"folds": [item["clustering"] for item in selected]},
+            "prototypes": {"folds": [item["prototypes"] for item in selected]},
+            "teacher": {"folds": [item["teacher"] for item in selected]},
+            "feature_scores": {"folds": [item["feature_scores"] for item in selected]},
+            "prefix_search": {"folds": [item["prefix_search"] for item in selected]},
+            "final_grid": {"folds": [item["final_grid"] for item in selected]},
+            "outer_folds": [_outer_record(fold) for fold in result.outer_folds],
+            "agreement": {
+                "folds": [
+                    {
+                        "fold_index": fold.fold_index,
+                        "outer_teacher_final_soft_nmi": fold.outer_teacher_final_soft_nmi,
+                        "outer_shared_timestamp_count": fold.outer_shared_timestamp_count,
+                        "oos_predictive_loglik_per_observation": (
+                            fold.oos_predictive_loglik_per_observation
+                        ),
+                    }
+                    for fold in result.outer_folds
+                ],
+                "soft_nmi_mean": result.soft_nmi_mean,
+                "soft_nmi_population_std": result.soft_nmi_population_std,
+                "soft_nmi_worst": result.soft_nmi_worst,
+            },
+            "validity": {
+                "valid_fold_count": result.valid_fold_count,
+                "planned_fold_count": len(result.outer_folds),
+                "valid_fold_rate": result.valid_fold_rate,
+                "latest_complete_fold_valid": result.latest_complete_fold_valid,
+                "production_eligible": result.production_eligible,
+                "failure_reason": result.failure_reason,
+            },
+            "stability": {
+                "selection_sink": "outer_fold_train_only",
+                "fold_feature_discovery_hashes": [
+                    fold.final_configuration.feature_discovery_hash for fold in result.outer_folds
+                ],
+            },
+            **({"failure": {"outer_fold_failures": list(failures)}} if failures else {}),
+        },
+    )
+
+
+def _validate_inputs(
     evidence: GlobalV4Evidence,
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
@@ -794,21 +487,21 @@ def _validate_global_v4_tracking_inputs(
         raise ValueError("global v4 tracking source build differs from canonical evidence")
     if result.catalog_hash != evidence.catalog_hash:
         raise ValueError("global v4 tracking catalog differs from canonical evidence")
-    fold_by_index = {fold.fold_index: fold for fold in result.outer_folds}
-    unknown = set(selections) - set(fold_by_index)
-    if unknown:
+    folds = {fold.fold_index: fold for fold in result.outer_folds}
+    if set(selections) - set(folds):
         raise ValueError("global v4 tracking selections reference unknown outer folds")
-    missing_valid = {fold.fold_index for fold in result.outer_folds if fold.valid} - set(selections)
-    if missing_valid:
+    missing = {fold.fold_index for fold in result.outer_folds if fold.valid} - set(selections)
+    if missing:
         raise ValueError(
             "global v4 tracking requires selection evidence for every valid outer fold"
         )
-    for fold_index, selection in selections.items():
-        fold = fold_by_index[fold_index]
-        if selection.source_build_id != result.source_build_id:
-            raise ValueError("global v4 tracked selection source build differs from result")
-        if selection.catalog_hash != result.catalog_hash:
-            raise ValueError("global v4 tracked selection catalog differs from result")
+    for index, selection in selections.items():
+        fold = folds[index]
+        if (
+            selection.source_build_id != result.source_build_id
+            or selection.catalog_hash != result.catalog_hash
+        ):
+            raise ValueError("global v4 tracked selection lineage differs from result")
         if fold.valid and (
             selection.final_candidate.candidate_id != fold.final_configuration.candidate_id
             or selection.final_candidate.feature_order != fold.final_configuration.feature_order
@@ -823,51 +516,158 @@ def track_global_v4_evaluation(
     evidence: GlobalV4Evidence,
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
+    metric_ledger_root: str | Path | None = None,
 ) -> GlobalV4TrackingResult:
-    """Track global v4 as one parent and one fail-closed child per outer fold.
+    """Track one v4 parent and one child dossier per outer fold."""
 
-    ``evidence`` is the canonical statistical payload; its hash intentionally
-    contains neither MLflow run IDs nor run timestamps.  The local evidence
-    artifact is written and hash-checked before it is uploaded unchanged.
-    """
-
-    _validate_global_v4_tracking_inputs(evidence, result, selections)
+    _validate_inputs(evidence, result, selections)
     tracked_folds: list[tuple[str, str]] = []
+    logged_model_ids: list[tuple[str, str]] = []
     plot_manifest_path: Path | None = None
+    metric_ledger = MetricExportLedger(metric_ledger_root) if metric_ledger_root else None
 
     def emit_parent(parent_run_id: str, directory: Path) -> None:
         nonlocal plot_manifest_path
-        canonical_path = directory / "global_v4_evidence.json"
-        canonical_path.write_bytes(evidence.canonical_json())
-        if sha256(canonical_path.read_bytes()).hexdigest() != evidence.evidence_hash:
+        evidence_path = directory / "global_v4_evidence.json"
+        evidence_path.write_bytes(evidence.canonical_json())
+        if sha256(evidence_path.read_bytes()).hexdigest() != evidence.evidence_hash:
             raise ValueError("global v4 canonical evidence hash mismatch")
-        port.log_params(parent_run_id, {"global_v4_evidence_sha256": evidence.evidence_hash})
-        port.log_artifact(parent_run_id, str(canonical_path), "evidence")
-
+        identity_value = evidence.evidence.get("identity", {})
+        lineage_value = evidence.evidence.get("lineage", {})
+        validity_value = evidence.evidence.get("validity", {})
+        identity = identity_value if isinstance(identity_value, Mapping) else {}
+        lineage = lineage_value if isinstance(lineage_value, Mapping) else {}
+        validity = validity_value if isinstance(validity_value, Mapping) else {}
+        port.log_params(
+            parent_run_id,
+            {
+                "global_v4_evidence_sha256": evidence.evidence_hash,
+                "metric_catalog_version": str(METRIC_CATALOG_VERSION),
+                "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+                "profile_id": str(identity.get("profile_id", "xetra")),
+                "profile_config_version": str(identity.get("profile_config_version", 4)),
+                "source_build_id": str(lineage.get("source_build_id", evidence.source_build_id)),
+                "source_data_sha256": str(
+                    lineage.get("source_data_sha256", evidence.source_data_hash)
+                ),
+                "source_catalog_hash": str(
+                    lineage.get("source_catalog_hash", evidence.catalog_hash)
+                ),
+                "profile_hash": evidence.profile_hash,
+                "repository_hash": evidence.repository_hash,
+                "outer_plan_hash": evidence.outer_plan_hash,
+                "outer_fold_count": str(identity.get("outer_fold_count", len(result.outer_folds))),
+                "valid_fold_count": str(validity.get("valid_fold_count", result.valid_fold_count)),
+                "valid_fold_rate": str(validity.get("valid_fold_rate", result.valid_fold_rate)),
+                "production_eligible": str(
+                    validity.get("production_eligible", result.production_eligible)
+                ).lower(),
+            },
+        )
+        port.log_artifact(parent_run_id, str(evidence_path), "evidence")
         for fold in result.outer_folds:
             fold_id = f"outer_fold_{fold.fold_index:03d}"
             selection = selections.get(fold.fold_index)
             fold_evidence = (
-                _v4_selected_fold_evidence(fold, selection)
+                _selected_fold_evidence(fold, selection)
                 if selection is not None
-                else _v4_failed_fold_evidence(fold)
+                else _failed_fold_evidence(fold)
             )
-            # RunType has no outer-fold value; CANDIDATE is the existing generic
-            # child type while the immutable identity names this exact outer fold.
-            child_run_id, _ = track_statistics_run(
+            child_id, _ = track_statistics_run(
                 port,
                 writer,
                 run_name=fold_id,
                 parent_run_id=parent_run_id,
-                statistics=_running_statistics(
-                    GLOBAL_V4_EVALUATION_ID,
-                    RunType.CANDIDATE,
-                    fold_id,
-                    fold_evidence,
-                ),
+                statistics=_running_statistics(fold_id, RunType.CANDIDATE, fold_evidence),
             )
-            tracked_folds.append((fold_id, child_run_id))
-
+            tracked_folds.append((fold_id, child_id))
+            selection = selections.get(fold.fold_index)
+            port.log_params(
+                child_id,
+                {
+                    "metric_catalog_version": str(METRIC_CATALOG_VERSION),
+                    "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+                    "outer_fold_id": fold_id,
+                    "outer_fold_index": str(fold.fold_index),
+                    "train_start": fold.train_start.isoformat(),
+                    "train_end": fold.train_end.isoformat(),
+                    "test_start": fold.test_start.isoformat(),
+                    "test_end": fold.test_end.isoformat(),
+                    "valid": str(fold.valid).lower(),
+                    "failure_reason": fold.failure_reason or "",
+                    "candidate_id": fold.final_configuration.candidate_id,
+                    "feature_discovery_hash": (
+                        selection.feature_discovery_hash if selection is not None else ""
+                    ),
+                },
+            )
+            candidates = (
+                tuple(getattr(selection.final_grid.candidate_grid, "evaluations", ()))
+                if selection is not None
+                else ()
+            )
+            if selection is not None:
+                final_grid_plan = getattr(selection, "final_grid_plan", None)
+                if candidates and final_grid_plan is None:
+                    raise ValueError("selected v4 evaluation is missing its final-grid plan")
+                resolved_final_grid_plan = cast(WalkForwardPlan, final_grid_plan)
+                model_root = directory / "logged_models" / fold_id
+                dataset_snapshot_key = (
+                    f"dataset:{evidence.source_build_id}:{evidence.source_data_hash}:"
+                    f"{evidence.catalog_hash}"
+                )
+                evaluation_run_key = f"{GLOBAL_V4_EVALUATION_ID}:{evidence.evidence_hash}"
+                for candidate in candidates:
+                    candidate_dir = model_root / candidate.candidate_id
+                    candidate_dir.mkdir(parents=True, exist_ok=True)
+                    aggregate = next(
+                        item
+                        for item in selection.final_grid.candidate_grid.aggregates
+                        if item.candidate_id == candidate.candidate_id
+                    )
+                    _write_json(
+                        candidate_dir / "candidate_evidence.json",
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "feature_order": list(candidate.feature_order),
+                            "source_build_id": candidate.source_build_id,
+                            "evaluation_plan_hash": candidate.evaluation_plan_hash,
+                            "aggregate": _aggregate_record(aggregate),
+                            "selection_context": _selected_fold_evidence(fold, selection),
+                        },
+                    )
+                    model_id = _project_candidate_logged_model(
+                        port,
+                        evaluation=candidate,
+                        source_run_id=child_id,
+                        source_build_id=evidence.source_build_id,
+                        plan=resolved_final_grid_plan,
+                        candidate_dir=candidate_dir,
+                        dataset_snapshot_key=dataset_snapshot_key,
+                        evaluation_run_key=evaluation_run_key,
+                        scope="outer_fold_candidate",
+                        outer_fold_id=fold_id,
+                        model_name=f"{evaluation_run_key}:{fold_id}:{candidate.candidate_id}",
+                        extra_metric_points=(
+                            model_metric_points(
+                                candidate,
+                                fold_timestamps=tuple(
+                                    item.test_end for item in resolved_final_grid_plan.folds
+                                ),
+                            )
+                            + outer_selection_metric_points(selection, fold)
+                        ),
+                        extra_tags={
+                            "regime_engine.feature_discovery_hash": (
+                                selection.feature_discovery_hash
+                            ),
+                            "regime_engine.selected": str(
+                                candidate.candidate_id == fold.final_configuration.candidate_id
+                            ).lower(),
+                        },
+                        metric_ledger=metric_ledger,
+                    )
+                    logged_model_ids.append((f"{fold_id}:{candidate.candidate_id}", model_id))
         entries = render_global_v4_diagnostics(result, selections, directory)
         manifest_entries: list[dict[str, object]] = []
         for entry in entries:
@@ -890,130 +690,16 @@ def track_global_v4_evaluation(
         port,
         writer,
         run_name=GLOBAL_V4_EVALUATION_ID,
-        statistics=_running_statistics(
-            GLOBAL_V4_EVALUATION_ID,
-            RunType.PARENT,
-            GLOBAL_V4_EVALUATION_ID,
-            evidence.evidence,
-        ),
+        statistics=_running_statistics(GLOBAL_V4_EVALUATION_ID, RunType.PARENT, evidence.evidence),
         payload_emitter=emit_parent,
     )
     if plot_manifest_path is None:
         raise RuntimeError("global v4 plot manifest was not created")
     return GlobalV4TrackingResult(
-        parent_run_id=parent_run_id,
-        outer_fold_run_ids=tuple(tracked_folds),
-        statistics_root=str(writer.preflight()),
-        global_evidence_hash=evidence.evidence_hash,
-        plot_manifest_path=str(plot_manifest_path),
-    )
-
-
-def track_evaluation_result(
-    port: TrackingPort,
-    writer: StatisticsWriter,
-    *,
-    result: EvaluationResult,
-) -> EvaluationTrackingResult:
-    """Track one v3 evaluation result with a one-to-one immutable local mirror per run."""
-
-    grids: tuple[CandidateGridEvaluation, ...]
-    feature_grids: tuple[UnivariateFeatureGrid, ...]
-    if isinstance(result, MedoidMultivariateEvaluation):
-        evaluation_id = EvaluationId.MEDOID_MULTIVARIATE
-        lineage, feature_spec, grids = result.lineage, result.feature_spec, (result.candidate_grid,)
-        champion, reason = (
-            result.medoid_multivariate_statistical_champion,
-            result.no_champion_reason,
-        )
-        feature_grids = ()
-    elif isinstance(result, MedoidUnivariateEvaluation):
-        evaluation_id = EvaluationId.MEDOID_UNIVARIATE
-        lineage, feature_spec = result.lineage, result.feature_spec
-        grids = ()
-        champion, reason = result.medoid_univariate_evaluation_champion, result.no_champion_reason
-        feature_grids = result.feature_grids
-    else:
-        evaluation_id = EvaluationId.DELTA1_UNIVARIATE
-        lineage = result.lineage
-        feature_spec = FeatureSpec(
-            evaluation_id, tuple(grid.feature_name for grid in result.feature_grids)
-        )
-        grids = ()
-        champion, reason = result.delta1_univariate_evaluation_champion, result.no_champion_reason
-        feature_grids = result.feature_grids
-    parent_evidence: dict[str, object] = {
-        "identity": {"evaluation_id": evaluation_id.value},
-        "lineage": asdict(lineage),
-        "input": {"feature_order": feature_spec.feature_order},
-        "champion": {"candidate_id": champion, "no_champion_reason": reason},
-    }
-    parent_run_id, _ = track_statistics_run(
-        port,
-        writer,
-        run_name=evaluation_id.value,
-        statistics=_running_statistics(
-            evaluation_id, RunType.PARENT, evaluation_id.value, parent_evidence
-        ),
-        payload_emitter=(
-            (
-                lambda run_id, directory: _emit_delta_parent_comparison(
-                    port,
-                    run_id,
-                    directory,
-                    tuple(feature_grid.candidate_grid for feature_grid in feature_grids),
-                )
-            )
-            if evaluation_id is EvaluationId.DELTA1_UNIVARIATE
-            else None
-        ),
-    )
-    feature_run_ids: list[tuple[str, str]] = []
-    candidate_run_ids: list[tuple[str, str]] = []
-    for grid in grids:
-        candidate_run_ids.extend(_track_grid(port, writer, grid, parent_run_id))
-    for feature_grid in feature_grids:
-        feature_run_id, _ = track_statistics_run(
-            port,
-            writer,
-            run_name=feature_grid.feature_name,
-            parent_run_id=parent_run_id,
-            statistics=_running_statistics(
-                evaluation_id,
-                RunType.FEATURE,
-                feature_grid.feature_name,
-                {"input": {"feature_name": feature_grid.feature_name}},
-            ),
-            payload_emitter=(
-                _delta_feature_payload(port, feature_grid.candidate_grid)
-                if evaluation_id is EvaluationId.DELTA1_UNIVARIATE
-                else None
-            ),
-        )
-        feature_run_ids.append((feature_grid.feature_name, feature_run_id))
-        for candidate in feature_grid.candidate_grid.evaluations:
-            candidate_run_id, _ = track_statistics_run(
-                port,
-                writer,
-                run_name=candidate.candidate_id,
-                parent_run_id=feature_run_id,
-                statistics=_running_statistics(
-                    evaluation_id,
-                    RunType.CANDIDATE,
-                    candidate.candidate_id,
-                    _candidate_evidence(
-                        feature_grid.candidate_grid,
-                        candidate.candidate_id,
-                        include_optimization=evaluation_id is EvaluationId.DELTA1_UNIVARIATE,
-                    ),
-                ),
-                payload_emitter=(
-                    _delta_candidate_payload(port, candidate)
-                    if evaluation_id is EvaluationId.DELTA1_UNIVARIATE
-                    else None
-                ),
-            )
-            candidate_run_ids.append((candidate.candidate_id, candidate_run_id))
-    return EvaluationTrackingResult(
-        parent_run_id, tuple(feature_run_ids), tuple(candidate_run_ids), str(writer.preflight())
+        parent_run_id,
+        tuple(tracked_folds),
+        str(writer.preflight()),
+        evidence.evidence_hash,
+        str(plot_manifest_path),
+        tuple(logged_model_ids),
     )

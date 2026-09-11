@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -14,6 +15,7 @@ from mlflow.tracking import MlflowClient
 
 from market_regime_engine.mlflow_support.model_package import load_production_package
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
+from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 
 REGISTERED_MODEL_NAME = "regime-xetra"
@@ -114,18 +116,21 @@ def _require_alias(alias: str) -> None:
         raise ValueError("only challenger/champion aliases are permitted")
 
 
-def _package_uri(package_directory: str | Path) -> str:
-    package_path = Path(package_directory).resolve()
-    if not package_path.is_dir():
-        raise ValueError("production package directory does not exist")
-    return package_path.as_uri()
-
-
 class MlflowModelRegistry:
     """Concrete registry boundary with production-package validation and audited CAS."""
 
     def __init__(self, client: _RegistryClient | None = None) -> None:
-        self._client = client if client is not None else cast(_RegistryClient, MlflowClient())
+        if client is not None:
+            self._client = client
+            return
+        settings = MLflowSettings.from_environment()
+        self._client = cast(
+            _RegistryClient,
+            MlflowClient(
+                tracking_uri=settings.tracking_uri,
+                registry_uri=settings.registry_uri,
+            ),
+        )
 
     def register_production_model(
         self,
@@ -136,7 +141,7 @@ class MlflowModelRegistry:
         package_source_uri: str | None = None,
     ) -> RegisteredProductionModel:
         if type(artifact) is not ProductionModelArtifact:
-            raise TypeError("only PR-063 ProductionModelArtifact objects can be registered")
+            raise TypeError("only v4 ProductionModelArtifact objects can be registered")
         _require_model_name(artifact.registered_model)
         package_path = Path(package_directory).resolve()
         packaged = load_production_package(package_path)
@@ -152,33 +157,55 @@ class MlflowModelRegistry:
                 raise
             self._client.create_registered_model(REGISTERED_MODEL_NAME)
 
-        source = (
-            package_source_uri if package_source_uri is not None else _package_uri(package_path)
-        )
-        if not source:
-            raise ValueError("production package source URI cannot be empty")
+        if package_source_uri is None or not package_source_uri.startswith("runs:/"):
+            raise ValueError(
+                "production registration requires a remote MLflow runs:/ package source URI"
+            )
+        source = package_source_uri
+        package_digest = sha256((package_path / "production_model.json").read_bytes()).hexdigest()
+        tags = {
+            "regime_engine.package_schema": "RegimeEngineProductionModel.v4",
+            "regime_engine.package_sha256": package_digest,
+            "regime_engine.profile_id": artifact.profile_id,
+            "regime_engine.profile_config_version": str(artifact.profile_config_version),
+            "regime_engine.candidate_id": artifact.candidate_id,
+            "regime_engine.source_build_id": artifact.source_build_id,
+            "regime_engine.source_data_sha256": artifact.source_data_sha256,
+            "regime_engine.source_catalog_hash": artifact.source_catalog_hash,
+            "regime_engine.validation_evidence_hash": artifact.validation_evidence_hash,
+            "regime_engine.feature_selection_definition_hash": (
+                artifact.feature_selection_definition_hash
+            ),
+            "regime_engine.feature_selection_execution_hash": (
+                artifact.feature_selection_execution_hash
+            ),
+            "regime_engine.evaluation_plan_hash": artifact.evaluation_plan_hash,
+            "regime_engine.validation_evaluation_cutoff": (
+                artifact.validation_evaluation_cutoff.isoformat().replace("+00:00", "Z")
+            ),
+            "regime_engine.deployment_selection_cutoff": (
+                artifact.deployment_selection_cutoff.isoformat().replace("+00:00", "Z")
+            ),
+            "regime_engine.state_identity_scope": artifact.state_identity_scope,
+            "regime_engine.trained_through_timestamp": (
+                artifact.trained_through_timestamp.isoformat().replace("+00:00", "Z")
+            ),
+        }
+        search = getattr(self._client, "search_model_versions", None)
+        if callable(search):
+            for existing in search("name='regime-xetra'"):
+                existing_tags = getattr(existing, "tags", {})
+                if all(existing_tags.get(key) == value for key, value in tags.items()):
+                    return RegisteredProductionModel(
+                        model_name=REGISTERED_MODEL_NAME,
+                        exact_version=str(existing.version),
+                        package_uri=str(existing.source),
+                    )
         version = self._client.create_model_version(
             name=REGISTERED_MODEL_NAME,
             source=source,
             description=description,
-            tags={
-                "regime_engine.package_schema": "RegimeEngineProductionModel.v1",
-                "regime_engine.profile_id": artifact.profile_id,
-                "regime_engine.profile_config_version": str(artifact.profile_config_version),
-                "regime_engine.candidate_id": artifact.candidate_id,
-                "regime_engine.source_build_id": artifact.source_build_id,
-                "regime_engine.source_data_sha256": artifact.source_data_sha256,
-                "regime_engine.feature_selection_definition_hash": (
-                    artifact.feature_selection_definition_hash
-                ),
-                "regime_engine.feature_selection_execution_hash": (
-                    artifact.feature_selection_execution_hash
-                ),
-                "regime_engine.evaluation_plan_hash": artifact.evaluation_plan_hash,
-                "regime_engine.trained_through_timestamp": (
-                    artifact.trained_through_timestamp.isoformat().replace("+00:00", "Z")
-                ),
-            },
+            tags=tags,
         )
         return RegisteredProductionModel(
             model_name=REGISTERED_MODEL_NAME,

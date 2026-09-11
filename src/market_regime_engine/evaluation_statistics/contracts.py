@@ -9,8 +9,6 @@ from enum import StrEnum
 from hashlib import sha256
 from math import isfinite
 
-from market_regime_engine.evaluations.contracts import EvaluationId
-
 SCHEMA_VERSION = 1
 GLOBAL_V4_SCHEMA_VERSION = 1
 GLOBAL_V4_EVALUATION_ID = "global_regime_v4"
@@ -23,7 +21,7 @@ _EVIDENCE_GROUPS = {
     "folds",
     "states",
     "aggregate",
-    "feature_selection",
+    "feature_discovery",
     "agreement",
     "champion",
     "optimization",
@@ -89,11 +87,10 @@ def _safe(value: object, field_name: str = "") -> None:
         raise ValueError("statistics values must be JSON primitives, mappings, or sequences")
 
 
-def _evaluation_id_value(value: EvaluationId | str) -> str:
-    result = value.value if isinstance(value, EvaluationId) else value
-    if not result or result.strip() != result:
+def _evaluation_id_value(value: str) -> str:
+    if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError("evaluation_id must be a non-empty trimmed string")
-    return result
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +162,7 @@ class GlobalV4Evidence:
 
 @dataclass(frozen=True, slots=True)
 class RunStatistics:
-    evaluation_id: EvaluationId | str
+    evaluation_id: str
     mlflow_run_id: str
     run_type: RunType
     run_name: str

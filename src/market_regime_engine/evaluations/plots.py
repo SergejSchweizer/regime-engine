@@ -535,14 +535,18 @@ def _final_grid_plots(
         aggregates = tuple(selection.final_grid.candidate_grid.aggregates)
         ids = tuple(item.candidate_id for item in aggregates)
         optional_scores = tuple(item.oos_predictive_loglik_mean for item in aggregates)
-        if len(ids) != 12 or any(value is None for value in optional_scores):
-            raise ValueError("final v4 plot requires all twelve comparable candidate aggregates")
-        scores = tuple(float(value) for value in optional_scores if value is not None)
+        if len(ids) != 12:
+            raise ValueError("final v4 plot requires the exact twelve configured candidates")
+        scores = tuple(float("nan") if value is None else float(value) for value in optional_scores)
+        unavailable = tuple(
+            candidate_id for candidate_id, score in zip(ids, scores, strict=True) if np.isnan(score)
+        )
         source = {
             "fold_id": fold_id,
             "feature_order": list(selection.final_candidate.feature_order),
             "plan_hash": selection.final_grid.candidate_grid.evaluation_plan_hash,
             "candidate_oos_predictive_loglik_mean": list(zip(ids, scores, strict=True)),
+            "unavailable_candidates": list(unavailable),
             "champion": selection.final_candidate.candidate_id,
         }
 
@@ -557,7 +561,12 @@ def _final_grid_plots(
             colors = [
                 _PALETTE[2] if candidate_id == champion else _PALETTE[0] for candidate_id in ids
             ]
-            axis.bar(positions, scores, color=colors)
+            axis.bar(
+                positions,
+                scores,
+                color=colors,
+                hatch=["//" if np.isnan(score) else "" for score in scores],
+            )
             axis.set_xticks(positions, ids, rotation=45, ha="right")
             _configure(
                 axis,
@@ -571,6 +580,15 @@ def _final_grid_plots(
                 handles=[
                     Rectangle((0, 0), 1, 1, color=_PALETTE[2], label="Selected champion"),
                     Rectangle((0, 0), 1, 1, color=_PALETTE[0], label="Other candidate"),
+                    Rectangle(
+                        (0, 0),
+                        1,
+                        1,
+                        facecolor="white",
+                        edgecolor="black",
+                        hatch="//",
+                        label="Unavailable candidate",
+                    ),
                 ],
                 fontsize=_LEGEND_SIZE,
             )
@@ -589,7 +607,11 @@ def _final_grid_plots(
                 x_axis_field="candidate_id",
                 x_axis_label="Canonical candidate ID",
                 y_axis_label="Mean OOS predictive log likelihood per observation",
-                legend_entries=("Selected champion", "Other candidate"),
+                legend_entries=(
+                    "Selected champion",
+                    "Other candidate",
+                    "Unavailable candidate",
+                ),
                 draw=draw,
                 candidate_id=selection.final_candidate.candidate_id,
                 fold_id=fold_id,
@@ -715,7 +737,7 @@ def _feature_frequency_plot(
         axis.set_xticks(positions, ordered, rotation=45, ha="right")
         _configure(
             axis,
-            title="Final feature-selection frequency across Outer-TRAIN folds",
+            title="Final feature-discovery frequency across Outer-TRAIN folds",
             x_label="Feature",
             y_label="Selection frequency (fraction of outer folds)",
         )
@@ -723,8 +745,8 @@ def _feature_frequency_plot(
 
     return _finish(
         root,
-        plot_type="feature_selection_frequency",
-        filename="feature_selection_frequency.png",
+        plot_type="feature_discovery_frequency",
+        filename="feature_discovery_frequency.png",
         source=source,
         source_metric_keys=("outer_folds.final_configuration.feature_order",),
         x_axis_field="feature_name",

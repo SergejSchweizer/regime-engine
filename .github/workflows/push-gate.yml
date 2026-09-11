@@ -34,6 +34,8 @@ jobs:
         run: |
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
+      - name: Zero-legacy repository audit
+        run: .venv/bin/python scripts/verify_zero_legacy.py
       - name: Dependency audit
         shell: bash
         run: |

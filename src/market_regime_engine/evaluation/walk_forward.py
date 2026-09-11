@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -39,6 +39,9 @@ from market_regime_engine.states.alignment import (
 )
 from market_regime_engine.states.signatures import StateSignature
 from market_regime_engine.training.multistart import MultistartResult, run_multistart
+
+if TYPE_CHECKING:
+    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 
 AdapterFactory = Callable[[], GaussianHMMAdapter]
 _TIMESTAMP_COLUMN = "timestamp_m1"
@@ -204,8 +207,8 @@ class WalkForwardEvaluation:
     alignment_reference_scaler: StandardScalerArtifact | None = None
 
     def __post_init__(self) -> None:
-        if self.profile_id != "xetra" or self.profile_config_version not in {1, 2, 3, 4}:
-            raise ValueError("walk-forward evaluation requires a supported xetra profile version")
+        if self.profile_id != "xetra" or self.profile_config_version != 4:
+            raise ValueError("walk-forward evaluation requires the Xetra v4 profile")
         if self.state_count not in (2, 3, 4, 5):
             raise ValueError("walk-forward evaluation supports exactly K2/K3/K4/K5")
         expected_candidates = {
@@ -307,11 +310,8 @@ def _validate_candidate_contract(
             or any(character not in "0123456789abcdef" for character in value)
         ):
             raise ValueError(f"resolved candidate {field_name} must be a lowercase SHA-256 digest")
-    contract_version = getattr(candidate, "feature_contract_version", 1)
-    if profile.profile_config_version == 4 and contract_version != 4:
-        raise ValueError("xetra v4 walk-forward candidates require feature contract version 4")
-    if profile.profile_config_version != 4 and contract_version != 1:
-        raise ValueError("legacy walk-forward candidates require feature contract version 1")
+    if getattr(candidate, "feature_contract_version", None) != 4:
+        raise ValueError("Xetra v4 walk-forward candidates require feature contract version 4")
 
 
 def _fold_source_frames(
@@ -472,11 +472,12 @@ def run_walk_forward_candidate(
     candidate: WalkForwardCandidate,
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
+    seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection."""
 
-    if profile.profile_id != "xetra" or profile.profile_config_version not in {1, 2, 3, 4}:
-        raise ValueError("walk-forward runner supports xetra profile configurations 1, 2, 3, and 4")
+    if profile.profile_id != "xetra" or profile.profile_config_version != 4:
+        raise ValueError("walk-forward runner supports only the Xetra v4 profile")
     _validate_candidate_contract(candidate, profile)
     if candidate.model_family == "gaussian_hmm":
         if candidate.state_count not in profile.gaussian_hmm.candidate_states:
@@ -530,19 +531,39 @@ def run_walk_forward_candidate(
             scaler = fit_standard_scaler(train_rows, candidate.feature_order)
             scaled_train = scaler.transform(train_rows)
             scaled_test = scaler.transform(test_rows)
+            checkpoint = (
+                None if seed_checkpoint_factory is None else seed_checkpoint_factory(fold.fold_id)
+            )
             if max_workers is None:
-                multistart = run_multistart(
-                    scaled_train,
-                    state_count=candidate.state_count,
-                    adapter_factory=adapter_factory,
-                )
+                if checkpoint is None:
+                    multistart = run_multistart(
+                        scaled_train,
+                        state_count=candidate.state_count,
+                        adapter_factory=adapter_factory,
+                    )
+                else:
+                    multistart = run_multistart(
+                        scaled_train,
+                        state_count=candidate.state_count,
+                        adapter_factory=adapter_factory,
+                        checkpoint=checkpoint,
+                    )
             else:
-                multistart = run_multistart(
-                    scaled_train,
-                    state_count=candidate.state_count,
-                    adapter_factory=adapter_factory,
-                    max_workers=max_workers,
-                )
+                if checkpoint is None:
+                    multistart = run_multistart(
+                        scaled_train,
+                        state_count=candidate.state_count,
+                        adapter_factory=adapter_factory,
+                        max_workers=max_workers,
+                    )
+                else:
+                    multistart = run_multistart(
+                        scaled_train,
+                        state_count=candidate.state_count,
+                        adapter_factory=adapter_factory,
+                        max_workers=max_workers,
+                        checkpoint=checkpoint,
+                    )
             artifact = multistart.winner.artifact
             if artifact.feature_order != candidate.feature_order:
                 raise ValueError("fitted model feature order differs from frozen resolved order")

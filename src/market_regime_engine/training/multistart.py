@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+import os
+import pickle
+import threading
+import warnings
+from collections.abc import Callable, Iterator
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
+from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
+from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
+
+if TYPE_CHECKING:
+    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 
 MULTISTART_SEEDS = (11, 23, 37, 53, 71, 89, 107, 131)
 MINIMUM_VALID_STARTS = 6
 MINIMUM_SUCCESS_RATE = 0.75
 TRAIN_LOGLIK_TIE_ABS_TOLERANCE = 1e-12
+_CPU_SLOT_COUNT = os.cpu_count() or 1
+_CPU_SLOTS = threading.BoundedSemaphore(_CPU_SLOT_COUNT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +132,14 @@ def _evaluate_start(
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
 
 
+def _pickleable(value: object) -> bool:
+    try:
+        pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+    except pickle.PickleError, TypeError, AttributeError:
+        return False
+    return True
+
+
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
     """Choose from starts tied to the exact global maximum likelihood."""
 
@@ -133,46 +154,179 @@ def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
     return min(tied_results, key=lambda result: result.seed)
 
 
+@contextmanager
+def _reserve_cpu_slots(requested: int) -> Iterator[int]:
+    """Reserve host CPU slots for one independent multistart batch."""
+
+    acquired = 0
+    target = min(max(1, requested), _CPU_SLOT_COUNT)
+    try:
+        while acquired < target:
+            if _CPU_SLOTS.acquire(blocking=False):
+                acquired += 1
+                continue
+            if acquired == 0:
+                _CPU_SLOTS.acquire()
+                acquired = 1
+            break
+        yield acquired
+    finally:
+        for _ in range(acquired):
+            _CPU_SLOTS.release()
+
+
 def run_multistart(
     train_rows: npt.ArrayLike,
     *,
     state_count: int,
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
+    checkpoint: HMMSeedCheckpoint | None = None,
 ) -> MultistartResult:
     """Fit exactly eight starts and choose the valid TRAIN-loglik winner deterministically."""
 
     if state_count not in (2, 3, 4, 5):
         raise ValueError("state_count must be K=2,3,4,5")
 
-    worker_limit = 1 if max_workers is None else max_workers
+    # There are only eight independent starts in one multistart.  Use all of
+    # those lanes, while the slot reservation below bounds concurrent nested
+    # multistarts across outer folds and candidate grids by host CPU count.
+    worker_limit = min(8, _CPU_SLOT_COUNT) if max_workers is None else max_workers
     if worker_limit < 1:
         raise ValueError("max_workers must be at least 1")
     worker_limit = min(worker_limit, len(MULTISTART_SEEDS))
 
-    if worker_limit == 1:
-        evaluated = tuple(
-            _evaluate_start(
-                train_rows,
-                state_count=state_count,
-                adapter_factory=adapter_factory,
-                seed=seed,
-            )
-            for seed in MULTISTART_SEEDS
-        )
-    else:
-        with ThreadPoolExecutor(max_workers=worker_limit) as executor:
-            futures = {
-                seed: executor.submit(
-                    _evaluate_start,
+    evaluated_by_seed: dict[int, tuple[StartDiagnostic, FitResult | None]] = {}
+    pending_seeds: list[int] = []
+    for seed in MULTISTART_SEEDS:
+        if checkpoint is not None:
+            cached = checkpoint.load(seed)
+            if cached is not None:
+                evaluated_by_seed[seed] = (cached.diagnostic, cached.result)
+                continue
+        pending_seeds.append(seed)
+
+    if pending_seeds:
+        pending_worker_limit = min(worker_limit, len(pending_seeds))
+        save_results_in_parent = False
+        if pending_worker_limit == 1:
+            pending_results = {}
+            for seed in pending_seeds:
+                outcome = _evaluate_start(
                     train_rows,
                     state_count=state_count,
                     adapter_factory=adapter_factory,
                     seed=seed,
                 )
-                for seed in MULTISTART_SEEDS
-            }
-            evaluated = tuple(futures[seed].result() for seed in MULTISTART_SEEDS)
+                pending_results[seed] = outcome
+                if checkpoint is not None:
+                    from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
+
+                    checkpoint.save(seed, SeedFitOutcome(*outcome))
+        elif isinstance(adapter_factory, CandidateAdapterFactory) and _pickleable(adapter_factory):
+            # hmmlearn fitting is CPU-bound and its Python-facing orchestration
+            # does not scale reliably in a thread pool.  Process workers give
+            # each independent seed its own interpreter/GIL while preserving
+            # the exact pinned seed order in the parent.  A threaded caller
+            # must use spawn so workers do not inherit its locks; a top-level
+            # caller can use fork without that nested-parent hazard.
+            process_context_name = (
+                "fork" if threading.current_thread() is threading.main_thread() else "spawn"
+            )
+            with (
+                _reserve_cpu_slots(pending_worker_limit) as reserved_workers,
+                warnings.catch_warnings(),
+            ):
+                if process_context_name == "fork":
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=(
+                            r"This process .* is multi-threaded, use os.fork\(\) may lead "
+                            r"to deadlocks"
+                        ),
+                        category=DeprecationWarning,
+                        module=r"multiprocessing\.popen_fork",
+                    )
+                with ProcessPoolExecutor(
+                    max_workers=reserved_workers,
+                    mp_context=multiprocessing.get_context(process_context_name),
+                ) as process_executor:
+                    futures = {
+                        seed: process_executor.submit(
+                            _evaluate_start,
+                            train_rows,
+                            state_count=state_count,
+                            adapter_factory=adapter_factory,
+                            seed=seed,
+                        )
+                        for seed in pending_seeds
+                    }
+                    future_seeds = {future: seed for seed, future in futures.items()}
+                    pending_results = {}
+                    try:
+                        for future in as_completed(futures.values()):
+                            seed = future_seeds[future]
+                            outcome = future.result()
+                            pending_results[seed] = outcome
+                            if checkpoint is not None:
+                                from market_regime_engine.evaluation_runs.hmm_units import (
+                                    SeedFitOutcome,
+                                )
+
+                                checkpoint.save(seed, SeedFitOutcome(*outcome))
+                    except BaseException:
+                        # Persist every successful future that completed before
+                        # the interruption surfaced.  Pending futures remain
+                        # reclaimable and will be retried on restart.
+                        for future, seed in future_seeds.items():
+                            if not future.done() or future.cancelled():
+                                continue
+                            try:
+                                outcome = future.result()
+                            except BaseException:
+                                continue
+                            pending_results[seed] = outcome
+                            if checkpoint is not None:
+                                from market_regime_engine.evaluation_runs.hmm_units import (
+                                    SeedFitOutcome,
+                                )
+
+                                checkpoint.save(seed, SeedFitOutcome(*outcome))
+                        raise
+            save_results_in_parent = True
+        else:
+            # Custom adapters used by unit tests and extension callers may be
+            # closures and cannot be sent to process workers.
+            def evaluate_thread(seed: int) -> tuple[StartDiagnostic, FitResult | None]:
+                outcome = _evaluate_start(
+                    train_rows,
+                    state_count=state_count,
+                    adapter_factory=adapter_factory,
+                    seed=seed,
+                )
+                if checkpoint is not None:
+                    from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
+
+                    checkpoint.save(seed, SeedFitOutcome(*outcome))
+                return outcome
+
+            with (
+                _reserve_cpu_slots(pending_worker_limit) as reserved_workers,
+                ThreadPoolExecutor(max_workers=reserved_workers) as thread_executor,
+            ):
+                futures = {
+                    seed: thread_executor.submit(evaluate_thread, seed) for seed in pending_seeds
+                }
+                pending_results = {seed: futures[seed].result() for seed in pending_seeds}
+
+        for seed, outcome in pending_results.items():
+            evaluated_by_seed[seed] = outcome
+            if checkpoint is not None and save_results_in_parent:
+                from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
+
+                checkpoint.save(seed, SeedFitOutcome(*outcome))
+
+    evaluated = tuple(evaluated_by_seed[seed] for seed in MULTISTART_SEEDS)
 
     diagnostics = [diagnostic for diagnostic, _result in evaluated]
     valid_results: list[FitResult] = []

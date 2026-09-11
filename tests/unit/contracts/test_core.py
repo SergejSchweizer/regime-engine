@@ -41,7 +41,7 @@ def source() -> SourceLineage:
 def model() -> ModelIdentity:
     return ModelIdentity(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         model_name="regime-xetra",
         model_version="7",
         feature_contract_hash=HASH_B,
@@ -69,7 +69,7 @@ def prediction() -> RegimePrediction:
 def test_contracts_are_frozen_and_keep_profile_version_separate() -> None:
     identity = model()
     assert identity.profile_id == "xetra"
-    assert identity.profile_config_version == 1
+    assert identity.profile_config_version == 4
     with pytest.raises(FrozenInstanceError):
         identity.profile_id = "other"  # type: ignore[misc]
 
@@ -108,7 +108,7 @@ def test_selection_hashes_are_distinct_and_validated_independently() -> None:
 def test_model_contract_rejects_reduced_covariance_and_bad_filter_state() -> None:
     kwargs = dict(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         model_name="regime-xetra",
         model_version="1",
         feature_contract_hash=HASH_A,

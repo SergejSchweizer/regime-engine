@@ -116,12 +116,12 @@ class SoftRegimeNmiAgreement:
 
     @property
     def normalized_mutual_information(self) -> float:
-        """Compatibility name for the selected soft-regime agreement score."""
+        """Normalized mutual information for the selected soft regimes."""
         return self.soft_regime_nmi
 
     @property
     def nmi(self) -> float:
-        """Short compatibility alias for ``soft_regime_nmi``."""
+        """Short name for ``soft_regime_nmi``."""
         return self.soft_regime_nmi
 
     @property

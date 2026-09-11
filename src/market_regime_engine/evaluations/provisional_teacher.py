@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from itertools import pairwise
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -48,6 +49,9 @@ from market_regime_engine.training.candidate_grid import (
     aggregate_candidate,
 )
 
+if TYPE_CHECKING:
+    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
+
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _GAUSSIAN_CANDIDATE_IDS = tuple(
     f"gaussian_hmm_k{state_count}_full" for state_count in V4_PROVISIONAL_STATE_COUNTS
@@ -66,15 +70,29 @@ def _evaluate_candidates(
     candidates: tuple[ResolvedCandidateProfile, ...],
     runner: ProvisionalCandidateRunner,
     max_workers: int | None,
+    seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate teacher candidates concurrently while preserving canonical output order."""
 
-    worker_limit = 1 if max_workers is None else max_workers
+    worker_limit = (os.cpu_count() or 1) if max_workers is None else max_workers
     if worker_limit < 1:
         raise ValueError("max_workers must be at least 1")
     worker_limit = min(worker_limit, len(candidates))
 
     def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+        if seed_checkpoint_factory is not None and runner is run_provisional_gaussian_candidate:
+            return run_provisional_gaussian_candidate(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                cast(AdapterFactory, adapter_factory(profile, candidate)),
+                seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
+                    candidate.candidate_id,
+                    fold_id,
+                    candidate.state_count,
+                ),
+            )
         return runner(
             source_rows,
             plan,
@@ -249,7 +267,6 @@ def _candidates(
             feature_selection_definition_hash=feature_selection_definition_hash,
             feature_selection_execution_hash=feature_selection_execution_hash,
             original_feature_universe=prototype_features,
-            preliminary_medoids=(),
             feature_contract_version=4,
         )
         for state_count in V4_PROVISIONAL_STATE_COUNTS
@@ -262,6 +279,8 @@ def run_provisional_gaussian_candidate(
     profile: ModelProfile,
     candidate: ResolvedCandidateProfile,
     candidate_adapter_factory: AdapterFactory,
+    *,
+    seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
 ) -> WalkForwardEvaluation:
     """Run one teacher candidate through the existing walk-forward runner."""
 
@@ -271,6 +290,7 @@ def run_provisional_gaussian_candidate(
         profile=profile,
         candidate=candidate,
         adapter_factory=candidate_adapter_factory,
+        seed_checkpoint_factory=seed_checkpoint_factory,
     )
 
 
@@ -376,6 +396,7 @@ def select_provisional_teacher(
     feature_selection_execution_hash: str,
     runner: ProvisionalCandidateRunner = run_provisional_gaussian_candidate,
     max_workers: int | None = None,
+    seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
 ) -> ProvisionalTeacherEvaluation:
     """Select provisional Gaussian K causally using only the supplied TRAIN rows."""
 
@@ -407,14 +428,25 @@ def select_provisional_teacher(
         by_id[candidate_id]
         for candidate_id in randomized_order(_GAUSSIAN_CANDIDATE_IDS, scope="provisional-teacher")
     )
-    evaluations_by_id = _evaluate_candidates(
-        source_rows,
-        plan,
-        profile,
-        scheduled,
-        runner,
-        max_workers,
-    )
+    if seed_checkpoint_factory is None:
+        evaluations_by_id = _evaluate_candidates(
+            source_rows,
+            plan,
+            profile,
+            scheduled,
+            runner,
+            max_workers,
+        )
+    else:
+        evaluations_by_id = _evaluate_candidates(
+            source_rows,
+            plan,
+            profile,
+            scheduled,
+            runner,
+            max_workers,
+            seed_checkpoint_factory,
+        )
     evaluations = tuple(evaluations_by_id[candidate_id] for candidate_id in _GAUSSIAN_CANDIDATE_IDS)
     aggregates = tuple(aggregate_candidate(evaluation) for evaluation in evaluations)
     selection: StatisticalChampionSelection | None

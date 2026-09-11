@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
 )
+from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
 from market_regime_engine.profiles.config import ModelProfile
 
@@ -30,20 +32,45 @@ class CandidateContract(Protocol):
     def feature_order(self) -> tuple[str, ...]: ...
 
 
-def adapter_factory(profile: ModelProfile, candidate: CandidateContract) -> Callable[[], object]:
+@dataclass(frozen=True, slots=True)
+class CandidateAdapterFactory:
+    """Pickle-safe immutable adapter constructor for process-level fitting."""
+
+    model_family: str
+    feature_order: tuple[str, ...]
+    student_t_settings: StudentTHMMSettings | None = None
+
+    def __call__(self) -> GaussianHMMAdapter:
+        if self.model_family == "gaussian_hmm":
+            return HmmlearnGaussianHMMAdapter(self.feature_order)
+        if self.model_family == "gmm_hmm":
+            return HmmlearnGMMHMMAdapter(self.feature_order)
+        if self.model_family == "student_t_hmm":
+            if self.student_t_settings is None:
+                raise ValueError("Student-t adapter factory is missing settings")
+            return StudentTHMMAdapter(self.feature_order, self.student_t_settings)
+        raise ValueError(f"unsupported adapter model family: {self.model_family}")
+
+
+def adapter_factory(
+    profile: ModelProfile | None, candidate: CandidateContract
+) -> Callable[[], object]:
     """Return a fresh adapter factory after validating the candidate/profile contract."""
 
     if candidate.state_count not in (2, 3, 4, 5):
         raise ValueError("candidate state_count must be 2, 3, 4, or 5")
     if candidate.model_family == "gaussian_hmm" and candidate.mixture_count == 1:
-        return lambda: HmmlearnGaussianHMMAdapter(candidate.feature_order)
+        return CandidateAdapterFactory("gaussian_hmm", candidate.feature_order)
     if candidate.model_family == "gmm_hmm" and candidate.mixture_count == 2:
-        return lambda: HmmlearnGMMHMMAdapter(candidate.feature_order)
+        return CandidateAdapterFactory("gmm_hmm", candidate.feature_order)
     if candidate.model_family == "student_t_hmm" and candidate.mixture_count == 1:
+        if profile is None:
+            raise ValueError("Student-t candidate requires an active model profile")
         settings = profile.student_t_hmm
         if settings is None:
             raise ValueError("Student-t candidate requires Student-t profile settings")
-        return lambda: StudentTHMMAdapter(
+        return CandidateAdapterFactory(
+            "student_t_hmm",
             candidate.feature_order,
             StudentTHMMSettings(
                 minimum_nu=settings.minimum_nu,

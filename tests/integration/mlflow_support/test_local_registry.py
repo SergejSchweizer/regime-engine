@@ -16,7 +16,7 @@ def artifact() -> ProductionModelArtifact:
     features = ("f0",)
     return ProductionModelArtifact(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         registered_model="regime-xetra",
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
@@ -28,7 +28,11 @@ def artifact() -> ProductionModelArtifact:
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
         evaluation_plan_hash="c" * 64,
-        evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        validation_evaluation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        deployment_selection_cutoff=datetime(2026, 8, 21, tzinfo=UTC),
+        validation_evidence_hash="e" * 64,
+        source_catalog_hash="f" * 64,
+        state_identity_scope="model_version_local",
         feature_order=features,
         scaler=StandardScalerArtifact(
             feature_order=features,
@@ -60,7 +64,9 @@ def test_local_sqlite_mlflow_registry_package_and_alias_roundtrip(tmp_path) -> N
     registry = MlflowModelRegistry(client)
     package = save_production_package(artifact(), tmp_path / "package")
 
-    version = registry.register_production_model(artifact(), package)
+    version = registry.register_production_model(
+        artifact(), package, package_source_uri="runs:/run-1/production-package"
+    )
     assert version.exact_version == "1"
     assert registry.compare_and_swap_alias(
         model_name="regime-xetra",
@@ -71,7 +77,6 @@ def test_local_sqlite_mlflow_registry_package_and_alias_roundtrip(tmp_path) -> N
     )
     resolved = registry.resolve_alias("regime-xetra", "champion")
     assert resolved.exact_version == version.exact_version
-    assert (
-        registry.get_model_package_uri("regime-xetra", version.exact_version)
-        == package.resolve().as_uri()
+    assert registry.get_model_package_uri("regime-xetra", version.exact_version) == (
+        "runs:/run-1/production-package"
     )

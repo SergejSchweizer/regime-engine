@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -13,6 +15,7 @@ from statistics import fmean, pstdev
 import numpy as np
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
+from mlflow.entities import Metric, Param
 from mlflow.tracking import MlflowClient
 
 from market_regime_engine.contracts import SourceLineage
@@ -21,6 +24,14 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardFoldResult,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
+from market_regime_engine.mlflow_support.metric_catalog import (
+    METRIC_CATALOG_VERSION,
+    validate_metric_points,
+)
+from market_regime_engine.mlflow_support.metric_export import (
+    MetricExportLedger,
+    export_model_metric_points,
+)
 from market_regime_engine.mlflow_support.plots import (
     PlotManifestEntry,
     candidate_covariance_scale,
@@ -46,8 +57,28 @@ class EvaluationTrackingResult:
     parent_manifest_path: str
 
 
+def _safe_logged_model_name(logical_name: str) -> str:
+    """Encode logical keys into MLflow's restricted LoggedModel name alphabet."""
+
+    if not logical_name or logical_name.strip() != logical_name:
+        raise ValueError("logical LoggedModel name must be non-empty and trimmed")
+    encoded = re.sub(
+        r"[^A-Za-z0-9_-]",
+        lambda match: f"_x{ord(match.group(0)):02x}_",
+        logical_name,
+    )
+    if not encoded:
+        raise ValueError("logical LoggedModel name encoded to empty value")
+    return encoded
+
+
 class FileMlflowTrackingPort:
     """Minimal concrete TrackingPort used by hermetic file-store integration tests."""
+
+    # MLflow stores impose a maximum batch size.  Keeping the chunk size below
+    # that limit gives one transaction per chunk instead of one transaction per
+    # metric point, without depending on a backend-specific larger limit.
+    _LOG_BATCH_SIZE = 1000
 
     def __init__(
         self,
@@ -77,17 +108,30 @@ class FileMlflowTrackingPort:
         return run_id
 
     def log_params(self, run_id: str, params: dict[str, str]) -> None:
-        for key, value in sorted(params.items()):
-            self._client.log_param(run_id, key, value)
+        self._client.log_batch(
+            run_id,
+            params=[
+                Param(  # type: ignore[no-untyped-call]
+                    key=key, value=value
+                )
+                for key, value in sorted(params.items())
+            ],
+        )
 
     def log_metric_points(self, run_id: str, points: tuple[MetricPoint, ...]) -> None:
-        for point in points:
-            self._client.log_metric(
+        for offset in range(0, len(points), self._LOG_BATCH_SIZE):
+            batch = points[offset : offset + self._LOG_BATCH_SIZE]
+            self._client.log_batch(
                 run_id,
-                point.key,
-                point.value,
-                timestamp=point.timestamp_ms,
-                step=point.step,
+                metrics=[
+                    Metric(
+                        key=point.key,
+                        value=point.value,
+                        timestamp=point.timestamp_ms,
+                        step=point.step,
+                    )
+                    for point in batch
+                ],
             )
 
     def create_logged_model(
@@ -98,6 +142,24 @@ class FileMlflowTrackingPort:
         model_type: str,
         tags: dict[str, str],
     ) -> str:
+        existing = tuple(
+            item
+            for item in self._client.search_logged_models([self._experiment_id])
+            if item.name == name
+        )
+        if len(existing) > 1:
+            raise ValueError(f"multiple LoggedModels exist for logical name {name!r}")
+        if existing:
+            item = existing[0]
+            if item.model_type != model_type or any(
+                item.tags.get(key) != value for key, value in tags.items()
+            ):
+                raise ValueError(f"existing LoggedModel {item.model_id} has conflicting identity")
+            model_id = item.model_id
+            if not isinstance(model_id, str):
+                raise TypeError("logged model_id must be a string")
+            self._logged_model_source_runs[model_id] = source_run_id
+            return model_id
         model = self._client.create_logged_model(
             self._experiment_id,
             name=name,
@@ -118,15 +180,43 @@ class FileMlflowTrackingPort:
             run_id = model.source_run_id
         if not isinstance(run_id, str):
             raise ValueError(f"logged model {model_id} has no source run")
-        for point in points:
-            self._client.log_metric(
+        for offset in range(0, len(points), self._LOG_BATCH_SIZE):
+            batch = points[offset : offset + self._LOG_BATCH_SIZE]
+            self._client.log_batch(
                 run_id,
-                point.key,
-                point.value,
-                timestamp=point.timestamp_ms,
-                step=point.step,
-                model_id=model_id,
+                metrics=[
+                    Metric(
+                        key=point.key,
+                        value=point.value,
+                        timestamp=point.timestamp_ms,
+                        step=point.step,
+                        model_id=model_id,
+                    )
+                    for point in batch
+                ],
             )
+
+    def get_model_metric_points(self, model_id: str) -> tuple[MetricPoint, ...]:
+        store = getattr(self._client._tracking_client, "store", None)
+        read_all = getattr(store, "_get_all_model_metrics", None)
+        if callable(read_all):
+            model = self._client.get_logged_model(model_id)
+            metrics = read_all(
+                model_id,
+                self._client._tracking_client.store._get_model_dir(model.experiment_id, model_id),
+            )
+        else:
+            model = self._client.get_logged_model(model_id)
+            metrics = model.metrics or ()
+        return tuple(
+            MetricPoint(
+                key=metric.key,
+                value=float(metric.value),
+                step=int(metric.step),
+                timestamp_ms=int(metric.timestamp),
+            )
+            for metric in metrics
+        )
 
     def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
         self._client.log_model_artifacts(model_id, local_dir)
@@ -230,7 +320,9 @@ def _candidate_metric_points(
                         timestamp_ms=timestamp_ms,
                     )
                 )
-    return tuple(points)
+    result = tuple(points)
+    validate_metric_points(result)
+    return result
 
 
 def _aggregate_metric_points(evaluation: WalkForwardEvaluation) -> tuple[MetricPoint, ...]:
@@ -257,10 +349,114 @@ def _aggregate_metric_points(evaluation: WalkForwardEvaluation) -> tuple[MetricP
         metrics["candidate_bic_mean"] = fmean(bics)
     if aics:
         metrics["candidate_aic_mean"] = fmean(aics)
-    return tuple(
+    result = tuple(
         MetricPoint(key=key, value=value, step=0, timestamp_ms=timestamp_ms)
         for key, value in sorted(metrics.items())
     )
+    validate_metric_points(result)
+    return result
+
+
+def _candidate_model_tags(
+    evaluation: WalkForwardEvaluation,
+    *,
+    source_build_id: str,
+    plan: WalkForwardPlan,
+    dataset_snapshot_key: str,
+    evaluation_run_key: str,
+    scope: str = "candidate",
+    outer_fold_id: str | None = None,
+) -> dict[str, str]:
+    candidate_id = evaluation.candidate_id
+    model_family = candidate_id.split("_k", maxsplit=1)[0]
+    mixture_count = "2" if model_family == "gmm_hmm" else "1"
+    return {
+        "regime_engine.metric_catalog_version": str(METRIC_CATALOG_VERSION),
+        "regime_engine.profile_id": evaluation.profile_id,
+        "regime_engine.profile_config_version": str(evaluation.profile_config_version),
+        "regime_engine.candidate_id": candidate_id,
+        "regime_engine.model_family": model_family,
+        "regime_engine.state_count": str(evaluation.state_count),
+        "regime_engine.mixture_count": mixture_count,
+        "regime_engine.feature_order_sha256": _feature_order_hash(evaluation.feature_order),
+        "regime_engine.feature_dimension": str(len(evaluation.feature_order)),
+        "regime_engine.source_build_id": source_build_id,
+        "regime_engine.evaluation_plan_hash": plan.plan_hash,
+        "regime_engine.dataset_snapshot_key": dataset_snapshot_key,
+        "regime_engine.evaluation_run_key": evaluation_run_key,
+        "regime_engine.feature_selection_definition_hash": (
+            evaluation.feature_selection_definition_hash
+        ),
+        "regime_engine.feature_selection_execution_hash": (
+            evaluation.feature_selection_execution_hash
+        ),
+        "regime_engine.scope": scope,
+        **({"regime_engine.outer_fold_id": outer_fold_id} if outer_fold_id is not None else {}),
+    }
+
+
+def _project_candidate_logged_model(
+    port: TrackingPort,
+    *,
+    evaluation: WalkForwardEvaluation,
+    source_run_id: str,
+    source_build_id: str,
+    plan: WalkForwardPlan,
+    candidate_dir: Path,
+    dataset_snapshot_key: str,
+    evaluation_run_key: str,
+    scope: str = "candidate",
+    outer_fold_id: str | None = None,
+    model_name: str | None = None,
+    extra_metric_points: tuple[MetricPoint, ...] = (),
+    extra_tags: dict[str, str] | None = None,
+    metric_ledger: MetricExportLedger | None = None,
+) -> str:
+    """Project one candidate dossier into exactly one MLflow LoggedModel."""
+
+    points = (
+        _candidate_metric_points(evaluation, plan)
+        + _aggregate_metric_points(evaluation)
+        + extra_metric_points
+    )
+    validate_metric_points(points)
+    logical_model_name = model_name or f"{evaluation_run_key}-{evaluation.candidate_id}"
+    model_id = port.create_logged_model(
+        name=_safe_logged_model_name(logical_model_name),
+        source_run_id=source_run_id,
+        model_type=evaluation.candidate_id,
+        tags={
+            **_candidate_model_tags(
+                evaluation,
+                source_build_id=source_build_id,
+                plan=plan,
+                dataset_snapshot_key=dataset_snapshot_key,
+                evaluation_run_key=evaluation_run_key,
+                scope=scope,
+                outer_fold_id=outer_fold_id,
+            ),
+            "regime_engine.logical_model_key": logical_model_name,
+            **(extra_tags or {}),
+        },
+    )
+    try:
+        if metric_ledger is None:
+            port.log_model_metric_points(model_id, points)
+        else:
+            export_model_metric_points(
+                port,
+                model_id,
+                logical_model_key=logical_model_name,
+                points=points,
+                ledger=metric_ledger,
+            )
+        port.log_model_artifacts(model_id, str(candidate_dir))
+        port.finalize_logged_model(model_id)
+    except BaseException:
+        with suppress(BaseException):
+            port.finalize_logged_model(model_id, failed=True)
+        raise
+    return model_id
 
 
 def _timeline_rows(
@@ -500,6 +696,9 @@ def track_walk_forward_evaluations(
     statistical_selection_result: str,
     artifact_root: str | Path,
     max_workers: int | None = None,
+    dataset_snapshot_key: str | None = None,
+    evaluation_run_key: str | None = None,
+    metric_ledger_root: str | Path | None = None,
 ) -> EvaluationTrackingResult:
     """Persist MLflow evidence with parallel local rendering and ordered MLflow writes."""
 
@@ -511,8 +710,21 @@ def track_walk_forward_evaluations(
         raise ValueError("statistical_selection_result must be a non-empty trimmed string")
     ordered = _validate_inputs(source_lineage, plan, evaluations)
     first = ordered[0]
+    resolved_dataset_snapshot_key = dataset_snapshot_key or (
+        f"dataset:{source_lineage.source_build_id}:{source_lineage.data_sha256}"
+    )
+    resolved_evaluation_run_key = evaluation_run_key or (
+        f"evaluation:{source_lineage.source_build_id}:{plan.plan_hash}"
+    )
+    for key, label in (
+        (resolved_dataset_snapshot_key, "dataset_snapshot_key"),
+        (resolved_evaluation_run_key, "evaluation_run_key"),
+    ):
+        if not key or key.strip() != key:
+            raise ValueError(f"{label} must be a non-empty trimmed string")
     root = Path(artifact_root)
     root.mkdir(parents=True, exist_ok=True)
+    metric_ledger = MetricExportLedger(metric_ledger_root) if metric_ledger_root else None
     parent_run_name = f"evaluation-{first.profile_id}-{source_lineage.source_build_id}"
     parent_run_id = port.start_run(run_name=parent_run_name)
     port.log_params(
@@ -568,8 +780,10 @@ def track_walk_forward_evaluations(
                 "minimum_multistart_success_rate": "0.75",
             },
         )
-        port.log_metric_points(candidate_run_id, _candidate_metric_points(evaluation, plan))
-        port.log_metric_points(candidate_run_id, _aggregate_metric_points(evaluation))
+        candidate_points = _candidate_metric_points(evaluation, plan)
+        aggregate_points = _aggregate_metric_points(evaluation)
+        port.log_metric_points(candidate_run_id, candidate_points)
+        port.log_metric_points(candidate_run_id, aggregate_points)
 
         candidate_dir = root / evaluation.candidate_id
         timeline_path = candidate_dir / "fold_timeline.parquet"
@@ -637,6 +851,17 @@ def track_walk_forward_evaluations(
         ]
         _write_json(manifest_path, manifest_payload)
         port.log_artifact(candidate_run_id, str(manifest_path), "evaluation")
+        _project_candidate_logged_model(
+            port,
+            evaluation=evaluation,
+            source_run_id=candidate_run_id,
+            source_build_id=source_lineage.source_build_id,
+            plan=plan,
+            candidate_dir=candidate_dir,
+            dataset_snapshot_key=resolved_dataset_snapshot_key,
+            evaluation_run_key=resolved_evaluation_run_key,
+            metric_ledger=metric_ledger,
+        )
         port.end_run(candidate_run_id)
 
     for entry in parent_entries:

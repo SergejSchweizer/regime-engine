@@ -4,7 +4,7 @@ The public lifecycle profile is exactly `xetra`; the registered MLflow model is 
 
 ## Scheduled model cycle
 
-The recommended cadence is exactly every 7 days. `scripts/model_cycle.sh` is the cron-safe entry point and must run from the local repository checkout on the same host as the local Compose project. The script accepts only a local Unix-socket Docker daemon/context and invokes the installed `regime-engine` CLI exclusively inside the local `mlflow` service with `docker compose exec -T mlflow ...`. It does not build or pull an image, use a remote Docker context, open a second Python environment on the NAS, or contact a second serving process.
+The recommended cadence is exactly every 7 days. `scripts/model_cycle.sh` is the cron-safe entry point and must run from the repository checkout with the project `.venv`. It invokes the installed `regime-engine` CLI directly and uses the external MLflow service configured by `MLFLOW_TRACKING_URI` (default `http://10.10.1.3:5000`). It does not build containers, use a Docker context, or contact a second serving process.
 
 A non-blocking `flock` keyed by profile prevents overlapping scheduled cycles. If another `xetra` cycle already owns the lock, the later invocation exits successfully as a deterministic no-op.
 
@@ -13,7 +13,7 @@ The cycle first reads `status`. If `current_source_build_id == completed_source_
 1. `evaluate` against the status-pinned source build; the evaluation result includes the statistical champion candidate.
 2. `final-refit` for that immutable evaluation ID.
 3. `publish-oos` for the same evaluation ID.
-4. `register` using both the final-refit production package and explicit immutable OOS build ID.
+4. `register` using both the final-refit production package and explicit immutable OOS build ID. The backend uploads that package to NAS MLflow and registers only its remote `runs:/...` URI.
 
 Registration creates/updates the `challenger` lifecycle state through the backend; it does **not** move `champion`. If the source build observed by `evaluate` differs from the build observed by `status`, the cycle fails rather than silently evaluating a different vintage.
 
@@ -35,10 +35,10 @@ These thresholds are operational freshness evidence only. They do not replace st
 
 ## Cron example
 
-Run from the repository checkout that owns `compose.yaml`:
+Run from the repository checkout:
 
 ```cron
 17 2 * * 0 cd /srv/regime-engine && ./scripts/model_cycle.sh >>/var/log/regime-engine-model-cycle.log 2>&1
 ```
 
-The exact minute is an operator choice; the required cadence is weekly. Production secrets remain Docker/runtime inputs and must never be placed in the cron line or script arguments.
+The exact minute is an operator choice; the required cadence is weekly. Production secrets remain environment or password-file inputs and must never be placed in the cron line or script arguments.

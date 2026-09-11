@@ -35,6 +35,8 @@ jobs:
         run: |
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
+      - name: Zero-legacy repository audit
+        run: .venv/bin/python scripts/verify_zero_legacy.py
       - name: Dependency audit
         shell: bash
         run: |
@@ -109,7 +111,13 @@ jobs:
         shell: bash
         run: |
           set +e
-          .venv/bin/coverage run -m pytest tests -m "integration and not external"
+          # Integration tests include full HMM evaluations that already
+          # parallelize their independent folds/seeds across all CPUs. Running
+          # pytest-xdist on top of those tests creates one machine-sized worker
+          # pool per test process and can starve the actual numerical work.
+          # Keep one pytest coordinator while retaining evaluator-level
+          # all-CPU parallelism.
+          .venv/bin/coverage run -m pytest -n 0 tests -m "integration and not external"
           code=$?
           set -e
           if [[ ${code} -ne 0 && ${code} -ne 5 ]]; then

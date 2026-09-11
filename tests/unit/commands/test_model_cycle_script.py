@@ -6,19 +6,16 @@ def _script_text() -> str:
         return handle.read()
 
 
-def test_model_cycle_script_is_bash_valid_and_uses_local_compose_cli_only() -> None:
+def test_model_cycle_script_is_bash_valid_and_uses_external_mlflow() -> None:
     subprocess = __import__("subprocess")
     subprocess.run(["bash", "-n", SCRIPT], check=True)
     text = _script_text()
     assert "set -euo pipefail" in text
     assert 'PROFILE="${REGIME_ENGINE_PROFILE:-xetra}"' in text
-    assert "docker context show" in text
-    assert "docker context inspect" in text
-    assert "unix://*" in text
     assert "flock -n 9" in text
-    assert 'docker compose -f "$COMPOSE_FILE"' in text
-    assert "compose exec -T mlflow regime-engine" in text
-    assert "compose exec -T mlflow python" in text
+    assert ".venv/bin/regime-engine" in text
+    assert "MLFLOW_TRACKING_URI=" in text
+    assert "http://10.10.1.3:5000" in text
 
 
 def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion() -> None:
@@ -40,16 +37,10 @@ def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion
     assert "champion alias" not in text.lower()
 
 
-def test_model_cycle_script_contains_no_remote_or_build_path() -> None:
+def test_model_cycle_script_contains_no_docker_or_second_service_path() -> None:
     text = _script_text()
     banned = (
-        "docker compose build",
-        "docker compose push",
-        "docker buildx",
-        "docker login",
-        "ssh://",
-        "tcp://",
-        ":5001",
+        "docker",
         "uvicorn",
         "prometheus",
     )

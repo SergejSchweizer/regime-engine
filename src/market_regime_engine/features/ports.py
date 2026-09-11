@@ -17,7 +17,7 @@ from market_regime_engine.feature_discovery.contracts import content_hash
 
 
 class SourceMode(StrEnum):
-    FEATURE_SELECTION = "feature_selection"
+    SCHEMA_DISCOVERY = "schema_discovery"
     RESOLVED_MODEL = "resolved_model"
 
 
@@ -203,8 +203,8 @@ class FeatureRequest:
     def __post_init__(self) -> None:
         if len(set(self.feature_names)) != len(self.feature_names):
             raise ValueError("feature_names must be duplicate-free")
-        if not self.feature_names and self.mode is not SourceMode.FEATURE_SELECTION:
-            raise ValueError("all-feature requests are only valid for feature selection")
+        if not self.feature_names and self.mode is not SourceMode.SCHEMA_DISCOVERY:
+            raise ValueError("all-feature requests are only valid for schema discovery")
         if self.start is not None:
             _require_utc(self.start, "start")
         if self.end is not None:
@@ -220,7 +220,7 @@ class FeatureRequest:
     ) -> FeatureRequest:
         """Request the complete dynamic source catalog without a name allowlist."""
 
-        return cls((), start, end, SourceMode.FEATURE_SELECTION)
+        return cls((), start, end, SourceMode.SCHEMA_DISCOVERY)
 
 
 @dataclass(frozen=True, slots=True)

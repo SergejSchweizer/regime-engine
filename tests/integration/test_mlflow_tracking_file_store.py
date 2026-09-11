@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 from mlflow.tracking import MlflowClient
 
+from market_regime_engine.mlflow_support.metric_export import (
+    MetricExportLedger,
+    export_model_metric_points,
+)
 from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 
@@ -52,3 +56,94 @@ def test_file_mlflow_port_persists_parent_child_params_metrics_and_artifact(
     assert history[0].timestamp == 1_700_000_000_000
     artifacts = client.list_artifacts(child, "evaluation")
     assert [item.path for item in artifacts] == ["evaluation/evidence.json"]
+
+
+def test_file_mlflow_port_reuses_one_logical_logged_model_on_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-test")
+    first_run = port.start_run(run_name="first")
+    second_run = port.start_run(run_name="retry")
+    first = port.create_logged_model(
+        name="evaluation-a-fold-1-candidate-a",
+        source_run_id=first_run,
+        model_type="candidate-a",
+        tags={"regime_engine.evaluation_run_key": "evaluation-a"},
+    )
+    second = port.create_logged_model(
+        name="evaluation-a-fold-1-candidate-a",
+        source_run_id=second_run,
+        model_type="candidate-a",
+        tags={"regime_engine.evaluation_run_key": "evaluation-a"},
+    )
+
+    assert second == first
+
+
+def test_metric_export_resume_has_no_duplicate_points_or_conflicts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-test")
+    run_id = port.start_run(run_name="metric-export")
+    model_id = port.create_logged_model(
+        name="evaluation-a-fold-1-candidate-a",
+        source_run_id=run_id,
+        model_type="candidate-a",
+        tags={"regime_engine.evaluation_run_key": "evaluation-a"},
+    )
+    points = (
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+        MetricPoint("invalid_fold_count", 0.0, 0, 100),
+    )
+    original = port.log_model_metric_points
+    calls = 0
+
+    def fail_after_first(point_model_id: str, point_batch: tuple[MetricPoint, ...]) -> None:
+        nonlocal calls
+        calls += 1
+        original(point_model_id, point_batch)
+        if calls == 1:
+            raise RuntimeError("forced metric export interruption")
+
+    monkeypatch.setattr(port, "log_model_metric_points", fail_after_first)
+    ledger = MetricExportLedger(tmp_path / "ledger")
+    with pytest.raises(RuntimeError, match="forced"):
+        export_model_metric_points(
+            port,
+            model_id,
+            logical_model_key="evaluation-a-fold-1-candidate-a",
+            points=points,
+            ledger=ledger,
+        )
+
+    monkeypatch.setattr(port, "log_model_metric_points", original)
+    export_model_metric_points(
+        port,
+        model_id,
+        logical_model_key="evaluation-a-fold-1-candidate-a",
+        points=points,
+        ledger=ledger,
+    )
+    export_model_metric_points(
+        port,
+        model_id,
+        logical_model_key="evaluation-a-fold-1-candidate-a",
+        points=points,
+        ledger=ledger,
+    )
+
+    client = MlflowClient(tracking_uri=tracking_uri)
+    assert len(client.get_metric_history(run_id, "valid_fold_count")) == 1
+    assert len(client.get_metric_history(run_id, "invalid_fold_count")) == 1
+    assert all(item.emitted for item in ledger.states("evaluation-a-fold-1-candidate-a"))
+    with pytest.raises(ValueError, match="conflict"):
+        ledger.ensure(
+            "evaluation-a-fold-1-candidate-a",
+            MetricPoint("valid_fold_count", 2.0, 0, 100),
+        )

@@ -201,7 +201,7 @@ def test_catalog_origin_and_materialization_contracts_fail_closed() -> None:
 
 def test_request_and_snapshot_contracts_cover_dynamic_and_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="duplicate-free"):
-        FeatureRequest(("feature_a", "feature_a"), None, None, SourceMode.FEATURE_SELECTION)
+        FeatureRequest(("feature_a", "feature_a"), None, None, SourceMode.SCHEMA_DISCOVERY)
     with pytest.raises(ValueError, match="only valid"):
         FeatureRequest((), None, None, SourceMode.RESOLVED_MODEL)
     with pytest.raises(ValueError, match="after"):
@@ -209,7 +209,7 @@ def test_request_and_snapshot_contracts_cover_dynamic_and_invalid_inputs() -> No
             ("feature_a",),
             datetime(2026, 9, 10, tzinfo=UTC),
             datetime(2026, 9, 9, tzinfo=UTC),
-            SourceMode.FEATURE_SELECTION,
+            SourceMode.SCHEMA_DISCOVERY,
         )
     assert FeatureRequest.all_features().feature_names == ()
 

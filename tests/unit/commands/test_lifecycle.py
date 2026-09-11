@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -333,11 +334,13 @@ def test_operator_service_rejects_unknown_profile_and_missing_parameters() -> No
         service.execute(request(OperatorAction.REGISTER, ("production_package", "/packages/final")))
 
 
-def test_lazy_operator_backend_factory_can_be_installed_and_cleared() -> None:
+def test_lazy_operator_backend_factory_can_be_installed_and_cleared(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REGIME_ENGINE_STATE_ROOT", str(tmp_path))
     configure_operator_backend_factory(None)
-    with pytest.raises(OperatorCommandError) as exc:
-        build_operator_service()
-    assert exc.value.code == "runtime_not_configured"
+    assert isinstance(build_operator_service(), LifecycleOperatorService)
 
     backend = FakeBackend()
     configure_operator_backend_factory(lambda: backend)

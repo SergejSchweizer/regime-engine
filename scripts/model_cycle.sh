@@ -2,7 +2,8 @@
 set -euo pipefail
 
 PROFILE="${REGIME_ENGINE_PROFILE:-xetra}"
-COMPOSE_FILE="${REGIME_ENGINE_COMPOSE_FILE:-compose.yaml}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_FILE="${REGIME_ENGINE_CONFIG_FILE:-$ROOT/config.yaml}"
 LOCK_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
 LOCK_FILE="${REGIME_ENGINE_MODEL_CYCLE_LOCK:-${LOCK_ROOT}/regime-engine-model-cycle-${PROFILE}.lock}"
 
@@ -15,23 +16,46 @@ if [[ "$PROFILE" != "xetra" ]]; then
   fail "only profile xetra is supported"
 fi
 
-command -v docker >/dev/null 2>&1 || fail "docker is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required for single-run locking"
-[[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
+[[ -x "$ROOT/.venv/bin/regime-engine" ]] || fail "missing .venv/bin/regime-engine"
+[[ -f "$CONFIG_FILE" ]] || fail "feature PostgreSQL config not found: $CONFIG_FILE"
 
-case "${DOCKER_HOST:-}" in
-  ""|unix://*) ;;
-  *) fail "remote DOCKER_HOST is forbidden; use the local Unix-socket Docker daemon" ;;
-esac
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 
-DOCKER_CONTEXT="$(docker context show)"
-DOCKER_ENDPOINT="$(docker context inspect "$DOCKER_CONTEXT" --format '{{(index .Endpoints "docker").Host}}')"
-case "$DOCKER_ENDPOINT" in
-  unix://*) ;;
-  *) fail "Docker context $DOCKER_CONTEXT is not local Unix-socket based: $DOCKER_ENDPOINT" ;;
-esac
+export REGIME_ENGINE_ROOT="$ROOT"
+export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-http://10.10.1.3:5000}"
+# Native BLAS/OpenMP threads are deliberately one per explicit process/task;
+# otherwise each HMM worker creates a second machine-sized thread pool.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+eval "$($ROOT/.venv/bin/python - "$CONFIG_FILE" <<'PY'
+from __future__ import annotations
 
-source "$(git rev-parse --show-toplevel)/scripts/compose_provenance_env.sh"
+import shlex
+import sys
+from pathlib import Path
+
+import yaml
+
+config = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+feature_postgres = config["feature_postgres"]
+for key, variable in {
+    "host": "REGIME_FEATURE_PGHOST",
+    "port": "REGIME_FEATURE_PGPORT",
+    "database": "REGIME_FEATURE_PGDATABASE",
+    "user": "REGIME_FEATURE_PGUSER",
+    "sslmode": "REGIME_FEATURE_PGSSLMODE",
+    "password_file": "REGIME_FEATURE_PGPASSWORD_FILE",
+}.items():
+    print(f"export {variable}={shlex.quote(str(feature_postgres[key]))}")
+PY
+)"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -39,18 +63,14 @@ if ! flock -n 9; then
   exit 0
 fi
 
-compose() {
-  docker compose -f "$COMPOSE_FILE" "$@"
-}
-
 run_cli() {
-  compose exec -T mlflow regime-engine "$@"
+  "$ROOT/.venv/bin/regime-engine" "$@"
 }
 
 json_field() {
   local document="$1"
   local field="$2"
-  printf '%s' "$document" | compose exec -T mlflow python -c '
+  printf '%s' "$document" | "$ROOT/.venv/bin/python" -c '
 import json
 import sys
 
@@ -66,7 +86,7 @@ print(value)
 json_optional_field() {
   local document="$1"
   local field="$2"
-  printf '%s' "$document" | compose exec -T mlflow python -c '
+  printf '%s' "$document" | "$ROOT/.venv/bin/python" -c '
 import json
 import sys
 
@@ -104,12 +124,10 @@ PRODUCTION_PACKAGE="$(json_field "$REFIT_JSON" production_package)"
 OOS_JSON="$(run_cli publish-oos --profile "$PROFILE" --evaluation-id "$EVALUATION_ID")"
 OOS_BUILD_ID="$(json_field "$OOS_JSON" oos_build_id)"
 
-REGISTER_JSON="$({
-  run_cli register \
-    --profile "$PROFILE" \
-    --production-package "$PRODUCTION_PACKAGE" \
-    --oos-build-id "$OOS_BUILD_ID"
-})"
+REGISTER_JSON="$(run_cli register \
+  --profile "$PROFILE" \
+  --production-package "$PRODUCTION_PACKAGE" \
+  --oos-build-id "$OOS_BUILD_ID")"
 CHALLENGER_VERSION="$(json_field "$REGISTER_JSON" exact_version)"
 
 printf 'regime-engine model cycle: source=%s evaluation=%s statistical_champion=%s oos=%s challenger=%s\n' \

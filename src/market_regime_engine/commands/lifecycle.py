@@ -317,11 +317,15 @@ def configure_operator_backend_factory(factory: OperatorBackendFactory | None) -
 
 
 def build_operator_service() -> OperatorService:
-    """Build the CLI service lazily after deployment composition installs a backend factory."""
+    """Build the configured production v4 CLI service.
 
-    if _backend_factory is None:
-        raise OperatorCommandError(
-            "runtime_not_configured",
-            "lifecycle backend factory has not been configured by deployment composition",
-        )
-    return LifecycleOperatorService(_backend_factory())
+    Tests and embedding applications can still install an explicit backend
+    factory.  The normal command-line path uses the external PostgreSQL/MLflow
+    v4 backend without requiring a separate deployment bootstrap call.
+    """
+
+    if _backend_factory is not None:
+        return LifecycleOperatorService(_backend_factory())
+    from market_regime_engine.commands.v4_backend import V4LifecycleBackend
+
+    return LifecycleOperatorService(V4LifecycleBackend())

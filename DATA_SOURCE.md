@@ -63,8 +63,8 @@ The v4 source entrypoint can finalize this materialized matrix through
 `FileDatasetSnapshotStore` before model work starts. The corresponding
 `FileEvaluationRunStore` binds the snapshot key to the profile, plan, code,
 lockfile, and Python identities and resumes completed outer-fold units after
-a process or container restart. The legacy v3 evaluation script does not use
-this schema-wide entrypoint and remains governed by its static feature policy.
+a process restart. A v4 evaluation is always keyed to this immutable
+snapshot; schema changes are visible only to a newly acquired snapshot.
 
 ## Dedicated least-privilege identity
 
@@ -92,7 +92,8 @@ No writer/admin/ownership/CREATE privileges are required. The engine must never 
 
 ## Runtime environment contract
 
-Feature PostgreSQL settings are deliberately namespaced because the same MLflow container has a separate backend PostgreSQL:
+Feature PostgreSQL settings are deliberately namespaced because the external
+MLflow service has its own independent tracking backend:
 
 ```text
 REGIME_FEATURE_PGHOST=10.10.1.3

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -21,6 +23,15 @@ from market_regime_engine.evaluation.walk_forward_splits import (
     WalkForwardPlan,
     plan_walk_forward,
 )
+from market_regime_engine.evaluation_runs.contracts import (
+    DatasetSnapshotIdentity,
+    EvaluationRunIdentity,
+    WorkUnitIdentity,
+)
+from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
+from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
+from market_regime_engine.evaluation_runs.stages import StageCheckpoint
+from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
 from market_regime_engine.evaluations.final_v4_grid import (
     FinalV4GridEvaluation,
@@ -34,12 +45,6 @@ from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalTeacherEvaluation,
     run_provisional_gaussian_candidate,
     select_provisional_teacher,
-)
-from market_regime_engine.evaluations.run_store import (
-    DatasetSnapshotKey,
-    DatasetSnapshotStore,
-    EvaluationRunKey,
-    EvaluationRunStore,
 )
 from market_regime_engine.evaluations.teacher_reference import (
     FrozenTeacherRefit,
@@ -107,6 +112,7 @@ class V4ConfigurationSelection:
     final_grid: FinalV4GridEvaluation
     final_candidate: ResolvedCandidateProfile
     feature_discovery_hash: str
+    final_grid_plan: WalkForwardPlan | None = None
 
     def __post_init__(self) -> None:
         if self.source_build_id != self.quality.source_build_id:
@@ -253,6 +259,7 @@ def select_v4_configuration(
     prefix_runner: PrefixCandidateRunner | None = None,
     grid_runner: GridCandidateRunner | None = None,
     max_workers: int | None = None,
+    stage_checkpoint: StageCheckpoint | None = None,
 ) -> V4ConfigurationSelection:
     """Run the complete adaptive chain using only one immutable Outer-TRAIN frame."""
 
@@ -267,48 +274,160 @@ def select_v4_configuration(
         feature_selection_definition_hash,
         feature_selection_execution_hash,
     )
-    quality = filter_outer_train_quality(catalog, snapshot, train_start, train_end)
-    distance = global_absolute_spearman_distance(snapshot, quality)
-    clusters = select_global_clusters(distance)
-    prototypes = select_temporary_prototypes(clusters, distance)
-    teacher_evaluation = select_provisional_teacher(
-        train_rows,
-        profile=profile,
-        prototype_features=prototypes.prototypes,
-        source_build_id=build_id,
-        feature_selection_definition_hash=definition_hash,
-        feature_selection_execution_hash=execution_hash,
-        runner=teacher_runner if teacher_runner is not None else run_provisional_gaussian_candidate,
-        max_workers=max_workers,
+
+    def checkpoint(
+        stage: str,
+        compute: Callable[[], object],
+        *,
+        parents: tuple[object, ...] = (),
+    ) -> object:
+        if stage_checkpoint is None:
+            return compute()
+        return stage_checkpoint.run(
+            stage,
+            compute,
+            parameters=(
+                ("catalog_hash", catalog.catalog_hash),
+                ("source_build_id", build_id),
+                ("train_end", train_end.isoformat()),
+            ),
+            parent_payloads=tuple(
+                pickle.dumps(parent, protocol=pickle.HIGHEST_PROTOCOL) for parent in parents
+            ),
+        )
+
+    seed_checkpoint_factory = None
+    if stage_checkpoint is not None:
+
+        def make_seed_checkpoint(
+            candidate_id: str,
+            fold_id: str,
+            state_count: int,
+        ) -> HMMSeedCheckpoint:
+            return HMMSeedCheckpoint(
+                run_identity=stage_checkpoint.identity,
+                store=stage_checkpoint.store,
+                candidate_id=candidate_id,
+                fold_id=fold_id,
+                state_count=state_count,
+            )
+
+        seed_checkpoint_factory = make_seed_checkpoint
+
+    quality = cast(
+        QualityFilterResult,
+        checkpoint(
+            "quality",
+            lambda: filter_outer_train_quality(catalog, snapshot, train_start, train_end),
+        ),
     )
-    teacher_reference = build_provisional_teacher_reference(teacher_evaluation)
-    feature_scores = score_all_raw_features(snapshot, quality, teacher_reference)
-    winner_selection = select_cluster_winners(clusters, feature_scores)
-    prefix_search = search_ranked_prefixes(
-        train_rows,
-        ranked_features=winner_selection.ranked_features,
-        teacher=teacher_reference,
-        profile=profile,
-        inner_plan=teacher_evaluation.inner_plan,
-        source_build_id=build_id,
-        original_feature_universe=catalog.feature_names,
-        feature_selection_definition_hash=definition_hash,
-        feature_selection_execution_hash=execution_hash,
-        runner=prefix_runner if prefix_runner is not None else run_prefix_gaussian_candidate,
-        max_workers=max_workers,
+    distance = cast(
+        DistanceMatrixResult,
+        checkpoint(
+            "distance",
+            lambda: global_absolute_spearman_distance(snapshot, quality),
+            parents=(quality,),
+        ),
+    )
+    clusters = cast(
+        ClusterSolution,
+        checkpoint("clusters", lambda: select_global_clusters(distance), parents=(distance,)),
+    )
+    prototypes = cast(
+        PrototypeSet,
+        checkpoint(
+            "prototypes",
+            lambda: select_temporary_prototypes(clusters, distance),
+            parents=(clusters, distance),
+        ),
+    )
+    teacher_evaluation = cast(
+        ProvisionalTeacherEvaluation,
+        checkpoint(
+            "teacher",
+            lambda: select_provisional_teacher(
+                train_rows,
+                profile=profile,
+                prototype_features=prototypes.prototypes,
+                source_build_id=build_id,
+                feature_selection_definition_hash=definition_hash,
+                feature_selection_execution_hash=execution_hash,
+                runner=teacher_runner
+                if teacher_runner is not None
+                else run_provisional_gaussian_candidate,
+                max_workers=max_workers,
+                seed_checkpoint_factory=seed_checkpoint_factory,
+            ),
+            parents=(prototypes,),
+        ),
+    )
+    teacher_reference = cast(
+        ProvisionalTeacherReference,
+        checkpoint(
+            "teacher_reference",
+            lambda: build_provisional_teacher_reference(teacher_evaluation),
+            parents=(teacher_evaluation,),
+        ),
+    )
+    feature_scores = cast(
+        tuple[FeatureRegimeScore, ...],
+        checkpoint(
+            "feature_scores",
+            lambda: score_all_raw_features(snapshot, quality, teacher_reference),
+            parents=(quality, teacher_reference),
+        ),
+    )
+    winner_selection = cast(
+        RegimeWinnerSelection,
+        checkpoint(
+            "winners",
+            lambda: select_cluster_winners(clusters, feature_scores),
+            parents=(clusters, feature_scores),
+        ),
+    )
+    prefix_search = cast(
+        PrefixSearchResult,
+        checkpoint(
+            "prefix_search",
+            lambda: search_ranked_prefixes(
+                train_rows,
+                ranked_features=winner_selection.ranked_features,
+                teacher=teacher_reference,
+                profile=profile,
+                inner_plan=teacher_evaluation.inner_plan,
+                source_build_id=build_id,
+                original_feature_universe=catalog.feature_names,
+                feature_selection_definition_hash=definition_hash,
+                feature_selection_execution_hash=execution_hash,
+                runner=prefix_runner
+                if prefix_runner is not None
+                else run_prefix_gaussian_candidate,
+                max_workers=max_workers,
+                seed_checkpoint_factory=seed_checkpoint_factory,
+            ),
+            parents=(winner_selection, teacher_reference),
+        ),
     )
     selected_prefix = prefix_search.evaluations[prefix_search.selected_prefix_length - 2]
-    final_grid = evaluate_final_v4_grid(
-        train_rows,
-        feature_order=selected_prefix.feature_order,
-        profile=profile,
-        plan=teacher_evaluation.inner_plan,
-        source_build_id=build_id,
-        original_feature_universe=catalog.feature_names,
-        feature_selection_definition_hash=definition_hash,
-        feature_selection_execution_hash=execution_hash,
-        runner=grid_runner,
-        max_workers=max_workers,
+    final_grid = cast(
+        FinalV4GridEvaluation,
+        checkpoint(
+            "final_grid",
+            lambda: evaluate_final_v4_grid(
+                train_rows,
+                feature_order=selected_prefix.feature_order,
+                profile=profile,
+                plan=teacher_evaluation.inner_plan,
+                source_build_id=build_id,
+                original_feature_universe=catalog.feature_names,
+                feature_selection_definition_hash=definition_hash,
+                feature_selection_execution_hash=execution_hash,
+                runner=grid_runner,
+                max_workers=max_workers,
+                seed_checkpoint_factory=seed_checkpoint_factory,
+            ),
+            parents=(prefix_search,),
+        ),
     )
     if final_grid.selection is None:
         raise ValueError(
@@ -353,6 +472,7 @@ def select_v4_configuration(
         final_grid=final_grid,
         final_candidate=final_candidate,
         feature_discovery_hash=discovery_hash,
+        final_grid_plan=teacher_evaluation.inner_plan,
     )
 
 
@@ -440,6 +560,8 @@ def _evaluate_outer_fold(
     outer_runner: PrefixCandidateRunner,
     teacher_refitter: Callable[..., FrozenTeacherRefit],
     max_workers: int | None,
+    selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
+    stage_checkpoint: StageCheckpoint | None = None,
 ) -> OuterFoldResult:
     """Evaluate one outer fold; callers may persist this atomic result."""
 
@@ -455,6 +577,7 @@ def _evaluate_outer_fold(
             profile=profile,
             source_build_id=build_id,
             max_workers=max_workers,
+            stage_checkpoint=stage_checkpoint,
         )
     except (ValueError, TypeError) as exc:
         return _invalid_outer_fold(
@@ -462,6 +585,8 @@ def _evaluate_outer_fold(
             _fallback_configuration(catalog, build_id, fold, str(exc)),
             f"TRAIN-only v4 selection failed: {type(exc).__name__}: {exc}",
         )
+    if selection_sink is not None:
+        selection_sink(fold.fold_index, selection)
 
     configuration = FinalSelectedConfiguration(
         feature_order=selection.final_candidate.feature_order,
@@ -557,19 +682,20 @@ def evaluate_global_regime_v4(
     outer_runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
     teacher_refitter: Callable[..., FrozenTeacherRefit] = refit_frozen_teacher,
     max_workers: int | None = None,
-    run_store: EvaluationRunStore | None = None,
-    run_key: EvaluationRunKey | None = None,
+    run_store: SQLiteEvaluationRunStore | None = None,
+    run_identity: EvaluationRunIdentity | None = None,
+    selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
 ) -> AdaptiveEvaluationResult:
     """Run every outer fold with TRAIN-only adaptive selection and frozen TEST use."""
 
-    if (run_store is None) != (run_key is None):
-        raise ValueError("run_store and run_key must be supplied together")
+    if (run_store is None) != (run_identity is None):
+        raise ValueError("run_store and run_identity must be supplied together")
     if not isinstance(source_rows, pd.DataFrame):
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
-    if run_store is not None and run_key is not None:
-        state = run_store.open_run(run_key)
-        if state.status == "COMPLETE":
-            payload = run_store.load_completed_run(run_key)
+    if run_store is not None and run_identity is not None:
+        state = run_store.open_run(run_identity)
+        if state.status == "COMPLETE" and selection_sink is None:
+            payload = run_store.load_completed_run(run_identity)
             if payload is None:
                 raise ValueError("completed evaluation has no durable result payload")
             cached = pickle.loads(payload)
@@ -587,46 +713,53 @@ def evaluate_global_regime_v4(
     if any(current <= previous for previous, current in pairwise(timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
     outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
-    outer_results: list[OuterFoldResult] = []
-    for fold in outer_plan.folds:
-        if run_store is None or run_key is None:
-            outer_results.append(
-                _evaluate_outer_fold(
-                    source_rows,
-                    fold,
-                    catalog=catalog,
-                    profile=profile,
-                    build_id=build_id,
-                    outer_runner=outer_runner,
-                    teacher_refitter=teacher_refitter,
-                    max_workers=max_workers,
-                )
-            )
-            continue
+    requested_workers = (os.cpu_count() or 1) if max_workers is None else max_workers
+    if requested_workers < 1:
+        raise ValueError("max_workers must be at least 1")
+    outer_worker_limit = min(len(outer_plan.folds), requested_workers)
 
-        work_unit_key = f"outer-fold-{fold.fold_id}"
-        input_hash = content_hash(
-            (
-                "global_regime_v4_outer_fold",
-                run_key.key,
-                fold.fold_id,
-                fold.train_start,
-                fold.train_end,
-                fold.test_start,
-                fold.test_end,
-                fold.train_source_observations,
-                fold.test_source_observations,
+    def evaluate_fold(fold: WalkForwardFold) -> OuterFoldResult:
+        if run_store is None or run_identity is None:
+            return _evaluate_outer_fold(
+                source_rows,
+                fold,
+                catalog=catalog,
+                profile=profile,
+                build_id=build_id,
+                outer_runner=outer_runner,
+                teacher_refitter=teacher_refitter,
+                max_workers=max_workers,
+                selection_sink=selection_sink,
             )
+
+        unit = WorkUnitIdentity(
+            evaluation_run_key=run_identity.key,
+            unit_type="outer_fold",
+            coordinates=(("fold_id", fold.fold_id),),
+            unit_parameters=(
+                ("test_source_observations", str(fold.test_source_observations)),
+                ("train_source_observations", str(fold.train_source_observations)),
+            ),
         )
-        cached_payload = run_store.load_completed_work_unit(run_key, work_unit_key, input_hash)
+        cached_payload = run_store.load_completed_work_unit(run_identity, unit)
         if cached_payload is not None:
             cached = pickle.loads(cached_payload)
             if not isinstance(cached, OuterFoldResult) or cached.fold_index != fold.fold_index:
                 raise ValueError("cached outer-fold payload is incompatible")
-            outer_results.append(cached)
-            continue
-        if not run_store.claim_work_unit(run_key, work_unit_key, input_hash):
-            raise RuntimeError(f"outer fold work unit is currently claimed: {work_unit_key}")
+            if selection_sink is not None and cached.valid:
+                train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                selection = select_v4_configuration(
+                    train_rows,
+                    catalog=catalog,
+                    profile=profile,
+                    source_build_id=build_id,
+                    max_workers=max_workers,
+                    stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                )
+                selection_sink(fold.fold_index, selection)
+            return cached
+        if not run_store.claim_work_unit(run_identity, unit):
+            raise RuntimeError(f"outer fold work unit is currently claimed: {unit.key}")
         fold_result = _evaluate_outer_fold(
             source_rows,
             fold,
@@ -636,14 +769,24 @@ def evaluate_global_regime_v4(
             outer_runner=outer_runner,
             teacher_refitter=teacher_refitter,
             max_workers=max_workers,
+            selection_sink=selection_sink,
+            stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
         )
         run_store.complete_work_unit(
-            run_key,
-            work_unit_key,
-            input_hash,
+            run_identity,
+            unit,
             pickle.dumps(fold_result, protocol=pickle.HIGHEST_PROTOCOL),
         )
-        outer_results.append(fold_result)
+        return fold_result
+
+    if outer_worker_limit == 1:
+        outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
+    else:
+        with ThreadPoolExecutor(max_workers=outer_worker_limit) as executor:
+            futures = [executor.submit(evaluate_fold, fold) for fold in outer_plan.folds]
+            # Result order is part of the evaluation contract, independent of
+            # completion order and scheduler timing.
+            outer_results = [future.result() for future in futures]
 
     valid_folds = tuple(fold for fold in outer_results if fold.valid)
     nmi_values = tuple(
@@ -673,9 +816,9 @@ def evaluate_global_regime_v4(
             else "one or more outer folds failed without reusing a prior configuration"
         ),
     )
-    if run_store is not None and run_key is not None:
+    if run_store is not None and run_identity is not None:
         run_store.complete_run(
-            run_key,
+            run_identity,
             result.result_hash,
             pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL),
         )
@@ -692,12 +835,13 @@ def evaluate_global_regime_v4_from_source(
     outer_runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
     teacher_refitter: Callable[..., FrozenTeacherRefit] = refit_frozen_teacher,
     max_workers: int | None = None,
-    snapshot_store: DatasetSnapshotStore | None = None,
-    run_store: EvaluationRunStore | None = None,
+    snapshot_store: ArrowDatasetSnapshotStore | None = None,
+    run_store: SQLiteEvaluationRunStore | None = None,
     repository_commit_sha: str | None = None,
     uv_lock_sha256: str | None = None,
     python_version: str | None = None,
     evaluation_contract_version: int = 1,
+    selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
 
@@ -722,33 +866,33 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source catalog and snapshot materialization digests differ")
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
-    run_key: EvaluationRunKey | None = None
+    run_identity: EvaluationRunIdentity | None = None
     if snapshot_store is not None and run_store is not None:
         if repository_commit_sha is None or uv_lock_sha256 is None or python_version is None:
             raise ValueError(
                 "durable source evaluation requires repository, lockfile and Python identities"
             )
-        dataset_key = DatasetSnapshotKey.from_catalog(catalog)
-        snapshot_store.finalize(dataset_key, snapshot)
-        snapshot = snapshot_store.load(dataset_key)
+        dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)
+        snapshot_store.finalize(dataset_identity, snapshot, catalog=catalog)
+        snapshot = snapshot_store.load(dataset_identity)
         timestamps = tuple(row.timestamp for row in snapshot.rows)
         plan = plan_walk_forward(timestamps, profile.walk_forward)
-        run_key = EvaluationRunKey(
+        run_identity = EvaluationRunIdentity(
             evaluation_id="global_regime_v4",
             profile_id=profile.profile_id,
             profile_config_version=profile.profile_config_version,
             profile_hash=profile.profile_hash,
             evaluation_contract_version=evaluation_contract_version,
             evaluation_plan_hash=plan.plan_hash,
-            dataset_snapshot_key=dataset_key.key,
+            dataset_snapshot_key=dataset_identity.key,
             evaluation_cutoff=cast(datetime, plan.evaluation_cutoff),
             repository_commit_sha=repository_commit_sha,
             uv_lock_sha256=uv_lock_sha256,
             python_version=python_version,
         )
-        state = run_store.open_run(run_key)
+        state = run_store.open_run(run_identity)
         if state.status == "COMPLETE":
-            cached_result_payload = run_store.load_completed_run(run_key)
+            cached_result_payload = run_store.load_completed_run(run_identity)
             if cached_result_payload is None:
                 raise ValueError("completed evaluation has no durable result payload")
             cached_result = pickle.loads(cached_result_payload)
@@ -772,7 +916,8 @@ def evaluate_global_regime_v4_from_source(
         teacher_refitter=teacher_refitter,
         max_workers=max_workers,
         run_store=run_store,
-        run_key=run_key,
+        run_identity=run_identity,
+        selection_sink=selection_sink,
     )
 
 

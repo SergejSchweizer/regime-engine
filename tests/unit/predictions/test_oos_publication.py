@@ -63,7 +63,7 @@ def valid_fold() -> WalkForwardFoldResult:
 def evaluation() -> WalkForwardEvaluation:
     return WalkForwardEvaluation(
         profile_id="xetra",
-        profile_config_version=1,
+        profile_config_version=4,
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
         source_build_id="source-build-1",

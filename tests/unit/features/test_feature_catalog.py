@@ -23,7 +23,7 @@ class DynamicCursor:
         self.executed.append((query, params))
 
     def fetchone(self) -> tuple[Any, ...]:
-        return ("build-1", "a" * 64, 2, 1, 2, NOW, NOW.replace(day=10), NOW)
+        return ("build-1", "a" * 64, 4, 3, 2, NOW, NOW.replace(day=10), NOW)
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         self.fetchall_count += 1
@@ -71,7 +71,7 @@ def test_dynamic_read_uses_one_snapshot_and_returns_catalog_lineage() -> None:
     connection = DynamicConnection(cursor)
     source = PostgresFeatureSource(lambda: connection)
     feature_catalog, snapshot = source.read_with_catalog(
-        FeatureRequest(("feature_b", "feature_a"), None, None, SourceMode.FEATURE_SELECTION)
+        FeatureRequest(("feature_b", "feature_a"), None, None, SourceMode.SCHEMA_DISCOVERY)
     )
 
     assert feature_catalog.feature_names == ("feature_a", "feature_b")
@@ -91,7 +91,7 @@ def test_dynamic_read_validates_requested_names_against_same_catalog_snapshot() 
     connection = DynamicConnection(cursor)
     source = PostgresFeatureSource(lambda: connection)
     with pytest.raises(ValueError, match="unregistered"):
-        source.read(FeatureRequest(("feature_missing",), None, None, SourceMode.FEATURE_SELECTION))
+        source.read(FeatureRequest(("feature_missing",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
 
 
@@ -136,15 +136,15 @@ def test_dynamic_catalog_schema_failures_roll_back(
     connection = DynamicConnection(cursor)
     source = PostgresFeatureSource(lambda: connection)
     with pytest.raises(ValueError, match=message):
-        source.read(FeatureRequest(("feature_a",), None, None, SourceMode.FEATURE_SELECTION))
+        source.read(FeatureRequest(("feature_a",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
 
 
-def test_legacy_registered_mode_remains_explicit_and_catalog_method_is_rejected() -> None:
+def test_resolved_feature_mode_remains_explicit_and_catalog_method_is_rejected() -> None:
     source = PostgresFeatureSource(
         lambda: pytest.fail("connection must not be used"), ("feature_a",)
     )
     with pytest.raises(ValueError, match="dynamic catalog mode"):
         source.read_with_catalog(
-            FeatureRequest(("feature_a",), None, None, SourceMode.FEATURE_SELECTION)
+            FeatureRequest(("feature_a",), None, None, SourceMode.SCHEMA_DISCOVERY)
         )

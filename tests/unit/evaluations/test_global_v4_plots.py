@@ -230,7 +230,7 @@ def test_global_v4_diagnostics_are_png_only_and_source_hash_deterministic(tmp_pa
         "final_12_model_same_vector_comparison",
         "outer_soft_nmi_history",
         "selected_m_l_history",
-        "feature_selection_frequency",
+        "feature_discovery_frequency",
         "adjacent_fold_cluster_stability",
     }
     assert expected <= {entry.plot_type for entry in first}

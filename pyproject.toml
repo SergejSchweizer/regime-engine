@@ -34,6 +34,7 @@ dev = [
   "pip-audit==2.9.0",
   "pytest==9.1.1",
   "pytest-cov==7.0.0",
+  "pytest-xdist==3.8.0",
   "ruff==0.16.2",
   "types-PyYAML==6.0.12.20250822",
 ]
@@ -61,7 +62,7 @@ packages = ["market_regime_engine"]
 mypy_path = "src"
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers -n auto"
 testpaths = ["tests"]
 markers = [
   "integration: hermetic integration test",

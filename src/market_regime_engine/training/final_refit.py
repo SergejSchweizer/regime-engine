@@ -15,18 +15,15 @@ from market_regime_engine.evaluation.diagnostics import (
     validate_train_occupancy,
 )
 from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
+from market_regime_engine.feature_discovery.contracts import DeploymentSelection, content_hash
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
-from market_regime_engine.models.gaussian_hmm import (
-    HmmlearnGaussianHMMAdapter,
-    HmmlearnGMMHMMAdapter,
-)
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter, StudentTHMMSettings
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
+from market_regime_engine.preprocessing.scaling import fit_standard_scaler
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.states.alignment import StateAlignment, align_to_reference
+from market_regime_engine.states.alignment import StateAlignment, align_first_fold
+from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.multistart import AdapterFactory, run_multistart
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
@@ -43,29 +40,7 @@ def _require_utc(value: datetime, field_name: str) -> datetime:
 def _default_adapter_builder(
     profile: ModelProfile | None, candidate: ResolvedCandidateProfile
 ) -> AdapterFactory:
-    def factory() -> HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter:
-        if candidate.model_family == "student_t_hmm":
-            if profile is None:
-                raise ValueError("Student-t candidate requires an active model profile")
-            settings = profile.student_t_hmm
-            if settings is None:
-                raise ValueError("Student-t candidate requires Student-t profile settings")
-            return StudentTHMMAdapter(
-                candidate.feature_order,
-                StudentTHMMSettings(
-                    minimum_nu=settings.minimum_nu,
-                    maximum_nu=settings.maximum_nu,
-                    initial_nu=settings.initial_nu,
-                    n_iter=settings.n_iter,
-                    tol=settings.tol,
-                    min_covar=settings.min_covar,
-                ),
-            )
-        if candidate.model_family == "gmm_hmm":
-            return HmmlearnGMMHMMAdapter(candidate.feature_order)
-        return HmmlearnGaussianHMMAdapter(candidate.feature_order)
-
-    return factory
+    return adapter_factory(profile, candidate)  # type: ignore[return-value]
 
 
 def _refit_matrix(
@@ -110,20 +85,6 @@ def _refit_matrix(
     return matrix, retained_timestamps, skipped
 
 
-def _last_valid_reference(
-    evaluation: WalkForwardEvaluation,
-) -> tuple[tuple[tuple[float, ...], ...], StandardScalerArtifact]:
-    valid = evaluation.valid_folds
-    if not valid:
-        raise ValueError("winning candidate has no valid evaluation fold for final alignment")
-    alignment = valid[-1].alignment
-    if alignment is None:
-        raise ValueError("last valid winning-K fold is missing persistent alignment evidence")
-    if evaluation.alignment_reference_scaler is None:
-        raise ValueError("winning evaluation is missing fixed alignment reference scaler")
-    return alignment.aligned_signatures, evaluation.alignment_reference_scaler
-
-
 def _aligned_artifact(
     artifact: GaussianHMMArtifact,
     alignment: StateAlignment,
@@ -166,6 +127,7 @@ def final_production_refit(
     lineage: SourceLineage,
     candidate: ResolvedCandidateProfile,
     winning_evaluation: WalkForwardEvaluation,
+    deployment_selection: DeploymentSelection,
     profile: ModelProfile | None = None,
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
 ) -> ProductionModelArtifact:
@@ -181,6 +143,12 @@ def final_production_refit(
         raise ValueError("final-refit candidate and evaluation source builds differ")
     if lineage.source_build_id != winning_evaluation.source_build_id:
         raise ValueError("final-refit source lineage differs from evaluation source build")
+    if deployment_selection.source_build_id != lineage.source_build_id:
+        raise ValueError("final-refit deployment selection differs from source build")
+    if deployment_selection.configuration.candidate_id != candidate.candidate_id:
+        raise ValueError("final-refit candidate differs from deployment selection")
+    if deployment_selection.configuration.feature_order != candidate.feature_order:
+        raise ValueError("final-refit features differ from deployment selection")
     if (
         candidate.feature_selection_definition_hash
         != winning_evaluation.feature_selection_definition_hash
@@ -189,7 +157,16 @@ def final_production_refit(
     ):
         raise ValueError("final-refit selection hashes differ from champion evaluation")
 
-    cutoff = _require_utc(winning_evaluation.evaluation_cutoff, "evaluation_cutoff")
+    validation_cutoff = _require_utc(
+        deployment_selection.validation_evaluation_cutoff,
+        "validation_evaluation_cutoff",
+    )
+    if validation_cutoff != winning_evaluation.evaluation_cutoff:
+        raise ValueError("deployment selection validation cutoff differs from evaluation")
+    cutoff = _require_utc(
+        deployment_selection.deployment_selection_cutoff,
+        "deployment_selection_cutoff",
+    )
     matrix, retained_timestamps, skipped = _refit_matrix(
         source_rows,
         feature_order=candidate.feature_order,
@@ -210,8 +187,9 @@ def final_production_refit(
     validate_full_covariances(raw_artifact)
     filtered = causal_filter(scaled, raw_artifact)
     validate_train_occupancy(filtered.filtered_probabilities)
-    reference_signatures, reference_scaler = _last_valid_reference(winning_evaluation)
-    alignment = align_to_reference(raw_artifact, reference_signatures, scaler, reference_scaler)
+    # Production state identity is local to this newly fitted model version.
+    # Never inherit a permutation from an outer/evaluation fold.
+    alignment = align_first_fold(raw_artifact)
     production_hmm = _aligned_artifact(raw_artifact, alignment)
     terminal = tuple(
         filtered.terminal_probabilities[index] for index in alignment.persistent_to_fitted
@@ -230,7 +208,11 @@ def final_production_refit(
         feature_selection_definition_hash=winning_evaluation.feature_selection_definition_hash,
         feature_selection_execution_hash=winning_evaluation.feature_selection_execution_hash,
         evaluation_plan_hash=winning_evaluation.evaluation_plan_hash,
-        evaluation_cutoff=cutoff,
+        validation_evaluation_cutoff=validation_cutoff,
+        deployment_selection_cutoff=cutoff,
+        validation_evidence_hash=content_hash(winning_evaluation),
+        source_catalog_hash=deployment_selection.source_catalog_hash,
+        state_identity_scope=deployment_selection.configuration.state_identity_scope,
         feature_order=candidate.feature_order,
         scaler=scaler,
         hmm=production_hmm,

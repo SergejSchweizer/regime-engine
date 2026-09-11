@@ -29,6 +29,11 @@ mapping = {
 }
 for source_key, environment_key in mapping.items():
     value = settings.get(source_key)
+    if source_key == "password_file" and (
+        os.environ.get("REGIME_FEATURE_PGPASSWORD")
+        or os.environ.get("REGIME_FEATURE_PGPASSWORD_FILE")
+    ):
+        continue
     if value is not None and environment_key not in os.environ:
         print(f"export {environment_key}={shlex.quote(str(value))}")
 PY
@@ -70,4 +75,4 @@ export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-disable}"
 
 export REGIME_RUN_EXTERNAL_FEATURE_PG=1
 export REGIME_RUN_EXTERNAL_TESTS=1
-exec .venv/bin/pytest -m external tests/external/test_feature_postgres_smoke.py
+exec .venv/bin/python -m pytest -m external tests/external/test_feature_postgres_smoke.py
