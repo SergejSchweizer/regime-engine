@@ -824,6 +824,12 @@ def evaluate_global_regime_v4(
             cached = pickle.loads(cached_payload)
             if not isinstance(cached, OuterFoldResult) or cached.fold_index != fold.fold_index:
                 raise ValueError("cached outer-fold payload is incompatible")
+            if not cached.valid:
+                run_store.terminalize_pending_stage_units_for_invalid_outer_fold(
+                    run_identity,
+                    fold.fold_id,
+                    cached.failure_reason or "cached outer fold is domain-invalid",
+                )
             if selection_sink is not None and cached.valid:
                 train_rows = source_rows.iloc[: fold.train_source_observations].copy()
                 selection = select_v4_configuration(
