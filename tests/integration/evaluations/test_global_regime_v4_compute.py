@@ -101,6 +101,7 @@ def _one_real_fit_multistart(
     *,
     state_count: int,
     adapter_factory: Callable[[], GaussianHMMAdapter],
+    **_kwargs: object,
 ) -> MultistartResult:
     """Use real backend math once per fit while preserving the eight-start contract."""
 

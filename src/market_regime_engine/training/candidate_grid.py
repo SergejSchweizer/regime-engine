@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import isfinite
 from statistics import fmean, pstdev
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -18,6 +18,7 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
@@ -41,6 +42,29 @@ CandidateRunner = Callable[
     WalkForwardEvaluation,
 ]
 SeedCheckpointFactory = Callable[[str, str, int], "HMMSeedCheckpoint"]
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateProcessTask:
+    """Pickle-safe immutable input for one CPU-bound candidate evaluation."""
+
+    source_rows: pd.DataFrame
+    plan: WalkForwardPlan
+    profile: ModelProfile
+    candidate: ResolvedCandidateProfile
+
+
+def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEvaluation:
+    """Evaluate one candidate outside the caller's interpreter/GIL."""
+
+    return run_walk_forward_candidate(
+        task.source_rows,
+        plan=task.plan,
+        profile=task.profile,
+        candidate=task.candidate,
+        adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
+        max_workers=1,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,11 +307,37 @@ def evaluate_candidate_grid(
             )
         return runner(source_rows, plan, profile, candidate, candidate_adapter)
 
-    if worker_limit == 1:
+    use_processes = (
+        max_workers is None
+        and runner is _default_runner
+        and adapter_factory_builder is None
+        and seed_checkpoint_factory is None
+        and worker_limit > 1
+    )
+    if use_processes:
+        tasks = tuple(
+            _CandidateProcessTask(source_rows, plan, profile, candidate)
+            for candidate in scheduled_candidates
+        )
+        with cpu_process_pool(worker_limit) as executor:
+            process_futures = {
+                task.candidate.candidate_id: executor.submit(_evaluate_candidate_in_process, task)
+                for task in tasks
+            }
+            evaluations_by_id = {
+                candidate_id: process_futures[candidate_id].result()
+                for candidate_id in process_futures
+            }
+        evaluations = tuple(
+            evaluations_by_id[candidate.candidate_id] for candidate in scheduled_candidates
+        )
+    elif worker_limit == 1:
         evaluations = tuple(evaluate(candidate) for candidate in scheduled_candidates)
     else:
-        with ThreadPoolExecutor(max_workers=worker_limit) as executor:
-            futures = [executor.submit(evaluate, candidate) for candidate in scheduled_candidates]
+        with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
+            futures = [
+                thread_executor.submit(evaluate, candidate) for candidate in scheduled_candidates
+            ]
             evaluations = tuple(future.result() for future in futures)
     by_candidate_id = {item.candidate_id: item for item in evaluations}
     expected_ids = expected_candidate_ids()
