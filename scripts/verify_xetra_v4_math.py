@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow.ipc as ipc
+from scipy.special import gammaln, logsumexp
 from scipy.stats import rankdata
 from sklearn.metrics import silhouette_samples
 
@@ -245,6 +246,186 @@ def independent_gaussian_log_likelihood(
     return total
 
 
+def _independent_gaussian_log_density(
+    values: np.ndarray,
+    means: np.ndarray,
+    covariances: np.ndarray,
+) -> np.ndarray:
+    """Return one independent full-covariance Gaussian log density per row/state."""
+
+    observations = np.asarray(values, dtype=float)
+    state_means = np.asarray(means, dtype=float)
+    state_covariances = np.asarray(covariances, dtype=float)
+    if observations.ndim != 2 or state_means.ndim != 2:
+        raise ValueError("density primitives must be two-dimensional")
+    if state_means.shape[1] != observations.shape[1]:
+        raise ValueError("density feature dimensions are inconsistent")
+    if state_covariances.shape != (
+        state_means.shape[0],
+        observations.shape[1],
+        observations.shape[1],
+    ):
+        raise ValueError("density covariance dimensions are invalid")
+    dimension = observations.shape[1]
+    output = np.empty((len(observations), len(state_means)), dtype=float)
+    for state, (mean, covariance) in enumerate(zip(state_means, state_covariances, strict=True)):
+        symmetric = (covariance + covariance.T) / 2.0
+        sign, logdet = np.linalg.slogdet(symmetric)
+        if sign <= 0.0 or not np.isfinite(logdet):
+            raise ValueError("density covariance must be positive definite")
+        centered = observations - mean
+        solved = np.linalg.solve(symmetric, centered.T).T
+        quadratic = np.einsum("ij,ij->i", centered, solved)
+        output[:, state] = -0.5 * (dimension * np.log(2.0 * np.pi) + logdet + quadratic)
+    return output
+
+
+def independent_gmm_log_likelihood(
+    observations: np.ndarray,
+    start_probabilities: np.ndarray,
+    transition_matrix: np.ndarray,
+    mixture_weights: np.ndarray,
+    mixture_means: np.ndarray,
+    mixture_covariances: np.ndarray,
+) -> float:
+    """Compute a two-component full-covariance GMM-HMM likelihood independently."""
+
+    values = np.asarray(observations, dtype=float)
+    starts = np.asarray(start_probabilities, dtype=float)
+    transitions = np.asarray(transition_matrix, dtype=float)
+    weights = np.asarray(mixture_weights, dtype=float)
+    means = np.asarray(mixture_means, dtype=float)
+    covariances = np.asarray(mixture_covariances, dtype=float)
+    state_count = len(starts)
+    if transitions.shape != (state_count, state_count):
+        raise ValueError("GMM transition dimensions are invalid")
+    if weights.ndim != 2 or weights.shape[0] != state_count:
+        raise ValueError("GMM mixture-weight dimensions are invalid")
+    if means.ndim != 3 or means.shape[:2] != weights.shape:
+        raise ValueError("GMM mixture-mean dimensions are invalid")
+    if covariances.shape != (
+        state_count,
+        weights.shape[1],
+        values.shape[1],
+        values.shape[1],
+    ):
+        raise ValueError("GMM mixture-covariance dimensions are invalid")
+    if not np.allclose(weights.sum(axis=1), 1.0, rtol=0.0, atol=1e-12):
+        raise ValueError("GMM mixture weights must be normalized")
+    component_log_density = np.empty((len(values), state_count, weights.shape[1]))
+    for state in range(state_count):
+        component_log_density[:, state, :] = (
+            _independent_gaussian_log_density(
+                values,
+                means[state],
+                covariances[state],
+            )
+            + np.log(weights[state])[None, :]
+        )
+    emissions = logsumexp(component_log_density, axis=2)
+    return _forward_log_likelihood(emissions, starts, transitions)
+
+
+def independent_student_t_log_likelihood(
+    observations: np.ndarray,
+    start_probabilities: np.ndarray,
+    transition_matrix: np.ndarray,
+    means: np.ndarray,
+    covariances: np.ndarray,
+    degrees_of_freedom: np.ndarray,
+) -> float:
+    """Compute a full-covariance multivariate Student-t HMM likelihood independently."""
+
+    values = np.asarray(observations, dtype=float)
+    starts = np.asarray(start_probabilities, dtype=float)
+    transitions = np.asarray(transition_matrix, dtype=float)
+    state_means = np.asarray(means, dtype=float)
+    state_covariances = np.asarray(covariances, dtype=float)
+    degrees = np.asarray(degrees_of_freedom, dtype=float)
+    state_count = len(starts)
+    if transitions.shape != (state_count, state_count):
+        raise ValueError("Student-t transition dimensions are invalid")
+    if state_means.shape != (state_count, values.shape[1]):
+        raise ValueError("Student-t mean dimensions are invalid")
+    if state_covariances.shape != (state_count, values.shape[1], values.shape[1]):
+        raise ValueError("Student-t covariance dimensions are invalid")
+    if degrees.shape != (state_count,) or np.any(degrees <= 2.0):
+        raise ValueError("Student-t degrees of freedom are invalid")
+    emissions = np.empty((len(values), state_count), dtype=float)
+    dimension = values.shape[1]
+    for state, (mean, covariance, degree) in enumerate(
+        zip(state_means, state_covariances, degrees, strict=True)
+    ):
+        symmetric = (covariance + covariance.T) / 2.0
+        sign, logdet = np.linalg.slogdet(symmetric)
+        if sign <= 0.0 or not np.isfinite(logdet):
+            raise ValueError("Student-t covariance must be positive definite")
+        centered = values - mean
+        solved = np.linalg.solve(symmetric, centered.T).T
+        quadratic = np.einsum("ij,ij->i", centered, solved)
+        emissions[:, state] = (
+            gammaln((degree + dimension) / 2.0)
+            - gammaln(degree / 2.0)
+            - 0.5 * (dimension * np.log(degree * np.pi) + logdet)
+            - 0.5 * (degree + dimension) * np.log1p(quadratic / degree)
+        )
+    return _forward_log_likelihood(emissions, starts, transitions)
+
+
+def _forward_log_likelihood(
+    log_emissions: np.ndarray,
+    start_probabilities: np.ndarray,
+    transition_matrix: np.ndarray,
+) -> float:
+    """Apply a scaled forward recursion to independently computed emissions."""
+
+    starts = np.asarray(start_probabilities, dtype=float)
+    transitions = np.asarray(transition_matrix, dtype=float)
+    if log_emissions.ndim != 2 or log_emissions.shape[1] != len(starts):
+        raise ValueError("forward emission dimensions are invalid")
+    alpha = np.log(starts) + log_emissions[0]
+    total = float(logsumexp(alpha))
+    alpha -= total
+    for row in log_emissions[1:]:
+        alpha = logsumexp(alpha[:, None] + np.log(transitions), axis=0) + row
+        increment = float(logsumexp(alpha))
+        total += increment
+        alpha -= increment
+    return total
+
+
+def independent_hmm_log_likelihood(item: dict[str, object]) -> float:
+    """Dispatch one expectation record without importing production model code."""
+
+    family = str(item.get("model_family", "gaussian_hmm"))
+    common = (
+        np.asarray(item["observations"], dtype=float),
+        np.asarray(item["start_probabilities"], dtype=float),
+        np.asarray(item["transition_matrix"], dtype=float),
+    )
+    if family == "gaussian_hmm":
+        return independent_gaussian_log_likelihood(
+            *common,
+            np.asarray(item["means"], dtype=float),
+            np.asarray(item["covariances"], dtype=float),
+        )
+    if family == "gmm_hmm":
+        return independent_gmm_log_likelihood(
+            *common,
+            np.asarray(item["mixture_weights"], dtype=float),
+            np.asarray(item["mixture_means"], dtype=float),
+            np.asarray(item["mixture_covariances"], dtype=float),
+        )
+    if family == "student_t_hmm":
+        return independent_student_t_log_likelihood(
+            *common,
+            np.asarray(item["means"], dtype=float),
+            np.asarray(item["covariances"], dtype=float),
+            np.asarray(item["degrees_of_freedom"], dtype=float),
+        )
+    raise ValueError(f"unsupported likelihood model family: {family}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
@@ -296,14 +477,13 @@ def main() -> None:
         )
         nmi_errors.append(abs(actual - float(item["soft_regime_nmi"])))
     likelihood_errors: list[float] = []
-    for item in expected.get("gaussian_likelihoods", []):
-        actual = independent_gaussian_log_likelihood(
-            np.asarray(item["observations"], dtype=float),
-            np.asarray(item["start_probabilities"], dtype=float),
-            np.asarray(item["transition_matrix"], dtype=float),
-            np.asarray(item["means"], dtype=float),
-            np.asarray(item["covariances"], dtype=float),
-        )
+    likelihood_items = expected.get("likelihoods", expected.get("gaussian_likelihoods", []))
+    if not isinstance(likelihood_items, list):
+        raise SystemExit("likelihood expectations must be a list")
+    for item in likelihood_items:
+        if not isinstance(item, dict):
+            raise SystemExit("likelihood expectation must be an object")
+        actual = independent_hmm_log_likelihood(item)
         likelihood_errors.append(abs(actual - float(item["log_likelihood"])))
     maximum_feature_score_error = max(feature_score_errors, default=0.0)
     maximum_nmi_error = max(nmi_errors, default=0.0)
@@ -313,7 +493,7 @@ def main() -> None:
     if maximum_nmi_error > 1.0e-10:
         raise SystemExit("soft-NMI audit failed")
     if maximum_likelihood_error > 1.0e-10:
-        raise SystemExit("Gaussian likelihood audit failed")
+        raise SystemExit("HMM likelihood audit failed")
 
     print(
         json.dumps(
