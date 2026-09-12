@@ -31,6 +31,7 @@ from market_regime_engine.mlflow_support.metric_export import (
     MetricExportLedger,
     export_model_metric_points,
 )
+from market_regime_engine.mlflow_support.model_metrics import model_metric_points
 from market_regime_engine.mlflow_support.plots import (
     PlotManifestEntry,
     candidate_covariance_scale,
@@ -420,6 +421,10 @@ def _project_candidate_logged_model(
     points = (
         _candidate_metric_points(evaluation, plan)
         + _aggregate_metric_points(evaluation)
+        + model_metric_points(
+            evaluation,
+            fold_timestamps=tuple(item.test_end for item in plan.folds),
+        )
         + extra_metric_points
     )
     validate_metric_points(points)

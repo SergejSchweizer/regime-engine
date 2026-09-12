@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -29,6 +30,7 @@ from market_regime_engine.mlflow_support.plots import (
     render_transition_heatmap,
     summarize_em_convergence,
 )
+from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
@@ -349,6 +351,14 @@ def test_walk_forward_tracking_projection_is_deterministic(tmp_path: Path) -> No
         == "model-1"
     )
     assert len(port.logged) == 1
+    logged_points = port.logged[0][1]
+    logged_keys = {cast(MetricPoint, point).key for point in logged_points}
+    assert {
+        "train_loglik_total",
+        "oos_filtered_probability_state_0",
+        "transition_probability_state_0_to_state_0",
+        "covariance_min_eigenvalue",
+    } <= logged_keys
     assert port.finalized == [("model-1", False)]
     with pytest.raises(ValueError, match="state index"):
         render_covariance_heatmap(evaluation, evaluation.folds[0], 2, 1.0, tmp_path)
