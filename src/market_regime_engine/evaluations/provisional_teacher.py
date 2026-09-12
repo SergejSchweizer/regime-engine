@@ -122,6 +122,7 @@ def _evaluate_candidates(
                     profile,
                     candidate,
                     cast(AdapterFactory, adapter_factory(profile, candidate)),
+                    max_workers=max_workers,
                     seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
                         candidate.candidate_id,
                         fold_id,
@@ -342,6 +343,7 @@ def run_provisional_gaussian_candidate(
     candidate: ResolvedCandidateProfile,
     candidate_adapter_factory: AdapterFactory,
     *,
+    max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
 ) -> WalkForwardEvaluation:
     """Run one teacher candidate through the existing walk-forward runner."""
@@ -352,6 +354,7 @@ def run_provisional_gaussian_candidate(
         profile=profile,
         candidate=candidate,
         adapter_factory=candidate_adapter_factory,
+        max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
     )
 

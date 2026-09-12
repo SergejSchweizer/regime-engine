@@ -281,10 +281,12 @@ def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch,
         shared_candidate,
         candidate_adapter_factory,
         *,
+        max_workers,
         seed_checkpoint_factory,
     ):
         nonlocal calls
         del candidate_adapter_factory, seed_checkpoint_factory
+        assert max_workers == 1
         calls += 1
         assert frame is rows
         assert candidate_plan is plan
