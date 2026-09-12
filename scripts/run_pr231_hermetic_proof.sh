@@ -10,13 +10,17 @@ mkdir -p "$OUTPUT_DIR"
   exit 2
 }
 
+# The host exposes 88 logical CPUs; reserve two for the OS and use at most 86
+# evaluation processes. Callers may lower this explicitly for shared hosts.
+export REGIME_CPU_WORKERS="${REGIME_CPU_WORKERS:-86}"
+
 COMPUTATION_PROOF="$OUTPUT_DIR/pr231-computation-proof.json"
 RUN_METADATA="$OUTPUT_DIR/pr231-proof.json"
 JUNIT_XML="$OUTPUT_DIR/pr231-junit.xml"
 START_EPOCH="$(date +%s)"
 STARTED_UTC="$(date -u --iso-8601=seconds)"
 set +e
-PR231_PROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q \
+PR231_PROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q -n 1 \
   "$ROOT/tests/e2e/test_global_regime_v4_full_compute.py" \
   -m "integration and slow" --junitxml="$JUNIT_XML"
 EXIT_CODE=$?
@@ -64,7 +68,7 @@ repository_sha = subprocess.run(
 payload = {
     "workflow": "local",
     "repository_sha": repository_sha,
-    "command": ".venv/bin/pytest -q tests/e2e/test_global_regime_v4_full_compute.py -m 'integration and slow' --junitxml=pr231-junit.xml",
+    "command": ".venv/bin/pytest -q -n 1 tests/e2e/test_global_regime_v4_full_compute.py -m 'integration and slow' --junitxml=pr231-junit.xml",
     "started_utc": os.environ["PR231_STARTED_UTC"],
     "finished_utc": os.environ["PR231_FINISHED_UTC"],
     "duration_seconds": int(os.environ["PR231_END_EPOCH"])

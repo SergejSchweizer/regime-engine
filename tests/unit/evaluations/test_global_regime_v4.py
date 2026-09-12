@@ -47,6 +47,22 @@ class _WinnerStub:
     ranked_features: tuple[str, ...]
 
 
+@pytest.mark.parametrize(
+    ("total_budget", "outer_workers", "expected_limits"),
+    ((86, 24, (3,) * 14 + (2,) * 10), (24, 24, (1,) * 24), (2, 2, (1, 1)), (86, 1, (86,))),
+)
+def test_nested_worker_limits_share_total_cpu_budget(
+    total_budget: int,
+    outer_workers: int,
+    expected_limits: tuple[int, ...],
+) -> None:
+    limits = global_v4._nested_worker_limits(total_budget, outer_workers)
+    assert limits == expected_limits
+    assert max(limits) == max(expected_limits)
+    if total_budget == 86 and outer_workers == 24:
+        assert outer_workers + sum(limits) == total_budget
+
+
 def _catalog() -> FeatureCatalogSnapshot:
     lineage = SourceLineage(
         source_dataset="xetra_gold",

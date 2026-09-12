@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import fsum, isfinite, log
 from typing import Any, cast
 
 import numpy as np
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     FEATURE_SCORE_BIN_COUNT,
     FEATURE_SCORE_TIE_TOLERANCE,
@@ -17,10 +19,32 @@ from market_regime_engine.feature_discovery.contracts import (
     QualityFilterResult,
 )
 from market_regime_engine.features.ports import FeatureSnapshot
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _PROBABILITY_TOLERANCE = 1.0e-10
 _ENTROPY_TOLERANCE = 1.0e-12
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoreFeatureTask:
+    """Pickle-safe independent raw-feature scoring task."""
+
+    feature_name: str
+    canonical_ordinal: int
+    values: tuple[float | None, ...]
+    teacher: ProvisionalTeacherReference
+
+
+def _score_feature_in_process(task: _ScoreFeatureTask) -> FeatureRegimeScore:
+    """Score one raw feature in a process outside the caller's GIL."""
+
+    return _score_feature_values(
+        task.feature_name,
+        task.canonical_ordinal,
+        task.values,
+        task.teacher,
+    )
 
 
 def _finite_value(value: object, name: str) -> float:
@@ -285,23 +309,34 @@ def score_all_raw_features(
     snapshot: FeatureSnapshot,
     quality: QualityFilterResult,
     teacher: ProvisionalTeacherReference,
+    max_workers: int | None = None,
 ) -> tuple[FeatureRegimeScore, ...]:
-    """Score every quality-eligible raw feature in canonical source order."""
+    """Score every quality-eligible raw feature in canonical source order.
+
+    Features are independent once the common teacher is frozen. Process
+    workers therefore remove the GIL from this CPU-bound stage while the
+    returned tuple is restored to canonical source order.
+    """
 
     values_by_feature, _ = _validate_inputs(snapshot, quality, teacher)
-    scores: list[FeatureRegimeScore] = []
-    for quality_item in quality.features:
-        if not quality_item.eligible:
-            continue
-        scores.append(
-            _score_feature_values(
-                quality_item.feature_name,
-                quality_item.canonical_ordinal,
-                values_by_feature[quality_item.feature_name],
-                teacher,
-            )
+    tasks = tuple(
+        _ScoreFeatureTask(
+            quality_item.feature_name,
+            quality_item.canonical_ordinal,
+            values_by_feature[quality_item.feature_name],
+            teacher,
         )
-    return tuple(scores)
+        for quality_item in quality.features
+        if quality_item.eligible
+    )
+    if not tasks:
+        return ()
+    worker_limit = cpu_worker_count(max_workers, task_count=len(tasks))
+    if worker_limit == 1:
+        return tuple(_score_feature_in_process(task) for task in tasks)
+    with cpu_process_pool(worker_limit) as executor:
+        futures = tuple(executor.submit(_score_feature_in_process, task) for task in tasks)
+        return tuple(future.result() for future in futures)
 
 
 compute_feature_regime_scores = score_all_raw_features

@@ -25,6 +25,9 @@ fi
 
 export REGIME_ENGINE_ROOT="$ROOT"
 export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-http://10.10.1.3:5000}"
+# Reserve two logical CPUs for the operating system and service overhead;
+# operators may lower this for a shared host.
+export REGIME_CPU_WORKERS="${REGIME_CPU_WORKERS:-86}"
 # Native BLAS/OpenMP threads are deliberately one per explicit process/task;
 # otherwise each HMM worker creates a second machine-sized thread pool.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"

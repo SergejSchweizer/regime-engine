@@ -99,6 +99,37 @@ _MIN_OUTER_TEST_SUPPORT = 42
 PrefixEvaluationPayloadSink = Callable[[int, int, str, WalkForwardEvaluation], None]
 
 
+def _nested_worker_limits(total_worker_budget: int, outer_worker_count: int) -> tuple[int, ...]:
+    """Share one CPU budget between outer processes and nested stages.
+
+    An outer process is itself a CPU lane. When it runs a candidate grid or
+    multistart pool, those child processes must come from the remaining
+    budget; otherwise every outer process can independently create a
+    machine-sized pool and oversubscribe the host. The remainder is assigned
+    to individual outer-fold slots so a budget such as 86 is used fully when
+    24 folds run concurrently, rather than rounding down to 72 processes.
+    """
+
+    if total_worker_budget < 1 or outer_worker_count < 1:
+        raise ValueError("worker budget and outer worker count must be positive")
+    if outer_worker_count == 1:
+        return (total_worker_budget,)
+    baseline = max(1, (total_worker_budget - outer_worker_count) // outer_worker_count)
+    remainder = max(
+        0,
+        total_worker_budget - outer_worker_count - baseline * outer_worker_count,
+    )
+    return tuple(baseline + int(slot < remainder) for slot in range(outer_worker_count))
+
+
+def _nested_worker_limit_for_fold(worker_limits: tuple[int, ...], fold_index: int) -> int:
+    """Return the nested budget assigned to a one-based outer-fold slot."""
+
+    if not worker_limits or fold_index < 1:
+        raise ValueError("worker limits and fold index must be positive")
+    return worker_limits[(fold_index - 1) % len(worker_limits)]
+
+
 @dataclass(frozen=True, slots=True)
 class _OuterProcessContext:
     """Inherited immutable context for one durable outer-fold worker."""
@@ -109,7 +140,7 @@ class _OuterProcessContext:
     build_id: str
     outer_runner: PrefixCandidateRunner
     teacher_refitter: Callable[..., FrozenTeacherRefit]
-    nested_max_workers: int
+    nested_worker_limits: tuple[int, ...]
     run_store_root: str | None
     run_identity: EvaluationRunIdentity | None
 
@@ -147,7 +178,9 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
             build_id=context.build_id,
             outer_runner=context.outer_runner,
             teacher_refitter=context.teacher_refitter,
-            max_workers=context.nested_max_workers,
+            max_workers=_nested_worker_limit_for_fold(
+                context.nested_worker_limits, fold.fold_index
+            ),
         )
     store = SQLiteEvaluationRunStore(context.run_store_root)
     unit = WorkUnitIdentity(
@@ -175,7 +208,7 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
         build_id=context.build_id,
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
-        max_workers=context.nested_max_workers,
+        max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
         stage_checkpoint=StageCheckpoint(context.run_identity, store, fold.fold_id),
     )
     store.complete_work_unit(
@@ -213,7 +246,7 @@ def _evaluate_outer_fold_process_with_selection(
         build_id=context.build_id,
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
-        max_workers=context.nested_max_workers,
+        max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
         selection_sink=lambda _fold_index, selection: captured.append(selection),
         prefix_evaluation_sink=lambda prefix_length, candidate_id, evaluation: (
             prefix_evaluations.__setitem__((prefix_length, candidate_id), evaluation)
@@ -504,7 +537,12 @@ def select_v4_configuration(
         tuple[FeatureRegimeScore, ...],
         checkpoint(
             "feature_scores",
-            lambda: score_all_raw_features(snapshot, quality, teacher_reference),
+            lambda: score_all_raw_features(
+                snapshot,
+                quality,
+                teacher_reference,
+                max_workers=max_workers,
+            ),
             parents=(quality, teacher_reference),
         ),
     )
@@ -866,8 +904,12 @@ def evaluate_global_regime_v4(
     if any(current <= previous for previous, current in pairwise(timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
     outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
-    requested_workers = cpu_worker_count(max_workers, task_count=len(outer_plan.folds))
-    outer_worker_limit = requested_workers
+    total_worker_budget = cpu_worker_count(max_workers)
+    outer_worker_limit = min(total_worker_budget, len(outer_plan.folds))
+    nested_worker_limits = _nested_worker_limits(total_worker_budget, outer_worker_limit)
+
+    def nested_worker_limit_for_fold(fold: WalkForwardFold) -> int:
+        return _nested_worker_limit_for_fold(nested_worker_limits, fold.fold_index)
 
     def evaluate_fold(fold: WalkForwardFold) -> OuterFoldResult:
         fold_prefix_sink = None
@@ -895,7 +937,7 @@ def evaluate_global_regime_v4(
                 build_id=build_id,
                 outer_runner=outer_runner,
                 teacher_refitter=teacher_refitter,
-                max_workers=max_workers,
+                max_workers=nested_worker_limit_for_fold(fold),
                 selection_sink=selection_sink,
                 prefix_evaluation_sink=fold_prefix_sink,
             )
@@ -927,7 +969,7 @@ def evaluate_global_regime_v4(
                     catalog=catalog,
                     profile=profile,
                     source_build_id=build_id,
-                    max_workers=max_workers,
+                    max_workers=nested_worker_limit_for_fold(fold),
                     stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
                 )
                 selection_sink(fold.fold_index, selection)
@@ -942,7 +984,7 @@ def evaluate_global_regime_v4(
             build_id=build_id,
             outer_runner=outer_runner,
             teacher_refitter=teacher_refitter,
-            max_workers=max_workers,
+            max_workers=nested_worker_limit_for_fold(fold),
             selection_sink=selection_sink,
             prefix_evaluation_sink=fold_prefix_sink,
             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
@@ -980,7 +1022,7 @@ def evaluate_global_regime_v4(
             build_id=build_id,
             outer_runner=outer_runner,
             teacher_refitter=teacher_refitter,
-            nested_max_workers=1,
+            nested_worker_limits=nested_worker_limits,
             run_store_root=str(run_store.root),
             run_identity=run_identity,
         )
@@ -1005,7 +1047,7 @@ def evaluate_global_regime_v4(
                             catalog=catalog,
                             profile=profile,
                             source_build_id=build_id,
-                            max_workers=1,
+                            max_workers=nested_worker_limit_for_fold(fold),
                             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
                         )
                         selection_sink(fold.fold_index, selection)
@@ -1030,7 +1072,7 @@ def evaluate_global_regime_v4(
                             catalog=catalog,
                             profile=profile,
                             source_build_id=build_id,
-                            max_workers=1,
+                            max_workers=nested_worker_limit_for_fold(fold),
                             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
                         )
                         selection_sink(fold.fold_index, selection)
@@ -1043,7 +1085,7 @@ def evaluate_global_regime_v4(
             build_id=build_id,
             outer_runner=outer_runner,
             teacher_refitter=teacher_refitter,
-            nested_max_workers=1,
+            nested_worker_limits=nested_worker_limits,
             run_store_root=None,
             run_identity=None,
         )
