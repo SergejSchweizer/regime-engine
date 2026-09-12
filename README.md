@@ -62,6 +62,17 @@ artifacts only. The evaluation itself has no durable position ledger or resume
 key: if the process is interrupted, invoke the same command again and it will
 recompute every fold from the beginning.
 
+Run the local-only hermetic full-computation proof with:
+
+```bash
+./scripts/run_pr231_hermetic_proof.sh
+```
+
+It writes timing metadata, the JUnit report and the computation proof sidecar
+to `.artifacts/pr231-hermetic-proof` by default. Set
+`PR231_PROOF_OUTPUT_DIR` to store them elsewhere. This proof never runs in
+GitHub Actions, contacts external services or participates in merge/push gates.
+
 ## Statistical lifecycle
 
 Feature discovery and candidate selection use outer-fold TRAIN data only. The v4 contract evaluates the dynamic source catalog, Gaussian K2-K5, two-mixture GMM-HMM K2-K5, and Student-t K2-K5 candidates using the deterministic walk-forward contract in `EVALUATION.md`. No ETF/portfolio/trading metric participates in discovery or model ranking.
