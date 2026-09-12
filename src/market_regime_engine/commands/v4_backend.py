@@ -26,7 +26,6 @@ from market_regime_engine.contracts import PredictionMode
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
-from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.deployment_selection import (
     select_deployment_configuration,
@@ -130,11 +129,11 @@ def _configured_state_root(root: Path) -> Path:
         )
     state_root = Path(configured).expanduser()
     if not state_root.is_absolute():
-        raise RuntimeError("resumable lifecycle state root must be an absolute path")
+        raise RuntimeError("lifecycle state root must be an absolute path")
     resolved_state_root = state_root.resolve()
     resolved_root = root.resolve()
     if resolved_state_root == resolved_root or resolved_root in resolved_state_root.parents:
-        raise RuntimeError("resumable lifecycle state root must be outside the repository")
+        raise RuntimeError("lifecycle state root must be outside the repository")
     return resolved_state_root
 
 
@@ -241,13 +240,11 @@ class V4LifecycleBackend:
         _atomic_pickle(self._source_path, (catalog, snapshot))
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
-        checkpoint = self.state_root / "evaluation-runs"
         selections: dict[int, V4ConfigurationSelection] = {}
         result = evaluate_global_regime_v4_from_source(
             recording,
             profile=self.profile,
-            snapshot_store=ArrowDatasetSnapshotStore(checkpoint / "snapshots"),
-            run_store=SQLiteEvaluationRunStore(checkpoint / "runs"),
+            snapshot_store=ArrowDatasetSnapshotStore(self.state_root / "snapshots"),
             repository_commit_sha=_commit(self.root),
             uv_lock_sha256=_file_sha256(self.root / "uv.lock"),
             python_version=platform.python_version(),
