@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,9 @@ from market_regime_engine.evaluation.selection import (
 )
 from market_regime_engine.evaluation.walk_forward import AdapterFactory, WalkForwardEvaluation
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan, plan_walk_forward
+from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
+from market_regime_engine.evaluation_runs.stages import StageCheckpoint
+from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluations.teacher_reference import FrozenTeacherRefit
 from market_regime_engine.feature_discovery.contracts import (
     PrefixEvaluation,
@@ -525,3 +529,77 @@ def test_train_snapshot_rejects_test_only_column_and_keeps_catalog_order() -> No
     snapshot = global_v4._as_feature_snapshot(_rows(20), catalog)
     assert snapshot.feature_names == ("f0", "f1", "f2")
     assert snapshot.rows[0].timestamp == START
+
+
+def test_outer_test_stage_checkpoint_reuses_refit_and_test_result(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _rows()
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    fold = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward).folds[0]
+    selection = _selection_stub(catalog)
+    identity = EvaluationRunIdentity(
+        evaluation_id="global_regime_v4",
+        profile_id="xetra",
+        profile_config_version=4,
+        profile_hash=profile.profile_hash,
+        evaluation_contract_version=1,
+        evaluation_plan_hash=HASH,
+        dataset_snapshot_key=HASH,
+        evaluation_cutoff=fold.test_end,
+        repository_commit_sha="b" * 40,
+        uv_lock_sha256="c" * 64,
+        python_version="3.14.7",
+    )
+    store = SQLiteEvaluationRunStore(tmp_path / "runs")
+    store.open_run(identity)
+    checkpoint = StageCheckpoint(identity, store, fold.fold_id)
+    monkeypatch.setattr(global_v4, "select_v4_configuration", lambda *args, **kwargs: selection)
+    outer_calls = 0
+    teacher_calls = 0
+
+    def outer_runner(*args: object, **kwargs: object) -> WalkForwardEvaluation:
+        nonlocal outer_calls
+        del kwargs
+        outer_calls += 1
+        source_rows = cast(pd.DataFrame, args[0])
+        return cast(
+            WalkForwardEvaluation,
+            _model_evaluation(tuple(source_rows["timestamp_m1"].iloc[-63:])),
+        )
+
+    def teacher_refitter(*args: object, **kwargs: object) -> FrozenTeacherRefit:
+        nonlocal teacher_calls
+        del kwargs
+        teacher_calls += 1
+        test_rows = cast(pd.DataFrame, args[1])
+        return cast(FrozenTeacherRefit, _teacher_refit(tuple(test_rows["timestamp_m1"])))
+
+    arguments = {
+        "catalog": catalog,
+        "profile": profile,
+        "build_id": "build-1",
+        "outer_runner": outer_runner,
+        "teacher_refitter": teacher_refitter,
+        "max_workers": 1,
+        "stage_checkpoint": checkpoint,
+    }
+    first = global_v4._evaluate_outer_fold(rows, fold, **arguments)
+    second = global_v4._evaluate_outer_fold(rows, fold, **arguments)
+
+    assert first == second
+    assert first.valid is True
+    assert outer_calls == 1
+    assert teacher_calls == 1
+    state = store.work_unit_state(
+        identity,
+        checkpoint._unit(
+            "outer_test",
+            (("fold_id", fold.fold_id), ("test_source_observations", "63")),
+            (pickle.dumps(selection, protocol=pickle.HIGHEST_PROTOCOL),),
+        ),
+    )
+    assert state is not None
+    assert state.status.value == "COMPLETE"
