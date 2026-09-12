@@ -96,6 +96,7 @@ class RegisteredClient:
             ),
         }
         self.aliases = {"champion": "2", "challenger": "1"}
+        self.operations: list[tuple[str, str]] = []
 
     def get_model_version_by_alias(self, name: str, alias: str) -> object:
         assert name == "regime-xetra"
@@ -109,14 +110,19 @@ class RegisteredClient:
 
     def delete_model_version(self, name: str, version: str) -> None:
         assert name == "regime-xetra"
+        if version in self.aliases.values():
+            raise RuntimeError("cannot delete a model version with an attached alias")
+        self.operations.append(("delete_model_version", version))
         del self.versions[version]
 
     def delete_registered_model_alias(self, name: str, alias: str) -> None:
         assert name == "regime-xetra"
+        self.operations.append(("delete_alias", alias))
         del self.aliases[alias]
 
     def set_registered_model_alias(self, name: str, alias: str, version: str) -> None:
         assert name == "regime-xetra"
+        self.operations.append(("retarget_alias", alias))
         self.aliases[alias] = version
 
 
@@ -136,6 +142,10 @@ def test_retired_cleanup_requires_v4_champion_and_retargets_alias() -> None:
     assert proof["status"] == "verified"
     assert set(client.versions) == {"2"}
     assert client.aliases["challenger"] == "2"
+    assert client.operations == [
+        ("retarget_alias", "challenger"),
+        ("delete_model_version", "1"),
+    ]
     retry = execute_retired_registered_model_cleanup(
         client,
         inventory,

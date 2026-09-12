@@ -246,7 +246,17 @@ def execute_retired_registered_model_cleanup(
                     "to_version": retarget,
                 }
             )
-    for operation in plan:
+    # MLflow keeps aliases attached to model versions and may reject deleting
+    # a version while an alias still points at it.  Apply alias mutations first
+    # so the manifest is safe against the real registry's referential rules.
+    ordered_plan = tuple(
+        operation
+        for operation in plan
+        if operation["operation"] in {"delete_alias", "retarget_alias"}
+    ) + tuple(
+        operation for operation in plan if operation["operation"] == "delete_model_version"
+    )
+    for operation in ordered_plan:
         if operation["operation"] == "delete_model_version":
             try:
                 client.delete_model_version(REGISTERED_MODEL_NAME, operation["version"])
@@ -276,16 +286,42 @@ def execute_retired_registered_model_cleanup(
         except Exception:
             continue
         survivors.append(item["version"])
+    surviving_aliases: list[dict[str, str]] = []
+    for item in aliases:
+        alias = str(item["alias"])
+        expected_target = item.get("retarget_version")
+        try:
+            current = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, alias)
+        except Exception as error:
+            if _is_missing_error(error):
+                if isinstance(expected_target, str) and expected_target:
+                    surviving_aliases.append(
+                        {"alias": alias, "reason": "expected v4 target is missing"}
+                    )
+                continue
+            raise
+        current_version = _identity(current.version, "surviving alias version")
+        if not isinstance(expected_target, str) or not expected_target:
+            surviving_aliases.append({"alias": alias, "version": current_version})
+        elif current_version != expected_target:
+            surviving_aliases.append(
+                {
+                    "alias": alias,
+                    "version": current_version,
+                    "expected_version": expected_target,
+                }
+            )
     proof: dict[str, object] = {
         "scope": "retired_registered_models",
         "tracking_uri": expected_tracking_uri,
         "model_name": REGISTERED_MODEL_NAME,
-        "plan": plan,
+        "plan": list(ordered_plan),
         "surviving_versions": sorted(survivors),
-        "status": "verified" if not survivors else "failed",
+        "surviving_aliases": surviving_aliases,
+        "status": "verified" if not survivors and not surviving_aliases else "failed",
     }
     if proof["status"] != "verified":
-        raise RuntimeError("legacy registered-model cleanup left targeted versions behind")
+        raise RuntimeError("legacy registered-model cleanup left targeted objects behind")
     return proof
 
 
