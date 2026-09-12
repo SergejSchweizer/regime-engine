@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
-from time import sleep
+from time import monotonic, sleep
 from typing import NoReturn
 
 import pytest
@@ -40,6 +40,12 @@ def identity() -> EvaluationRunIdentity:
         "e" * 64,
         "3.14.7",
     )
+
+
+def _parallel_compute(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
+    del parents
+    sleep(0.2)
+    return node.identity.key.encode("utf-8")
 
 
 def _process_executor_worker(root: str) -> tuple[str, int, int]:
@@ -101,6 +107,35 @@ def test_executor_resumes_and_completed_run_is_zero_compute(tmp_path: Path) -> N
     assert second.computed_unit_count == 0
     assert second.reused_unit_count == 2
     assert calls == []
+
+
+def test_independent_pickleable_units_use_process_workers(tmp_path: Path) -> None:
+    run = identity()
+    nodes = tuple(
+        WorkUnitNode(
+            make_work_unit(
+                run,
+                unit_type="independent",
+                coordinates=(("index", f"{index:03d}"),),
+            )
+        )
+        for index in range(4)
+    )
+    graph = EvaluationWorkGraph.from_nodes(run, nodes)
+    store = SQLiteEvaluationRunStore(tmp_path)
+    started = monotonic()
+    result = ResumableEvaluationExecutor(store, max_workers=4).execute(
+        run, graph, _parallel_compute
+    )
+    elapsed = monotonic() - started
+
+    assert result.computed_unit_count == 4
+    assert result.reused_unit_count == 0
+    assert elapsed < 0.65
+    assert all(
+        store.load_completed_work_unit(run, node.identity) == node.identity.key.encode("utf-8")
+        for node in nodes
+    )
 
 
 def test_executor_caches_domain_invalid_without_retry(tmp_path: Path) -> None:
