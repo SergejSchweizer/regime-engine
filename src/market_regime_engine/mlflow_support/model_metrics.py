@@ -17,6 +17,7 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
     WalkForwardFoldResult,
 )
+from market_regime_engine.mlflow_support.fit_quality_metrics import build_fit_quality_evidence
 from market_regime_engine.mlflow_support.metric_catalog import (
     require_metric_definition,
     validate_metric_points,
@@ -547,6 +548,7 @@ def model_metric_points(
     }
     for key, value in aggregate.items():
         _append(points, key, value, step=0, timestamp_ms=default_timestamp)
+    points.extend(build_fit_quality_evidence(evaluation).metric_points)
     for index, fold in enumerate(evaluation.folds):
         timestamp_ms = (
             _timestamp_ms(fold_timestamps[index])
