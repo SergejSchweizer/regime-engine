@@ -108,8 +108,8 @@ class _OuterProcessContext:
     outer_runner: PrefixCandidateRunner
     teacher_refitter: Callable[..., FrozenTeacherRefit]
     nested_max_workers: int
-    run_store_root: str
-    run_identity: EvaluationRunIdentity
+    run_store_root: str | None
+    run_identity: EvaluationRunIdentity | None
 
 
 _OUTER_PROCESS_CONTEXT: _OuterProcessContext | None = None
@@ -136,6 +136,17 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
     context = _OUTER_PROCESS_CONTEXT
     if context is None:
         raise RuntimeError("outer process context was not initialized")
+    if context.run_store_root is None or context.run_identity is None:
+        return _evaluate_outer_fold(
+            context.source_rows,
+            fold,
+            catalog=context.catalog,
+            profile=context.profile,
+            build_id=context.build_id,
+            outer_runner=context.outer_runner,
+            teacher_refitter=context.teacher_refitter,
+            max_workers=context.nested_max_workers,
+        )
     store = SQLiteEvaluationRunStore(context.run_store_root)
     unit = WorkUnitIdentity(
         evaluation_run_key=context.run_identity.key,
@@ -555,6 +566,9 @@ def select_v4_configuration(
     )
 
 
+_DEFAULT_SELECT_V4_CONFIGURATION = select_v4_configuration
+
+
 def _outer_fold_plan(fold: WalkForwardFold) -> WalkForwardPlan:
     # The existing runner validates fold positions relative to the supplied
     # plan.  A one-fold execution therefore uses a local fold identity while
@@ -871,6 +885,14 @@ def evaluate_global_regime_v4(
         and teacher_refitter is refit_frozen_teacher
         and outer_worker_limit > 1
     )
+    use_process_outer_without_ledger = (
+        run_store is None
+        and run_identity is None
+        and select_v4_configuration is _DEFAULT_SELECT_V4_CONFIGURATION
+        and outer_runner is run_prefix_gaussian_candidate
+        and teacher_refitter is refit_frozen_teacher
+        and outer_worker_limit > 1
+    )
     if use_process_outer:
         assert run_store is not None
         assert run_identity is not None
@@ -936,6 +958,42 @@ def evaluate_global_regime_v4(
                         )
                         selection_sink(fold.fold_index, selection)
                     outer_results.append(fold_result)
+    elif use_process_outer_without_ledger:
+        context = _OuterProcessContext(
+            source_rows=source_rows,
+            catalog=catalog,
+            profile=profile,
+            build_id=build_id,
+            outer_runner=outer_runner,
+            teacher_refitter=teacher_refitter,
+            nested_max_workers=1,
+            run_store_root=None,
+            run_identity=None,
+        )
+        _initialize_outer_process_context(context)
+        with cpu_process_pool(
+            outer_worker_limit,
+            initializer=_initialize_outer_process_context,
+            initargs=(context,),
+        ) as process_executor:
+            futures = [
+                process_executor.submit(_evaluate_outer_fold_process, fold)
+                for fold in outer_plan.folds
+            ]
+            outer_results = []
+            for fold, future in zip(outer_plan.folds, futures, strict=True):
+                fold_result = future.result()
+                if selection_sink is not None and fold_result.valid:
+                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                    selection = select_v4_configuration(
+                        train_rows,
+                        catalog=catalog,
+                        profile=profile,
+                        source_build_id=build_id,
+                        max_workers=1,
+                    )
+                    selection_sink(fold.fold_index, selection)
+                outer_results.append(fold_result)
     elif outer_worker_limit == 1:
         outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
     else:
