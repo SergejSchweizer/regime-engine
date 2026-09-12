@@ -85,6 +85,10 @@ jobs:
         run: |
           .venv/bin/coverage run -m pytest tests -m "not integration and not external"
           .venv/bin/python -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
+          if compgen -G ".coverage.unit.*" > /dev/null; then
+            .venv/bin/coverage combine --append --data-file=.coverage.unit .coverage.unit.*
+          fi
+          test -f .coverage.unit
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-unit
