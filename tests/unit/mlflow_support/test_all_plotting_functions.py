@@ -293,6 +293,16 @@ def test_model_metric_projection_covers_all_valid_fold_diagnostics() -> None:
         )
 
 
+def test_model_metric_projection_offsets_state_diagnostics_per_fold() -> None:
+    points = model_metrics.model_metric_points(_evaluation(valid_fold_count=2))
+    identities = {(point.key, point.step) for point in points}
+    assert len(identities) == len(points)
+    condition_numbers = tuple(
+        point for point in points if point.key == "state_diag_covariance_condition_number_state_0"
+    )
+    assert tuple(point.step for point in condition_numbers) == (0, 4)
+
+
 def test_walk_forward_tracking_projection_is_deterministic(tmp_path: Path) -> None:
     evaluation = _evaluation()
     plan = _plan()

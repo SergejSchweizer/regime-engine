@@ -84,3 +84,23 @@ def test_state_diagnostics_reject_non_normalized_posterior() -> None:
             train_hard_occupancy=(1.0, 0.0),
             train_soft_occupancy=(0.8, 0.2),
         )
+
+
+def test_state_diagnostics_step_offset_keeps_fold_histories_distinct() -> None:
+    artifact = _artifact()
+    evidence = build_state_diagnostic_evidence(
+        fold_id="fold_001",
+        artifact=artifact,
+        alignment=align_first_fold(artifact),
+        oos_timestamps=(datetime(2026, 1, 1, tzinfo=UTC),),
+        oos_filtered_probabilities=((0.75, 0.25),),
+        train_hard_occupancy=(1.0, 0.0),
+        train_soft_occupancy=(0.75, 0.25),
+    )
+    first = evidence.metric_points()
+    second = evidence.metric_points(step_offset=3)
+    assert {(point.key, point.step) for point in first}.isdisjoint(
+        (point.key, point.step) for point in second
+    )
+    with pytest.raises(ValueError, match="step_offset"):
+        evidence.metric_points(step_offset=-1)

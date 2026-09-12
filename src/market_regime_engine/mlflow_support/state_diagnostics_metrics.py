@@ -178,14 +178,16 @@ class StateDiagnosticEvidence:
         )
         return sha256(encoded).hexdigest()
 
-    def metric_points(self) -> tuple[MetricPoint, ...]:
+    def metric_points(self, *, step_offset: int = 0) -> tuple[MetricPoint, ...]:
         """Return all finite diagnostics with deterministic key/step order."""
 
+        if step_offset < 0:
+            raise ValueError("state diagnostic step_offset must be non-negative")
         points: list[MetricPoint] = []
         default_timestamp = _utc_millis(self.oos_timestamps[-1]) if self.oos_timestamps else 0
 
         def add(key: str, value: float, step: int, timestamp_ms: int = default_timestamp) -> None:
-            points.append(_point(key, value, step=step, timestamp_ms=timestamp_ms))
+            points.append(_point(key, value, step=step + step_offset, timestamp_ms=timestamp_ms))
 
         for state, value in enumerate(self.train_hard_occupancy):
             add(f"state_diag_train_hard_occupancy_state_{state}", value, 0)
