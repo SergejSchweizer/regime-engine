@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
+from types import MappingProxyType
 
 from market_regime_engine.mlflow_support.ports import MetricPoint
 
@@ -47,18 +49,18 @@ def _definition(
     ):
         comparison_domain = "same_feature_vector_source_plan"
     return MetricDefinition(
-        key,
-        label,
-        description,
-        unit,
-        direction,
-        scope,
-        step,
-        aggregation,
-        value_kind,
-        comparison_domain,
-        source_field,
-        model_metrics_visible,
+        key=key,
+        human_label=label,
+        description=description,
+        unit=unit,
+        direction=direction,
+        scope=scope,
+        step_semantics=step,
+        aggregation=aggregation,
+        value_kind=value_kind,
+        comparison_domain=comparison_domain,
+        source_field=source_field or key,
+        model_metrics_visible=model_metrics_visible,
     )
 
 
@@ -655,7 +657,9 @@ _DEFINITIONS = (
     ),
 )
 
-METRIC_CATALOG: dict[str, MetricDefinition] = {item.key: item for item in _DEFINITIONS}
+METRIC_CATALOG: Mapping[str, MetricDefinition] = MappingProxyType(
+    {item.key: item for item in _DEFINITIONS}
+)
 
 _DYNAMIC_PATTERNS = tuple(
     re.compile(pattern)
