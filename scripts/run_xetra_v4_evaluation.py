@@ -17,7 +17,11 @@ import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
-from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
+from market_regime_engine.evaluation_runs.contracts import (
+    DatasetSnapshotIdentity,
+    EvaluationRunIdentity,
+)
+from market_regime_engine.evaluation_runs.math_audit import build_math_expectations
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
 from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
@@ -131,6 +135,7 @@ def _run(performance: PerformanceRecorder) -> None:
             lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
         )
     observed: dict[str, Any] = {}
+    run_identity: EvaluationRunIdentity | None = None
 
     class RecordingSource:
         def read_schema_wide_with_catalog(self, request: Any) -> Any:
@@ -233,6 +238,26 @@ def _run(performance: PerformanceRecorder) -> None:
                 run_identity=run_identity,
                 selection_sink=selections.__setitem__,
             )
+    if run_identity is None:
+        catalog = observed["catalog"]
+        snapshot = observed["snapshot"]
+        dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)
+        outer_plan = plan_walk_forward(
+            tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
+        )
+        run_identity = EvaluationRunIdentity(
+            evaluation_id="global_regime_v4",
+            profile_id=profile.profile_id,
+            profile_config_version=profile.profile_config_version,
+            profile_hash=profile.profile_hash,
+            evaluation_contract_version=1,
+            evaluation_plan_hash=outer_plan.plan_hash,
+            dataset_snapshot_key=dataset_identity.key,
+            evaluation_cutoff=cast(datetime, outer_plan.evaluation_cutoff),
+            repository_commit_sha=commit,
+            uv_lock_sha256=_sha256_file(root / "uv.lock"),
+            python_version=platform.python_version(),
+        )
     performance.update_metadata(
         {
             "evaluation_id": "global_regime_v4",
@@ -270,6 +295,61 @@ def _run(performance: PerformanceRecorder) -> None:
             raise RuntimeError(
                 "source build/data/catalog changed during evaluation; refusing to audit or track"
             )
+    audit_root = Path(
+        os.environ.get("REGIME_EVALUATION_AUDIT_ROOT", str(checkpoint_root / "audit"))
+    )
+    audit_root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    assert run_identity is not None
+    audit_rows = pd.DataFrame(
+        [row.values for row in snapshot.rows],
+        columns=snapshot.feature_names,
+    )
+    audit_rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
+    prefix_payloads = {
+        outer_fold_index: dict(
+            run_store.load_completed_work_unit_payloads(
+                run_identity,
+                f"v4_stage/scope=fold_{outer_fold_index:03d}:prefix_candidate:",
+            )
+        )
+        for outer_fold_index in selections
+    }
+    expectations = build_math_expectations(
+        audit_rows,
+        result,
+        selections,
+        prefix_payloads=prefix_payloads,
+    )
+    expectations_path = audit_root / f"{run_identity.key}.json"
+    expectations_path.write_text(
+        json.dumps(expectations, default=str, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    snapshot_root = (
+        Path(arguments.snapshot_root)
+        if arguments.snapshot_root is not None
+        else checkpoint_root / "snapshots"
+    )
+    snapshot_path = snapshot_root / run_identity.dataset_snapshot_key / "snapshot.arrow"
+    audit_output = subprocess.check_output(
+        [
+            str(root / ".venv/bin/python"),
+            str(root / "scripts/verify_xetra_v4_math.py"),
+            "--snapshot",
+            str(snapshot_path),
+            "--expectations",
+            str(expectations_path),
+        ],
+        text=True,
+    )
+    audit_report_path = audit_root / f"{run_identity.key}.report.json"
+    audit_report_path.write_text(audit_output, encoding="utf-8")
+    performance.update_metadata(
+        {
+            "math_audit_expectations": str(expectations_path),
+            "math_audit_report": str(audit_report_path),
+        }
+    )
     tracking_uri = MLflowSettings.from_environment().tracking_uri
     port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-evaluation")
     evidence_workers = cpu_worker_count(None, task_count=len(result.outer_folds))
@@ -344,6 +424,8 @@ def _run(performance: PerformanceRecorder) -> None:
         "production_eligible": result.production_eligible,
         "mlflow_parent_run_id": tracked.parent_run_id,
         "evidence_hash": tracked.global_evidence_hash,
+        "math_audit_expectations": str(expectations_path),
+        "math_audit_report": str(audit_report_path),
     }
     summary_path = os.environ.get("REGIME_EVALUATION_SUMMARY_PATH")
     if summary_path:
