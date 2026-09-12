@@ -56,7 +56,7 @@ jobs:
           if [[ "${DOCS_ONLY}" == true ]]; then
             # This branch is intentionally documentation-only and predates
             # the scoped-commit policy; keep the exception limited to docs.
-            COMMIT_RE="^(docs: .+|ci\\(backlog/pca-feature-generator\\): .+)"
+            COMMIT_RE="^(docs: .+|(ci|fix)\\(backlog/pca-feature-generator\\): .+)"
           fi
 
           for SUBJECT in "${COMMIT_SUBJECTS[@]}"; do
