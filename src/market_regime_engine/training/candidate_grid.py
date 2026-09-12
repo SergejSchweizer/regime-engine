@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from statistics import fmean, pstdev
 from typing import TYPE_CHECKING, cast
@@ -302,6 +302,16 @@ def evaluate_candidate_grid(
                 f"{seed_checkpoint.scope}:final_grid_candidate:{candidate.candidate_id}",
             )
 
+            def scoped_seed_checkpoint(fold_id: str) -> HMMSeedCheckpoint:
+                return replace(
+                    seed_checkpoint_factory(
+                        candidate.candidate_id,
+                        fold_id,
+                        candidate.state_count,
+                    ),
+                    scope=stage_checkpoint.scope,
+                )
+
             def compute() -> WalkForwardEvaluation:
                 return _default_runner(
                     source_rows,
@@ -310,11 +320,7 @@ def evaluate_candidate_grid(
                     candidate,
                     candidate_adapter,
                     max_workers=max_workers,
-                    seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
-                        candidate.candidate_id,
-                        fold_id,
-                        candidate.state_count,
-                    ),
+                    seed_checkpoint_factory=scoped_seed_checkpoint,
                 )
 
             return stage_checkpoint.run(

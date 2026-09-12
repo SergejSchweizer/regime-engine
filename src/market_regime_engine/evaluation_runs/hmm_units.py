@@ -30,7 +30,7 @@ class HMMSeedCheckpoint:
     candidate_id: str
     fold_id: str
     state_count: int
-    scope: str = ""
+    scope: str = "default"
     parent_payload_hashes: tuple[str, ...] = ()
 
     def unit(self, seed: int) -> WorkUnitIdentity:
