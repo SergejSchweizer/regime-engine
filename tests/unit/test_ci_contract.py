@@ -21,14 +21,13 @@ def test_quality_contract_and_gate_workflows_cannot_diverge() -> None:
         assert "test_global_regime_v4_full_compute.py" not in workflow
 
 
-def test_long_hermetic_proof_has_a_dedicated_manual_and_scheduled_workflow() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "hermetic-v4-proof.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "workflow_dispatch:" in workflow
-    assert 'cron: "17 3 * * 0"' in workflow
-    assert "integration and slow" in workflow
-    assert "pr231-proof.json" in workflow
+def test_long_hermetic_proof_is_local_only() -> None:
+    assert not (ROOT / ".github" / "workflows" / "hermetic-v4-proof.yml").exists()
+    runner = (ROOT / "scripts" / "run_pr231_hermetic_proof.sh").read_text(encoding="utf-8")
+    assert '"integration and slow"' in runner
+    assert "PR231_PROOF_OUTPUT" in runner
+    assert "pr231-proof.json" in runner
+    assert "pr231-computation-proof.json" in runner
 
 
 def test_local_pre_commit_hook_runs_only_hermetic_integration_tests() -> None:
