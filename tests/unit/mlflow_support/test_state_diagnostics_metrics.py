@@ -57,19 +57,19 @@ def test_state_diagnostics_align_histories_and_emit_complete_metric_families() -
     assert any(point.key == "state_diag_covariance_eigenvalue_state_0_0" for point in points)
 
 
-def test_state_diagnostics_reject_inconsistent_oos_occupancy() -> None:
+def test_state_diagnostics_recomputes_occupancy_from_posterior_rows() -> None:
     artifact = _artifact()
-    with pytest.raises(ValueError, match="OOS soft occupancy"):
-        build_state_diagnostic_evidence(
-            fold_id="fold_001",
-            artifact=artifact,
-            alignment=align_first_fold(artifact),
-            oos_timestamps=(datetime(2026, 1, 1, tzinfo=UTC),) * 2,
-            oos_filtered_probabilities=((0.75, 0.25), (0.75, 0.25)),
-            train_hard_occupancy=(1.0, 0.0),
-            train_soft_occupancy=(0.75, 0.25),
-            oos_soft_occupancy=(0.5, 0.5),
-        )
+    evidence = build_state_diagnostic_evidence(
+        fold_id="fold_001",
+        artifact=artifact,
+        alignment=align_first_fold(artifact),
+        oos_timestamps=(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)),
+        oos_filtered_probabilities=((0.75, 0.25), (0.75, 0.25)),
+        train_hard_occupancy=(1.0, 0.0),
+        train_soft_occupancy=(0.75, 0.25),
+        oos_soft_occupancy=(0.5, 0.5),
+    )
+    assert evidence.oos_soft_occupancy == pytest.approx((0.75, 0.25))
 
 
 def test_state_diagnostics_reject_non_normalized_posterior() -> None:

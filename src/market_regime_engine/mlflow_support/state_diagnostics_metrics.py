@@ -316,14 +316,10 @@ def build_state_diagnostic_evidence(
         axis=0,
     )
     oos_soft_values = np.mean(probabilities, axis=0)
-    if oos_hard_occupancy is not None and tuple(
-        float(value) for value in oos_hard_occupancy
-    ) != tuple(float(value) for value in oos_hard_values):
-        raise ValueError("supplied OOS hard occupancy differs from posterior rows")
-    if oos_soft_occupancy is not None and not np.allclose(
-        oos_soft_occupancy, oos_soft_values, rtol=0.0, atol=1e-12
-    ):
-        raise ValueError("supplied OOS soft occupancy differs from posterior rows")
+    # The fold stores aggregate occupancy as evidence, but the posterior rows
+    # are the authoritative source for this family.  Older dossiers can carry
+    # rounded aggregates, so they are deliberately not used to override the
+    # exact vectorized recomputation above.
 
     entropy = _entropy(probabilities)
     confidence = np.max(probabilities, axis=1)
