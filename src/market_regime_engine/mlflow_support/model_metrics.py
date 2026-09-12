@@ -22,6 +22,9 @@ from market_regime_engine.mlflow_support.metric_catalog import (
     validate_metric_points,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint
+from market_regime_engine.mlflow_support.state_diagnostics_metrics import (
+    build_state_diagnostic_evidence,
+)
 
 
 def _model_shape(candidate_id: str) -> tuple[str, int, int]:
@@ -403,6 +406,18 @@ def _fold_points(
             )
 
     if fold.model_artifact is not None and fold.alignment is not None:
+        state_evidence = build_state_diagnostic_evidence(
+            fold_id=fold.fold_id,
+            artifact=fold.model_artifact,
+            alignment=fold.alignment,
+            oos_timestamps=fold.oos_timestamps,
+            oos_filtered_probabilities=fold.oos_filtered_probabilities,
+            train_hard_occupancy=fold.train_hard_occupancy or (),
+            train_soft_occupancy=fold.train_soft_occupancy or (),
+            oos_hard_occupancy=fold.oos_hard_occupancy,
+            oos_soft_occupancy=fold.oos_soft_occupancy,
+        )
+        points.extend(state_evidence.metric_points())
         mapping = fold.alignment.persistent_to_fitted
         transition = np.asarray(fold.model_artifact.transition_matrix, dtype=np.float64)
         aligned = transition[np.ix_(mapping, mapping)]
