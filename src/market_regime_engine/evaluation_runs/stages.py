@@ -99,6 +99,14 @@ class StageCheckpoint:
                 domain_invalid=True,
             )
             raise
+        except Exception:
+            # Technical failures are retryable.  Release the lease before
+            # propagating the exception so a restart need not wait for lease
+            # expiry and never mistakes an incomplete stage for a terminal
+            # statistical result.  BaseException is deliberately excluded:
+            # process interruption must leave the lease crash-reclaimable.
+            self.store.fail_work_unit(self.identity, unit, "stage computation failed")
+            raise
         try:
             payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
             self.store.complete_work_unit(self.identity, unit, payload)
