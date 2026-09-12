@@ -15,6 +15,11 @@ The cycle first reads `status`. If `current_source_build_id == completed_source_
 3. `publish-oos` for the same evaluation ID.
 4. `register` using both the final-refit production package and explicit immutable OOS build ID. The backend uploads that package to NAS MLflow and registers only its remote `runs:/...` URI.
 
+The evaluation step is one non-resumable computation. It persists the immutable
+input snapshot and writes the completed evaluation only after all folds finish;
+it does not persist a partial computation-position ledger. If evaluation is
+interrupted, the next cycle recomputes it from the beginning.
+
 Registration creates/updates the `challenger` lifecycle state through the backend; it does **not** move `champion`. If the source build observed by `evaluate` differs from the build observed by `status`, the cycle fails rather than silently evaluating a different vintage.
 
 ## Promotion and rollback

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from statistics import fmean, pstdev
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -182,6 +182,35 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
         pickle.dumps(fold_result, protocol=pickle.HIGHEST_PROTOCOL),
     )
     return fold_result
+
+
+def _evaluate_outer_fold_process_with_selection(
+    fold: WalkForwardFold,
+) -> tuple[OuterFoldResult, V4ConfigurationSelection | None]:
+    """Evaluate one non-resumable fold and return its selection in the same pass.
+
+    The full evaluation needs the TRAIN-only selection for evidence assembly.
+    Returning it from the worker avoids rerunning the complete discovery/HMM
+    pipeline in the parent process after the outer fold has already finished.
+    """
+
+    context = _OUTER_PROCESS_CONTEXT
+    if context is None:
+        raise RuntimeError("outer process context was not initialized")
+    captured: list[V4ConfigurationSelection] = []
+    fold_result = _evaluate_outer_fold(
+        context.source_rows,
+        fold,
+        catalog=context.catalog,
+        profile=context.profile,
+        build_id=context.build_id,
+        outer_runner=context.outer_runner,
+        teacher_refitter=context.teacher_refitter,
+        max_workers=context.nested_max_workers,
+        selection_sink=lambda _fold_index, selection: captured.append(selection),
+    )
+    selection = captured[0] if fold_result.valid and captured else None
+    return fold_result, selection
 
 
 @dataclass(frozen=True, slots=True)
@@ -991,24 +1020,24 @@ def evaluate_global_regime_v4(
             initializer=_initialize_outer_process_context,
             initargs=(context,),
         ) as process_executor:
-            futures = [
-                process_executor.submit(_evaluate_outer_fold_process, fold)
-                for fold in outer_plan.folds
-            ]
-            outer_results = []
-            for fold, future in zip(outer_plan.folds, futures, strict=True):
-                fold_result = future.result()
-                if selection_sink is not None and fold_result.valid:
-                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
-                    selection = select_v4_configuration(
-                        train_rows,
-                        catalog=catalog,
-                        profile=profile,
-                        source_build_id=build_id,
-                        max_workers=1,
+            submit = cast(Any, process_executor.submit)
+            if selection_sink is None:
+                futures = [submit(_evaluate_outer_fold_process, fold) for fold in outer_plan.folds]
+                outer_results = [future.result() for future in futures]
+            else:
+                futures = [
+                    submit(_evaluate_outer_fold_process_with_selection, fold)
+                    for fold in outer_plan.folds
+                ]
+                outer_results = []
+                for fold, future in zip(outer_plan.folds, futures, strict=True):
+                    fold_result, captured_selection = cast(
+                        tuple[OuterFoldResult, V4ConfigurationSelection | None],
+                        future.result(),
                     )
-                    selection_sink(fold.fold_index, selection)
-                outer_results.append(fold_result)
+                    if captured_selection is not None:
+                        selection_sink(fold.fold_index, captured_selection)
+                    outer_results.append(fold_result)
     elif outer_worker_limit == 1:
         outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
     else:
