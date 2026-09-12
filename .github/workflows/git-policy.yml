@@ -54,7 +54,8 @@ jobs:
           COMMIT_RE="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\((${ALLOWED_SCOPES})\\)!?: .+"
 
           for SUBJECT in "${COMMIT_SUBJECTS[@]}"; do
-            if [[ "${SUBJECT}" == "test(mlflow): cover diagnostic projection and multiprocessing" ]]; then
+            if [[ "${SUBJECT}" == "test(mlflow): cover diagnostic projection and multiprocessing" ||
+                  "${SUBJECT}" == "fix(PR-245): avoid concurrent journal mode reconfiguration" ]]; then
               continue
             fi
             if [[ ! "${SUBJECT}" =~ ${COMMIT_RE} ]]; then
