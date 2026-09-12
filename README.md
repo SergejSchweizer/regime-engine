@@ -56,18 +56,11 @@ export REGIME_EVALUATION_CHECKPOINT_ROOT=/volume2/docker/mlflow/evaluation-check
 ./scripts/run_xetra_v4_cron.sh
 ```
 
-The checkpoint root is mandatory, absolute, and must be outside the checkout.
-The run prints its immutable `evaluation_run_key`; after an interruption, use
-that key to resume without rereading live PostgreSQL:
-
-```bash
-REGIME_EVALUATION_CHECKPOINT_ROOT=/volume2/docker/mlflow/evaluation-checkpoints \
-  .venv/bin/python scripts/run_xetra_v4_evaluation.py --run-key <evaluation_run_key>
-```
-
-If the Arrow snapshot or SQLite ledger is missing or corrupt, the command
-fails closed. Do not delete or replace either under the old run key; capture a
-new source snapshot and start a new run.
+The artifact root is mandatory, absolute, and must be outside the checkout.
+It stores the immutable input snapshot, audit output, and metric-export
+artifacts only. The evaluation itself has no durable position ledger or resume
+key: if the process is interrupted, invoke the same command again and it will
+recompute every fold from the beginning.
 
 ## Statistical lifecycle
 

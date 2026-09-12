@@ -50,11 +50,10 @@ runs the complete v4 evaluation against one read-only source snapshot.
 
 `REGIME_EVALUATION_CHECKPOINT_ROOT` (or its alias
 `REGIME_ENGINE_STATE_ROOT`) must point to an absolute persistent volume outside
-the checkout. The evaluation prints an immutable run key. Pass that key to
-`scripts/run_xetra_v4_evaluation.py --run-key` after an interruption to replay
-the durable snapshot and completed units without recapturing live PostgreSQL.
-Missing or corrupt snapshot/ledger state fails closed and requires a new run
-key; it is never silently rebuilt under the old identity.
+the checkout. The root stores the immutable input snapshot and post-run audit
+artifacts, but no durable computation-position ledger. The full evaluation is
+intentionally non-resumable: after an interruption, rerun the cron command and
+all folds are computed again from the beginning.
 
 ## CPU parallelism
 

@@ -1,4 +1,4 @@
-"""Run, track, and summarize one complete Xetra v4 evaluation snapshot."""
+"""Run, track, and summarize one complete, non-resumable Xetra v4 evaluation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import platform
-import sqlite3
 import subprocess
 from datetime import datetime
 from hashlib import sha256
@@ -23,7 +22,6 @@ from market_regime_engine.evaluation_runs.contracts import (
 )
 from market_regime_engine.evaluation_runs.math_audit import build_math_expectations
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
-from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.global_regime_v4 import (
     V4ConfigurationSelection,
@@ -57,7 +55,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _configured_checkpoint_root(root: Path) -> Path:
-    """Require resumable state on an explicit persistent volume."""
+    """Require evaluation artifacts on an explicit persistent volume."""
 
     configured = os.environ.get("REGIME_EVALUATION_CHECKPOINT_ROOT") or os.environ.get(
         "REGIME_ENGINE_STATE_ROOT"
@@ -79,24 +77,6 @@ def _configured_checkpoint_root(root: Path) -> Path:
     return resolved_checkpoint_root
 
 
-def _ledger_counts(checkpoint_root: Path) -> dict[str, int]:
-    database = checkpoint_root / "runs" / "evaluation-runs.sqlite3"
-    if not database.is_file():
-        return {}
-    with sqlite3.connect(database) as connection:
-        rows = connection.execute(
-            "SELECT status, COUNT(*) FROM work_units GROUP BY status"
-        ).fetchall()
-        stages = connection.execute(
-            "SELECT substr(work_unit_key, 1, instr(work_unit_key, '/') - 1), COUNT(*) "
-            "FROM work_units GROUP BY substr(work_unit_key, 1, instr(work_unit_key, '/') - 1)"
-        ).fetchall()
-    return {
-        **{f"work_units_{status.lower()}": int(count) for status, count in rows},
-        **{f"work_units_{stage}": int(count) for stage, count in stages},
-    }
-
-
 def _tracking_worker_count(task_count: int) -> int:
     """Resolve the same bounded tracking budget used by the tracker itself."""
 
@@ -110,10 +90,6 @@ def _tracking_worker_count(task_count: int) -> int:
 def _run(performance: PerformanceRecorder) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--run-key",
-        help="resume exactly this durable evaluation run without reading live PostgreSQL",
-    )
-    parser.add_argument(
         "--snapshot-root",
         help="recompute from an existing immutable snapshot root (benchmark mode)",
     )
@@ -122,14 +98,12 @@ def _run(performance: PerformanceRecorder) -> None:
         help="dataset snapshot key to use with --snapshot-root",
     )
     arguments = parser.parse_args()
-    if arguments.run_key is not None and arguments.snapshot_root is not None:
-        parser.error("--run-key and --snapshot-root are mutually exclusive")
     if arguments.snapshot_root is not None and arguments.snapshot_key is None:
         parser.error("--snapshot-key is required with --snapshot-root")
     root = _root()
     profile = load_profile(root / "configs/profiles/xetra_v4.yaml")
     source: PostgresFeatureSource | None = None
-    if arguments.run_key is None and arguments.snapshot_root is None:
+    if arguments.snapshot_root is None:
         settings = FeaturePostgresSettings.from_env(os.environ)
         source = PostgresFeatureSource(
             lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
@@ -151,7 +125,6 @@ def _run(performance: PerformanceRecorder) -> None:
     checkpoint_root = _configured_checkpoint_root(root)
     commit = _commit(root)
     snapshot_store = ArrowDatasetSnapshotStore(checkpoint_root / "snapshots")
-    run_store = SQLiteEvaluationRunStore(checkpoint_root / "runs")
     if arguments.snapshot_root is not None:
         assert arguments.snapshot_key is not None
         input_store = ArrowDatasetSnapshotStore(arguments.snapshot_root)
@@ -181,7 +154,6 @@ def _run(performance: PerformanceRecorder) -> None:
             uv_lock_sha256=_sha256_file(root / "uv.lock"),
             python_version=platform.python_version(),
         )
-        run_store.open_run(run_identity)
         with performance.stage(
             "statistical_evaluation_snapshot",
             worker_count=available_cpu_count(),
@@ -192,11 +164,9 @@ def _run(performance: PerformanceRecorder) -> None:
                 catalog=catalog,
                 profile=profile,
                 source_build_id=catalog.lineage.source_build_id,
-                run_store=run_store,
-                run_identity=run_identity,
                 selection_sink=selections.__setitem__,
             )
-    elif arguments.run_key is None:
+    else:
         assert source is not None
         with performance.stage(
             "statistical_evaluation",
@@ -206,36 +176,9 @@ def _run(performance: PerformanceRecorder) -> None:
                 RecordingSource(),
                 profile=profile,
                 snapshot_store=snapshot_store,
-                run_store=run_store,
                 repository_commit_sha=commit,
                 uv_lock_sha256=_sha256_file(root / "uv.lock"),
                 python_version=platform.python_version(),
-                selection_sink=selections.__setitem__,
-            )
-    else:
-        run_identity = run_store.load_identity(arguments.run_key)
-        if run_identity.evaluation_id != "global_regime_v4":
-            raise RuntimeError("requested run key is not a global v4 evaluation")
-        if run_identity.profile_hash != profile.profile_hash:
-            raise RuntimeError("requested run key was created with a different profile")
-        dataset_identity = snapshot_store.load_identity(run_identity.dataset_snapshot_key)
-        snapshot = snapshot_store.load(dataset_identity)
-        catalog = snapshot_store.load_catalog(dataset_identity)
-        observed["catalog"] = catalog
-        observed["snapshot"] = snapshot
-        rows = pd.DataFrame(
-            [row.values for row in snapshot.rows],
-            columns=snapshot.feature_names,
-        )
-        rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-        with performance.stage("statistical_evaluation_resume", worker_count=1):
-            result = evaluate_global_regime_v4(
-                rows,
-                catalog=catalog,
-                profile=profile,
-                source_build_id=catalog.lineage.source_build_id,
-                run_store=run_store,
-                run_identity=run_identity,
                 selection_sink=selections.__setitem__,
             )
     if run_identity is None:
@@ -264,7 +207,6 @@ def _run(performance: PerformanceRecorder) -> None:
             "outer_fold_count": len(result.outer_folds),
             "valid_fold_count": result.valid_fold_count,
             "selection_count": len(selections),
-            **_ledger_counts(checkpoint_root),
         }
     )
     catalog = observed["catalog"]
@@ -277,7 +219,7 @@ def _run(performance: PerformanceRecorder) -> None:
         snapshot.rows[0].timestamp,
         snapshot.rows[-1].timestamp,
     )
-    if arguments.run_key is None and arguments.snapshot_root is None:
+    if arguments.snapshot_root is None:
         assert source is not None
         with performance.stage("postgres_audit", worker_count=1, task_count=1):
             audit_catalog, audit_snapshot = source.read_schema_wide_with_catalog(
@@ -305,20 +247,10 @@ def _run(performance: PerformanceRecorder) -> None:
         columns=snapshot.feature_names,
     )
     audit_rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-    prefix_payloads = {
-        outer_fold_index: dict(
-            run_store.load_completed_work_unit_payloads(
-                run_identity,
-                f"v4_stage/scope=fold_{outer_fold_index:03d}:prefix_candidate:",
-            )
-        )
-        for outer_fold_index in selections
-    }
     expectations = build_math_expectations(
         audit_rows,
         result,
         selections,
-        prefix_payloads=prefix_payloads,
     )
     expectations_path = audit_root / f"{run_identity.key}.json"
     expectations_path.write_text(

@@ -1083,8 +1083,8 @@ def evaluate_global_regime_v4_from_source(
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
         raise ValueError("dynamic source evaluation requires the canonical Xetra v4 profile")
-    if (snapshot_store is None) != (run_store is None):
-        raise ValueError("snapshot_store and run_store must be supplied together")
+    if run_store is not None and snapshot_store is None:
+        raise ValueError("run_store requires snapshot_store")
     catalog, snapshot = source.read_schema_wide_with_catalog(
         FeatureRequest.all_features(start, end)
     )
@@ -1097,41 +1097,42 @@ def evaluate_global_regime_v4_from_source(
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
     run_identity: EvaluationRunIdentity | None = None
-    if snapshot_store is not None and run_store is not None:
-        if repository_commit_sha is None or uv_lock_sha256 is None or python_version is None:
-            raise ValueError(
-                "durable source evaluation requires repository, lockfile and Python identities"
-            )
+    if snapshot_store is not None:
         dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)
         snapshot_store.finalize(dataset_identity, snapshot, catalog=catalog)
         snapshot = snapshot_store.load(dataset_identity)
-        timestamps = tuple(row.timestamp for row in snapshot.rows)
-        plan = plan_walk_forward(timestamps, profile.walk_forward)
-        run_identity = EvaluationRunIdentity(
-            evaluation_id="global_regime_v4",
-            profile_id=profile.profile_id,
-            profile_config_version=profile.profile_config_version,
-            profile_hash=profile.profile_hash,
-            evaluation_contract_version=evaluation_contract_version,
-            evaluation_plan_hash=plan.plan_hash,
-            dataset_snapshot_key=dataset_identity.key,
-            evaluation_cutoff=cast(datetime, plan.evaluation_cutoff),
-            repository_commit_sha=repository_commit_sha,
-            uv_lock_sha256=uv_lock_sha256,
-            python_version=python_version,
-        )
-        state = run_store.open_run(run_identity)
-        if state.status == "COMPLETE":
-            cached_result_payload = run_store.load_completed_run(run_identity)
-            if cached_result_payload is None:
-                raise ValueError("completed evaluation has no durable result payload")
-            cached_result = pickle.loads(cached_result_payload)
-            if (
-                not isinstance(cached_result, AdaptiveEvaluationResult)
-                or cached_result.result_hash != state.root_identity_hash
-            ):
-                raise ValueError("durable evaluation result is incompatible or corrupted")
-            return cached_result
+        if run_store is not None:
+            if repository_commit_sha is None or uv_lock_sha256 is None or python_version is None:
+                raise ValueError(
+                    "durable source evaluation requires repository, lockfile and Python identities"
+                )
+            timestamps = tuple(row.timestamp for row in snapshot.rows)
+            plan = plan_walk_forward(timestamps, profile.walk_forward)
+            run_identity = EvaluationRunIdentity(
+                evaluation_id="global_regime_v4",
+                profile_id=profile.profile_id,
+                profile_config_version=profile.profile_config_version,
+                profile_hash=profile.profile_hash,
+                evaluation_contract_version=evaluation_contract_version,
+                evaluation_plan_hash=plan.plan_hash,
+                dataset_snapshot_key=dataset_identity.key,
+                evaluation_cutoff=cast(datetime, plan.evaluation_cutoff),
+                repository_commit_sha=repository_commit_sha,
+                uv_lock_sha256=uv_lock_sha256,
+                python_version=python_version,
+            )
+            state = run_store.open_run(run_identity)
+            if state.status == "COMPLETE":
+                cached_result_payload = run_store.load_completed_run(run_identity)
+                if cached_result_payload is None:
+                    raise ValueError("completed evaluation has no durable result payload")
+                cached_result = pickle.loads(cached_result_payload)
+                if (
+                    not isinstance(cached_result, AdaptiveEvaluationResult)
+                    or cached_result.result_hash != state.root_identity_hash
+                ):
+                    raise ValueError("durable evaluation result is incompatible or corrupted")
+                return cached_result
     rows = pd.DataFrame(
         [row.values for row in snapshot.rows],
         columns=snapshot.feature_names,
