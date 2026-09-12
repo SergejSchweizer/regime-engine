@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from market_regime_engine.mlflow_support.registry import REGISTERED_MODEL_NAME
+from market_regime_engine.mlflow_support.settings import PRODUCTION_MLFLOW_URI
 
 EVALUATION_EXPERIMENT_NAME = "regime-engine-evaluation"
 V4_PACKAGE_SCHEMA = "RegimeEngineProductionModel.v4"
@@ -72,6 +73,17 @@ def _identity(value: object, field: str) -> str:
     if not result or result.strip() != result:
         raise ValueError(f"{field} must be non-empty and trimmed")
     return result
+
+
+def require_production_tracking_uri(tracking_uri: str) -> str:
+    """Reject cleanup against anything except the pinned production MLflow service."""
+
+    if tracking_uri != PRODUCTION_MLFLOW_URI:
+        raise ValueError(
+            "destructive MLflow cleanup is limited to the pinned production URI "
+            f"{PRODUCTION_MLFLOW_URI}"
+        )
+    return tracking_uri
 
 
 def collect_evaluation_manifest(
@@ -285,5 +297,6 @@ __all__ = [
     "collect_evaluation_manifest",
     "execute_evaluation_cleanup",
     "execute_retired_registered_model_cleanup",
+    "require_production_tracking_uri",
     "write_json",
 ]

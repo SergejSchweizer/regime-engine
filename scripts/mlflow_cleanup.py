@@ -14,6 +14,7 @@ from market_regime_engine.mlflow_support.cleanup import (
     collect_evaluation_manifest,
     execute_evaluation_cleanup,
     execute_retired_registered_model_cleanup,
+    require_production_tracking_uri,
     write_json,
 )
 from market_regime_engine.mlflow_support.settings import MLflowSettings
@@ -36,6 +37,10 @@ def main() -> None:
         default=Path("docs/qa/mlflow_cleanup_report.json"),
     )
     args = parser.parse_args()
+    try:
+        require_production_tracking_uri(args.tracking_uri)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     client = MlflowClient(tracking_uri=args.tracking_uri, registry_uri=args.tracking_uri)
     if args.scope == "evaluation-runs":
         manifest = collect_evaluation_manifest(
