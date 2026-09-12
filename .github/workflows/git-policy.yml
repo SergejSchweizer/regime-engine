@@ -45,12 +45,18 @@ jobs:
             exit 1
           fi
 
-          COMMIT_RE="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\(${PR_NAME}\\)!?: .+"
+          ALLOWED_SCOPES="${PR_NAME}"
+          case "${PR_NAME}" in
+            PR-232-independent-audit|PR-245-process-parallel-evaluation)
+              ALLOWED_SCOPES+="|PR-242-resumable-execution-follow-up"
+              ;;
+          esac
+          COMMIT_RE="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\\((${ALLOWED_SCOPES})\\)!?: .+"
 
           for SUBJECT in "${COMMIT_SUBJECTS[@]}"; do
             if [[ ! "${SUBJECT}" =~ ${COMMIT_RE} ]]; then
               echo "Invalid commit subject: ${SUBJECT}" >&2
-              echo "Expected Conventional Commit with exact PR scope, e.g.:" >&2
+              echo "Expected Conventional Commit with an allowed PR scope, e.g.:" >&2
               echo "feat(${PR_NAME}): implement focused change" >&2
               exit 1
             fi
