@@ -57,6 +57,7 @@ PrefixCandidateRunner = Callable[
     [pd.DataFrame, WalkForwardPlan, ModelProfile, ResolvedCandidateProfile, AdapterFactory],
     WalkForwardEvaluation,
 ]
+PrefixEvaluationSink = Callable[[int, str, WalkForwardEvaluation], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +329,7 @@ def search_ranked_prefixes(
     runner: PrefixCandidateRunner = run_prefix_gaussian_candidate,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
+    evaluation_sink: PrefixEvaluationSink | None = None,
 ) -> PrefixSearchResult:
     """Evaluate every exact ranked prefix and choose only by teacher soft NMI.
 
@@ -458,6 +460,12 @@ def search_ranked_prefixes(
                     )
                 )
                 continue
+            if evaluation_sink is not None:
+                evaluation_sink(
+                    prefix_length,
+                    selection.champion_candidate_id,
+                    selected_candidate,
+                )
             prefix_results.append(
                 PrefixEvaluation(
                     prefix_length=prefix_length,
@@ -487,6 +495,7 @@ select_prefix = search_ranked_prefixes
 
 __all__ = [
     "PrefixCandidateRunner",
+    "PrefixEvaluationSink",
     "evaluate_prefix_search",
     "run_prefix_gaussian_candidate",
     "search_ranked_prefixes",

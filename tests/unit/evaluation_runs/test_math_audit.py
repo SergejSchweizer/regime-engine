@@ -32,6 +32,8 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
     fold = SimpleNamespace(
         fold_index=1,
         valid=True,
+        oos_timestamps=timestamps[2:],
+        oos_filtered_probabilities=((0.5, 0.5),) * 2,
         model_artifact=artifact,
         scaler_artifact=StandardScalerArtifact(
             feature_order=("f0",),
@@ -54,6 +56,16 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
         teacher_reference=SimpleNamespace(
             timestamps=timestamps,
             filtered_probabilities=((0.5, 0.5),) * 4,
+        ),
+        prefix_search=SimpleNamespace(
+            evaluations=(
+                SimpleNamespace(
+                    prefix_length=2,
+                    candidate_id="gaussian_hmm_k2_full",
+                    valid=True,
+                    soft_regime_nmi=0.5,
+                ),
+            ),
         ),
         feature_scores=(
             SimpleNamespace(
@@ -87,6 +99,9 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
         rows,
         cast(Any, result),
         {1: cast(Any, selection)},
+        prefix_evaluations={
+            1: {(2, "gaussian_hmm_k2_full"): cast(Any, SimpleNamespace(valid_folds=(fold,)))}
+        },
     )
 
     assert expectations["feature_order"] == ["f0", "f1"]
@@ -95,3 +110,7 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
     likelihoods = cast(list[dict[str, object]], expectations["likelihoods"])
     assert len(likelihoods) == 2
     assert {item["scope"] for item in likelihoods} == {"TRAIN", "OOS"}
+
+    prefix_nmi = cast(list[dict[str, object]], expectations["prefix_nmi"])
+    assert len(prefix_nmi) == 1
+    assert prefix_nmi[0]["candidate_id"] == "gaussian_hmm_k2_full"

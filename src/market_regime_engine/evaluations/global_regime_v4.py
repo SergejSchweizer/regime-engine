@@ -70,6 +70,7 @@ from market_regime_engine.feature_discovery.contracts import (
 from market_regime_engine.feature_discovery.distance import global_absolute_spearman_distance
 from market_regime_engine.feature_discovery.prefix_search import (
     PrefixCandidateRunner,
+    PrefixEvaluationSink,
     run_prefix_gaussian_candidate,
     search_ranked_prefixes,
 )
@@ -95,6 +96,7 @@ from market_regime_engine.training.candidate_grid import CandidateRunner as Grid
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _MIN_OUTER_TEST_SUPPORT = 42
+PrefixEvaluationPayloadSink = Callable[[int, int, str, WalkForwardEvaluation], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +188,11 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
 
 def _evaluate_outer_fold_process_with_selection(
     fold: WalkForwardFold,
-) -> tuple[OuterFoldResult, V4ConfigurationSelection | None]:
+) -> tuple[
+    OuterFoldResult,
+    V4ConfigurationSelection | None,
+    dict[tuple[int, str], WalkForwardEvaluation],
+]:
     """Evaluate one non-resumable fold and return its selection in the same pass.
 
     The full evaluation needs the TRAIN-only selection for evidence assembly.
@@ -198,6 +204,7 @@ def _evaluate_outer_fold_process_with_selection(
     if context is None:
         raise RuntimeError("outer process context was not initialized")
     captured: list[V4ConfigurationSelection] = []
+    prefix_evaluations: dict[tuple[int, str], WalkForwardEvaluation] = {}
     fold_result = _evaluate_outer_fold(
         context.source_rows,
         fold,
@@ -208,9 +215,12 @@ def _evaluate_outer_fold_process_with_selection(
         teacher_refitter=context.teacher_refitter,
         max_workers=context.nested_max_workers,
         selection_sink=lambda _fold_index, selection: captured.append(selection),
+        prefix_evaluation_sink=lambda prefix_length, candidate_id, evaluation: (
+            prefix_evaluations.__setitem__((prefix_length, candidate_id), evaluation)
+        ),
     )
     selection = captured[0] if fold_result.valid and captured else None
-    return fold_result, selection
+    return fold_result, selection, prefix_evaluations
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +389,7 @@ def select_v4_configuration(
     grid_runner: GridCandidateRunner | None = None,
     max_workers: int | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
+    prefix_evaluation_sink: PrefixEvaluationSink | None = None,
 ) -> V4ConfigurationSelection:
     """Run the complete adaptive chain using only one immutable Outer-TRAIN frame."""
 
@@ -524,6 +535,7 @@ def select_v4_configuration(
                 else run_prefix_gaussian_candidate,
                 max_workers=max_workers,
                 seed_checkpoint_factory=seed_checkpoint_factory,
+                evaluation_sink=prefix_evaluation_sink,
             ),
             parents=(winner_selection, teacher_reference),
         ),
@@ -684,6 +696,7 @@ def _evaluate_outer_fold(
     teacher_refitter: Callable[..., FrozenTeacherRefit],
     max_workers: int | None,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
+    prefix_evaluation_sink: PrefixEvaluationSink | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
 ) -> OuterFoldResult:
     """Evaluate one outer fold; callers may persist this atomic result."""
@@ -701,6 +714,7 @@ def _evaluate_outer_fold(
             source_build_id=build_id,
             max_workers=max_workers,
             stage_checkpoint=stage_checkpoint,
+            prefix_evaluation_sink=prefix_evaluation_sink,
         )
     except (ValueError, TypeError) as exc:
         return _invalid_outer_fold(
@@ -822,6 +836,7 @@ def evaluate_global_regime_v4(
     run_store: SQLiteEvaluationRunStore | None = None,
     run_identity: EvaluationRunIdentity | None = None,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
+    prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
 ) -> AdaptiveEvaluationResult:
     """Run every outer fold with TRAIN-only adaptive selection and frozen TEST use."""
 
@@ -855,6 +870,22 @@ def evaluate_global_regime_v4(
     outer_worker_limit = requested_workers
 
     def evaluate_fold(fold: WalkForwardFold) -> OuterFoldResult:
+        fold_prefix_sink = None
+        if prefix_evaluation_sink is not None:
+
+            def record_fold_prefix(
+                prefix_length: int,
+                candidate_id: str,
+                evaluation: WalkForwardEvaluation,
+            ) -> None:
+                prefix_evaluation_sink(
+                    fold.fold_index,
+                    prefix_length,
+                    candidate_id,
+                    evaluation,
+                )
+
+            fold_prefix_sink = record_fold_prefix
         if run_store is None or run_identity is None:
             return _evaluate_outer_fold(
                 source_rows,
@@ -866,6 +897,7 @@ def evaluate_global_regime_v4(
                 teacher_refitter=teacher_refitter,
                 max_workers=max_workers,
                 selection_sink=selection_sink,
+                prefix_evaluation_sink=fold_prefix_sink,
             )
 
         unit = WorkUnitIdentity(
@@ -912,6 +944,7 @@ def evaluate_global_regime_v4(
             teacher_refitter=teacher_refitter,
             max_workers=max_workers,
             selection_sink=selection_sink,
+            prefix_evaluation_sink=fold_prefix_sink,
             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
         )
         run_store.complete_work_unit(
@@ -1021,7 +1054,7 @@ def evaluate_global_regime_v4(
             initargs=(context,),
         ) as process_executor:
             submit = cast(Any, process_executor.submit)
-            if selection_sink is None:
+            if selection_sink is None and prefix_evaluation_sink is None:
                 futures = [submit(_evaluate_outer_fold_process, fold) for fold in outer_plan.folds]
                 outer_results = [future.result() for future in futures]
             else:
@@ -1031,12 +1064,27 @@ def evaluate_global_regime_v4(
                 ]
                 outer_results = []
                 for fold, future in zip(outer_plan.folds, futures, strict=True):
-                    fold_result, captured_selection = cast(
-                        tuple[OuterFoldResult, V4ConfigurationSelection | None],
+                    fold_result, captured_selection, captured_prefix_evaluations = cast(
+                        tuple[
+                            OuterFoldResult,
+                            V4ConfigurationSelection | None,
+                            dict[tuple[int, str], WalkForwardEvaluation],
+                        ],
                         future.result(),
                     )
-                    if captured_selection is not None:
+                    if selection_sink is not None and captured_selection is not None:
                         selection_sink(fold.fold_index, captured_selection)
+                    if prefix_evaluation_sink is not None:
+                        for (
+                            prefix_length,
+                            candidate_id,
+                        ), evaluation in captured_prefix_evaluations.items():
+                            prefix_evaluation_sink(
+                                fold.fold_index,
+                                prefix_length,
+                                candidate_id,
+                                evaluation,
+                            )
                     outer_results.append(fold_result)
     elif outer_worker_limit == 1:
         outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
@@ -1101,6 +1149,7 @@ def evaluate_global_regime_v4_from_source(
     python_version: str | None = None,
     evaluation_contract_version: int = 1,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
+    prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
 
@@ -1178,6 +1227,7 @@ def evaluate_global_regime_v4_from_source(
         run_store=run_store,
         run_identity=run_identity,
         selection_sink=selection_sink,
+        prefix_evaluation_sink=prefix_evaluation_sink,
     )
 
 
