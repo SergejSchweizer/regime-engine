@@ -17,8 +17,10 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.scheduling import randomized_order
+from market_regime_engine.feature_discovery.contracts import content_hash
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
     ResolvedCandidateProfile,
@@ -287,16 +289,38 @@ def evaluate_candidate_grid(
             else adapter_factory_builder(candidate)
         )
         if seed_checkpoint_factory is not None and runner is _default_runner:
-            return _default_runner(
-                source_rows,
-                plan,
-                profile,
-                candidate,
-                candidate_adapter,
-                seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
-                    candidate.candidate_id,
-                    fold_id,
-                    candidate.state_count,
+            seed_checkpoint = seed_checkpoint_factory(
+                candidate.candidate_id,
+                plan.folds[0].fold_id,
+                candidate.state_count,
+            )
+            stage_checkpoint = StageCheckpoint(
+                seed_checkpoint.run_identity,
+                seed_checkpoint.store,
+                f"{seed_checkpoint.scope}:final_grid_candidate:{candidate.candidate_id}",
+            )
+
+            def compute() -> WalkForwardEvaluation:
+                return _default_runner(
+                    source_rows,
+                    plan,
+                    profile,
+                    candidate,
+                    candidate_adapter,
+                    seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
+                        candidate.candidate_id,
+                        fold_id,
+                        candidate.state_count,
+                    ),
+                )
+
+            return stage_checkpoint.run(
+                "candidate_evaluation",
+                compute,
+                parameters=(
+                    ("candidate_hash", content_hash(candidate)),
+                    ("candidate_id", candidate.candidate_id),
+                    ("plan_hash", plan.plan_hash),
                 ),
             )
         return runner(source_rows, plan, profile, candidate, candidate_adapter)

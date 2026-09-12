@@ -400,6 +400,7 @@ def select_v4_configuration(
                 candidate_id=candidate_id,
                 fold_id=fold_id,
                 state_count=state_count,
+                scope=stage_checkpoint.scope,
             )
 
         seed_checkpoint_factory = make_seed_checkpoint
@@ -696,7 +697,8 @@ def _evaluate_outer_fold(
     outer_source = source_rows.iloc[
         : fold.train_source_observations + fold.test_source_observations
     ].copy()
-    try:
+
+    def evaluate_outer_test() -> OuterFoldResult:
         model_evaluation = outer_runner(
             outer_source,
             _outer_fold_plan(fold),
@@ -711,6 +713,19 @@ def _evaluate_outer_fold(
             profile=profile,
         )
         return _valid_outer_fold(fold, configuration, model_evaluation, teacher_refit)
+
+    try:
+        if stage_checkpoint is None:
+            return evaluate_outer_test()
+        return stage_checkpoint.run(
+            "outer_test",
+            evaluate_outer_test,
+            parameters=(
+                ("fold_id", fold.fold_id),
+                ("test_source_observations", str(fold.test_source_observations)),
+            ),
+            parent_payloads=(pickle.dumps(selection, protocol=pickle.HIGHEST_PROTOCOL),),
+        )
     except (ValueError, TypeError) as exc:
         return _invalid_outer_fold(
             fold,

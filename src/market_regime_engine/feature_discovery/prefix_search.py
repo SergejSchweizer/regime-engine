@@ -22,6 +22,7 @@ from market_regime_engine.evaluation.walk_forward import (
     run_walk_forward_candidate,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.evaluations.provisional_teacher import build_inner_walk_forward_plan
@@ -96,16 +97,42 @@ def _evaluate_candidates(
 
     def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
         if seed_checkpoint_factory is not None and runner is run_prefix_gaussian_candidate:
-            return run_prefix_gaussian_candidate(
-                source_rows,
-                plan,
-                profile,
-                candidate,
-                cast(AdapterFactory, adapter_factory(profile, candidate)),
-                seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
-                    candidate.candidate_id,
-                    fold_id,
-                    candidate.state_count,
+            seed_checkpoint = seed_checkpoint_factory(
+                candidate.candidate_id,
+                plan.folds[0].fold_id,
+                candidate.state_count,
+            )
+            stage_checkpoint = StageCheckpoint(
+                seed_checkpoint.run_identity,
+                seed_checkpoint.store,
+                (
+                    f"{seed_checkpoint.scope}:prefix_candidate:"
+                    f"{len(candidate.feature_order)}:{candidate.candidate_id}"
+                ),
+            )
+
+            def compute() -> WalkForwardEvaluation:
+                return run_prefix_gaussian_candidate(
+                    source_rows,
+                    plan,
+                    profile,
+                    candidate,
+                    cast(AdapterFactory, adapter_factory(profile, candidate)),
+                    seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
+                        candidate.candidate_id,
+                        fold_id,
+                        candidate.state_count,
+                    ),
+                )
+
+            return stage_checkpoint.run(
+                "candidate_evaluation",
+                compute,
+                parameters=(
+                    ("candidate_hash", content_hash(candidate)),
+                    ("candidate_id", candidate.candidate_id),
+                    ("feature_count", str(len(candidate.feature_order))),
+                    ("plan_hash", plan.plan_hash),
                 ),
             )
         return runner(

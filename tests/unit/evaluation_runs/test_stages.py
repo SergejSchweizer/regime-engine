@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
+from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluation_runs.store import (
     SQLiteEvaluationRunStore,
@@ -117,3 +118,39 @@ def test_stage_store_repairs_only_pending_fold_scope(tmp_path) -> None:
         == 1
     )
     assert store.work_unit_state(identity, unit).status is WorkUnitStatus.DOMAIN_INVALID
+
+
+def test_hmm_seed_scope_separates_outer_fold_units(tmp_path) -> None:
+    identity = EvaluationRunIdentity(
+        evaluation_id="global_regime_v4",
+        profile_id="xetra",
+        profile_config_version=4,
+        profile_hash="a" * 64,
+        evaluation_contract_version=1,
+        evaluation_plan_hash="b" * 64,
+        dataset_snapshot_key="c" * 64,
+        evaluation_cutoff=datetime(2026, 1, 1, tzinfo=UTC),
+        repository_commit_sha="d" * 40,
+        uv_lock_sha256="e" * 64,
+        python_version="3.14.7",
+    )
+    store = SQLiteEvaluationRunStore(tmp_path / "runs")
+    store.open_run(identity)
+    first_outer = HMMSeedCheckpoint(
+        run_identity=identity,
+        store=store,
+        candidate_id="gaussian_hmm_k2_full",
+        fold_id="fold_001",
+        state_count=2,
+        scope="outer_fold_001",
+    )
+    second_outer = HMMSeedCheckpoint(
+        run_identity=identity,
+        store=store,
+        candidate_id="gaussian_hmm_k2_full",
+        fold_id="fold_001",
+        state_count=2,
+        scope="outer_fold_002",
+    )
+
+    assert first_outer.unit(89).key != second_outer.unit(89).key

@@ -30,6 +30,7 @@ class HMMSeedCheckpoint:
     candidate_id: str
     fold_id: str
     state_count: int
+    scope: str = ""
     parent_payload_hashes: tuple[str, ...] = ()
 
     def unit(self, seed: int) -> WorkUnitIdentity:
@@ -39,6 +40,7 @@ class HMMSeedCheckpoint:
             coordinates=(
                 ("candidate_id", self.candidate_id),
                 ("fold_id", self.fold_id),
+                ("scope", self.scope),
                 ("seed", str(seed)),
             ),
             parent_payload_hashes=self.parent_payload_hashes,

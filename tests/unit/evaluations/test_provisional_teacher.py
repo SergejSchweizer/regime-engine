@@ -17,6 +17,9 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardFoldResult,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
+from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
+from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
+from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.feature_discovery.contracts import (
     V4_PROVISIONAL_STATE_COUNTS,
 )
@@ -242,3 +245,84 @@ def test_independent_forward_recursion_matches_teacher_continuation_likelihood()
     assert actual.test_log_likelihood_per_observation == pytest.approx(
         expected_test_log_likelihood / len(test)
     )
+
+
+def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch, tmp_path) -> None:
+    rows = source_rows(819)
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    plan = module.build_inner_walk_forward_plan(tuple(rows["timestamp_m1"]))
+    candidate = module._candidates(
+        FEATURES,
+        source_build_id="build-1",
+        feature_selection_definition_hash=HASH,
+        feature_selection_execution_hash=HASH,
+    )[0]
+    identity = EvaluationRunIdentity(
+        evaluation_id="global_regime_v4",
+        profile_id="xetra",
+        profile_config_version=4,
+        profile_hash=profile.profile_hash,
+        evaluation_contract_version=1,
+        evaluation_plan_hash=plan.plan_hash,
+        dataset_snapshot_key=HASH,
+        evaluation_cutoff=plan.evaluation_cutoff,
+        repository_commit_sha="b" * 40,
+        uv_lock_sha256="c" * 64,
+        python_version="3.14.7",
+    )
+    store = SQLiteEvaluationRunStore(tmp_path / "runs")
+    store.open_run(identity)
+    calls = 0
+
+    def fake_runner(
+        frame,
+        candidate_plan,
+        shared_profile,
+        shared_candidate,
+        candidate_adapter_factory,
+        *,
+        seed_checkpoint_factory,
+    ):
+        nonlocal calls
+        del candidate_adapter_factory, seed_checkpoint_factory
+        calls += 1
+        assert frame is rows
+        assert candidate_plan is plan
+        assert shared_profile is profile
+        assert shared_candidate is candidate
+        return invalid_evaluation(frame, candidate_plan, candidate)
+
+    monkeypatch.setattr(module, "run_provisional_gaussian_candidate", fake_runner)
+
+    def seed_factory(candidate_id, fold_id, state_count):
+        return HMMSeedCheckpoint(
+            run_identity=identity,
+            store=store,
+            candidate_id=candidate_id,
+            fold_id=fold_id,
+            state_count=state_count,
+            scope="outer_fold_001",
+        )
+
+    runner = module.run_provisional_gaussian_candidate
+    first = module._evaluate_candidates(
+        rows,
+        plan,
+        profile,
+        (candidate,),
+        runner,
+        max_workers=1,
+        seed_checkpoint_factory=seed_factory,
+    )
+    second = module._evaluate_candidates(
+        rows,
+        plan,
+        profile,
+        (candidate,),
+        runner,
+        max_workers=1,
+        seed_checkpoint_factory=seed_factory,
+    )
+
+    assert first == second
+    assert calls == 1
