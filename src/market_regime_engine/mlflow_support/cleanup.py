@@ -253,9 +253,7 @@ def execute_retired_registered_model_cleanup(
         operation
         for operation in plan
         if operation["operation"] in {"delete_alias", "retarget_alias"}
-    ) + tuple(
-        operation for operation in plan if operation["operation"] == "delete_model_version"
-    )
+    ) + tuple(operation for operation in plan if operation["operation"] == "delete_model_version")
     for operation in ordered_plan:
         if operation["operation"] == "delete_model_version":
             try:
