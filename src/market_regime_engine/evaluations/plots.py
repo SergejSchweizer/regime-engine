@@ -27,11 +27,13 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
     ClusterSolution,
     OuterFoldResult,
 )
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 if TYPE_CHECKING:
     from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
@@ -843,10 +845,46 @@ def _cluster_stability_plot(
     )
 
 
+def _render_global_v4_plot_task(
+    plot_type: str,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+    root: Path,
+) -> tuple[GlobalV4PlotManifestEntry, ...]:
+    """Render one independent plot family in a separate interpreter."""
+
+    items = _selections_by_fold(selections, result)
+    if plot_type == "quality":
+        return (_quality_plot(root, items),)
+    if plot_type == "silhouette":
+        return (_silhouette_plot(root, items),)
+    if plot_type == "cluster_size":
+        return (_cluster_size_plot(root, items),)
+    if plot_type == "state_information":
+        return _state_information_plots(root, items)
+    if plot_type == "prefix":
+        return (_prefix_plot(root, items),)
+    if plot_type == "final_grid":
+        return _final_grid_plots(root, items)
+    if plot_type == "outer_nmi":
+        return (_outer_nmi_plot(root, result),)
+    if plot_type == "selection_history":
+        return (_selection_history_plot(root, items),)
+    if plot_type == "feature_frequency":
+        return (_feature_frequency_plot(root, items),)
+    if plot_type == "cluster_stability":
+        return (_cluster_stability_plot(root, items),)
+    if plot_type == "no_selection":
+        return (_no_selection_plot(root, result),)
+    raise ValueError(f"unsupported global v4 plot task: {plot_type}")
+
+
 def render_global_v4_diagnostics(
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
     output_dir: Path,
+    *,
+    max_workers: int | None = None,
 ) -> tuple[GlobalV4PlotManifestEntry, ...]:
     """Render every v4 diagnostic from fold-local selection evidence.
 
@@ -861,21 +899,36 @@ def render_global_v4_diagnostics(
     items = _selections_by_fold(selections, result)
     if not items:
         root = output_dir / "plots"
-        return (_outer_nmi_plot(root, result), _no_selection_plot(root, result))
+        task_types: tuple[str, ...] = ("outer_nmi", "no_selection")
+    else:
+        task_types = (
+            "quality",
+            "silhouette",
+            "cluster_size",
+            "state_information",
+            "prefix",
+            "final_grid",
+            "outer_nmi",
+            "selection_history",
+            "feature_frequency",
+            "cluster_stability",
+        )
     root = output_dir / "plots"
-    entries: list[GlobalV4PlotManifestEntry] = [
-        _quality_plot(root, items),
-        _silhouette_plot(root, items),
-        _cluster_size_plot(root, items),
-        *_state_information_plots(root, items),
-        _prefix_plot(root, items),
-        *_final_grid_plots(root, items),
-        _outer_nmi_plot(root, result),
-        _selection_history_plot(root, items),
-        _feature_frequency_plot(root, items),
-        _cluster_stability_plot(root, items),
-    ]
-    return tuple(entries)
+    worker_limit = cpu_worker_count(max_workers, task_count=len(task_types))
+    if worker_limit == 1:
+        task_results = [
+            _render_global_v4_plot_task(plot_type, result, selections, root)
+            for plot_type in task_types
+        ]
+    else:
+        with cpu_process_pool(worker_limit) as executor:
+            futures = [
+                executor.submit(_render_global_v4_plot_task, plot_type, result, selections, root)
+                for plot_type in task_types
+            ]
+            # Consume in canonical task order so the manifest remains byte-stable.
+            task_results = [future.result() for future in futures]
+    return tuple(entry for entries in task_results for entry in entries)
 
 
 __all__ = ["GlobalV4PlotManifestEntry", "render_global_v4_diagnostics"]
