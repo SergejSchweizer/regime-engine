@@ -31,6 +31,8 @@ class AuditCounts:
     expected_model_count: int
     metric_key_count: int
     metric_point_count: int
+    unexpected_metric_key_count: int
+    unexpected_point_count: int
     missing_model_count: int
     unexpected_model_count: int
     duplicate_model_count: int
@@ -80,6 +82,8 @@ def audit(
     unknown_keys = tag_violations = domain_violations = 0
     metric_keys: set[str] = set()
     metric_point_count = 0
+    unexpected_metric_key_count = 0
+    unexpected_point_count = 0
     ledger_states: dict[str, tuple[Any, ...]] = {}
     if ledger_root is not None:
         from market_regime_engine.mlflow_support.metric_export import MetricExportLedger
@@ -114,13 +118,20 @@ def audit(
         actual_identity = {(key, step) for key, step, _value, _timestamp in actual_tuples}
         duplicate_points += len(actual_tuples) - len(actual_identity)
         missing_points += len(expected_identity - actual_identity)
+        unexpected_point_count += len(actual_identity - expected_identity)
         for identity in expected_identity & actual_identity:
             expected_point = next(item for item in expected_tuples if item[:2] == identity)
             actual_matches = tuple(item for item in actual_tuples if item[:2] == identity)
             if any(item != expected_point for item in actual_matches):
                 conflicting_points += 1
         metric_point_count += len(actual_tuples)
-        metric_keys.update(key for key, _step, _value, _timestamp in actual_tuples)
+        actual_keys = {key for key, _step, _value, _timestamp in actual_tuples}
+        expected_keys = {key for key, _step, _value, _timestamp in expected_tuples}
+        unexpected_metric_key_count += len(actual_keys - expected_keys)
+
+    actual_model_points = tuple(tuple(model.metrics or ()) for model in actual_models)
+    for points in actual_model_points:
+        metric_keys.update(str(point.key) for point in points)
         unknown_keys += sum(metric_definition(key) is None for key in metric_keys)
         for key in metric_keys:
             definition = metric_definition(key)
@@ -131,10 +142,10 @@ def audit(
     counts = AuditCounts(
         model_count=len(actual_models),
         expected_model_count=len(expected_entries),
-        metric_key_count=sum(
-            len({item.key for item in (model.metrics or ())}) for model in actual_models
-        ),
+        metric_key_count=sum(len({item.key for item in points}) for points in actual_model_points),
         metric_point_count=metric_point_count,
+        unexpected_metric_key_count=unexpected_metric_key_count,
+        unexpected_point_count=unexpected_point_count,
         missing_model_count=len(missing_models),
         unexpected_model_count=len(unexpected_models),
         duplicate_model_count=len(duplicate_models),
@@ -160,8 +171,10 @@ def audit(
                     "duplicate_model_count",
                     "duplicate_expected_name_count",
                     "missing_point_count",
+                    "unexpected_point_count",
                     "duplicate_point_count",
                     "conflicting_point_count",
+                    "unexpected_metric_key_count",
                     "unknown_metric_key_count",
                     "tag_violation_count",
                     "comparison_domain_violation_count",
