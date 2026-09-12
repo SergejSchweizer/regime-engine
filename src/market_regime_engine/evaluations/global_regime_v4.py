@@ -566,6 +566,9 @@ def select_v4_configuration(
     )
 
 
+_DEFAULT_SELECT_V4_CONFIGURATION = select_v4_configuration
+
+
 def _outer_fold_plan(fold: WalkForwardFold) -> WalkForwardPlan:
     # The existing runner validates fold positions relative to the supplied
     # plan.  A one-fold execution therefore uses a local fold identity while
@@ -885,6 +888,7 @@ def evaluate_global_regime_v4(
     use_process_outer_without_ledger = (
         run_store is None
         and run_identity is None
+        and select_v4_configuration is _DEFAULT_SELECT_V4_CONFIGURATION
         and outer_runner is run_prefix_gaussian_candidate
         and teacher_refitter is refit_frozen_teacher
         and outer_worker_limit > 1
