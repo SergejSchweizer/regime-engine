@@ -689,6 +689,7 @@ _DYNAMIC_PATTERNS = tuple(
         r"predictive_forecast_h[0-9]+_(?:predicted|actual|residual)",
         r"predictive_h[0-9]+_(?:observation_count|missing_target_count|rmse|mae|mape|r2)",
         r"classification_(?:hard_ari|hard_nmi|hard_accuracy|hard_purity|soft_nmi|label_count|omitted_unknown_count)",
+        r"backtest_(?:position|turnover|asset_return|gross_return|transaction_cost_return|net_return|equity|drawdown|benchmark_return|observation_count|missing_return_count|cumulative_net_return|annualized_return|volatility_annualized|sharpe|sortino|maximum_drawdown|calmar|hit_rate|turnover_mean|turnover_total|transaction_cost_total|mean_abs_exposure|maximum_abs_exposure|benchmark_cumulative_return|active_cumulative_return)",
         r"(?:selected_M_silhouette|prefix_soft_regime_nmi|outer_teacher_final_soft_nmi|outer_shared_timestamp_count|outer_oos_predictive_loglik_per_obs|eligible_feature_count)",
     )
 )
