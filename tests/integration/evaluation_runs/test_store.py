@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import multiprocessing
+import os
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -39,6 +42,26 @@ def unit(run: EvaluationRunIdentity, seed: str = "11") -> WorkUnitIdentity:
         "candidate_seed",
         (("candidate_id", "gaussian_hmm_k2_full"), ("seed", seed)),
     )
+
+
+def _crash_after_uncommitted_payload(root: str, mode: str) -> None:
+    run = identity()
+    work_unit = unit(run, "71")
+    store = SQLiteEvaluationRunStore(root)
+    store.open_run(run)
+    assert store.claim_work_unit(run, work_unit, lease_seconds=3_600)
+    payload = b"payload-written-before-ledger-commit"
+    if mode == "before_commit":
+        with store._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE work_units SET payload=?, payload_hash=? "
+                "WHERE run_key=? AND work_unit_key=?",
+                (payload, sha256(payload).hexdigest(), run.key, work_unit.key),
+            )
+            os._exit(17)
+    store.complete_work_unit(run, work_unit, payload)
+    os._exit(0)
 
 
 def test_sqlite_claim_completion_idempotency_and_terminal_invalid(tmp_path: Path) -> None:
@@ -83,3 +106,49 @@ def test_sqlite_reclaims_expired_lease_and_retries_technical_failure(tmp_path: P
     assert store.claim_work_unit(run, pending, owner="worker-b")
     store.fail_work_unit(run, pending, "temporary database outage")
     assert store.claim_work_unit(run, pending, owner="worker-c")
+
+
+def test_process_exit_before_ledger_commit_never_creates_false_complete(
+    tmp_path: Path,
+) -> None:
+    run = identity()
+    work_unit = unit(run, "71")
+    context = multiprocessing.get_context("spawn")
+    process = context.Process(
+        target=_crash_after_uncommitted_payload,
+        args=(str(tmp_path), "before_commit"),
+    )
+    process.start()
+    process.join(timeout=10)
+    assert process.exitcode == 17
+
+    store = SQLiteEvaluationRunStore(tmp_path)
+    state = store.work_unit_state(run, work_unit)
+    assert state is not None
+    assert state.status.value == "RUNNING"
+    assert store.load_completed_work_unit(run, work_unit) is None
+
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE work_units SET lease_expires_at=? WHERE run_key=? AND work_unit_key=?",
+            ((NOW - timedelta(days=1)).isoformat(), run.key, work_unit.key),
+        )
+    assert store.claim_work_unit(run, work_unit, owner="recovery-worker")
+    store.complete_work_unit(run, work_unit, b"recomputed-after-crash")
+    assert store.load_completed_work_unit(run, work_unit) == b"recomputed-after-crash"
+
+
+def test_process_exit_after_ledger_commit_reuses_terminal_payload(tmp_path: Path) -> None:
+    run = identity()
+    work_unit = unit(run, "71")
+    context = multiprocessing.get_context("spawn")
+    process = context.Process(
+        target=_crash_after_uncommitted_payload,
+        args=(str(tmp_path), "after_commit"),
+    )
+    process.start()
+    process.join(timeout=10)
+    assert process.exitcode == 0
+
+    store = SQLiteEvaluationRunStore(tmp_path)
+    assert store.load_completed_work_unit(run, work_unit) == b"payload-written-before-ledger-commit"
