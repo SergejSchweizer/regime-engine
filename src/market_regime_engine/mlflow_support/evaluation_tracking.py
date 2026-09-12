@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
+from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan, plan_walk_forward
 from market_regime_engine.evaluation_statistics.contracts import (
     GLOBAL_V4_EVALUATION_ID,
@@ -31,12 +31,19 @@ from market_regime_engine.feature_discovery.contracts import (
     OuterFoldResult,
 )
 from market_regime_engine.features.ports import FeatureCatalogSnapshot, FeatureSnapshot
-from market_regime_engine.mlflow_support.metric_catalog import METRIC_CATALOG_VERSION
+from market_regime_engine.mlflow_support.metric_catalog import (
+    METRIC_CATALOG_VERSION,
+    validate_metric_points,
+)
 from market_regime_engine.mlflow_support.metric_export import MetricExportLedger
-from market_regime_engine.mlflow_support.model_metrics import outer_selection_metric_points
-from market_regime_engine.mlflow_support.ports import TrackingPort
+from market_regime_engine.mlflow_support.model_metrics import (
+    model_metric_points,
+    outer_selection_metric_points,
+)
+from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
 from market_regime_engine.mlflow_support.tracking import (
-    FileMlflowTrackingPort,
+    _aggregate_metric_points,
+    _candidate_metric_points,
     _project_candidate_logged_model,
 )
 from market_regime_engine.profiles.config import ModelProfile
@@ -63,6 +70,24 @@ class GlobalV4TrackingResult:
         self.global_evidence_hash = global_evidence_hash
         self.plot_manifest_path = plot_manifest_path
         self.logged_model_ids = logged_model_ids
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedCandidateTracking:
+    """CPU-heavy candidate payloads prepared outside the tracking coordinator."""
+
+    evaluation: WalkForwardEvaluation
+    evidence_json: bytes
+    metric_points: tuple[MetricPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedFoldTracking:
+    """Immutable evidence and metric payloads for one outer fold."""
+
+    fold_evidence: dict[str, object]
+    final_grid_plan: WalkForwardPlan | None
+    candidates: tuple[_PreparedCandidateTracking, ...]
 
 
 def _running_statistics(
@@ -377,6 +402,63 @@ def _build_fold_evidence(
     )
 
 
+def _json_bytes(payload: object) -> bytes:
+    """Serialize a local tracking payload with the coordinator's exact format."""
+
+    return (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+    ).encode("utf-8")
+
+
+def _prepare_global_v4_fold_tracking(
+    fold: OuterFoldResult,
+    selection: V4ConfigurationSelection | None,
+) -> _PreparedFoldTracking:
+    """Prepare one fold's evidence, JSON and metric points in a worker process."""
+
+    fold_evidence = _build_fold_evidence(fold, selection)
+    if selection is None:
+        return _PreparedFoldTracking(fold_evidence, None, ())
+    candidates = tuple(getattr(selection.final_grid.candidate_grid, "evaluations", ()))
+    final_grid_plan = getattr(selection, "final_grid_plan", None)
+    if candidates and final_grid_plan is None:
+        raise ValueError("selected v4 evaluation is missing its final-grid plan")
+    resolved_final_grid_plan = cast(WalkForwardPlan, final_grid_plan)
+    prepared: list[_PreparedCandidateTracking] = []
+    for candidate in candidates:
+        aggregate = next(
+            item
+            for item in selection.final_grid.candidate_grid.aggregates
+            if item.candidate_id == candidate.candidate_id
+        )
+        candidate_payload = {
+            "candidate_id": candidate.candidate_id,
+            "feature_order": list(candidate.feature_order),
+            "source_build_id": candidate.source_build_id,
+            "evaluation_plan_hash": candidate.evaluation_plan_hash,
+            "aggregate": _aggregate_record(aggregate),
+            "selection_context": fold_evidence,
+        }
+        points = (
+            _candidate_metric_points(candidate, resolved_final_grid_plan)
+            + _aggregate_metric_points(candidate)
+            + model_metric_points(
+                candidate,
+                fold_timestamps=tuple(item.test_end for item in resolved_final_grid_plan.folds),
+            )
+            + outer_selection_metric_points(selection, fold)
+        )
+        validate_metric_points(points)
+        prepared.append(
+            _PreparedCandidateTracking(
+                evaluation=candidate,
+                evidence_json=_json_bytes(candidate_payload),
+                metric_points=points,
+            )
+        )
+    return _PreparedFoldTracking(fold_evidence, resolved_final_grid_plan, tuple(prepared))
+
+
 def build_global_v4_evidence(
     result: AdaptiveEvaluationResult,
     *,
@@ -543,21 +625,17 @@ def _track_global_v4_fold(
     parent_run_id: str,
     directory: Path,
     metric_ledger: MetricExportLedger | None,
+    prepared: _PreparedFoldTracking,
 ) -> tuple[tuple[str, str], tuple[tuple[str, str], ...]]:
     """Track one independent outer-fold dossier and its optional models."""
 
     fold_id = f"outer_fold_{fold.fold_index:03d}"
-    fold_evidence = (
-        _selected_fold_evidence(fold, selection)
-        if selection is not None
-        else _failed_fold_evidence(fold)
-    )
     child_id, _ = track_statistics_run(
         port,
         writer,
         run_name=fold_id,
         parent_run_id=parent_run_id,
-        statistics=_running_statistics(fold_id, RunType.CANDIDATE, fold_evidence),
+        statistics=_running_statistics(fold_id, RunType.CANDIDATE, prepared.fold_evidence),
     )
     port.log_params(
         child_id,
@@ -579,40 +657,22 @@ def _track_global_v4_fold(
         },
     )
     model_ids: list[tuple[str, str]] = []
-    candidates = (
-        tuple(getattr(selection.final_grid.candidate_grid, "evaluations", ()))
-        if selection is not None
-        else ()
-    )
     if selection is not None:
-        final_grid_plan = getattr(selection, "final_grid_plan", None)
-        if candidates and final_grid_plan is None:
+        if prepared.final_grid_plan is None and prepared.candidates:
             raise ValueError("selected v4 evaluation is missing its final-grid plan")
-        resolved_final_grid_plan = cast(WalkForwardPlan, final_grid_plan)
+        resolved_final_grid_plan = cast(WalkForwardPlan, prepared.final_grid_plan)
         model_root = directory / "logged_models" / fold_id
         dataset_snapshot_key = (
             f"dataset:{evidence.source_build_id}:{evidence.source_data_hash}:"
             f"{evidence.catalog_hash}"
         )
         evaluation_run_key = f"{GLOBAL_V4_EVALUATION_ID}:{evidence.evidence_hash}"
-        for candidate in candidates:
+        for prepared_candidate in prepared.candidates:
+            candidate = prepared_candidate.evaluation
             candidate_dir = model_root / candidate.candidate_id
             candidate_dir.mkdir(parents=True, exist_ok=True)
-            aggregate = next(
-                item
-                for item in selection.final_grid.candidate_grid.aggregates
-                if item.candidate_id == candidate.candidate_id
-            )
-            _write_json(
-                candidate_dir / "candidate_evidence.json",
-                {
-                    "candidate_id": candidate.candidate_id,
-                    "feature_order": list(candidate.feature_order),
-                    "source_build_id": candidate.source_build_id,
-                    "evaluation_plan_hash": candidate.evaluation_plan_hash,
-                    "aggregate": _aggregate_record(aggregate),
-                    "selection_context": _selected_fold_evidence(fold, selection),
-                },
+            (candidate_dir / "candidate_evidence.json").write_bytes(
+                prepared_candidate.evidence_json
             )
             model_id = _project_candidate_logged_model(
                 port,
@@ -626,13 +686,13 @@ def _track_global_v4_fold(
                 scope="outer_fold_candidate",
                 outer_fold_id=fold_id,
                 model_name=f"{evaluation_run_key}:{fold_id}:{candidate.candidate_id}",
-                extra_metric_points=outer_selection_metric_points(selection, fold),
                 extra_tags={
                     "regime_engine.feature_discovery_hash": selection.feature_discovery_hash,
                     "regime_engine.selected": str(
                         candidate.candidate_id == fold.final_configuration.candidate_id
                     ).lower(),
                 },
+                metric_points=prepared_candidate.metric_points,
                 metric_ledger=metric_ledger,
             )
             model_ids.append((f"{fold_id}:{candidate.candidate_id}", model_id))
@@ -696,42 +756,48 @@ def track_global_v4_evaluation(
         )
         port.log_artifact(parent_run_id, str(evidence_path), "evidence")
         configured_workers = os.environ.get("REGIME_TRACKING_WORKERS")
-        requested_workers = int(configured_workers) if configured_workers else 16
+        requested_workers = int(configured_workers) if configured_workers else None
         tracking_workers = cpu_worker_count(
             requested_workers,
             task_count=len(result.outer_folds),
         )
-        if isinstance(port, FileMlflowTrackingPort) and tracking_workers > 1:
-            with ThreadPoolExecutor(max_workers=tracking_workers) as executor:
-                fold_results = list(
-                    executor.map(
-                        lambda fold: _track_global_v4_fold(
-                            port,
-                            writer,
-                            evidence=evidence,
-                            fold=fold,
-                            selection=selections.get(fold.fold_index),
-                            parent_run_id=parent_run_id,
-                            directory=directory,
-                            metric_ledger=metric_ledger,
-                        ),
-                        result.outer_folds,
-                    )
+        preparation_tasks = tuple(
+            (fold, selections.get(fold.fold_index)) for fold in result.outer_folds
+        )
+        if tracking_workers == 1:
+            prepared_folds = tuple(
+                _prepare_global_v4_fold_tracking(
+                    fold,
+                    selection,
                 )
+                for fold, selection in preparation_tasks
+            )
         else:
-            fold_results = [
-                _track_global_v4_fold(
-                    port,
-                    writer,
-                    evidence=evidence,
-                    fold=fold,
-                    selection=selections.get(fold.fold_index),
-                    parent_run_id=parent_run_id,
-                    directory=directory,
-                    metric_ledger=metric_ledger,
-                )
-                for fold in result.outer_folds
-            ]
+            with cpu_process_pool(tracking_workers) as executor:
+                futures = [
+                    executor.submit(
+                        _prepare_global_v4_fold_tracking,
+                        fold,
+                        selection,
+                    )
+                    for fold, selection in preparation_tasks
+                ]
+                # Preserve canonical fold order regardless of process completion order.
+                prepared_folds = tuple(future.result() for future in futures)
+        fold_results = [
+            _track_global_v4_fold(
+                port,
+                writer,
+                evidence=evidence,
+                fold=fold,
+                selection=selection,
+                parent_run_id=parent_run_id,
+                directory=directory,
+                metric_ledger=metric_ledger,
+                prepared=prepared,
+            )
+            for (fold, selection), prepared in zip(preparation_tasks, prepared_folds, strict=True)
+        ]
         tracked_folds.extend(item[0] for item in fold_results)
         logged_model_ids.extend(
             model_id for _fold, model_ids in fold_results for model_id in model_ids

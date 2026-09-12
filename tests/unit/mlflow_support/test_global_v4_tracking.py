@@ -309,6 +309,19 @@ def test_outer_fold_evidence_worker_matches_inline_payload() -> None:
     assert parallel == inline
 
 
+def test_tracking_preparation_worker_matches_inline_payload() -> None:
+    fold = _result().outer_folds[0]
+    selection = _selection()
+    inline = module._prepare_global_v4_fold_tracking(fold, selection)
+    with cpu_process_pool(2) as executor:
+        parallel = executor.submit(
+            module._prepare_global_v4_fold_tracking,
+            fold,
+            selection,
+        ).result()
+    assert parallel == inline
+
+
 def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarchy(
     tmp_path: Path,
 ) -> None:

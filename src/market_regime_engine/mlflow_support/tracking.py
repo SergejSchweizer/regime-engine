@@ -413,19 +413,24 @@ def _project_candidate_logged_model(
     outer_fold_id: str | None = None,
     model_name: str | None = None,
     extra_metric_points: tuple[MetricPoint, ...] = (),
+    metric_points: tuple[MetricPoint, ...] | None = None,
     extra_tags: dict[str, str] | None = None,
     metric_ledger: MetricExportLedger | None = None,
 ) -> str:
     """Project one candidate dossier into exactly one MLflow LoggedModel."""
 
     points = (
-        _candidate_metric_points(evaluation, plan)
-        + _aggregate_metric_points(evaluation)
-        + model_metric_points(
-            evaluation,
-            fold_timestamps=tuple(item.test_end for item in plan.folds),
+        metric_points
+        if metric_points is not None
+        else (
+            _candidate_metric_points(evaluation, plan)
+            + _aggregate_metric_points(evaluation)
+            + model_metric_points(
+                evaluation,
+                fold_timestamps=tuple(item.test_end for item in plan.folds),
+            )
+            + extra_metric_points
         )
-        + extra_metric_points
     )
     validate_metric_points(points)
     logical_model_name = model_name or f"{evaluation_run_key}-{evaluation.candidate_id}"
