@@ -73,3 +73,61 @@ def test_model_metrics_verifier_checks_exact_expected_points(
     )
     assert report["status"] == "verified"
     assert report["counts"]["missing_point_count"] == 0
+
+
+def test_model_metrics_verifier_rejects_extra_catalogued_points(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    run_id = port.start_run(run_name="audit")
+    model_name = "evaluation-a-fold-1-candidate-a"
+    tags = {
+        "regime_engine.metric_catalog_version": "1",
+        "regime_engine.evaluation_plan_hash": "plan",
+        "regime_engine.dataset_snapshot_key": "dataset",
+        "regime_engine.evaluation_run_key": "run",
+        "regime_engine.feature_order_sha256": "features",
+        "regime_engine.feature_dimension": "2",
+        "regime_engine.scope": "candidate",
+    }
+    model_id = port.create_logged_model(
+        name=model_name,
+        source_run_id=run_id,
+        model_type="candidate-a",
+        tags=tags,
+    )
+    expected_point = MetricPoint("valid_fold_count", 1.0, 0, 100)
+    port.log_model_metric_points(
+        model_id,
+        (
+            expected_point,
+            MetricPoint("oos_predictive_loglik_per_obs", -1.25, 1, 100),
+        ),
+    )
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": expected_point.key,
+                            "value": expected_point.value,
+                            "step": expected_point.step,
+                            "timestamp_ms": expected_point.timestamp_ms,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["unexpected_point_count"] == 1
+    assert report["counts"]["unexpected_metric_key_count"] == 1
