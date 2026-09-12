@@ -345,6 +345,49 @@ class SQLiteEvaluationRunStore:
             self._check_identity(row, identity)
             return self._load_terminal(connection, identity, unit)
 
+    def load_completed_work_unit_payloads(
+        self,
+        identity: EvaluationRunIdentity,
+        key_prefix: str,
+    ) -> tuple[tuple[str, bytes], ...]:
+        """Load terminal payloads whose deterministic keys share ``key_prefix``.
+
+        This is intentionally a read-only, prefix-scoped projection for audit
+        and reporting consumers that need to inspect a family of durable
+        stages without reconstructing their parameter hashes.
+        """
+
+        if not key_prefix or key_prefix.strip() != key_prefix:
+            raise ValueError("key_prefix must be a non-empty trimmed string")
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT * FROM runs WHERE run_key = ?", (identity.key,)
+            ).fetchone()
+            if run is None:
+                raise ValueError("evaluation run ledger is missing")
+            self._check_identity(run, identity)
+            rows = connection.execute(
+                """
+                SELECT work_unit_key, payload, payload_hash, status
+                FROM work_units
+                WHERE run_key=?
+                  AND substr(work_unit_key, 1, ?) = ?
+                  AND status IN ('COMPLETE', 'DOMAIN_INVALID')
+                ORDER BY work_unit_key
+                """,
+                (identity.key, len(key_prefix), key_prefix),
+            ).fetchall()
+        payloads: list[tuple[str, bytes]] = []
+        for row in rows:
+            payload = row["payload"]
+            payload_hash = row["payload_hash"]
+            if not isinstance(payload, bytes) or not isinstance(payload_hash, str):
+                raise ValueError("terminal work unit payload metadata is missing")
+            if _digest(payload, "work unit payload") != payload_hash:
+                raise ValueError("terminal work unit payload hash does not match")
+            payloads.append((str(row["work_unit_key"]), payload))
+        return tuple(payloads)
+
     def work_unit_state(
         self,
         identity: EvaluationRunIdentity,
