@@ -675,6 +675,16 @@ _DYNAMIC_PATTERNS = tuple(
         r"emission_(?:mean|variance)_state_[0-9]+_feature_[0-9]+",
         r"oos_filtered_probability_state_[0-9]+",
         r"viterbi_state",
+        r"state_diag_(?:train|oos)_(?:hard|soft)_occupancy_state_[0-9]+",
+        r"state_diag_(?:expected_duration|covariance_condition_number)_state_[0-9]+",
+        r"state_diag_covariance_eigenvalue_state_[0-9]+_[0-9]+",
+        r"state_diag_(?:posterior_entropy|posterior_confidence)",
+        r"state_diag_posterior_probability_state_[0-9]+",
+        r"state_diag_viterbi_state",
+        r"state_diag_transition_row_entropy_state_[0-9]+",
+        r"state_diag_transition_probability_state_[0-9]+_to_state_[0-9]+",
+        r"state_diag_emission_(?:mean|variance)_state_[0-9]+_feature_[0-9]+",
+        r"state_diag_low_confidence_(?:count|rate)",
         r"(?:selected_M_silhouette|prefix_soft_regime_nmi|outer_teacher_final_soft_nmi|outer_shared_timestamp_count|outer_oos_predictive_loglik_per_obs|eligible_feature_count)",
     )
 )
