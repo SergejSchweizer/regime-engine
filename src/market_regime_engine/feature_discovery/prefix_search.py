@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import TYPE_CHECKING, cast
@@ -111,6 +111,16 @@ def _evaluate_candidates(
                 ),
             )
 
+            def scoped_seed_checkpoint(fold_id: str) -> HMMSeedCheckpoint:
+                return replace(
+                    seed_checkpoint_factory(
+                        candidate.candidate_id,
+                        fold_id,
+                        candidate.state_count,
+                    ),
+                    scope=stage_checkpoint.scope,
+                )
+
             def compute() -> WalkForwardEvaluation:
                 return run_prefix_gaussian_candidate(
                     source_rows,
@@ -119,11 +129,7 @@ def _evaluate_candidates(
                     candidate,
                     cast(AdapterFactory, adapter_factory(profile, candidate)),
                     max_workers=max_workers,
-                    seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
-                        candidate.candidate_id,
-                        fold_id,
-                        candidate.state_count,
-                    ),
+                    seed_checkpoint_factory=scoped_seed_checkpoint,
                 )
 
             return stage_checkpoint.run(

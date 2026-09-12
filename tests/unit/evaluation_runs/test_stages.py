@@ -186,3 +186,39 @@ def test_hmm_seed_scope_separates_outer_fold_units(tmp_path) -> None:
     )
 
     assert first_outer.unit(89).key != second_outer.unit(89).key
+
+
+def test_hmm_seed_scope_separates_discovery_stage_and_feature_dimension(tmp_path) -> None:
+    identity = EvaluationRunIdentity(
+        evaluation_id="global_regime_v4",
+        profile_id="xetra",
+        profile_config_version=4,
+        profile_hash="a" * 64,
+        evaluation_contract_version=1,
+        evaluation_plan_hash="b" * 64,
+        dataset_snapshot_key="c" * 64,
+        evaluation_cutoff=datetime(2026, 1, 1, tzinfo=UTC),
+        repository_commit_sha="d" * 40,
+        uv_lock_sha256="e" * 64,
+        python_version="3.14.7",
+    )
+    store = SQLiteEvaluationRunStore(tmp_path / "runs")
+    store.open_run(identity)
+    teacher = HMMSeedCheckpoint(
+        run_identity=identity,
+        store=store,
+        candidate_id="gaussian_hmm_k2_full",
+        fold_id="fold_001",
+        state_count=2,
+        scope="fold_001:teacher_candidate:gaussian_hmm_k2_full",
+    )
+    prefix = HMMSeedCheckpoint(
+        run_identity=identity,
+        store=store,
+        candidate_id="gaussian_hmm_k2_full",
+        fold_id="fold_001",
+        state_count=2,
+        scope="fold_001:prefix_candidate:3:gaussian_hmm_k2_full",
+    )
+
+    assert teacher.unit(89).key != prefix.unit(89).key

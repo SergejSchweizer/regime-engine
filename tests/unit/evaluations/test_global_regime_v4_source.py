@@ -88,6 +88,58 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
     assert captured["catalog"] == bound_catalog
 
 
+def test_v4_source_entrypoint_can_persist_only_the_input_snapshot(monkeypatch) -> None:
+    lineage = _lineage()
+    catalog = FeatureCatalogSnapshot.from_entries(
+        lineage,
+        "timestamp_m1",
+        (FeatureCatalogEntry("feature_a", 1), FeatureCatalogEntry("feature_b", 2)),
+    )
+    snapshot = FeatureSnapshot(
+        lineage,
+        catalog.feature_names,
+        (FeatureRow(START, (1.0, 2.0)), FeatureRow(START + timedelta(days=1), (2.0, 3.0))),
+    )
+    bound_catalog = catalog.with_materialization(snapshot)
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+
+    class Source:
+        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+            del request
+            return bound_catalog, snapshot
+
+    class SnapshotStore:
+        def __init__(self) -> None:
+            self.finalized = None
+
+        def finalize(self, key, value, *, catalog=None):
+            self.finalized = key, value, catalog
+
+        def load(self, key):
+            assert self.finalized is not None
+            assert self.finalized[0] == key
+            return self.finalized[1]
+
+    captured: dict[str, object] = {}
+
+    def fake_evaluate(rows: pd.DataFrame, **kwargs):
+        captured["rows"] = rows
+        captured.update(kwargs)
+        return "evaluated"
+
+    monkeypatch.setattr(global_v4, "evaluate_global_regime_v4", fake_evaluate)
+    snapshot_store = SnapshotStore()
+    assert (
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source(), profile=profile, snapshot_store=snapshot_store
+        )
+        == "evaluated"
+    )
+    assert snapshot_store.finalized is not None
+    assert captured["run_store"] is None
+    assert captured["run_identity"] is None
+
+
 def test_v4_source_entrypoint_fails_closed_for_invalid_snapshot_contracts() -> None:
     lineage = _lineage()
     catalog = FeatureCatalogSnapshot.from_entries(

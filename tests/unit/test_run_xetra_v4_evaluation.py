@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,3 +66,12 @@ def test_tracking_worker_count_respects_explicit_bounded_override(
     module = _module()
     monkeypatch.setenv("REGIME_TRACKING_WORKERS", "2")
     assert module._tracking_worker_count(10_000) == min(2, module.available_cpu_count())
+
+
+def test_full_evaluation_does_not_accept_a_resume_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setattr(sys, "argv", ["run_xetra_v4_evaluation.py", "--run-key", "old-run"])
+    with pytest.raises(SystemExit):
+        module._run(None)
