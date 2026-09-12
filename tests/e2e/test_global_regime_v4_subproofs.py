@@ -6,6 +6,8 @@ import hashlib
 import json
 import multiprocessing
 import os
+import pickle
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,8 @@ from tests.fixtures.global_regime_v4.synthetic import SyntheticGlobalV4, build_s
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
+_BASELINE_CACHE_SCHEMA = 1
+
 
 @dataclass(frozen=True, slots=True)
 class _Baseline:
@@ -49,18 +53,76 @@ class _Baseline:
     result: AdaptiveEvaluationResult
     selections: dict[int, Any]
     evidence: GlobalV4Evidence
+    cache_reused: bool
 
 
 def _baseline() -> _Baseline:
     fixture = build_synthetic_global_v4()
     profile = load_profile("configs/profiles/xetra_v4.yaml")
+    output = os.environ.get("PR231_SUBPROOF_OUTPUT")
+    cache_path = (
+        None
+        if output is None
+        else Path(output).parent
+        / f"pr231-baseline-v{_BASELINE_CACHE_SCHEMA}-{fixture.source_data_hash}.pickle"
+    )
+    repository_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if cache_path is not None and cache_path.is_file():
+        try:
+            envelope = pickle.loads(cache_path.read_bytes())
+        except (
+            EOFError,
+            OSError,
+            pickle.PickleError,
+            TypeError,
+            ValueError,
+            AttributeError,
+            ImportError,
+            ModuleNotFoundError,
+        ):
+            envelope = None
+        if (
+            isinstance(envelope, dict)
+            and envelope.get("schema") == _BASELINE_CACHE_SCHEMA
+            and envelope.get("repository_sha") == repository_sha
+            and envelope.get("source_data_sha256") == fixture.source_data_hash
+            and envelope.get("profile_hash") == profile.profile_hash
+            and isinstance(envelope.get("state"), _Baseline)
+        ):
+            return _Baseline(
+                fixture,
+                profile,
+                envelope["state"].result,
+                envelope["state"].selections,
+                envelope["state"].evidence,
+                True,
+            )
     result, selections = _evaluate_with_selection_capture(
         fixture.rows,
         fixture.catalog,
         profile,
     )
     evidence = _evidence(fixture, result, selections)
-    return _Baseline(fixture, profile, result, selections, evidence)
+    state = _Baseline(fixture, profile, result, selections, evidence, False)
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        envelope = {
+            "schema": _BASELINE_CACHE_SCHEMA,
+            "repository_sha": repository_sha,
+            "source_data_sha256": fixture.source_data_hash,
+            "profile_hash": profile.profile_hash,
+            "state": state,
+        }
+        temporary = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+        temporary.write_bytes(pickle.dumps(envelope, protocol=pickle.HIGHEST_PROTOCOL))
+        temporary.replace(cache_path)
+    return state
 
 
 def _write_sidecar(phase: str, payload: dict[str, object]) -> None:
@@ -102,6 +164,7 @@ def test_global_v4_subproof_pipeline_math() -> None:
             "result_hash": state.result.result_hash,
             "evidence_hash": state.evidence.evidence_hash,
             "golden_snapshot_hash": content_hash(golden),
+            "baseline_cache_reused": state.cache_reused,
         },
     )
 
@@ -133,6 +196,7 @@ def test_global_v4_subproof_tracking_and_plots(
             "result_hash": state.result.result_hash,
             "evidence_hash": state.evidence.evidence_hash,
             "plot_manifest_path": tracked.plot_manifest_path,
+            "baseline_cache_reused": state.cache_reused,
         },
     )
 
@@ -176,6 +240,7 @@ def test_global_v4_subproof_independent_process_and_labels(tmp_path: Path) -> No
             "evidence_sha256": hashlib.sha256(evidence_bytes).hexdigest(),
             "canonical_result_bytes_equal": True,
             "canonical_evidence_bytes_equal": True,
+            "baseline_cache_reused": state.cache_reused,
         },
     )
 
@@ -230,5 +295,6 @@ def test_global_v4_subproof_future_mutation_isolation() -> None:
             "earlier_fold_result_bytes_equal": True,
             "earlier_selection_bytes_equal": True,
             "earlier_evidence_bytes_equal": True,
+            "baseline_cache_reused": state.cache_reused,
         },
     )

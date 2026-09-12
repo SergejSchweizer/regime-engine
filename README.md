@@ -81,6 +81,8 @@ only the phase needed for a change:
 Each phase creates its own metadata and proof sidecar below
 `.artifacts/pr231-hermetic-proof` (or `PR231_PROOF_OUTPUT_DIR`). The combined
 `all` mode remains available, but is not required when validating one phase.
+Sub-phases reuse a commit- and fixture-bound local baseline cache when they
+share the same output directory; a missing or stale cache is recomputed.
 
 It writes timing metadata, the JUnit report and the computation proof sidecar
 to `.artifacts/pr231-hermetic-proof` by default. Set
