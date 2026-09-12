@@ -128,8 +128,18 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
     monkeypatch.setattr(
         global_v4,
         "cpu_process_pool",
-        lambda *, max_workers, **kwargs: _InlineProcessPool(max_workers=max_workers, **kwargs),
+        lambda max_workers, **kwargs: _InlineProcessPool(max_workers=max_workers, **kwargs),
     )
+    no_store = global_v4.evaluate_global_regime_v4(
+        source_rows,
+        catalog=catalog,
+        profile=profile,
+        max_workers=2,
+    )
+    assert no_store.valid_fold_count == 0
+    assert sorted(calls) == [1, 2]
+    assert process_pool_worker_counts == [2]
+    calls.clear()
     first = global_v4.evaluate_global_regime_v4(
         source_rows,
         catalog=catalog,
@@ -138,7 +148,7 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         run_identity=run_identity,
     )
     assert sorted(calls) == [1, 2]
-    assert process_pool_worker_counts == [2]
+    assert process_pool_worker_counts == [2, 2]
 
     second = global_v4.evaluate_global_regime_v4(
         source_rows,
