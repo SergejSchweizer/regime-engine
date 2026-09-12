@@ -329,8 +329,13 @@ def test_global_v4_full_compute_and_independent_math_proof(
         for selection in captured.values()
         for prototype in selection.prototypes.prototypes
     )
-    assert any(
-        not prefix.valid
+    assert all(
+        prefix.prefix_length == len(prefix.feature_order)
+        for selection in captured.values()
+        for prefix in selection.prefix_search.evaluations
+    )
+    assert all(
+        prefix.shared_timestamp_count > 0
         for selection in captured.values()
         for prefix in selection.prefix_search.evaluations
     )
