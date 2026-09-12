@@ -1,0 +1,83 @@
+name: Hermetic v4 Proof
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermetic-v4-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14.7"
+          enable-cache: true
+      - name: Create exact Python environment
+        run: |
+          uv venv --python 3.14.7 .venv
+          uv pip install --python .venv/bin/python -r uv.lock
+          uv pip install --python .venv/bin/python --no-deps -e .
+      - name: Run PR-231 hermetic full-computation proof
+        shell: bash
+        run: |
+          set +e
+          start_epoch=$(date +%s)
+          start_utc=$(date -u --iso-8601=seconds)
+          .venv/bin/pytest -q tests/e2e/test_global_regime_v4_full_compute.py \
+            -m "integration and slow" --junitxml=pr231-junit.xml
+          exit_code=$?
+          end_epoch=$(date +%s)
+          end_utc=$(date -u --iso-8601=seconds)
+          PR231_START_EPOCH="${start_epoch}" \
+          PR231_STARTED_UTC="${start_utc}" \
+          PR231_END_EPOCH="${end_epoch}" \
+          PR231_FINISHED_UTC="${end_utc}" \
+          PR231_EXIT_CODE="${exit_code}" \
+          .venv/bin/python - <<'PY'
+          import ast
+          import json
+          import os
+          from pathlib import Path
+
+          source = Path("tests/e2e/test_global_regime_v4_full_compute.py")
+          tree = ast.parse(source.read_text(encoding="utf-8"))
+          golden_hash = next(
+              node.value.value
+              for node in tree.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "PR231_GOLDEN_SNAPSHOT_HASH" for target in node.targets)
+              and isinstance(node.value, ast.Constant)
+          )
+          payload = {
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "repository_sha": os.environ["GITHUB_SHA"],
+              "command": ".venv/bin/pytest -q tests/e2e/test_global_regime_v4_full_compute.py -m 'integration and slow' --junitxml=pr231-junit.xml",
+              "started_utc": os.environ["PR231_STARTED_UTC"],
+              "finished_utc": os.environ["PR231_FINISHED_UTC"],
+              "duration_seconds": int(os.environ["PR231_END_EPOCH"]) - int(os.environ["PR231_START_EPOCH"]),
+              "exit_code": int(os.environ["PR231_EXIT_CODE"]),
+              "golden_snapshot_hash": golden_hash,
+          }
+          Path("pr231-proof.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          exit ${exit_code}
+      - name: Upload immutable proof artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr231-hermetic-proof-${{ github.run_id }}
+          path: |
+            pr231-proof.json
+            pr231-junit.xml
+          if-no-files-found: warn
