@@ -773,6 +773,7 @@ def evaluate_global_regime_v4(
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
     if run_store is not None and run_identity is not None:
         state = run_store.open_run(run_identity)
+        run_store.enable_write_ahead_logging()
         if state.status == "COMPLETE" and selection_sink is None:
             payload = run_store.load_completed_run(run_identity)
             if payload is None:

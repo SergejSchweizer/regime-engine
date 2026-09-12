@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 from hashlib import sha256
 from pathlib import Path
 
@@ -18,15 +19,17 @@ from market_regime_engine.evaluation_statistics.render import render_statistics
 class StatisticsWriter:
     def __init__(self, checkout_root: str | Path) -> None:
         self._root = Path(checkout_root) / "evaluations"
+        self._preflight_lock = threading.Lock()
 
     def preflight(self) -> Path:
-        self._root.mkdir(parents=True, exist_ok=True)
-        probe = self._root / ".write-probe"
-        try:
-            probe.write_bytes(b"")
-            probe.unlink()
-        except OSError as exc:
-            raise OSError("evaluation statistics root is not writable") from exc
+        with self._preflight_lock:
+            self._root.mkdir(parents=True, exist_ok=True)
+            probe = self._root / ".write-probe"
+            try:
+                probe.write_bytes(b"")
+                probe.unlink()
+            except OSError as exc:
+                raise OSError("evaluation statistics root is not writable") from exc
         return self._root
 
     def _directory(self, statistics: RunStatistics) -> Path:

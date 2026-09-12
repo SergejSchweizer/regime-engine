@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -248,3 +249,39 @@ def test_global_v4_diagnostics_are_png_only_and_source_hash_deterministic(tmp_pa
         for entry in first
         if entry.plot_type != "final_12_model_same_vector_comparison"
     )
+
+
+def test_global_v4_diagnostics_render_complete_all_invalid_result(tmp_path) -> None:
+    invalid_folds = tuple(
+        replace(
+            fold,
+            valid=False,
+            oos_predictive_loglik_per_observation=0.0,
+            oos_timestamps=(),
+            oos_filtered_probabilities=(),
+            teacher_reference_hash=None,
+            outer_teacher_final_soft_nmi=None,
+            outer_shared_timestamp_count=0,
+            failure_reason="selection gates rejected every candidate",
+        )
+        for fold in _result().outer_folds
+    )
+    invalid_result = replace(
+        _result(),
+        outer_folds=invalid_folds,
+        valid_fold_count=0,
+        valid_fold_rate=0.0,
+        soft_nmi_mean=None,
+        soft_nmi_population_std=None,
+        soft_nmi_worst=None,
+        latest_complete_fold_valid=False,
+        production_eligible=False,
+    )
+
+    entries = render_global_v4_diagnostics(invalid_result, {}, tmp_path)
+
+    assert {entry.plot_type for entry in entries} == {
+        "outer_soft_nmi_history",
+        "selection_unavailable_summary",
+    }
+    assert all(entry.png_path.endswith(".png") for entry in entries)

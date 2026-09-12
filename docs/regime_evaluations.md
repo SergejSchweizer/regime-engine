@@ -73,6 +73,12 @@ process-local lane, and `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and
 oversubscription. The runtime also exposes physical-core and NUMA topology for
 benchmarking, but does not pin workers to a NUMA node without measured benefit.
 
+The non-statistical MLflow dossier/plot tail is independently bounded by
+`REGIME_TRACKING_WORKERS` (default 16) because it is request/file-I/O bound;
+set it explicitly when benchmarking a different MLflow service capacity. Set
+`REGIME_PERFORMANCE_REPORT_PATH` to write an opt-in JSON stage report beside
+the checkpoint state. Neither setting changes canonical statistical outputs.
+
 Run the reproducible scheduler benchmark with:
 
 ```bash

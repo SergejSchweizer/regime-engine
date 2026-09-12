@@ -14,12 +14,40 @@ from typing import cast
 
 from market_regime_engine.runtime.cpu import cpu_worker_count
 
+_NATIVE_THREAD_LIMITER: object | None = None
+
+
+def _limit_native_numerical_threads() -> None:
+    """Keep one BLAS/OpenMP numerical lane per process-pool worker."""
+
+    global _NATIVE_THREAD_LIMITER
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[name] = "1"
+    try:
+        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+    except ImportError:
+        # The environment cap is enough when numerical libraries initialise
+        # after worker startup; minimal extension installs remain supported.
+        _NATIVE_THREAD_LIMITER = None
+    else:
+        limiter = threadpool_limits(limits=1)
+        limiter.__enter__()
+        # Keep the context alive for the worker lifetime, including forked
+        # workers whose numerical libraries were already imported.
+        _NATIVE_THREAD_LIMITER = limiter
+
 
 def _initialize_process_worker(
     initializer: Callable[..., None] | None,
     initargs: tuple[object, ...],
     cpu_affinity: tuple[int, ...] | None,
 ) -> None:
+    _limit_native_numerical_threads()
     if cpu_affinity is not None and hasattr(os, "sched_setaffinity"):
         os.sched_setaffinity(0, cpu_affinity)
     if initializer is not None:
@@ -59,13 +87,8 @@ def cpu_process_pool(
                 category=DeprecationWarning,
                 module=r"multiprocessing\.popen_fork",
             )
-        pool_initializer = cast(
-            Callable[[], object] | None,
-            _initialize_process_worker if cpu_affinity is not None else initializer,
-        )
-        pool_initargs = (
-            (initializer, initargs, cpu_affinity) if cpu_affinity is not None else initargs
-        )
+        pool_initializer = cast(Callable[[], object], _initialize_process_worker)
+        pool_initargs = (initializer, initargs, cpu_affinity)
         with ProcessPoolExecutor(
             max_workers=worker_limit,
             mp_context=context,
