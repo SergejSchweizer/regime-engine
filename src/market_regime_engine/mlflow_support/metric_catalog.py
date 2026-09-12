@@ -685,6 +685,7 @@ _DYNAMIC_PATTERNS = tuple(
         r"state_diag_transition_probability_state_[0-9]+_to_state_[0-9]+",
         r"state_diag_emission_(?:mean|variance)_state_[0-9]+_feature_[0-9]+",
         r"state_diag_low_confidence_(?:count|rate)",
+        r"fit_quality_(?:train_loglik_total|train_loglik_per_obs|oos_predictive_loglik_total|oos_predictive_loglik_per_obs|aic|bic|hqc|aic_per_train_obs|bic_per_train_obs|hqc_per_train_obs|train_observation_count|valid_fold_count|invalid_fold_count|valid_fold_rate|parameter_count|feature_dimension)(?:_(?:mean|std|minimum|maximum|median|count))?",
         r"(?:selected_M_silhouette|prefix_soft_regime_nmi|outer_teacher_final_soft_nmi|outer_shared_timestamp_count|outer_oos_predictive_loglik_per_obs|eligible_feature_count)",
     )
 )
