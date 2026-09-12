@@ -49,3 +49,19 @@ def test_checkpoint_root_accepts_external_persistent_volume(
     external = tmp_path.parent / "persistent-xetra-runs"
     monkeypatch.setenv("REGIME_EVALUATION_CHECKPOINT_ROOT", str(external))
     assert module._configured_checkpoint_root(tmp_path) == external.resolve()
+
+
+def test_tracking_worker_count_uses_all_available_cpus_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.delenv("REGIME_TRACKING_WORKERS", raising=False)
+    assert module._tracking_worker_count(10_000) == module.available_cpu_count()
+
+
+def test_tracking_worker_count_respects_explicit_bounded_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setenv("REGIME_TRACKING_WORKERS", "2")
+    assert module._tracking_worker_count(10_000) == min(2, module.available_cpu_count())

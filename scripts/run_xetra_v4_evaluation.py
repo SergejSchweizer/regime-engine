@@ -93,6 +93,16 @@ def _ledger_counts(checkpoint_root: Path) -> dict[str, int]:
     }
 
 
+def _tracking_worker_count(task_count: int) -> int:
+    """Resolve the same bounded tracking budget used by the tracker itself."""
+
+    configured = os.environ.get("REGIME_TRACKING_WORKERS")
+    return cpu_worker_count(
+        int(configured) if configured else None,
+        task_count=task_count,
+    )
+
+
 def _run(performance: PerformanceRecorder) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -277,9 +287,10 @@ def _run(performance: PerformanceRecorder) -> None:
             repository_commit_sha=commit,
             max_workers=evidence_workers,
         )
+    tracking_workers = _tracking_worker_count(len(result.outer_folds))
     with performance.stage(
         "mlflow_tracking",
-        worker_count=int(os.environ.get("REGIME_TRACKING_WORKERS", "16")),
+        worker_count=tracking_workers,
         task_count=len(result.outer_folds),
     ):
         tracked = track_global_v4_evaluation(

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from market_regime_engine.runtime.cpu import available_cpu_count
+from market_regime_engine.runtime.cpu import available_cpu_count, cpu_topology
 
 
 def _rss_mib() -> float | None:
@@ -34,23 +34,31 @@ class PerformanceStage:
     process_cpu_seconds: float
     child_cpu_seconds: float
     parent_rss_mib: float | None
+    child_peak_rss_mib: float | None
     task_count: int | None
     worker_count: int | None
 
     def as_dict(self) -> dict[str, Any]:
-        cpu_seconds = self.process_cpu_seconds + self.child_cpu_seconds
+        # rusage counters can differ by a few nanoseconds across process
+        # reaping boundaries.  A negative child delta is measurement noise,
+        # never useful CPU time.
+        child_cpu_seconds = max(0.0, self.child_cpu_seconds)
+        cpu_seconds = self.process_cpu_seconds + child_cpu_seconds
+        capacity = available_cpu_count()
         return {
             "name": self.name,
             "wall_seconds": self.wall_seconds,
             "process_cpu_seconds": self.process_cpu_seconds,
-            "child_cpu_seconds": self.child_cpu_seconds,
+            "child_cpu_seconds": child_cpu_seconds,
             "total_cpu_seconds": cpu_seconds,
             "effective_cpu_utilization_percent": (
-                100.0 * cpu_seconds / (self.wall_seconds * available_cpu_count())
+                100.0 * cpu_seconds / (self.wall_seconds * capacity)
                 if self.wall_seconds > 0
                 else 0.0
             ),
             "parent_rss_mib": self.parent_rss_mib,
+            "child_peak_rss_mib": self.child_peak_rss_mib,
+            "available_logical_cpus": capacity,
             "task_count": self.task_count,
             "worker_count": self.worker_count,
         }
@@ -104,6 +112,7 @@ class PerformanceRecorder:
                         - children_before.ru_stime
                     ),
                     parent_rss_mib=_rss_mib(),
+                    child_peak_rss_mib=children_after.ru_maxrss / 1024.0,
                     task_count=task_count,
                     worker_count=worker_count,
                 )
@@ -127,13 +136,33 @@ class PerformanceRecorder:
         if self._path is None:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        topology = cpu_topology()
         report: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": self._status,
             "available_logical_cpus": available_cpu_count(),
+            "affinity_logical_cpus": topology.logical_cpu_count,
+            "physical_core_count": topology.physical_core_count,
+            "numa_nodes": [
+                {"node": node_id, "logical_cpu_count": len(cpus)}
+                for node_id, cpus in topology.numa_nodes
+            ],
+            "native_thread_environment": {
+                name: os.environ.get(name)
+                for name in (
+                    "OMP_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS",
+                    "MKL_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS",
+                )
+                if os.environ.get(name) is not None
+            },
             "wall_seconds": time.perf_counter() - self._started,
             "peak_parent_rss_mib": max(
                 (stage.parent_rss_mib or 0.0 for stage in self._stages), default=0.0
+            ),
+            "peak_child_rss_mib": max(
+                (stage.child_peak_rss_mib or 0.0 for stage in self._stages), default=0.0
             ),
             "metadata": self._metadata,
             "stages": [stage.as_dict() for stage in self._stages],
