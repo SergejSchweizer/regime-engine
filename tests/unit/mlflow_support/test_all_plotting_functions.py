@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import market_regime_engine.mlflow_support.model_metrics as model_metrics
+import market_regime_engine.mlflow_support.tracking as tracking
 from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
     WalkForwardFoldResult,
@@ -258,6 +260,96 @@ def test_plot_renderers_reject_invalid_inputs(tmp_path: Path) -> None:
     plan = _plan()
     with pytest.raises(ValueError, match="unsupported fold-history metric"):
         render_fold_history(evaluation, plan, "not-a-metric", tmp_path)
+
+
+def test_model_metric_projection_covers_all_valid_fold_diagnostics() -> None:
+    evaluation = _evaluation()
+    points = model_metrics.model_metric_points(evaluation)
+    keys = {point.key for point in points}
+
+    assert {"train_loglik_total", "hqc", "aic", "bic"} <= keys
+    assert "oos_filtered_probability_state_0" in keys
+    assert "viterbi_state" in keys
+    assert "transition_probability_state_0_to_state_0" in keys
+    assert "covariance_min_eigenvalue" in keys
+
+    gmm = _evaluation(candidate_id="gmm_hmm_k2_m2_full")
+    student_t = _evaluation(candidate_id="student_t_hmm_k2_full")
+    assert model_metrics.model_metric_points(gmm)
+    assert model_metrics.model_metric_points(student_t)
+    assert model_metrics.model_metric_points(
+        evaluation,
+        fold_timestamps=(datetime(2024, 1, 1, tzinfo=UTC),) * len(evaluation.folds),
+    )
+
+    with pytest.raises(ValueError, match="fold_timestamps"):
+        model_metrics.model_metric_points(evaluation, fold_timestamps=(START,))
+    with pytest.raises(ValueError, match="non-negative"):
+        model_metrics.model_metric_points(
+            evaluation,
+            fold_timestamps=(datetime(1960, 1, 1, tzinfo=UTC),) * len(evaluation.folds),
+        )
+
+
+def test_walk_forward_tracking_projection_is_deterministic(tmp_path: Path) -> None:
+    evaluation = _evaluation()
+    plan = _plan()
+
+    candidate_points = tracking._candidate_metric_points(evaluation, plan)
+    aggregate_points = tracking._aggregate_metric_points(evaluation)
+    assert candidate_points
+    assert aggregate_points
+    assert (
+        tracking._candidate_model_tags(
+            evaluation,
+            source_build_id="build-1",
+            plan=plan,
+            dataset_snapshot_key="dataset-1",
+            evaluation_run_key="evaluation-1",
+        )["regime_engine.scope"]
+        == "candidate"
+    )
+    assert len(tracking._timeline_rows(evaluation, plan)) == len(plan.folds)
+    assert len(tracking._metric_rows(evaluation, plan)) == len(plan.folds)
+    assert tracking._aligned_parameter_payload(evaluation, evaluation.folds[0])["candidate_id"] == (
+        evaluation.candidate_id
+    )
+
+    class Port:
+        def __init__(self) -> None:
+            self.logged: list[tuple[str, tuple[object, ...]]] = []
+            self.finalized: list[tuple[str, bool]] = []
+
+        def create_logged_model(self, **kwargs: object) -> str:
+            assert kwargs["name"] == "evaluation-1-gaussian_hmm_k2_full"
+            return "model-1"
+
+        def log_model_metric_points(self, model_id: str, points: tuple[object, ...]) -> None:
+            self.logged.append((model_id, points))
+
+        def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
+            assert model_id == "model-1"
+            assert local_dir == str(tmp_path)
+
+        def finalize_logged_model(self, model_id: str, *, failed: bool = False) -> None:
+            self.finalized.append((model_id, failed))
+
+    port = Port()
+    assert (
+        tracking._project_candidate_logged_model(
+            port,  # type: ignore[arg-type]
+            evaluation=evaluation,
+            source_run_id="run-1",
+            source_build_id="build-1",
+            plan=plan,
+            candidate_dir=tmp_path,
+            dataset_snapshot_key="dataset-1",
+            evaluation_run_key="evaluation-1",
+        )
+        == "model-1"
+    )
+    assert len(port.logged) == 1
+    assert port.finalized == [("model-1", False)]
     with pytest.raises(ValueError, match="state index"):
         render_covariance_heatmap(evaluation, evaluation.folds[0], 2, 1.0, tmp_path)
     with pytest.raises(ValueError, match="at least one evaluation"):

@@ -72,6 +72,8 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["market_regime_engine"]
+concurrency = ["multiprocessing"]
+patch = ["subprocess"]
 
 [tool.coverage.report]
 fail_under = 90
