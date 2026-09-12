@@ -162,8 +162,6 @@ def _selections_by_fold(
     if missing_valid:
         raise ValueError("global v4 plots require selection evidence for every valid outer fold")
     ordered = tuple((result_by_index[index], selections[index]) for index in sorted(selections))
-    if not ordered:
-        raise ValueError("global v4 plots require at least one outer-fold selection")
     return ordered
 
 
@@ -679,6 +677,44 @@ def _outer_nmi_plot(root: Path, result: AdaptiveEvaluationResult) -> GlobalV4Plo
     )
 
 
+def _no_selection_plot(root: Path, result: AdaptiveEvaluationResult) -> GlobalV4PlotManifestEntry:
+    """Record a complete all-invalid run without inventing selection evidence."""
+
+    reasons = Counter(fold.failure_reason or "unspecified" for fold in result.outer_folds)
+    ordered_reasons = tuple(sorted(reasons.items()))
+    source = {
+        "outer_fold_count": len(result.outer_folds),
+        "valid_fold_count": result.valid_fold_count,
+        "failure_reasons": list(ordered_reasons),
+    }
+
+    def draw(axis: Axes) -> None:
+        axis.axis("off")
+        details = "\n".join(f"{count} x {reason}" for reason, count in ordered_reasons)
+        axis.text(
+            0.02,
+            0.95,
+            "No valid outer-fold selections were produced.\n\n" + details,
+            ha="left",
+            va="top",
+            transform=axis.transAxes,
+            wrap=True,
+        )
+
+    return _finish(
+        root,
+        plot_type="selection_unavailable_summary",
+        filename="selection_unavailable_summary.png",
+        source=source,
+        source_metric_keys=("outer_folds.valid", "outer_folds.failure_reason"),
+        x_axis_field="outer_fold_index",
+        x_axis_label="Outer fold",
+        y_axis_label="Selection availability",
+        legend_entries=(),
+        draw=draw,
+    )
+
+
 def _selection_history_plot(
     root: Path, items: tuple[tuple[OuterFoldResult, V4ConfigurationSelection], ...]
 ) -> GlobalV4PlotManifestEntry:
@@ -823,6 +859,9 @@ def render_global_v4_diagnostics(
     if not isinstance(output_dir, Path):
         raise TypeError("global v4 plot output_dir must be a pathlib.Path")
     items = _selections_by_fold(selections, result)
+    if not items:
+        root = output_dir / "plots"
+        return (_outer_nmi_plot(root, result), _no_selection_plot(root, result))
     root = output_dir / "plots"
     entries: list[GlobalV4PlotManifestEntry] = [
         _quality_plot(root, items),

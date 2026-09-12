@@ -136,6 +136,15 @@ class SQLiteEvaluationRunStore:
                 """
             )
 
+    def enable_write_ahead_logging(self) -> None:
+        """Enable concurrent readers before durable worker processes start."""
+
+        with self._connect() as connection:
+            mode = str(connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]).upper()
+            if mode != "WAL":
+                raise RuntimeError(f"SQLite WAL mode could not be enabled: {mode}")
+            connection.execute("PRAGMA synchronous=FULL")
+
     @staticmethod
     def _identity_json(identity: EvaluationRunIdentity) -> bytes:
         return canonical_json(identity.as_dict())

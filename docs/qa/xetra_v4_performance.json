@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "global_regime_v4",
+  "machine": {
+    "logical_cpus": 88,
+    "physical_cores": 44,
+    "numa_nodes": 2,
+    "python": "3.14.7"
+  },
+  "dataset": {
+    "snapshot_key": "bfdbda48ed9d1de5ff372870610710989faa5823dcc7992c65ba07b03e6c3932",
+    "rows": 16768,
+    "features": 166,
+    "outer_folds": 246,
+    "hmm_seed_fits": 8096
+  },
+  "baseline": {
+    "wall_seconds": 2682.98,
+    "status": "statistics_complete_tracking_failed",
+    "failure": "all outer folds were invalid and the plotter rejected an empty selection set"
+  },
+  "optimized": {
+    "wall_seconds": 1954.601404211,
+    "statistical_stage_wall_seconds": 1926.141,
+    "tracking_stage_wall_seconds": 13.377,
+    "tracking_workers": 16,
+    "status": "complete",
+    "valid_fold_count": 0,
+    "production_eligible": false,
+    "result_hash": "1e715f427e13bdffc2e2876b14a1b8d50c140f91e9ccc2f50d8c57f938d16ad5"
+  },
+  "comparison": {
+    "wall_reduction_seconds": 728.378595789,
+    "wall_reduction_percent": 27.148118726,
+    "tracking_tail_reduction_percent": 98.327875
+  },
+  "invariants": {
+    "baseline_result_root_hash": "84a642d78f7ed5395b325514267075e491e2fe7d8f310bae8afd49967af58291",
+    "optimized_result_root_hash": "84a642d78f7ed5395b325514267075e491e2fe7d8f310bae8afd49967af58291",
+    "baseline_result_hash": "1e715f427e13bdffc2e2876b14a1b8d50c140f91e9ccc2f50d8c57f938d16ad5",
+    "optimized_result_hash": "1e715f427e13bdffc2e2876b14a1b8d50c140f91e9ccc2f50d8c57f938d16ad5"
+  },
+  "artifacts": {
+    "detailed_report": "/home/dev_regime/perf-final-xetra-20260912/performance.json",
+    "summary": "/home/dev_regime/perf-final-xetra-20260912/summary.json",
+    "checkpoint_root": "/home/dev_regime/perf-final-xetra-20260912/checkpoints"
+  }
+}

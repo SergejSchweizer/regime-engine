@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 import platform
+import sqlite3
 import subprocess
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +17,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
 from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
@@ -33,6 +36,8 @@ from market_regime_engine.mlflow_support.evaluation_tracking import (
 from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 from market_regime_engine.profiles.loader import load_profile
+from market_regime_engine.runtime.cpu import available_cpu_count
+from market_regime_engine.runtime.performance import PerformanceRecorder
 
 
 def _root() -> Path:
@@ -70,24 +75,59 @@ def _configured_checkpoint_root(root: Path) -> Path:
     return resolved_checkpoint_root
 
 
-def main() -> None:
+def _ledger_counts(checkpoint_root: Path) -> dict[str, int]:
+    database = checkpoint_root / "runs" / "evaluation-runs.sqlite3"
+    if not database.is_file():
+        return {}
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT status, COUNT(*) FROM work_units GROUP BY status"
+        ).fetchall()
+        stages = connection.execute(
+            "SELECT substr(work_unit_key, 1, instr(work_unit_key, '/') - 1), COUNT(*) "
+            "FROM work_units GROUP BY substr(work_unit_key, 1, instr(work_unit_key, '/') - 1)"
+        ).fetchall()
+    return {
+        **{f"work_units_{status.lower()}": int(count) for status, count in rows},
+        **{f"work_units_{stage}": int(count) for stage, count in stages},
+    }
+
+
+def _run(performance: PerformanceRecorder) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--run-key",
         help="resume exactly this durable evaluation run without reading live PostgreSQL",
     )
+    parser.add_argument(
+        "--snapshot-root",
+        help="recompute from an existing immutable snapshot root (benchmark mode)",
+    )
+    parser.add_argument(
+        "--snapshot-key",
+        help="dataset snapshot key to use with --snapshot-root",
+    )
     arguments = parser.parse_args()
+    if arguments.run_key is not None and arguments.snapshot_root is not None:
+        parser.error("--run-key and --snapshot-root are mutually exclusive")
+    if arguments.snapshot_root is not None and arguments.snapshot_key is None:
+        parser.error("--snapshot-key is required with --snapshot-root")
     root = _root()
     profile = load_profile(root / "configs/profiles/xetra_v4.yaml")
-    settings = FeaturePostgresSettings.from_env(os.environ)
-    source = PostgresFeatureSource(
-        lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
-    )
+    source: PostgresFeatureSource | None = None
+    if arguments.run_key is None and arguments.snapshot_root is None:
+        settings = FeaturePostgresSettings.from_env(os.environ)
+        source = PostgresFeatureSource(
+            lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
+        )
     observed: dict[str, Any] = {}
 
     class RecordingSource:
         def read_schema_wide_with_catalog(self, request: Any) -> Any:
-            catalog, snapshot = source.read_schema_wide_with_catalog(request)
+            if source is None:
+                raise RuntimeError("live source is not configured")
+            with performance.stage("postgres_snapshot", worker_count=1, task_count=1):
+                catalog, snapshot = source.read_schema_wide_with_catalog(request)
             observed["catalog"] = catalog
             observed["snapshot"] = snapshot
             return catalog, snapshot
@@ -97,17 +137,66 @@ def main() -> None:
     commit = _commit(root)
     snapshot_store = ArrowDatasetSnapshotStore(checkpoint_root / "snapshots")
     run_store = SQLiteEvaluationRunStore(checkpoint_root / "runs")
-    if arguments.run_key is None:
-        result = evaluate_global_regime_v4_from_source(
-            RecordingSource(),
-            profile=profile,
-            snapshot_store=snapshot_store,
-            run_store=run_store,
+    if arguments.snapshot_root is not None:
+        assert arguments.snapshot_key is not None
+        input_store = ArrowDatasetSnapshotStore(arguments.snapshot_root)
+        dataset_identity = input_store.load_identity(arguments.snapshot_key)
+        snapshot = input_store.load(dataset_identity)
+        catalog = input_store.load_catalog(dataset_identity)
+        observed["catalog"] = catalog
+        observed["snapshot"] = snapshot
+        rows = pd.DataFrame(
+            [row.values for row in snapshot.rows],
+            columns=snapshot.feature_names,
+        )
+        rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
+        outer_plan = plan_walk_forward(
+            tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
+        )
+        run_identity = EvaluationRunIdentity(
+            evaluation_id="global_regime_v4",
+            profile_id=profile.profile_id,
+            profile_config_version=profile.profile_config_version,
+            profile_hash=profile.profile_hash,
+            evaluation_contract_version=1,
+            evaluation_plan_hash=outer_plan.plan_hash,
+            dataset_snapshot_key=dataset_identity.key,
+            evaluation_cutoff=cast(datetime, outer_plan.evaluation_cutoff),
             repository_commit_sha=commit,
             uv_lock_sha256=_sha256_file(root / "uv.lock"),
             python_version=platform.python_version(),
-            selection_sink=selections.__setitem__,
         )
+        run_store.open_run(run_identity)
+        with performance.stage(
+            "statistical_evaluation_snapshot",
+            worker_count=available_cpu_count(),
+            task_count=len(outer_plan.folds),
+        ):
+            result = evaluate_global_regime_v4(
+                rows,
+                catalog=catalog,
+                profile=profile,
+                source_build_id=catalog.lineage.source_build_id,
+                run_store=run_store,
+                run_identity=run_identity,
+                selection_sink=selections.__setitem__,
+            )
+    elif arguments.run_key is None:
+        assert source is not None
+        with performance.stage(
+            "statistical_evaluation",
+            worker_count=available_cpu_count(),
+        ):
+            result = evaluate_global_regime_v4_from_source(
+                RecordingSource(),
+                profile=profile,
+                snapshot_store=snapshot_store,
+                run_store=run_store,
+                repository_commit_sha=commit,
+                uv_lock_sha256=_sha256_file(root / "uv.lock"),
+                python_version=platform.python_version(),
+                selection_sink=selections.__setitem__,
+            )
     else:
         run_identity = run_store.load_identity(arguments.run_key)
         if run_identity.evaluation_id != "global_regime_v4":
@@ -124,15 +213,25 @@ def main() -> None:
             columns=snapshot.feature_names,
         )
         rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-        result = evaluate_global_regime_v4(
-            rows,
-            catalog=catalog,
-            profile=profile,
-            source_build_id=catalog.lineage.source_build_id,
-            run_store=run_store,
-            run_identity=run_identity,
-            selection_sink=selections.__setitem__,
-        )
+        with performance.stage("statistical_evaluation_resume", worker_count=1):
+            result = evaluate_global_regime_v4(
+                rows,
+                catalog=catalog,
+                profile=profile,
+                source_build_id=catalog.lineage.source_build_id,
+                run_store=run_store,
+                run_identity=run_identity,
+                selection_sink=selections.__setitem__,
+            )
+    performance.update_metadata(
+        {
+            "evaluation_id": "global_regime_v4",
+            "outer_fold_count": len(result.outer_folds),
+            "valid_fold_count": result.valid_fold_count,
+            "selection_count": len(selections),
+            **_ledger_counts(checkpoint_root),
+        }
+    )
     catalog = observed["catalog"]
     snapshot = observed["snapshot"]
     initial_source_identity = (
@@ -143,10 +242,12 @@ def main() -> None:
         snapshot.rows[0].timestamp,
         snapshot.rows[-1].timestamp,
     )
-    if arguments.run_key is None:
-        audit_catalog, audit_snapshot = source.read_schema_wide_with_catalog(
-            FeatureRequest.all_features()
-        )
+    if arguments.run_key is None and arguments.snapshot_root is None:
+        assert source is not None
+        with performance.stage("postgres_audit", worker_count=1, task_count=1):
+            audit_catalog, audit_snapshot = source.read_schema_wide_with_catalog(
+                FeatureRequest.all_features()
+            )
         audit_source_identity = (
             audit_catalog.lineage.source_build_id,
             audit_catalog.lineage.data_sha256,
@@ -161,22 +262,30 @@ def main() -> None:
             )
     tracking_uri = MLflowSettings.from_environment().tracking_uri
     port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-evaluation")
-    evidence = build_global_v4_evidence(
-        result,
-        catalog=catalog,
-        snapshot=snapshot,
-        profile=profile,
-        selections=selections,
-        repository_commit_sha=commit,
-    )
-    tracked = track_global_v4_evaluation(
-        port,
-        StatisticsWriter(os.environ.get("REGIME_EVALUATION_STATISTICS_ROOT", ".state/evaluations")),
-        evidence=evidence,
-        result=result,
-        selections=selections,
-        metric_ledger_root=checkpoint_root / "metric-export",
-    )
+    with performance.stage("evidence_assembly", worker_count=1, task_count=1):
+        evidence = build_global_v4_evidence(
+            result,
+            catalog=catalog,
+            snapshot=snapshot,
+            profile=profile,
+            selections=selections,
+            repository_commit_sha=commit,
+        )
+    with performance.stage(
+        "mlflow_tracking",
+        worker_count=int(os.environ.get("REGIME_TRACKING_WORKERS", "16")),
+        task_count=len(result.outer_folds),
+    ):
+        tracked = track_global_v4_evaluation(
+            port,
+            StatisticsWriter(
+                os.environ.get("REGIME_EVALUATION_STATISTICS_ROOT", ".state/evaluations")
+            ),
+            evidence=evidence,
+            result=result,
+            selections=selections,
+            metric_ledger_root=checkpoint_root / "metric-export",
+        )
     outer_plan = plan_walk_forward(
         tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
     )
@@ -227,6 +336,17 @@ def main() -> None:
             json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
         )
     print(json.dumps(summary, sort_keys=True))
+
+
+def main() -> None:
+    performance = PerformanceRecorder.from_environment()
+    try:
+        _run(performance)
+    except BaseException as exc:
+        performance.finish(status="FAILED", error=exc)
+        raise
+    else:
+        performance.finish(status="COMPLETE")
 
 
 if __name__ == "__main__":

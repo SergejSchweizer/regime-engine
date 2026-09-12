@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import multiprocessing
 import pickle
 import threading
 import warnings
 from collections.abc import Callable, Iterator
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
@@ -227,69 +227,53 @@ def run_multistart(
             # the exact pinned seed order in the parent.  A threaded caller
             # must use spawn so workers do not inherit its locks; a top-level
             # caller can use fork without that nested-parent hazard.
-            process_context_name = (
-                "fork" if threading.current_thread() is threading.main_thread() else "spawn"
-            )
             with (
                 _reserve_cpu_slots(pending_worker_limit) as reserved_workers,
                 warnings.catch_warnings(),
+                cpu_process_pool(reserved_workers) as process_executor,
             ):
-                if process_context_name == "fork":
-                    warnings.filterwarnings(
-                        "ignore",
-                        message=(
-                            r"This process .* is multi-threaded, use os.fork\(\) may lead "
-                            r"to deadlocks"
-                        ),
-                        category=DeprecationWarning,
-                        module=r"multiprocessing\.popen_fork",
+                futures = {
+                    seed: process_executor.submit(
+                        _evaluate_start,
+                        train_rows,
+                        state_count=state_count,
+                        adapter_factory=adapter_factory,
+                        seed=seed,
                     )
-                with ProcessPoolExecutor(
-                    max_workers=reserved_workers,
-                    mp_context=multiprocessing.get_context(process_context_name),
-                ) as process_executor:
-                    futures = {
-                        seed: process_executor.submit(
-                            _evaluate_start,
-                            train_rows,
-                            state_count=state_count,
-                            adapter_factory=adapter_factory,
-                            seed=seed,
-                        )
-                        for seed in pending_seeds
-                    }
-                    future_seeds = {future: seed for seed, future in futures.items()}
-                    pending_results = {}
-                    try:
-                        for future in as_completed(futures.values()):
-                            seed = future_seeds[future]
+                    for seed in pending_seeds
+                }
+                future_seeds = {future: seed for seed, future in futures.items()}
+                pending_results = {}
+                try:
+                    for future in as_completed(futures.values()):
+                        seed = future_seeds[future]
+                        outcome = future.result()
+                        pending_results[seed] = outcome
+                        if checkpoint is not None:
+                            from market_regime_engine.evaluation_runs.hmm_units import (
+                                SeedFitOutcome,
+                            )
+
+                            checkpoint.save(seed, SeedFitOutcome(*outcome))
+                except BaseException:
+                    # Persist every successful future that completed before
+                    # the interruption surfaced.  Pending futures remain
+                    # reclaimable and will be retried on restart.
+                    for future, seed in future_seeds.items():
+                        if not future.done() or future.cancelled():
+                            continue
+                        try:
                             outcome = future.result()
-                            pending_results[seed] = outcome
-                            if checkpoint is not None:
-                                from market_regime_engine.evaluation_runs.hmm_units import (
-                                    SeedFitOutcome,
-                                )
+                        except BaseException:
+                            continue
+                        pending_results[seed] = outcome
+                        if checkpoint is not None:
+                            from market_regime_engine.evaluation_runs.hmm_units import (
+                                SeedFitOutcome,
+                            )
 
-                                checkpoint.save(seed, SeedFitOutcome(*outcome))
-                    except BaseException:
-                        # Persist every successful future that completed before
-                        # the interruption surfaced.  Pending futures remain
-                        # reclaimable and will be retried on restart.
-                        for future, seed in future_seeds.items():
-                            if not future.done() or future.cancelled():
-                                continue
-                            try:
-                                outcome = future.result()
-                            except BaseException:
-                                continue
-                            pending_results[seed] = outcome
-                            if checkpoint is not None:
-                                from market_regime_engine.evaluation_runs.hmm_units import (
-                                    SeedFitOutcome,
-                                )
-
-                                checkpoint.save(seed, SeedFitOutcome(*outcome))
-                        raise
+                            checkpoint.save(seed, SeedFitOutcome(*outcome))
+                    raise
             save_results_in_parent = True
         else:
             # Custom adapters used by unit tests and extension callers may be
