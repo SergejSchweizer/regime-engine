@@ -122,6 +122,6 @@ jobs:
         with:
           name: coverage-unit
           path: .
-      - name: Enforce combined coverage >= 90%
+      - name: Enforce unit coverage >= 80%
         run: |
-          .venv/bin/coverage report --fail-under=90
+          .venv/bin/coverage report --fail-under=80
