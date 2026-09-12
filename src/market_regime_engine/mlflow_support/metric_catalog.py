@@ -688,6 +688,7 @@ _DYNAMIC_PATTERNS = tuple(
         r"fit_quality_(?:train_loglik_total|train_loglik_per_obs|oos_predictive_loglik_total|oos_predictive_loglik_per_obs|aic|bic|hqc|aic_per_train_obs|bic_per_train_obs|hqc_per_train_obs|train_observation_count|valid_fold_count|invalid_fold_count|valid_fold_rate|parameter_count|feature_dimension)(?:_(?:mean|std|minimum|maximum|median|count))?",
         r"predictive_forecast_h[0-9]+_(?:predicted|actual|residual)",
         r"predictive_h[0-9]+_(?:observation_count|missing_target_count|rmse|mae|mape|r2)",
+        r"classification_(?:hard_ari|hard_nmi|hard_accuracy|hard_purity|soft_nmi|label_count|omitted_unknown_count)",
         r"(?:selected_M_silhouette|prefix_soft_regime_nmi|outer_teacher_final_soft_nmi|outer_shared_timestamp_count|outer_oos_predictive_loglik_per_obs|eligible_feature_count)",
     )
 )
