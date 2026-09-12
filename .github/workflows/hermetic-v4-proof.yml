@@ -33,6 +33,7 @@ jobs:
           set +e
           start_epoch=$(date +%s)
           start_utc=$(date -u --iso-8601=seconds)
+          export PR231_PROOF_OUTPUT=pr231-computation-proof.json
           .venv/bin/pytest -q tests/e2e/test_global_regime_v4_full_compute.py \
             -m "integration and slow" --junitxml=pr231-junit.xml
           exit_code=$?
@@ -79,5 +80,6 @@ jobs:
           name: pr231-hermetic-proof-${{ github.run_id }}
           path: |
             pr231-proof.json
+            pr231-computation-proof.json
             pr231-junit.xml
           if-no-files-found: warn

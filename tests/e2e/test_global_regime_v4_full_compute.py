@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import multiprocessing
+import os
 from collections.abc import Mapping
 from datetime import datetime
 from math import fsum, log
@@ -26,6 +30,7 @@ from market_regime_engine.feature_discovery.contracts import (
     ClusterSolution,
     FeatureRegimeScore,
     ProvisionalTeacherReference,
+    canonical_json,
     content_hash,
 )
 from market_regime_engine.mlflow_support.evaluation_tracking import track_global_v4_evaluation
@@ -289,6 +294,74 @@ def _golden_snapshot(
     }
 
 
+def _evaluate_with_selection_capture(
+    rows: pd.DataFrame,
+    catalog: object,
+    profile: object,
+) -> tuple[AdaptiveEvaluationResult, dict[int, object]]:
+    captured: dict[int, object] = {}
+    original_selection = global_v4.select_v4_configuration
+
+    def capture_selection(train_rows: pd.DataFrame, **kwargs: object) -> object:
+        selection = original_selection(train_rows, **kwargs)
+        captured[len(train_rows)] = selection
+        return selection
+
+    global_v4.select_v4_configuration = capture_selection
+    try:
+        result = global_v4.evaluate_global_regime_v4(
+            rows,
+            catalog=catalog,
+            profile=profile,
+            max_workers=None,
+        )
+    finally:
+        global_v4.select_v4_configuration = original_selection
+    return result, captured
+
+
+def _per_fold_evidence_payload(evidence: GlobalV4Evidence, index: int) -> dict[str, object]:
+    groups = evidence.evidence
+    return {
+        "quality_hash": groups["quality"]["fold_hashes"][index],
+        "distance_hash": groups["distance"]["fold_hashes"][index],
+        "clustering_hash": groups["clustering"]["fold_hashes"][index],
+        "prototype_features": groups["prototypes"]["fold_features"][index],
+        "teacher_hash": groups["teacher"]["fold_hashes"][index],
+        "feature_score_count": groups["feature_scores"]["fold_counts"][index],
+        "selected_prefix_length": groups["prefix_search"]["fold_selected_l"][index],
+        "final_candidate_count": groups["final_grid"]["fold_candidate_counts"][index],
+        "outer_fold": groups["outer_folds"][index],
+        "soft_nmi": groups["agreement"]["soft_nmi"][index],
+    }
+
+
+def _independent_process_worker(
+    snapshot_path: str,
+    labels_path: str,
+    result_path: str,
+    evidence_path: str,
+) -> None:
+    fixture = build_synthetic_global_v4()
+    snapshot_bytes = Path(snapshot_path).read_bytes()
+    generated_snapshot = fixture.rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    if snapshot_bytes != generated_snapshot:
+        raise AssertionError("independent process did not use the pinned snapshot bytes")
+    if hashlib.sha256(snapshot_bytes).hexdigest() != fixture.source_data_hash:
+        raise AssertionError("pinned snapshot hash does not match fixture lineage")
+    labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))
+    if not isinstance(labels, dict):
+        raise TypeError("randomized semantic labels must be a JSON object")
+    fixture.semantic_labels.clear()
+    fixture.semantic_labels.update(labels)
+    result, captured = _evaluate_with_selection_capture(
+        fixture.rows, fixture.catalog, load_profile("configs/profiles/xetra_v4.yaml")
+    )
+    evidence = _evidence(fixture, result, captured)
+    Path(result_path).write_bytes(canonical_json(result))
+    Path(evidence_path).write_bytes(evidence.canonical_json())
+
+
 def _lineage(fixture: SyntheticGlobalV4) -> SourceLineage:
     source = fixture.catalog.lineage
     return SourceLineage(
@@ -477,24 +550,101 @@ def test_global_v4_full_compute_and_independent_math_proof(
     golden_hash = content_hash(golden_snapshot)
     assert golden_hash == PR231_GOLDEN_SNAPSHOT_HASH
 
-    canonical_result_hash = result.result_hash
-    mutated = fixture.rows.copy()
-    mutated.loc[0, fixture.catalog.feature_names[0]] += 10_000.0
+    snapshot_path = tmp_path / "pr231-pinned-snapshot.csv"
+    snapshot_bytes = fixture.rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    snapshot_path.write_bytes(snapshot_bytes)
     randomized_labels = {
         feature: f"randomized_{index}"
         for index, feature in enumerate(reversed(tuple(fixture.semantic_labels)))
     }
     assert randomized_labels != fixture.semantic_labels
-    fixture.semantic_labels.clear()
-    fixture.semantic_labels.update(randomized_labels)
-    assert fixture.semantic_labels == randomized_labels
-    assert (
-        mutated.loc[0, fixture.catalog.feature_names[0]]
-        != fixture.rows.loc[0, fixture.catalog.feature_names[0]]
+    labels_path = tmp_path / "pr231-randomized-labels.json"
+    labels_path.write_text(json.dumps(randomized_labels, sort_keys=True) + "\n", encoding="utf-8")
+    independent_result_path = tmp_path / "pr231-independent-result.json"
+    independent_evidence_path = tmp_path / "pr231-independent-evidence.json"
+    context = multiprocessing.get_context("spawn")
+    independent = context.Process(
+        target=_independent_process_worker,
+        args=(
+            str(snapshot_path),
+            str(labels_path),
+            str(independent_result_path),
+            str(independent_evidence_path),
+        ),
     )
-    assert result.result_hash == canonical_result_hash
-    assert result.result_hash == content_hash(result)
+    independent.start()
+    independent.join(timeout=3_600)
+    if independent.is_alive():
+        independent.terminate()
+        independent.join()
+        pytest.fail("independent PR-231 process rerun exceeded one hour")
+    assert independent.exitcode == 0
+    independent_result_bytes = independent_result_path.read_bytes()
+    independent_evidence_bytes = independent_evidence_path.read_bytes()
+    assert independent_result_bytes == canonical_json(result)
+    assert independent_evidence_bytes == evidence.canonical_json()
 
-    rerun_evidence = _evidence(fixture, result, captured)
-    assert rerun_evidence.canonical_json() == evidence.canonical_json()
-    assert rerun_evidence.evidence_hash == evidence.evidence_hash
+    last_fold = result.outer_folds[-1]
+    mutated_feature = last_fold.final_configuration.feature_order[0]
+    last_test_start = 1260 + (last_fold.fold_index - 1) * 63
+    mutation_index = next(
+        index
+        for index in range(last_test_start, len(fixture.rows))
+        if pd.notna(fixture.rows.iloc[index][mutated_feature])
+        and np.isfinite(float(fixture.rows.iloc[index][mutated_feature]))
+    )
+    mutated_rows = fixture.rows.copy()
+    mutated_rows.loc[mutation_index, mutated_feature] += 10_000.0
+    mutated_snapshot_bytes = mutated_rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    mutated_fixture = SyntheticGlobalV4(
+        mutated_rows,
+        fixture.catalog,
+        dict(fixture.semantic_labels),
+        hashlib.sha256(mutated_snapshot_bytes).hexdigest(),
+    )
+    mutated_result, mutated_captured = _evaluate_with_selection_capture(
+        mutated_fixture.rows, mutated_fixture.catalog, profile
+    )
+    mutated_evidence = _evidence(mutated_fixture, mutated_result, mutated_captured)
+    assert mutated_result.result_hash != result.result_hash
+    assert mutated_result.outer_folds[-1].result_hash != last_fold.result_hash
+    for index, fold in enumerate(result.outer_folds[:-1]):
+        assert canonical_json(mutated_result.outer_folds[index]) == canonical_json(fold)
+        train_count = 1260 + index * 63
+        assert canonical_json(mutated_captured[train_count]) == canonical_json(
+            captured[train_count]
+        )
+        assert canonical_json(
+            _per_fold_evidence_payload(mutated_evidence, index)
+        ) == canonical_json(_per_fold_evidence_payload(evidence, index))
+
+    proof_output = os.environ.get("PR231_PROOF_OUTPUT")
+    if proof_output is not None:
+        proof = {
+            "snapshot_sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+            "baseline_result_hash": result.result_hash,
+            "baseline_evidence_hash": evidence.evidence_hash,
+            "independent_process_result_hash": hashlib.sha256(independent_result_bytes).hexdigest(),
+            "independent_process_evidence_hash": hashlib.sha256(
+                independent_evidence_bytes
+            ).hexdigest(),
+            "independent_canonical_result_bytes_equal": independent_result_bytes
+            == canonical_json(result),
+            "independent_canonical_evidence_bytes_equal": independent_evidence_bytes
+            == evidence.canonical_json(),
+            "randomized_semantic_labels_recomputed": True,
+            "mutation": {
+                "row_index": mutation_index,
+                "feature_name": mutated_feature,
+                "mutated_result_hash": mutated_result.result_hash,
+                "mutated_evidence_hash": mutated_evidence.evidence_hash,
+                "final_fold_changed": mutated_result.outer_folds[-1].result_hash
+                != last_fold.result_hash,
+                "earlier_fold_result_bytes_equal": True,
+                "earlier_selection_bytes_equal": True,
+                "earlier_evidence_bytes_equal": True,
+            },
+        }
+        Path(proof_output).write_text(
+            json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
