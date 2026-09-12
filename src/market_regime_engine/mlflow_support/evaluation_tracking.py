@@ -24,6 +24,7 @@ from market_regime_engine.evaluation_statistics.contracts import (
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
 from market_regime_engine.evaluations.plots import render_global_v4_diagnostics
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
     FinalSelectedConfiguration,
@@ -363,6 +364,19 @@ def _failed_fold_evidence(fold: OuterFoldResult) -> dict[str, object]:
     }
 
 
+def _build_fold_evidence(
+    fold: OuterFoldResult,
+    selection: V4ConfigurationSelection | None,
+) -> dict[str, object]:
+    """Build one independent outer-fold evidence dossier in a worker process."""
+
+    return (
+        _selected_fold_evidence(fold, selection)
+        if selection is not None
+        else _failed_fold_evidence(fold)
+    )
+
+
 def build_global_v4_evidence(
     result: AdaptiveEvaluationResult,
     *,
@@ -371,6 +385,7 @@ def build_global_v4_evidence(
     profile: ModelProfile,
     selections: Mapping[int, V4ConfigurationSelection],
     repository_commit_sha: str,
+    max_workers: int | None = None,
 ) -> GlobalV4Evidence:
     """Build the complete model-binary-free evidence bundle for one v4 run."""
 
@@ -387,14 +402,20 @@ def build_global_v4_evidence(
     outer_plan = plan_walk_forward(
         tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
     )
-    fold_evidence = tuple(
-        (
-            _selected_fold_evidence(fold, selections[fold.fold_index])
-            if fold.fold_index in selections
-            else _failed_fold_evidence(fold)
+    fold_tasks = tuple((fold, selections.get(fold.fold_index)) for fold in result.outer_folds)
+    worker_limit = cpu_worker_count(max_workers, task_count=len(fold_tasks))
+    if worker_limit == 1:
+        fold_evidence = tuple(
+            _build_fold_evidence(fold, selection) for fold, selection in fold_tasks
         )
-        for fold in result.outer_folds
-    )
+    else:
+        with cpu_process_pool(worker_limit) as executor:
+            futures = [
+                executor.submit(_build_fold_evidence, fold, selection)
+                for fold, selection in fold_tasks
+            ]
+            # Fold order is part of the canonical evidence contract.
+            fold_evidence = tuple(future.result() for future in futures)
     selected = tuple(
         item for item in fold_evidence if "quality" in item and "feature_scores" in item
     )
