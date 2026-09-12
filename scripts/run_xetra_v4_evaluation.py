@@ -36,7 +36,7 @@ from market_regime_engine.mlflow_support.evaluation_tracking import (
 from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 from market_regime_engine.profiles.loader import load_profile
-from market_regime_engine.runtime.cpu import available_cpu_count
+from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
 from market_regime_engine.runtime.performance import PerformanceRecorder
 
 
@@ -262,7 +262,12 @@ def _run(performance: PerformanceRecorder) -> None:
             )
     tracking_uri = MLflowSettings.from_environment().tracking_uri
     port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-evaluation")
-    with performance.stage("evidence_assembly", worker_count=1, task_count=1):
+    evidence_workers = cpu_worker_count(None, task_count=len(result.outer_folds))
+    with performance.stage(
+        "evidence_assembly",
+        worker_count=evidence_workers,
+        task_count=len(result.outer_folds),
+    ):
         evidence = build_global_v4_evidence(
             result,
             catalog=catalog,
@@ -270,6 +275,7 @@ def _run(performance: PerformanceRecorder) -> None:
             profile=profile,
             selections=selections,
             repository_commit_sha=commit,
+            max_workers=evidence_workers,
         )
     with performance.stage(
         "mlflow_tracking",

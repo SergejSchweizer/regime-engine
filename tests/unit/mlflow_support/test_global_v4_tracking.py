@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from mlflow.tracking import MlflowClient
@@ -12,11 +13,13 @@ from mlflow.tracking import MlflowClient
 import market_regime_engine.mlflow_support.evaluation_tracking as module
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
     FinalSelectedConfiguration,
     OuterFoldResult,
 )
+from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.mlflow_support.tracking import (
     FileMlflowTrackingPort,
     _safe_logged_model_name,
@@ -59,6 +62,10 @@ class RecordingPort:
 
     def log_model_metric_points(self, model_id: str, points: tuple[object, ...]) -> None:
         del model_id, points
+
+    def get_model_metric_points(self, model_id: str) -> tuple[MetricPoint, ...]:
+        del model_id
+        return ()
 
     def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
         del model_id, local_dir
@@ -122,7 +129,7 @@ def _result() -> AdaptiveEvaluationResult:
     )
 
 
-def _selection() -> SimpleNamespace:
+def _selection() -> Any:
     candidate_ids = (
         *(f"gaussian_hmm_k{count}_full" for count in (2, 3, 4, 5)),
         *(f"gmm_hmm_k{count}_m2_full" for count in (2, 3, 4, 5)),
@@ -291,6 +298,15 @@ def _evidence() -> GlobalV4Evidence:
         "stability": {"adjacent_cluster_stability": []},
     }
     return GlobalV4Evidence("build-1", HASH, HASH, HASH, HASH, HASH, groups)
+
+
+def test_outer_fold_evidence_worker_matches_inline_payload() -> None:
+    fold = _result().outer_folds[0]
+    selection = _selection()
+    inline = module._build_fold_evidence(fold, selection)
+    with cpu_process_pool(2) as executor:
+        parallel = executor.submit(module._build_fold_evidence, fold, selection).result()
+    assert parallel == inline
 
 
 def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarchy(
