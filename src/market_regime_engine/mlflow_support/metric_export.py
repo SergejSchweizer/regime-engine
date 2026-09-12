@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from market_regime_engine.mlflow_support.metric_catalog import validate_metric_points
@@ -20,6 +22,42 @@ class MetricExportState:
     emitted: bool
 
 
+@dataclass(frozen=True, slots=True)
+class MetricExportBatchState:
+    logical_model_key: str
+    batch_key: str
+    point_count: int
+
+
+def _require_logical_model_key(logical_model_key: str) -> None:
+    if not logical_model_key or logical_model_key.strip() != logical_model_key:
+        raise ValueError("logical_model_key must be a non-empty trimmed string")
+
+
+def metric_export_batch_key(
+    logical_model_key: str,
+    points: tuple[MetricPoint, ...],
+) -> str:
+    """Return the order-independent identity of one complete metric batch."""
+
+    _require_logical_model_key(logical_model_key)
+    validate_metric_points(points)
+    payload = {
+        "logical_model_key": logical_model_key,
+        "points": [
+            {
+                "key": point.key,
+                "step": point.step,
+                "timestamp_ms": point.timestamp_ms,
+                "value_hex": point.value.hex(),
+            }
+            for point in sorted(points, key=lambda item: (item.key, item.step))
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
 class MetricExportLedger:
     """Durable point ledger used to resume interrupted MLflow exports."""
 
@@ -32,12 +70,13 @@ class MetricExportLedger:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database, timeout=30.0, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
         connection.execute("PRAGMA synchronous=FULL")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS metric_points (
@@ -51,10 +90,43 @@ class MetricExportLedger:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metric_batches (
+                    logical_model_key TEXT PRIMARY KEY,
+                    batch_key TEXT NOT NULL,
+                    point_count INTEGER NOT NULL CHECK (point_count >= 0)
+                )
+                """
+            )
+
+    def ensure_batch(
+        self,
+        logical_model_key: str,
+        points: tuple[MetricPoint, ...],
+    ) -> MetricExportBatchState:
+        """Record one immutable batch identity or fail on a changed retry."""
+
+        batch_key = metric_export_batch_key(logical_model_key, points)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT batch_key, point_count FROM metric_batches WHERE logical_model_key = ?",
+                (logical_model_key,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    "INSERT INTO metric_batches(logical_model_key, batch_key, point_count) "
+                    "VALUES (?, ?, ?)",
+                    (logical_model_key, batch_key, len(points)),
+                )
+            elif str(row["batch_key"]) != batch_key or int(row["point_count"]) != len(points):
+                raise ValueError(f"metric export batch conflict for {logical_model_key}")
+            connection.commit()
+        return MetricExportBatchState(logical_model_key, batch_key, len(points))
 
     def ensure(self, logical_model_key: str, point: MetricPoint) -> MetricExportState:
-        if not logical_model_key or logical_model_key.strip() != logical_model_key:
-            raise ValueError("logical_model_key must be a non-empty trimmed string")
+        _require_logical_model_key(logical_model_key)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -144,6 +216,7 @@ def export_model_metric_points(
     """Reconcile and export points one at a time, preserving deterministic order."""
 
     validate_metric_points(points)
+    ledger.ensure_batch(logical_model_key, points)
     reader = getattr(port, "get_model_metric_points", None)
     if not callable(reader):
         raise TypeError("tracking port must expose get_model_metric_points for resumable export")
@@ -169,4 +242,10 @@ def export_model_metric_points(
         ledger.mark_emitted(logical_model_key, point)
 
 
-__all__ = ["MetricExportLedger", "MetricExportState", "export_model_metric_points"]
+__all__ = [
+    "MetricExportBatchState",
+    "MetricExportLedger",
+    "MetricExportState",
+    "export_model_metric_points",
+    "metric_export_batch_key",
+]

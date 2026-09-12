@@ -83,9 +83,11 @@ def test_file_mlflow_port_reuses_one_logical_logged_model_on_retry(
     assert second == first
 
 
+@pytest.mark.parametrize("failure_after", (1, 2, 3))
 def test_metric_export_resume_has_no_duplicate_points_or_conflicts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_after: int,
 ) -> None:
     monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
     tracking_uri = (tmp_path / "mlruns").as_uri()
@@ -100,6 +102,7 @@ def test_metric_export_resume_has_no_duplicate_points_or_conflicts(
     points = (
         MetricPoint("valid_fold_count", 1.0, 0, 100),
         MetricPoint("invalid_fold_count", 0.0, 0, 100),
+        MetricPoint("valid_fold_rate", 1.0, 0, 100),
     )
     original = port.log_model_metric_points
     calls = 0
@@ -108,7 +111,7 @@ def test_metric_export_resume_has_no_duplicate_points_or_conflicts(
         nonlocal calls
         calls += 1
         original(point_model_id, point_batch)
-        if calls == 1:
+        if calls == failure_after:
             raise RuntimeError("forced metric export interruption")
 
     monkeypatch.setattr(port, "log_model_metric_points", fail_after_first)
@@ -139,8 +142,29 @@ def test_metric_export_resume_has_no_duplicate_points_or_conflicts(
     )
 
     client = MlflowClient(tracking_uri=tracking_uri)
-    assert len(client.get_metric_history(run_id, "valid_fold_count")) == 1
-    assert len(client.get_metric_history(run_id, "invalid_fold_count")) == 1
+    reference_run_id = port.start_run(run_name="metric-export-reference")
+    reference_model_id = port.create_logged_model(
+        name="evaluation-a-fold-1-candidate-reference",
+        source_run_id=reference_run_id,
+        model_type="candidate-a",
+        tags={"regime_engine.evaluation_run_key": "evaluation-a"},
+    )
+    export_model_metric_points(
+        port,
+        reference_model_id,
+        logical_model_key="evaluation-a-fold-1-candidate-reference",
+        points=points,
+        ledger=MetricExportLedger(tmp_path / "reference-ledger"),
+    )
+
+    def history(run: str) -> list[tuple[str, float, int, int]]:
+        return [
+            (item.key, item.value, item.step, item.timestamp)
+            for key in sorted(point.key for point in points)
+            for item in client.get_metric_history(run, key)
+        ]
+
+    assert history(run_id) == history(reference_run_id)
     assert all(item.emitted for item in ledger.states("evaluation-a-fold-1-candidate-a"))
     with pytest.raises(ValueError, match="conflict"):
         ledger.ensure(
