@@ -15,6 +15,7 @@ from typing import Any, cast
 import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 
+from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluation_runs.contracts import (
     DatasetSnapshotIdentity,
@@ -122,6 +123,18 @@ def _run(performance: PerformanceRecorder) -> None:
             return catalog, snapshot
 
     selections: dict[int, V4ConfigurationSelection] = {}
+    prefix_evaluations: dict[int, dict[tuple[int, str], WalkForwardEvaluation]] = {}
+
+    def record_prefix_evaluation(
+        outer_fold_index: int,
+        prefix_length: int,
+        candidate_id: str,
+        evaluation: WalkForwardEvaluation,
+    ) -> None:
+        prefix_evaluations.setdefault(outer_fold_index, {})[prefix_length, candidate_id] = (
+            evaluation
+        )
+
     checkpoint_root = _configured_checkpoint_root(root)
     commit = _commit(root)
     snapshot_store = ArrowDatasetSnapshotStore(checkpoint_root / "snapshots")
@@ -165,6 +178,7 @@ def _run(performance: PerformanceRecorder) -> None:
                 profile=profile,
                 source_build_id=catalog.lineage.source_build_id,
                 selection_sink=selections.__setitem__,
+                prefix_evaluation_sink=record_prefix_evaluation,
             )
     else:
         assert source is not None
@@ -180,6 +194,7 @@ def _run(performance: PerformanceRecorder) -> None:
                 uv_lock_sha256=_sha256_file(root / "uv.lock"),
                 python_version=platform.python_version(),
                 selection_sink=selections.__setitem__,
+                prefix_evaluation_sink=record_prefix_evaluation,
             )
     if run_identity is None:
         catalog = observed["catalog"]
@@ -251,6 +266,7 @@ def _run(performance: PerformanceRecorder) -> None:
         audit_rows,
         result,
         selections,
+        prefix_evaluations=prefix_evaluations,
     )
     expectations_path = audit_root / f"{run_identity.key}.json"
     expectations_path.write_text(

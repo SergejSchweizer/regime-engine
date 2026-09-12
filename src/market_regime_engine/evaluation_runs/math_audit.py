@@ -125,7 +125,8 @@ def _likelihood_item(
 def _prefix_nmi_items(
     selection: V4ConfigurationSelection,
     outer_fold_index: int,
-    payloads: Mapping[str, bytes],
+    payloads: Mapping[str, bytes] | None = None,
+    evaluations: Mapping[tuple[int, str], WalkForwardEvaluation] | None = None,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     scope_prefix = f"v4_stage/scope=fold_{outer_fold_index:03d}:prefix_candidate:"
@@ -133,15 +134,22 @@ def _prefix_nmi_items(
         if not prefix.valid:
             continue
         key_prefix = f"{scope_prefix}{prefix.prefix_length}:{prefix.candidate_id}/"
-        payload = next(
-            (value for key, value in payloads.items() if key.startswith(key_prefix)),
-            None,
-        )
-        if payload is None:
-            raise ValueError(f"missing persisted prefix candidate payload for {key_prefix}")
-        evaluation = pickle.loads(payload)
-        if not isinstance(evaluation, WalkForwardEvaluation):
-            raise ValueError("persisted prefix candidate payload has an invalid type")
+        if evaluations is not None:
+            evaluation = evaluations.get((prefix.prefix_length, prefix.candidate_id))
+            if evaluation is None:
+                raise ValueError(f"missing in-memory prefix candidate evaluation for {key_prefix}")
+        else:
+            if payloads is None:
+                raise ValueError("prefix candidate payloads are missing")
+            payload = next(
+                (value for key, value in payloads.items() if key.startswith(key_prefix)),
+                None,
+            )
+            if payload is None:
+                raise ValueError(f"missing persisted prefix candidate payload for {key_prefix}")
+            evaluation = pickle.loads(payload)
+            if not isinstance(evaluation, WalkForwardEvaluation):
+                raise ValueError("persisted prefix candidate payload has an invalid type")
         timestamps: list[object] = []
         probabilities: list[list[float]] = []
         for fold in evaluation.valid_folds:
@@ -170,6 +178,7 @@ def build_math_expectations(
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
     prefix_payloads: Mapping[int, Mapping[str, bytes]] | None = None,
+    prefix_evaluations: Mapping[int, Mapping[tuple[int, str], WalkForwardEvaluation]] | None = None,
 ) -> dict[str, object]:
     """Serialize first-fold math evidence and representative final likelihoods."""
 
@@ -229,13 +238,16 @@ def build_math_expectations(
         )
 
     prefix_nmi: list[dict[str, object]] = []
-    if prefix_payloads is not None:
+    if prefix_payloads is not None or prefix_evaluations is not None:
         for outer_fold_index, selected in sorted(selections.items()):
             prefix_nmi.extend(
                 _prefix_nmi_items(
                     selected,
                     outer_fold_index,
-                    prefix_payloads.get(outer_fold_index, {}),
+                    None if prefix_payloads is None else prefix_payloads.get(outer_fold_index, {}),
+                    None
+                    if prefix_evaluations is None
+                    else prefix_evaluations.get(outer_fold_index, {}),
                 )
             )
 
