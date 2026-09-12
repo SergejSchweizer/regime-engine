@@ -233,6 +233,7 @@ def _default_runner(
     profile: ModelProfile,
     candidate: ResolvedCandidateProfile,
     adapter_factory: AdapterFactory,
+    max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
 ) -> WalkForwardEvaluation:
     return run_walk_forward_candidate(
@@ -241,6 +242,7 @@ def _default_runner(
         profile=profile,
         candidate=candidate,
         adapter_factory=adapter_factory,
+        max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
     )
 
@@ -307,6 +309,7 @@ def evaluate_candidate_grid(
                     profile,
                     candidate,
                     candidate_adapter,
+                    max_workers=max_workers,
                     seed_checkpoint_factory=lambda fold_id: seed_checkpoint_factory(
                         candidate.candidate_id,
                         fold_id,
