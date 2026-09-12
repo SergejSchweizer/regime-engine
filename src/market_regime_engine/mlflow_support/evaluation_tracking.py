@@ -30,10 +30,7 @@ from market_regime_engine.feature_discovery.contracts import (
 from market_regime_engine.features.ports import FeatureCatalogSnapshot, FeatureSnapshot
 from market_regime_engine.mlflow_support.metric_catalog import METRIC_CATALOG_VERSION
 from market_regime_engine.mlflow_support.metric_export import MetricExportLedger
-from market_regime_engine.mlflow_support.model_metrics import (
-    model_metric_points,
-    outer_selection_metric_points,
-)
+from market_regime_engine.mlflow_support.model_metrics import outer_selection_metric_points
 from market_regime_engine.mlflow_support.ports import TrackingPort
 from market_regime_engine.mlflow_support.tracking import _project_candidate_logged_model
 from market_regime_engine.profiles.config import ModelProfile
@@ -648,15 +645,7 @@ def track_global_v4_evaluation(
                         scope="outer_fold_candidate",
                         outer_fold_id=fold_id,
                         model_name=f"{evaluation_run_key}:{fold_id}:{candidate.candidate_id}",
-                        extra_metric_points=(
-                            model_metric_points(
-                                candidate,
-                                fold_timestamps=tuple(
-                                    item.test_end for item in resolved_final_grid_plan.folds
-                                ),
-                            )
-                            + outer_selection_metric_points(selection, fold)
-                        ),
+                        extra_metric_points=outer_selection_metric_points(selection, fold),
                         extra_tags={
                             "regime_engine.feature_discovery_hash": (
                                 selection.feature_discovery_hash
