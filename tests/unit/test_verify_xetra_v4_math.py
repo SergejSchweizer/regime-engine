@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from datetime import UTC, datetime, timedelta
+from math import lgamma
 from pathlib import Path
 
 import numpy as np
@@ -48,3 +49,34 @@ def test_independent_gaussian_likelihood_uses_forward_scaling() -> None:
 
     expected = -0.5 * (2.0 * np.log(2.0 * np.pi) + 1.0)
     assert actual == pytest.approx(expected)
+
+
+def test_independent_gmm_and_student_t_likelihoods_are_supported() -> None:
+    module = _module()
+    observations = np.asarray([[0.0], [1.0]], dtype=float)
+    starts = np.asarray([1.0], dtype=float)
+    transitions = np.asarray([[1.0]], dtype=float)
+    gmm = module.independent_gmm_log_likelihood(
+        observations,
+        starts,
+        transitions,
+        np.asarray([[0.25, 0.75]], dtype=float),
+        np.asarray([[[0.0], [0.0]]], dtype=float),
+        np.asarray([[[[1.0]], [[1.0]]]], dtype=float),
+    )
+    expected_gaussian = -0.5 * (2.0 * np.log(2.0 * np.pi) + 1.0)
+    assert gmm == pytest.approx(expected_gaussian)
+
+    student = module.independent_student_t_log_likelihood(
+        observations,
+        starts,
+        transitions,
+        np.asarray([[0.0]], dtype=float),
+        np.asarray([[[1.0]]], dtype=float),
+        np.asarray([5.0], dtype=float),
+    )
+    expected_student = sum(
+        lgamma(3.0) - lgamma(2.5) - 0.5 * np.log(5.0 * np.pi) - 3.0 * np.log1p(value * value / 5.0)
+        for value in (0.0, 1.0)
+    )
+    assert student == pytest.approx(expected_student)
