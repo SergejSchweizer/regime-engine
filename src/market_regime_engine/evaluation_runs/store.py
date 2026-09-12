@@ -90,7 +90,11 @@ class SQLiteEvaluationRunStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database, timeout=30.0, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        # Journal mode is a database-wide setting.  Re-applying WAL on every
+        # connection is itself a schema-level write and races when spawned
+        # workers initialise stores concurrently.  Keep the database's
+        # existing mode and let busy_timeout cover concurrent ledger writes.
+        connection.execute("PRAGMA busy_timeout=30000")
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
