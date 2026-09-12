@@ -67,6 +67,7 @@ testpaths = ["tests"]
 markers = [
   "integration: hermetic integration test",
   "external: opt-in test requiring an external service",
+  "slow: long-running proof reserved for the dedicated evidence workflow",
 ]
 
 [tool.coverage.run]

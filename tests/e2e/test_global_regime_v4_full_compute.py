@@ -38,7 +38,7 @@ from tests.fixtures.global_regime_v4.synthetic import (
     build_synthetic_global_v4,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 PR231_GOLDEN_SNAPSHOT_HASH = "a609a32cf99642cf65f1064b798cec55b3b5b104a5946e01fa334dbc85a4283f"
 

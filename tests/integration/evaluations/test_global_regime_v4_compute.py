@@ -26,7 +26,7 @@ from market_regime_engine.training.multistart import (
     StartDiagnostic,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 START = datetime(2020, 1, 1, tzinfo=UTC)
 HASH = "b" * 64

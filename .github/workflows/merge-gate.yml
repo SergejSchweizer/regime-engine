@@ -81,7 +81,7 @@ jobs:
           uv pip install --python .venv/bin/python --no-deps -e .
       - name: Unit tests with coverage
         env:
-          COVERAGE_FILE: .coverage.unit
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
         run: |
           .venv/bin/coverage run -m pytest tests -m "not integration and not external"
           .venv/bin/python -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
@@ -94,8 +94,8 @@ jobs:
           name: coverage-unit
           path: .coverage.unit
           include-hidden-files: true
+          overwrite: true
           if-no-files-found: error
-
   merge-gate:
     if: always()
     needs: [lint, type, unit]
@@ -123,5 +123,4 @@ jobs:
           name: coverage-unit
           path: .
       - name: Enforce unit coverage >= 80%
-        run: |
-          .venv/bin/coverage report --fail-under=80
+        run: .venv/bin/coverage report --data-file=.coverage.unit --fail-under=80

@@ -1,0 +1,13 @@
+# Local-only integration validation. GitHub merge/push gates intentionally
+# remain unit-only; this hook exercises hermetic integration behavior before a
+# developer commits. The long-running proof is reserved for its dedicated
+# workflow and external-service tests stay opt-in.
+repos:
+  - repo: local
+    hooks:
+      - id: hermetic-integration-tests
+        name: Hermetic integration tests
+        entry: .venv/bin/pytest -n 1 tests -m "integration and not slow and not external"
+        language: system
+        pass_filenames: false
+        always_run: true
