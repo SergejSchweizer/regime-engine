@@ -56,7 +56,7 @@ class ResumableEvaluationExecutor:
 
         try:
             pickle.dumps(compute)
-        except (AttributeError, OSError, pickle.PicklingError, TypeError):
+        except AttributeError, OSError, pickle.PicklingError, TypeError:
             return False
         return True
 
@@ -173,9 +173,7 @@ class ResumableEvaluationExecutor:
             results: list[tuple[WorkUnitNode, object | None, Exception | None]] = []
             use_processes = process_safe and len(claimed) > 1
             if use_processes:
-                worker_limit = min(
-                    len(claimed), self._max_workers or len(claimed)
-                )
+                worker_limit = min(len(claimed), self._max_workers or len(claimed))
                 with cpu_process_pool(worker_limit) as process_pool:
                     futures: list[tuple[WorkUnitNode, Future[bytes]]] = [
                         (node, process_pool.submit(compute, node, parents))
