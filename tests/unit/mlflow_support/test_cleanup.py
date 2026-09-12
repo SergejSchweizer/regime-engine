@@ -9,6 +9,7 @@ from market_regime_engine.mlflow_support.cleanup import (
     collect_evaluation_manifest,
     execute_evaluation_cleanup,
     execute_retired_registered_model_cleanup,
+    require_production_tracking_uri,
 )
 
 
@@ -71,6 +72,12 @@ def test_evaluation_cleanup_rejects_uri_mismatch() -> None:
     manifest = collect_evaluation_manifest(client, tracking_uri="http://10.10.1.3:5000")
     with pytest.raises(ValueError, match="tracking URI"):
         execute_evaluation_cleanup(client, manifest, expected_tracking_uri="http://other")
+
+
+def test_cleanup_requires_pinned_production_tracking_uri() -> None:
+    assert require_production_tracking_uri("http://10.10.1.3:5000") == "http://10.10.1.3:5000"
+    with pytest.raises(ValueError, match="pinned production URI"):
+        require_production_tracking_uri("file:///tmp/mlruns")
 
 
 class RegisteredClient:
