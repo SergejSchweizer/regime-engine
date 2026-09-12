@@ -40,6 +40,8 @@ from tests.fixtures.global_regime_v4.synthetic import (
 
 pytestmark = pytest.mark.integration
 
+PR231_GOLDEN_SNAPSHOT_HASH = "a609a32cf99642cf65f1064b798cec55b3b5b104a5946e01fa334dbc85a4283f"
+
 
 def _independent_soft_nmi(
     left_timestamps: tuple[datetime, ...],
@@ -257,6 +259,36 @@ def _evidence(
     )
 
 
+def _golden_snapshot(
+    fixture: SyntheticGlobalV4,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, object],
+    evidence: GlobalV4Evidence,
+) -> dict[str, object]:
+    """Capture every statistical selection as one fixed, reviewable digest."""
+
+    ordered = tuple(selections[index] for index in sorted(selections))
+    return {
+        "source_row_count": len(fixture.rows),
+        "feature_count": len(fixture.catalog.feature_names),
+        "outer_fold_count": len(result.outer_folds),
+        "folds": [
+            {
+                "fold_index": fold.fold_index,
+                "train_source_observations": 1260 + (fold.fold_index - 1) * 63,
+                "test_source_observations": 63,
+                "selection_hash": content_hash(selection),
+                "outer_result_hash": fold.result_hash,
+                "outer_soft_nmi": fold.outer_teacher_final_soft_nmi,
+                "valid": fold.valid,
+            }
+            for fold, selection in zip(result.outer_folds, ordered, strict=True)
+        ],
+        "result_hash": result.result_hash,
+        "evidence_hash": evidence.evidence_hash,
+    }
+
+
 def _lineage(fixture: SyntheticGlobalV4) -> SourceLineage:
     source = fixture.catalog.lineage
     return SourceLineage(
@@ -441,6 +473,10 @@ def test_global_v4_full_compute_and_independent_math_proof(
     assert tracked.global_evidence_hash == evidence.evidence_hash
     assert Path(tracked.plot_manifest_path).is_file()
 
+    golden_snapshot = _golden_snapshot(fixture, result, captured, evidence)
+    golden_hash = content_hash(golden_snapshot)
+    assert golden_hash == PR231_GOLDEN_SNAPSHOT_HASH
+
     canonical_result_hash = result.result_hash
     mutated = fixture.rows.copy()
     mutated.loc[0, fixture.catalog.feature_names[0]] += 10_000.0
@@ -449,6 +485,13 @@ def test_global_v4_full_compute_and_independent_math_proof(
         for index, feature in enumerate(reversed(tuple(fixture.semantic_labels)))
     }
     assert randomized_labels != fixture.semantic_labels
+    fixture.semantic_labels.clear()
+    fixture.semantic_labels.update(randomized_labels)
+    assert fixture.semantic_labels == randomized_labels
+    assert (
+        mutated.loc[0, fixture.catalog.feature_names[0]]
+        != fixture.rows.loc[0, fixture.catalog.feature_names[0]]
+    )
     assert result.result_hash == canonical_result_hash
     assert result.result_hash == content_hash(result)
 

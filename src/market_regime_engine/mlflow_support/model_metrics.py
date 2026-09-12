@@ -101,6 +101,7 @@ def _fold_points(
     fold: WalkForwardFoldResult,
     *,
     timestamp_ms: int,
+    state_step_offset: int = 0,
 ) -> list[MetricPoint]:
     points: list[MetricPoint] = []
     step = fold.fold_index
@@ -418,7 +419,7 @@ def _fold_points(
             oos_hard_occupancy=fold.oos_hard_occupancy,
             oos_soft_occupancy=fold.oos_soft_occupancy,
         )
-        points.extend(state_evidence.metric_points())
+        points.extend(state_evidence.metric_points(step_offset=state_step_offset))
         mapping = fold.alignment.persistent_to_fitted
         transition = np.asarray(fold.model_artifact.transition_matrix, dtype=np.float64)
         aligned = transition[np.ix_(mapping, mapping)]
@@ -549,13 +550,23 @@ def model_metric_points(
     for key, value in aggregate.items():
         _append(points, key, value, step=0, timestamp_ms=default_timestamp)
     points.extend(build_fit_quality_evidence(evaluation).metric_points)
+    state_step_offset = 0
     for index, fold in enumerate(evaluation.folds):
         timestamp_ms = (
             _timestamp_ms(fold_timestamps[index])
             if fold_timestamps is not None
             else default_timestamp
         )
-        points.extend(_fold_points(evaluation, fold, timestamp_ms=timestamp_ms))
+        points.extend(
+            _fold_points(
+                evaluation,
+                fold,
+                timestamp_ms=timestamp_ms,
+                state_step_offset=state_step_offset,
+            )
+        )
+        if fold.valid and fold.model_artifact is not None and fold.alignment is not None:
+            state_step_offset += max(len(fold.oos_timestamps), evaluation.state_count) + 1
     result = tuple(points)
     validate_metric_points(result)
     return result
