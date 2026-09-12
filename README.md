@@ -68,6 +68,20 @@ Run the local-only hermetic full-computation proof with:
 ./scripts/run_pr231_hermetic_proof.sh
 ```
 
+The proof is also available as independently startable local sub-proofs. Run
+only the phase needed for a change:
+
+```bash
+./scripts/run_pr231_hermetic_proof.sh pipeline-math
+./scripts/run_pr231_hermetic_proof.sh tracking-and-plots
+./scripts/run_pr231_hermetic_proof.sh independent-process-and-labels
+./scripts/run_pr231_hermetic_proof.sh future-mutation-isolation
+```
+
+Each phase creates its own metadata and proof sidecar below
+`.artifacts/pr231-hermetic-proof` (or `PR231_PROOF_OUTPUT_DIR`). The combined
+`all` mode remains available, but is not required when validating one phase.
+
 It writes timing metadata, the JUnit report and the computation proof sidecar
 to `.artifacts/pr231-hermetic-proof` by default. Set
 `PR231_PROOF_OUTPUT_DIR` to store them elsewhere. This proof never runs in

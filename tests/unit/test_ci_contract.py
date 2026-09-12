@@ -26,7 +26,7 @@ def test_long_hermetic_proof_is_local_only() -> None:
     runner = (ROOT / "scripts" / "run_pr231_hermetic_proof.sh").read_text(encoding="utf-8")
     assert '"integration and slow"' in runner
     assert "PR231_PROOF_OUTPUT" in runner
-    assert "pr231-proof.json" in runner
+    assert 'RUN_METADATA="$OUTPUT_DIR/pr231-${PHASE}.json"' in runner
     assert "pr231-computation-proof.json" in runner
 
 
