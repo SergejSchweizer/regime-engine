@@ -529,7 +529,11 @@ def select_v4_configuration(
     )
     clusters = cast(
         ClusterSolution,
-        checkpoint("clusters", lambda: select_global_clusters(distance), parents=(distance,)),
+        checkpoint(
+            "clusters",
+            lambda: select_global_clusters(distance, max_workers=max_workers),
+            parents=(distance,),
+        ),
     )
     prototypes = cast(
         PrototypeSet,

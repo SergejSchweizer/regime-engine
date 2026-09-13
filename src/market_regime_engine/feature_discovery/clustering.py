@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from math import isfinite
 
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering  # type: ignore[import-untyped]
 from sklearn.metrics import silhouette_samples  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     CLUSTER_COUNT_MAX,
     CLUSTER_COUNT_MIN,
@@ -17,6 +19,26 @@ from market_regime_engine.feature_discovery.contracts import (
     ClusterSolution,
     DistanceMatrixResult,
 )
+from market_regime_engine.runtime.cpu import cpu_worker_count
+
+
+@dataclass(frozen=True, slots=True)
+class _SilhouetteTask:
+    """Immutable input for one independent hierarchy-cut silhouette."""
+
+    cluster_count: int
+    labels: tuple[int, ...]
+    memberships: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+_CLUSTERING_DISTANCE_CONTEXT: np.ndarray | None = None
+
+
+def _initialize_clustering_worker(matrix: np.ndarray) -> None:
+    """Install the immutable distance matrix for silhouette workers."""
+
+    global _CLUSTERING_DISTANCE_CONTEXT
+    _CLUSTERING_DISTANCE_CONTEXT = matrix
 
 
 def _validate_ordinals(
@@ -142,9 +164,24 @@ def _silhouette(
     return mean
 
 
+def _silhouette_in_process(task: _SilhouetteTask) -> tuple[int, float]:
+    """Evaluate one hierarchy cut in a GIL-independent worker."""
+
+    if _CLUSTERING_DISTANCE_CONTEXT is None:
+        raise RuntimeError("clustering worker context was not initialized")
+    labels = np.asarray(task.labels, dtype=np.int64)
+    return task.cluster_count, _silhouette(
+        _CLUSTERING_DISTANCE_CONTEXT,
+        labels,
+        task.memberships,
+    )
+
+
 def select_global_clusters(
     distance: DistanceMatrixResult,
     feature_ordinals: Mapping[str, int] | Sequence[tuple[str, int]] | None = None,
+    *,
+    max_workers: int | None = None,
 ) -> ClusterSolution:
     """Build one hierarchy, derive every bounded cut, and select M*.
 
@@ -170,12 +207,37 @@ def select_global_clusters(
     merge_tree = _full_hierarchy(np.array(matrix, dtype=np.float64, copy=True))
     maximum_count = min(CLUSTER_COUNT_MAX, candidate_count - 1)
     candidate_memberships: list[tuple[int, tuple[tuple[str, tuple[str, ...]], ...]]] = []
-    silhouette_curve: list[tuple[int, float]] = []
+    silhouette_tasks: list[_SilhouetteTask] = []
     for cluster_count in range(CLUSTER_COUNT_MIN, maximum_count + 1):
         memberships = _forest_memberships(feature_order, merge_tree, cluster_count, ordinals)
         labels = _labels(feature_order, memberships)
-        silhouette_curve.append((cluster_count, _silhouette(matrix, labels, memberships)))
         candidate_memberships.append((cluster_count, memberships))
+        silhouette_tasks.append(
+            _SilhouetteTask(cluster_count, tuple(int(value) for value in labels), memberships)
+        )
+
+    worker_limit = cpu_worker_count(max_workers, task_count=len(silhouette_tasks))
+    if worker_limit > 1 and len(silhouette_tasks) >= 4:
+        with cpu_process_pool(
+            worker_limit,
+            initializer=_initialize_clustering_worker,
+            initargs=(matrix,),
+        ) as executor:
+            silhouette_results = tuple(
+                future.result()
+                for future in tuple(
+                    executor.submit(_silhouette_in_process, task) for task in silhouette_tasks
+                )
+            )
+    else:
+        silhouette_results = tuple(
+            (
+                task.cluster_count,
+                _silhouette(matrix, np.asarray(task.labels, dtype=np.int64), task.memberships),
+            )
+            for task in silhouette_tasks
+        )
+    silhouette_curve = list(silhouette_results)
 
     best_silhouette = max(value for _count, value in silhouette_curve)
     tied_counts = tuple(
