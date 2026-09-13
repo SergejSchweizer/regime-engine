@@ -523,7 +523,7 @@ def select_v4_configuration(
         DistanceMatrixResult,
         checkpoint(
             "distance",
-            lambda: global_absolute_spearman_distance(snapshot, quality),
+            lambda: global_absolute_spearman_distance(snapshot, quality, max_workers=max_workers),
             parents=(quality,),
         ),
     )

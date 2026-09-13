@@ -159,6 +159,7 @@ def test_fifty_feature_fixture_is_canonical_and_feature_permutations_do_not_chan
         catalog, snapshot, BASE, BASE + timedelta(days=OBSERVATIONS - 1)
     )
     result = compute_distance_matrix(snapshot, quality)
+    serial_result = compute_distance_matrix(snapshot, quality, max_workers=1)
 
     permuted_catalog = FeatureCatalogSnapshot.from_entries(
         catalog.lineage,
@@ -176,6 +177,7 @@ def test_fifty_feature_fixture_is_canonical_and_feature_permutations_do_not_chan
     assert result.feature_order == names
     assert len(result.distances) == 50
     assert result.pairwise_support[0][49] == OBSERVATIONS
+    assert result.matrix_hash == serial_result.matrix_hash
     assert result.matrix_hash == permuted_result.matrix_hash
 
 

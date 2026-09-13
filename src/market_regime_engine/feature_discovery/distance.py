@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from math import fsum, isfinite, sqrt
 
 import numpy as np
 from scipy.stats import rankdata  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     MIN_PAIRWISE_OBSERVATIONS,
     RHO_CLIP_TOLERANCE,
@@ -16,6 +18,41 @@ from market_regime_engine.feature_discovery.contracts import (
     QualityFilterResult,
 )
 from market_regime_engine.features.ports import FeatureSnapshot
+from market_regime_engine.runtime.cpu import cpu_worker_count
+
+
+@dataclass(frozen=True, slots=True)
+class _DistancePairTask:
+    """Canonical upper-triangle coordinate for one independent pair."""
+
+    left_index: int
+    right_index: int
+
+
+_DISTANCE_WORKER_CONTEXT: (
+    tuple[
+        np.ndarray,
+        tuple[str, ...],
+        tuple[bool, ...],
+        tuple[np.ndarray | None, ...],
+    ]
+    | None
+) = None
+
+
+def _initialize_distance_worker(
+    matrix: np.ndarray,
+    feature_names: tuple[str, ...],
+) -> None:
+    """Install the immutable distance inputs once in each process worker."""
+
+    global _DISTANCE_WORKER_CONTEXT
+    missing = tuple(bool(value) for value in np.isnan(matrix).any(axis=0))
+    full_ranks = tuple(
+        None if missing[index] else rankdata(matrix[:, index], method="average")
+        for index in range(matrix.shape[1])
+    )
+    _DISTANCE_WORKER_CONTEXT = (matrix, feature_names, missing, full_ranks)
 
 
 def _average_ranks(values: tuple[float, ...]) -> tuple[float, ...]:
@@ -90,6 +127,59 @@ def _rank_pearson_correlation_array(
     return _clip_correlation(correlation)
 
 
+def _compute_distance_pair(
+    matrix: np.ndarray,
+    feature_names: tuple[str, ...],
+    missing: tuple[bool, ...],
+    full_ranks: tuple[np.ndarray | None, ...],
+    task: _DistancePairTask,
+) -> tuple[int, int, int, float, float]:
+    """Compute one pair without mutating shared state."""
+
+    left_index = task.left_index
+    right_index = task.right_index
+    valid = ~np.isnan(matrix[:, left_index]) & ~np.isnan(matrix[:, right_index])
+    support = int(np.count_nonzero(valid))
+    if support < MIN_PAIRWISE_OBSERVATIONS:
+        raise ValueError(
+            f"pairwise support for {feature_names[left_index]} and "
+            f"{feature_names[right_index]} is {support}; "
+            f"requires at least {MIN_PAIRWISE_OBSERVATIONS}"
+        )
+    if left_index == right_index:
+        correlation = 1.0
+        distance = 0.0
+    else:
+        left_values = matrix[valid, left_index]
+        right_values = matrix[valid, right_index]
+        if not missing[left_index] and not missing[right_index]:
+            correlation = _rank_pearson_correlation_array(
+                left_values,
+                right_values,
+                left_ranks=full_ranks[left_index],
+                right_ranks=full_ranks[right_index],
+            )
+        else:
+            correlation = _rank_pearson_correlation_array(left_values, right_values)
+        distance = 1.0 - abs(correlation)
+        if distance < 0.0 and distance >= -RHO_CLIP_TOLERANCE:
+            distance = 0.0
+        if not isfinite(distance) or not 0.0 <= distance <= 1.0:
+            raise ValueError("Spearman distance must be finite in [0,1]")
+    return left_index, right_index, support, correlation, distance
+
+
+def _compute_distance_pair_in_process(
+    task: _DistancePairTask,
+) -> tuple[int, int, int, float, float]:
+    """Compute one distance pair in a worker interpreter outside the GIL."""
+
+    if _DISTANCE_WORKER_CONTEXT is None:
+        raise RuntimeError("distance worker context was not initialized")
+    matrix, feature_names, missing, full_ranks = _DISTANCE_WORKER_CONTEXT
+    return _compute_distance_pair(matrix, feature_names, missing, full_ranks, task)
+
+
 def _validate_snapshot(
     snapshot: FeatureSnapshot, quality: QualityFilterResult
 ) -> tuple[tuple[float | None, ...], ...]:
@@ -144,6 +234,7 @@ def _validate_snapshot(
 def global_absolute_spearman_distance(
     snapshot: FeatureSnapshot,
     quality: QualityFilterResult,
+    max_workers: int | None = None,
 ) -> DistanceMatrixResult:
     """Compute the canonical distance matrix for every eligible feature.
 
@@ -168,51 +259,49 @@ def global_absolute_spearman_distance(
         dtype=np.float64,
     )
     size = matrix.shape[1]
-    missing = np.isnan(matrix).any(axis=0)
+    missing = tuple(bool(value) for value in np.isnan(matrix).any(axis=0))
     full_ranks = tuple(
         None if missing[index] else rankdata(matrix[:, index], method="average")
         for index in range(size)
     )
+    tasks = tuple(
+        _DistancePairTask(left_index, right_index)
+        for left_index in range(size)
+        for right_index in range(left_index, size)
+    )
+    worker_limit = cpu_worker_count(max_workers, task_count=len(tasks))
+    # A process boundary is valuable for the real 50+ feature universe, while
+    # launching workers for tiny unit-test matrices costs more than the
+    # numerical kernel itself. The serial path remains the exact same pair
+    # implementation and is also used for an explicit one-worker override.
+    if worker_limit > 1 and len(tasks) >= 16:
+        with cpu_process_pool(
+            worker_limit,
+            initializer=_initialize_distance_worker,
+            initargs=(matrix, eligible_names),
+        ) as executor:
+            pair_results = tuple(
+                future.result()
+                for future in tuple(
+                    executor.submit(_compute_distance_pair_in_process, task) for task in tasks
+                )
+            )
+    else:
+        pair_results = tuple(
+            _compute_distance_pair(matrix, eligible_names, missing, full_ranks, task)
+            for task in tasks
+        )
+
     distances = [[0.0 for _ in range(size)] for _ in range(size)]
     supports = [[0 for _ in range(size)] for _ in range(size)]
     correlations = [[0.0 for _ in range(size)] for _ in range(size)]
-
-    for left_index in range(size):
-        for right_index in range(left_index, size):
-            valid = ~np.isnan(matrix[:, left_index]) & ~np.isnan(matrix[:, right_index])
-            support = int(np.count_nonzero(valid))
-            supports[left_index][right_index] = support
-            supports[right_index][left_index] = support
-            if support < MIN_PAIRWISE_OBSERVATIONS:
-                raise ValueError(
-                    f"pairwise support for {eligible_names[left_index]} and "
-                    f"{eligible_names[right_index]} is {support}; "
-                    f"requires at least {MIN_PAIRWISE_OBSERVATIONS}"
-                )
-            if left_index == right_index:
-                correlation = 1.0
-                distance = 0.0
-            else:
-                left_values = matrix[valid, left_index]
-                right_values = matrix[valid, right_index]
-                if not missing[left_index] and not missing[right_index]:
-                    correlation = _rank_pearson_correlation_array(
-                        left_values,
-                        right_values,
-                        left_ranks=full_ranks[left_index],
-                        right_ranks=full_ranks[right_index],
-                    )
-                else:
-                    correlation = _rank_pearson_correlation_array(left_values, right_values)
-                distance = 1.0 - abs(correlation)
-                if distance < 0.0 and distance >= -RHO_CLIP_TOLERANCE:
-                    distance = 0.0
-                if not isfinite(distance) or not 0.0 <= distance <= 1.0:
-                    raise ValueError("Spearman distance must be finite in [0,1]")
-            distances[left_index][right_index] = distance
-            distances[right_index][left_index] = distance
-            correlations[left_index][right_index] = correlation
-            correlations[right_index][left_index] = correlation
+    for left_index, right_index, support, correlation, distance in pair_results:
+        supports[left_index][right_index] = support
+        supports[right_index][left_index] = support
+        distances[left_index][right_index] = distance
+        distances[right_index][left_index] = distance
+        correlations[left_index][right_index] = correlation
+        correlations[right_index][left_index] = correlation
 
     return DistanceMatrixResult(
         feature_order=eligible_names,
