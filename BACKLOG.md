@@ -9,7 +9,7 @@ Status date: 2026-09-13
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
   on top of the merged resumability, MLflow Model Metrics, PCA and
-  process-parallel work. Follow-up PRs #333–#352 are also merged: global
+  process-parallel work. Follow-up PRs #333–#354 are also merged: global
   diagnostic plot families are split into independent process tasks, audit
   worker sizing respects affinity/cgroup limits, proof-bundle identities are
   cross-checked, duplicate MLflow comparison-group names are rejected, and
@@ -19,18 +19,21 @@ Status date: 2026-09-13
   multistart backend failures remain retryable while deterministic validation
   failures remain cacheable. The Spearman pair and hierarchy-cut kernels now
   use GIL-independent process workers with deterministic result assembly.
-  Acceptance follow-ups #346–#352 now add complete golden-proof structure
+  Acceptance follow-ups #346–#354 now add complete golden-proof structure
   checks, independent process-parallel math auditing, full file-backed MLflow
   metric-history verification, static import-graph zero-legacy enforcement,
   crash-safe process executor result harvesting, deterministic snapshot and
   multistart interruption matrices, fine-grained stage/MLflow resume parity,
-  and explicit `-n auto` CPU distribution in both GitHub gates.
+  and explicit `-n auto` CPU distribution in both GitHub gates. The latest
+  hardening also protects SQLite lease ownership against stale workers,
+  binds independent math audits to snapshot identity, and parallelizes
+  independent outer-fold MLflow I/O while retaining canonical ordering.
   The remaining full current-source audit and final production-eligibility
   evidence are tracked under PR-231, PR-232, PR-250 and PR-253.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
-  crash-boundary hardening is included through PRs #259–#350.
+  crash-boundary hardening is included through PRs #259–#354.
 - **Current CPU topology/performance implementation:** the runtime now sizes
   workers from Linux process affinity and the active cgroup quota, exposes
   physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
@@ -91,7 +94,7 @@ Status date: 2026-09-13
   `/health` endpoint returns `200 OK`; the evaluation experiment and
   `regime-xetra` registered model are currently absent. No production objects
   have been deleted. The full non-external suite passes under `pytest -n auto`
-  (`663 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
+  (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
   MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
   (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
@@ -171,7 +174,7 @@ still required.
 | PR-229 | IMPLEMENTED | Closed |
 | PR-230 | IMPLEMENTED | Closed |
 | PR-231 | IMPLEMENTATION MERGED | Code-level proof QA merged in #346 and #352; acceptance open: full hermetic proof execution, rerun, mutation and likelihood evidence |
-| PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347; acceptance open: full current-Xetra computation and external audit evidence |
+| PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347 and snapshot-identity binding in #354; acceptance open: full current-Xetra computation and external audit evidence |
 | PR-233 | IMPLEMENTED | Operational use remains gated by PR-232 |
 | PR-234 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
 | PR-235 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
@@ -181,9 +184,9 @@ still required.
 | PR-239 | IMPLEMENTED | Final runtime proof remains under PR-253 |
 | PR-240 | IMPLEMENTED | Final runtime proof remains under PR-253 |
 | PR-241 | IMPLEMENTED | Final release closure remains under PR-253 |
-| PR-242 | IMPLEMENTED | Snapshot crash-boundary QA added in #352; deployment-volume/process-kill evidence remains open |
-| PR-243 | IMPLEMENTED | Closed; used by resumable audit work |
-| PR-244 | IMPLEMENTED | Seed interruption matrix added in #352; two-worker duplicate and filesystem crash evidence remains open |
+| PR-242 | IMPLEMENTED | Snapshot crash-boundary and concurrent-claimer QA added in #352/#354; deployment-volume/process-kill evidence remains open |
+| PR-243 | IMPLEMENTED | Deterministic 120-node interruption/restart QA added in #354; filesystem crash evidence remains open |
+| PR-244 | IMPLEMENTED | Seed interruption matrix and two-worker duplicate-claim QA added in #352/#354; model-family golden evidence remains open |
 | PR-245 | IMPLEMENTED | Closed; CPU/process-parallel evaluation foundation |
 | PR-246 | IMPLEMENTED | External execution evidence remains under PR-250 |
 | PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
@@ -191,7 +194,7 @@ still required.
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; acceptance open: full Model Metrics completeness and external resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
-| PR-253 | IMPLEMENTATION MERGED | Static import-graph audit merged in #349; acceptance open: combined zero-legacy/runtime audit |
+| PR-253 | IMPLEMENTATION MERGED | Static import-graph audit merged in #349 and runtime contract QA in #354; acceptance open: combined production zero-legacy audit |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
 | PR-255 | IMPLEMENTED | Fit-quality metrics are present; final proof remains under PR-250 |
 | PR-256 | IMPLEMENTED | State diagnostics are present; final proof remains under PR-250 |
@@ -210,6 +213,7 @@ still required.
 | PR-269 | IMPLEMENTED | Closed; runtime performance telemetry |
 | PR-270 | IMPLEMENTED | Closed; independent audit artifact handoff |
 | GitHub #352 | MERGED | Acceptance hardening: hermetic proof contracts, snapshot/multistart interruption matrices, stage/MLflow resume parity, and explicit CI `-n auto`; full/external evidence remains open where noted above |
+| GitHub #354 | MERGED | Acceptance hardening: concurrent lease safety, randomized DAG restart, two-worker multistart, bound audit identity, runtime zero-legacy contract, and parallel fold tracking; full/external evidence remains open where noted above |
 | PR-329 | IMPLEMENTED | Closed; process-parallel Spearman pair kernel |
 | PR-330 | IMPLEMENTED | Closed; process-parallel hierarchy-cut silhouettes |
 | PR-333 | IMPLEMENTED | Closed; process-parallel global diagnostic plot families |
@@ -252,15 +256,36 @@ format and the local pre-commit hermetic integration hook also pass. This
 does not claim the deliberately deferred full current-Xetra run, external
 MLflow completeness proof, or external zero-legacy/runtime audit.
 
+### Acceptance follow-up #354 — merged
+
+GitHub PR #354 (`0865e48`) is merged into `origin/main` and its remote branch
+is deleted. It closes additional code-level gaps without running production
+work:
+
+- concurrent SQLite claimers and stale lease-owner writes are fail-closed;
+- a 120-node process-backed DAG survives seeded interruption/restart cycles;
+- two spawned workers cannot commit duplicate multistart seed payloads;
+- first/middle/last independent audit folds cover Gaussian, GMM-HMM and
+  Student-t likelihoods, with snapshot hash mismatch rejection;
+- the zero-legacy contract checks the active repository without importing
+  services; and
+- independent outer-fold MLflow I/O is parallelized while result order stays
+  canonical.
+
+The full fast non-external suite after these changes is `684 passed` under
+`pytest -n auto tests -m "not slow and not external"`. The remaining full
+current-Xetra, production-eligibility, external MLflow, and production
+runtime audit evidence is intentionally still open.
+
 ### GitHub follow-up PRs not assigned a separate backlog item
 
-PRs **#270–#350** are merged except **#277, #284 and #317**, which are
+PRs **#270–#354** are merged except **#277, #284 and #317**, which are
 closed without merge and have no active implementation branch. There are no
 open GitHub PRs and no remote `pr/*` branches. The merged follow-ups include
 the PCA completion (#303–#313), local test parallelization (#312), tracking
 parallelization (#314, #324), lineage/CPU/process safety (#315–#323,
 #329–#330), independent-audit parallelization (#325–#326), and audit
-contract hardening (#333–#350).
+contract hardening (#333–#354).
 
 ---
 
