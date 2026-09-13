@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import pickle
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,14 +94,21 @@ def _baseline() -> _Baseline:
             and envelope.get("repository_sha") == repository_sha
             and envelope.get("source_data_sha256") == fixture.source_data_hash
             and envelope.get("profile_hash") == profile.profile_hash
-            and isinstance(envelope.get("state"), _Baseline)
+            and isinstance(envelope.get("state"), dict)
         ):
+            cached_state = envelope["state"]
+            required_state_keys = {"fixture", "profile", "result", "selections", "evidence"}
+            if set(cached_state) != required_state_keys:
+                cached_state = None
+        else:
+            cached_state = None
+        if cached_state is not None:
             return _Baseline(
                 fixture,
                 profile,
-                envelope["state"].result,
-                envelope["state"].selections,
-                envelope["state"].evidence,
+                cached_state["result"],
+                cached_state["selections"],
+                cached_state["evidence"],
                 True,
             )
     result, selections = _evaluate_with_selection_capture(
@@ -117,7 +125,16 @@ def _baseline() -> _Baseline:
             "repository_sha": repository_sha,
             "source_data_sha256": fixture.source_data_hash,
             "profile_hash": profile.profile_hash,
-            "state": state,
+            # Keep the cache independent of this test module's pytest import
+            # name.  Pickling _Baseline directly makes an absolute test path
+            # and a package-qualified test path produce incompatible caches.
+            "state": {
+                "fixture": state.fixture,
+                "profile": state.profile,
+                "result": state.result,
+                "selections": state.selections,
+                "evidence": state.evidence,
+            },
         }
         temporary = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
         temporary.write_bytes(pickle.dumps(envelope, protocol=pickle.HIGHEST_PROTOCOL))
@@ -132,6 +149,25 @@ def _write_sidecar(phase: str, payload: dict[str, object]) -> None:
         json.dumps({"phase": phase, **payload}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _persist_tracking_artifacts(manifest_path: Path, output_root: Path) -> Path:
+    """Copy the manifest and PNGs beside the proof sidecar.
+
+    MLflow's local tracking writer uses pytest's temporary directory.  A proof
+    bundle must remain verifiable after pytest removes that directory, so the
+    sidecar may only reference artifacts copied into the caller-owned output
+    root.
+    """
+
+    artifact_root = output_root / "tracking-and-plots"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    durable_manifest = artifact_root / manifest_path.name
+    shutil.copy2(manifest_path, durable_manifest)
+    source_plots = manifest_path.parent / "plots"
+    durable_plots = artifact_root / "plots"
+    shutil.copytree(source_plots, durable_plots, dirs_exist_ok=True)
+    return durable_manifest
 
 
 def test_global_v4_subproof_pipeline_math() -> None:
@@ -190,12 +226,20 @@ def test_global_v4_subproof_tracking_and_plots(
     )
     assert tracked.global_evidence_hash == state.evidence.evidence_hash
     assert Path(tracked.plot_manifest_path).is_file()
+    output = Path(os.environ["PR231_SUBPROOF_OUTPUT"])
+    durable_manifest = _persist_tracking_artifacts(Path(tracked.plot_manifest_path), output.parent)
+    assert durable_manifest.is_file()
+    manifest = json.loads(durable_manifest.read_text(encoding="utf-8"))
+    assert manifest["entries"]
+    assert all(
+        (durable_manifest.parent / entry["png_path"]).is_file() for entry in manifest["entries"]
+    )
     _write_sidecar(
         "tracking-and-plots",
         {
             "result_hash": state.result.result_hash,
             "evidence_hash": state.evidence.evidence_hash,
-            "plot_manifest_path": tracked.plot_manifest_path,
+            "plot_manifest_path": str(durable_manifest),
             "baseline_cache_reused": state.cache_reused,
         },
     )

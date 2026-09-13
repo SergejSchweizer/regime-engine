@@ -83,6 +83,9 @@ Each phase creates its own metadata and proof sidecar below
 `all` mode remains available, but is not required when validating one phase.
 Sub-phases reuse a commit- and fixture-bound local baseline cache when they
 share the same output directory; a missing or stale cache is recomputed.
+The tracking phase copies its plot manifest and PNGs into that output
+directory, so the recorded bundle remains verifiable after pytest removes its
+temporary MLflow directory.
 After the selected phases finish, verify one complete bundle without rerunning
 any computation:
 
