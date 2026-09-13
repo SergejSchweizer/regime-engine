@@ -32,6 +32,18 @@ def _four_feature_distance() -> DistanceMatrixResult:
     )
 
 
+def _six_feature_distance() -> DistanceMatrixResult:
+    return _distance(
+        tuple(
+            tuple(
+                0.0 if left == right else 0.1 if left // 2 == right // 2 else 0.9
+                for right in range(6)
+            )
+            for left in range(6)
+        )
+    )
+
+
 def test_single_hierarchy_contains_every_cut_and_matches_silhouette_oracle() -> None:
     distance = _four_feature_distance()
     solution = select_global_clusters(distance)
@@ -75,6 +87,12 @@ def test_equal_merge_ties_and_repeated_runs_are_byte_deterministic() -> None:
     assert first.solution_hash == second.solution_hash
     assert first.merge_tree == second.merge_tree
     assert first.candidate_memberships == second.candidate_memberships
+
+
+def test_parallel_cluster_cut_silhouettes_match_serial_result() -> None:
+    serial = select_global_clusters(_six_feature_distance(), max_workers=1)
+    parallel = select_global_clusters(_six_feature_distance(), max_workers=2)
+    assert parallel == serial
 
 
 def test_singleton_silhouette_is_exactly_zero() -> None:
