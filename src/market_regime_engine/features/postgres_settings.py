@@ -58,7 +58,17 @@ class FeaturePostgresSettings:
     def from_env(cls, env: Mapping[str, str]) -> FeaturePostgresSettings:
         database = _required(env, "REGIME_FEATURE_PGDATABASE")
         direct = env.get("REGIME_FEATURE_PGPASSWORD")
-        password_file = env.get("REGIME_FEATURE_PGPASSWORD_FILE")
+        file_values = tuple(
+            value
+            for value in (
+                env.get("REGIME_FEATURE_PGPASSWORD_FILE"),
+                env.get("REGIME_FEATURE_PGPASSWORD_SECRET_FILE"),
+            )
+            if value
+        )
+        if len(set(file_values)) > 1:
+            raise ValueError("configure only one feature PostgreSQL password file")
+        password_file = file_values[0] if file_values else None
         if direct and password_file:
             raise ValueError("configure only one feature PostgreSQL password source")
         if password_file:
