@@ -34,6 +34,23 @@ def _require_logical_model_key(logical_model_key: str) -> None:
         raise ValueError("logical_model_key must be a non-empty trimmed string")
 
 
+def _require_model_id(model_id: str) -> None:
+    if not model_id or model_id.strip() != model_id:
+        raise ValueError("model_id must be a non-empty trimmed string")
+
+
+def _canonical_points(points: tuple[MetricPoint, ...]) -> tuple[MetricPoint, ...]:
+    """Validate points and return their stable order for every retry."""
+
+    validate_metric_points(points)
+    return tuple(
+        sorted(
+            points,
+            key=lambda item: (item.key, item.step, item.timestamp_ms, item.value.hex()),
+        )
+    )
+
+
 def metric_export_batch_key(
     logical_model_key: str,
     points: tuple[MetricPoint, ...],
@@ -41,7 +58,7 @@ def metric_export_batch_key(
     """Return the order-independent identity of one complete metric batch."""
 
     _require_logical_model_key(logical_model_key)
-    validate_metric_points(points)
+    canonical_points = _canonical_points(points)
     payload = {
         "logical_model_key": logical_model_key,
         "points": [
@@ -51,7 +68,7 @@ def metric_export_batch_key(
                 "timestamp_ms": point.timestamp_ms,
                 "value_hex": point.value.hex(),
             }
-            for point in sorted(points, key=lambda item: (item.key, item.step))
+            for point in canonical_points
         ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -99,14 +116,27 @@ class MetricExportLedger:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metric_model_bindings (
+                    logical_model_key TEXT PRIMARY KEY,
+                    model_id TEXT NOT NULL
+                )
+                """
+            )
 
     def ensure_batch(
         self,
         logical_model_key: str,
         points: tuple[MetricPoint, ...],
+        *,
+        model_id: str | None = None,
     ) -> MetricExportBatchState:
         """Record one immutable batch identity or fail on a changed retry."""
 
+        _require_logical_model_key(logical_model_key)
+        if model_id is not None:
+            _require_model_id(model_id)
         batch_key = metric_export_batch_key(logical_model_key, points)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -122,11 +152,28 @@ class MetricExportLedger:
                 )
             elif str(row["batch_key"]) != batch_key or int(row["point_count"]) != len(points):
                 raise ValueError(f"metric export batch conflict for {logical_model_key}")
+            if model_id is not None:
+                binding = connection.execute(
+                    "SELECT model_id FROM metric_model_bindings WHERE logical_model_key = ?",
+                    (logical_model_key,),
+                ).fetchone()
+                if binding is None:
+                    connection.execute(
+                        "INSERT INTO metric_model_bindings(logical_model_key, model_id) "
+                        "VALUES (?, ?)",
+                        (logical_model_key, model_id),
+                    )
+                elif str(binding["model_id"]) != model_id:
+                    raise ValueError(
+                        f"metric export model conflict for {logical_model_key}: "
+                        f"{binding['model_id']} != {model_id}"
+                    )
             connection.commit()
         return MetricExportBatchState(logical_model_key, batch_key, len(points))
 
     def ensure(self, logical_model_key: str, point: MetricPoint) -> MetricExportState:
         _require_logical_model_key(logical_model_key)
+        _canonical_points((point,))
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -169,24 +216,35 @@ class MetricExportLedger:
         )
 
     def mark_emitted(self, logical_model_key: str, point: MetricPoint) -> None:
+        _require_logical_model_key(logical_model_key)
+        _canonical_points((point,))
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            updated = connection.execute(
-                "UPDATE metric_points SET emitted = 1 WHERE logical_model_key = ? "
-                "AND metric_key = ? AND step = ? AND value = ? AND timestamp_ms = ?",
+            row = connection.execute(
+                "SELECT value, timestamp_ms FROM metric_points "
+                "WHERE logical_model_key = ? AND metric_key = ? AND step = ?",
                 (
                     logical_model_key,
                     point.key,
                     point.step,
-                    point.value,
-                    point.timestamp_ms,
                 ),
-            ).rowcount
-            if updated != 1:
+            ).fetchone()
+            if row is None:
                 raise ValueError("cannot mark an unknown or conflicting metric point emitted")
+            if (
+                float(row["value"]).hex() != point.value.hex()
+                or int(row["timestamp_ms"]) != point.timestamp_ms
+            ):
+                raise ValueError("cannot mark an unknown or conflicting metric point emitted")
+            connection.execute(
+                "UPDATE metric_points SET emitted = 1 WHERE logical_model_key = ? "
+                "AND metric_key = ? AND step = ?",
+                (logical_model_key, point.key, point.step),
+            )
             connection.commit()
 
     def states(self, logical_model_key: str) -> tuple[MetricExportState, ...]:
+        _require_logical_model_key(logical_model_key)
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM metric_points WHERE logical_model_key = ? ORDER BY metric_key, step",
@@ -215,29 +273,37 @@ def export_model_metric_points(
 ) -> None:
     """Reconcile and export points one at a time, preserving deterministic order."""
 
-    validate_metric_points(points)
-    ledger.ensure_batch(logical_model_key, points)
+    canonical_points = _canonical_points(points)
+    ledger.ensure_batch(logical_model_key, canonical_points, model_id=model_id)
     reader = getattr(port, "get_model_metric_points", None)
     if not callable(reader):
         raise TypeError("tracking port must expose get_model_metric_points for resumable export")
-    remote_points = tuple(reader(model_id))
-    for point in points:
+    remote_points = _canonical_points(tuple(reader(model_id)))
+    remote_by_identity = {(point.key, point.step): point for point in remote_points}
+    expected_identities = {(point.key, point.step) for point in canonical_points}
+    unexpected_remote = set(remote_by_identity) - expected_identities
+    if unexpected_remote:
+        rendered = ", ".join(f"{key}@{step}" for key, step in sorted(unexpected_remote))
+        raise ValueError(f"MLflow metric batch contains unexpected points: {rendered}")
+    for point in canonical_points:
         state = ledger.ensure(logical_model_key, point)
-        if state.emitted:
-            continue
-        matching = tuple(
-            item for item in remote_points if item.key == point.key and item.step == point.step
-        )
-        if matching:
-            if any(
-                item.value.hex() == point.value.hex() and item.timestamp_ms == point.timestamp_ms
-                for item in matching
-            ):
-                ledger.mark_emitted(logical_model_key, point)
-                continue
+        remote = remote_by_identity.get((point.key, point.step))
+        if remote is not None and (
+            remote.value.hex() != point.value.hex() or remote.timestamp_ms != point.timestamp_ms
+        ):
             raise ValueError(
                 f"MLflow metric conflict for {logical_model_key}:{point.key}@{point.step}"
             )
+        if state.emitted:
+            if remote is None:
+                raise ValueError(
+                    f"MLflow metric missing for emitted ledger point "
+                    f"{logical_model_key}:{point.key}@{point.step}"
+                )
+            continue
+        if remote is not None:
+            ledger.mark_emitted(logical_model_key, point)
+            continue
         port.log_model_metric_points(model_id, (point,))
         ledger.mark_emitted(logical_model_key, point)
 
