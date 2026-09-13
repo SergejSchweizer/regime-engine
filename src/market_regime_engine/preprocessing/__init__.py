@@ -15,6 +15,10 @@ from market_regime_engine.preprocessing.scaling import (
     StandardScalerArtifact,
     fit_standard_scaler,
 )
+from market_regime_engine.preprocessing.two_stage import (
+    PCATwoStageScalerArtifact,
+    fit_pca_hmm_scaler,
+)
 
 __all__ = [
     "PCA_SOURCE_UNIVERSE",
@@ -22,7 +26,9 @@ __all__ = [
     "PCAFitClock",
     "PCAFitResult",
     "PCAGeneratedFeatureSet",
+    "PCATwoStageScalerArtifact",
     "StandardScalerArtifact",
+    "fit_pca_hmm_scaler",
     "fit_pca_inner_train",
     "fit_pca_transformer",
     "fit_standard_scaler",
