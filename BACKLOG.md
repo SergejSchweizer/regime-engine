@@ -22,7 +22,7 @@ Status date: 2026-09-13
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
-  crash-boundary hardening is included through PRs #259–#330.
+  crash-boundary hardening is included through PRs #259–#339.
 - **Current CPU topology/performance implementation:** the runtime now sizes
   workers from Linux process affinity and the active cgroup quota, exposes
   physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
@@ -78,12 +78,12 @@ Status date: 2026-09-13
   ledger-repair tests pass. Test
   BLAS/OpenMP pools are capped at one native thread per worker to prevent
   xdist/native oversubscription. The
-  zero-legacy audit scans 569 active files and passes, and the scoped MLflow
+  zero-legacy audit scans 688 active files and passes, and the scoped MLflow
   cleanup tests pass (`5 passed`). NAS MLflow access is authorized and its
   `/health` endpoint returns `200 OK`; the evaluation experiment and
   `regime-xetra` registered model are currently absent. No production objects
   have been deleted. The full non-external suite passes under `pytest -n auto`
-  (`571 passed` for the non-integration/non-external selector). The corrected hermetic full-computation proof
+  (`586 passed` for the non-integration/non-external selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
   MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
   (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
@@ -93,8 +93,9 @@ Status date: 2026-09-13
   stale full run reached 450 passed and 8 fixture failures caused by the live
   lineage-version change before it was interrupted; those fixtures now pass
   in a focused rerun. The corrected full proof above is the required fresh
-  real-computation run. `mypy` now passes
-  all 112 source files; Ruff and the focused MLflow/export/audit checks pass.
+  real-computation run. `mypy` now passes all 125 source files; Ruff and the
+  focused MLflow/export/audit checks pass. The latest zero-legacy audit scans
+  688 files with no violations.
   The repository description is now set on GitHub to the scientific v4/MLflow
   description requested by the user.
 
