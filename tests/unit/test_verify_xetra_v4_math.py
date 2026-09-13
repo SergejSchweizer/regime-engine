@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from math import lgamma
@@ -20,6 +21,7 @@ def _module() -> Any:
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load independent math verifier")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -40,6 +42,37 @@ def test_independent_feature_score_and_soft_nmi_are_recomputable() -> None:
     assert information_ratio == pytest.approx(1.0)
     assert eta_squared == pytest.approx(0.7575757575757576)
     assert module.independent_soft_nmi(timestamps, probabilities, timestamps, probabilities) == 1.0
+
+
+def test_parallel_audit_verification_uses_canonical_results() -> None:
+    module = _module()
+    columns = {
+        "timestamp_m1": np.asarray([0, 1, 2, 3], dtype=object),
+        "feature_a": np.asarray([0.0, 1.0, 2.0, 3.0]),
+        "feature_b": np.asarray([3.0, 2.0, 1.0, 0.0]),
+        "feature_c": np.asarray([0.0, 0.5, 1.5, 3.0]),
+    }
+    features = ("feature_a", "feature_b", "feature_c")
+    distance = module.independent_distance(columns, features).tolist()
+    dossiers = [
+        {
+            "outer_fold_index": index,
+            "timestamp_column": "timestamp_m1",
+            "feature_order": list(features),
+            "distance": distance,
+        }
+        for index in range(3)
+    ]
+
+    report = module.verify_expectations(
+        columns,
+        {"fold_audits": dossiers, "audit_outer_fold_indices": [0, 1, 2]},
+        max_workers=2,
+    )
+
+    assert report["status"] == "verified"
+    assert report["audited_outer_fold_indices"] == [0, 1, 2]
+    assert report["distance_max_abs_error"] == 0.0
 
 
 def test_independent_gaussian_likelihood_uses_forward_scaling() -> None:
