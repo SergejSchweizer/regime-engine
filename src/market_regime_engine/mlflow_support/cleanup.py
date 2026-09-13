@@ -190,21 +190,19 @@ def _registry_legacy_survivors(
         )
     versions = tuple(search("name='regime-xetra'"))
     by_version = {str(version.version): version for version in versions}
-    legacy_versions = tuple(
+    retired_versions = tuple(
         sorted(
-            version_id
-            for version_id, version in by_version.items()
-            if not _version_is_v4(version)
+            version_id for version_id, version in by_version.items() if not _version_is_v4(version)
         )
     )
     try:
         registered = get_registered(REGISTERED_MODEL_NAME)
     except Exception as error:
         if _is_missing_error(error):
-            return legacy_versions, ()
+            return retired_versions, ()
         raise
     aliases = getattr(registered, "aliases", {}) or {}
-    legacy_aliases: list[dict[str, str]] = []
+    retired_aliases: list[dict[str, str]] = []
     for alias, target in sorted(dict(aliases).items()):
         target_version = str(target)
         version = by_version.get(target_version)
@@ -213,16 +211,16 @@ def _registry_legacy_survivors(
                 version = client.get_model_version(REGISTERED_MODEL_NAME, target_version)
             except Exception as error:
                 if _is_missing_error(error):
-                    legacy_aliases.append(
+                    retired_aliases.append(
                         {"alias": str(alias), "version": target_version, "reason": "missing target"}
                     )
                     continue
                 raise
         if alias not in ALLOWED_ALIASES or not _version_is_v4(version):
-            legacy_aliases.append(
+            retired_aliases.append(
                 {"alias": str(alias), "version": target_version, "reason": "legacy target"}
             )
-    return legacy_versions, tuple(legacy_aliases)
+    return retired_versions, tuple(retired_aliases)
 
 
 def execute_retired_registered_model_cleanup(
@@ -244,7 +242,7 @@ def execute_retired_registered_model_cleanup(
     aliases = inventory.get("aliases", [])
     if not isinstance(versions, list) or not isinstance(aliases, list):
         raise ValueError("legacy inventory versions/aliases must be lists")
-    inventory_legacy_versions, inventory_legacy_aliases = _registry_legacy_survivors(client)
+    inventory_retired_versions, inventory_retired_aliases = _registry_legacy_survivors(client)
     listed_versions = {
         str(item.get("version"))
         for item in versions
@@ -260,7 +258,7 @@ def execute_retired_registered_model_cleanup(
                 continue
             raise
         _require_retired_version(version, item["version"])
-    if not set(inventory_legacy_versions).issubset(listed_versions):
+    if not set(inventory_retired_versions).issubset(listed_versions):
         raise ValueError("legacy inventory does not enumerate every current legacy model version")
     listed_aliases = {
         (str(item.get("alias")), str(item.get("version")))
@@ -270,8 +268,7 @@ def execute_retired_registered_model_cleanup(
         and isinstance(item.get("version"), str)
     }
     if any(
-        (item["alias"], item["version"]) not in listed_aliases
-        for item in inventory_legacy_aliases
+        (item["alias"], item["version"]) not in listed_aliases for item in inventory_retired_aliases
     ):
         raise ValueError("legacy inventory does not enumerate every current legacy alias")
     plan: list[dict[str, str]] = []
@@ -387,18 +384,20 @@ def execute_retired_registered_model_cleanup(
                     "expected_version": expected_target,
                 }
             )
-    remaining_legacy_versions, remaining_legacy_aliases = _registry_legacy_survivors(client)
+    remaining_retired_versions, remaining_retired_aliases = _registry_legacy_survivors(client)
     proof: dict[str, object] = {
         "scope": "retired_registered_models",
         "tracking_uri": expected_tracking_uri,
         "model_name": REGISTERED_MODEL_NAME,
         "plan": list(ordered_plan),
-        "surviving_versions": sorted(set(survivors) | set(remaining_legacy_versions)),
-        "surviving_aliases": [*surviving_aliases, *remaining_legacy_aliases],
+        "surviving_versions": sorted(set(survivors) | set(remaining_retired_versions)),
+        "surviving_aliases": [*surviving_aliases, *remaining_retired_aliases],
         "status": (
             "verified"
-            if not survivors and not surviving_aliases and not remaining_legacy_versions
-            and not remaining_legacy_aliases
+            if not survivors
+            and not surviving_aliases
+            and not remaining_retired_versions
+            and not remaining_retired_aliases
             else "failed"
         ),
     }
