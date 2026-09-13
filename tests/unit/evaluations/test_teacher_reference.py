@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -81,14 +80,11 @@ def test_reference_contains_only_aligned_causal_valid_inner_test_rows() -> None:
 
 
 class DeterministicAdapter:
-    fit_state_counts: ClassVar[list[int]] = []
-
     def __init__(self) -> None:
         self._artifact = artifact()
 
     def fit(self, train_rows: object, state_count: int, seed: int) -> FitResult:
         values = np.asarray(train_rows, dtype=np.float64)
-        self.fit_state_counts.append(state_count)
         return FitResult(
             artifact=self._artifact,
             train_log_likelihood=causal_filter(values, self._artifact).log_likelihood,
@@ -138,8 +134,6 @@ def test_frozen_refit_uses_reference_k_and_continues_from_train_terminal_alpha()
         inner_plan_hash=HASH,
         prototype_features=FEATURES,
     )
-    DeterministicAdapter.fit_state_counts = []
-
     result = refit_frozen_teacher(
         train,
         test,
@@ -155,7 +149,8 @@ def test_frozen_refit_uses_reference_k_and_continues_from_train_terminal_alpha()
     assert len(result.test_timestamps) == 42
     assert len(result.train_filtered_probabilities) == 504
     assert len(result.test_filtered_probabilities) == 42
-    assert DeterministicAdapter.fit_state_counts == [2] * 8
+    assert result.multistart_result.state_count == reference.state_count
+    assert result.multistart_result.valid_start_count == 8
     assert result.test_log_likelihood_per_observation == (
         result.test_log_likelihood / len(result.test_timestamps)
     )
