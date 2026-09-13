@@ -25,6 +25,18 @@ class SyntheticGlobalV4:
     semantic_labels: dict[str, str]
     source_data_hash: str
 
+    @property
+    def canonical_snapshot_bytes(self) -> bytes:
+        """Return the exact newline-delimited CSV bytes used for fixture identity."""
+
+        return canonical_snapshot_bytes(self.rows)
+
+
+def canonical_snapshot_bytes(rows: pd.DataFrame) -> bytes:
+    """Serialize synthetic source rows with one stable, platform-independent format."""
+
+    return rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+
 
 def build_synthetic_global_v4() -> SyntheticGlobalV4:
     """Build 1,449 rows and 52 features covering the PR-231 edge cases.
@@ -86,7 +98,7 @@ def build_synthetic_global_v4() -> SyntheticGlobalV4:
         FeatureCatalogEntry(name, ordinal) for ordinal, name in enumerate(values, start=1)
     )
     catalog = FeatureCatalogSnapshot.from_entries(lineage, "timestamp_m1", entries)
-    csv_bytes = rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    csv_bytes = canonical_snapshot_bytes(rows)
     source_data_hash = sha256(csv_bytes).hexdigest()
     semantic_labels = {
         name: ("redundancy" if name.startswith("pair_") else "synthetic") for name in values
@@ -100,4 +112,5 @@ __all__ = [
     "SOURCE_BUILD_ID",
     "SyntheticGlobalV4",
     "build_synthetic_global_v4",
+    "canonical_snapshot_bytes",
 ]

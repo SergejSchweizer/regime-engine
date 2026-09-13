@@ -29,6 +29,8 @@ from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidenc
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.teacher_reference import refit_frozen_teacher
 from market_regime_engine.feature_discovery.contracts import (
+    FINAL_CANDIDATE_IDS,
+    V4_PROVISIONAL_STATE_COUNTS,
     AdaptiveEvaluationResult,
     ClusterSolution,
     FeatureRegimeScore,
@@ -44,11 +46,47 @@ from tests.fixtures.global_regime_v4.synthetic import (
     SOURCE_BUILD_ID,
     SyntheticGlobalV4,
     build_synthetic_global_v4,
+    canonical_snapshot_bytes,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 PR231_GOLDEN_SNAPSHOT_HASH = "d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65"
+
+_GOLDEN_TOP_LEVEL_KEYS = frozenset(
+    {
+        "source_row_count",
+        "feature_count",
+        "outer_fold_count",
+        "folds",
+        "validity",
+        "stability",
+        "hashes",
+    }
+)
+_GOLDEN_FOLD_KEYS = frozenset(
+    {
+        "fold_index",
+        "source_observations",
+        "m_star",
+        "cluster_memberships",
+        "cluster_candidates",
+        "cluster_solution_hash",
+        "prototypes",
+        "teacher",
+        "feature_scores",
+        "winners",
+        "l_star",
+        "prefix_candidate_id",
+        "prefix_hashes",
+        "candidate",
+        "final_grid",
+        "selection_hash",
+        "outer_result_hash",
+        "outer",
+    }
+)
+_GOLDEN_MODEL_FAMILIES = frozenset({"gaussian_hmm", "gmm_hmm", "student_t_hmm"})
 
 
 def _independent_soft_nmi(
@@ -422,6 +460,171 @@ def _golden_snapshot(
     }
 
 
+def _as_mapping(value: object, name: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise AssertionError(f"golden {name} must be an object")
+    return cast(Mapping[str, object], value)
+
+
+def _assert_complete_golden_snapshot(
+    snapshot: Mapping[str, object],
+    fixture: SyntheticGlobalV4,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, object],
+    evidence: GlobalV4Evidence,
+) -> None:
+    """Fail closed when a golden snapshot silently omits a proof primitive."""
+
+    assert frozenset(snapshot) == _GOLDEN_TOP_LEVEL_KEYS
+    assert snapshot["source_row_count"] == len(fixture.rows)
+    assert snapshot["feature_count"] == len(fixture.catalog.feature_names)
+    assert snapshot["outer_fold_count"] == len(result.outer_folds)
+
+    raw_folds = snapshot["folds"]
+    assert isinstance(raw_folds, list)
+    assert len(raw_folds) == len(result.outer_folds) == len(selections)
+    ordered = tuple(selections[index] for index in sorted(selections))
+    expected_train_counts = tuple(1260 + index * 63 for index in range(len(ordered)))
+    assert tuple(sorted(selections)) == expected_train_counts
+
+    for fold, selection, raw_fold in zip(result.outer_folds, ordered, raw_folds, strict=True):
+        golden_fold = _as_mapping(raw_fold, "fold")
+        assert frozenset(golden_fold) == _GOLDEN_FOLD_KEYS
+        train_count = 1260 + (fold.fold_index - 1) * 63
+        assert golden_fold["fold_index"] == fold.fold_index
+        assert golden_fold["source_observations"] == {"train": train_count, "test": 63}
+        assert golden_fold["m_star"] == selection.clusters.selected_count
+
+        memberships = [
+            {"cluster_id": cluster_id, "features": list(features)}
+            for cluster_id, features in selection.clusters.memberships
+        ]
+        assert golden_fold["cluster_memberships"] == memberships
+        cluster_candidates = [
+            {
+                "m": cluster_count,
+                "memberships": [
+                    {"cluster_id": cluster_id, "features": list(features)}
+                    for cluster_id, features in candidate_memberships
+                ],
+            }
+            for cluster_count, candidate_memberships in selection.clusters.candidate_memberships
+        ]
+        assert golden_fold["cluster_candidates"] == cluster_candidates
+        assert golden_fold["cluster_solution_hash"] == selection.clusters.solution_hash
+
+        prototype = _as_mapping(golden_fold["prototypes"], "prototypes")
+        assert frozenset(prototype) == {"features", "mean_distance_hash", "hash"}
+        assert prototype["features"] == list(selection.prototypes.prototypes)
+        assert prototype["mean_distance_hash"] == content_hash(selection.prototypes.mean_distances)
+        assert prototype["hash"] == content_hash(selection.prototypes)
+
+        teacher = _as_mapping(golden_fold["teacher"], "teacher")
+        assert frozenset(teacher) == {
+            "candidate_id",
+            "state_count",
+            "prototype_features",
+            "inner_plan_hash",
+            "reference_hash",
+            "candidate_aggregate_hashes",
+            "selection_hash",
+        }
+        assert teacher["candidate_id"] == selection.teacher_reference.candidate_id
+        assert teacher["state_count"] == selection.teacher_reference.state_count
+        assert teacher["prototype_features"] == list(selection.teacher_reference.prototype_features)
+        assert teacher["inner_plan_hash"] == selection.teacher_reference.inner_plan_hash
+        assert teacher["reference_hash"] == selection.teacher_reference.reference_hash
+        teacher_aggregates = teacher["candidate_aggregate_hashes"]
+        assert isinstance(teacher_aggregates, list)
+        teacher_aggregate_mappings = tuple(
+            _as_mapping(value, "teacher aggregate") for value in teacher_aggregates
+        )
+        assert tuple(item["candidate_id"] for item in teacher_aggregate_mappings) == tuple(
+            f"gaussian_hmm_k{state_count}_full" for state_count in V4_PROVISIONAL_STATE_COUNTS
+        )
+        assert tuple(item["hash"] for item in teacher_aggregate_mappings) == tuple(
+            content_hash(aggregate)
+            for aggregate in selection.teacher_evaluation.candidate_aggregates
+        )
+        assert teacher["selection_hash"] == content_hash(selection.teacher_evaluation.selection)
+
+        feature_scores = golden_fold["feature_scores"]
+        assert isinstance(feature_scores, list)
+        assert len(feature_scores) == len(selection.feature_scores)
+        for score_payload, score in zip(feature_scores, selection.feature_scores, strict=True):
+            score_mapping = _as_mapping(score_payload, "feature score")
+            assert frozenset(score_mapping) == {
+                "feature_name",
+                "state_information_ratio",
+                "eta_squared",
+                "hash",
+            }
+            assert score_mapping["feature_name"] == score.feature_name
+            assert score_mapping["state_information_ratio"] == score.state_information_ratio
+            assert score_mapping["eta_squared"] == score.eta_squared
+            assert score_mapping["hash"] == content_hash(score)
+
+        winners = _as_mapping(golden_fold["winners"], "winners")
+        assert frozenset(winners) == {"ranked_features", "hash"}
+        assert winners["ranked_features"] == list(selection.winner_selection.ranked_features)
+        assert winners["hash"] == content_hash(selection.winner_selection)
+        assert golden_fold["l_star"] == selection.prefix_search.selected_prefix_length
+        assert golden_fold["prefix_candidate_id"] == selection.prefix_search.selected_candidate_id
+        assert golden_fold["prefix_hashes"] == [
+            content_hash(prefix) for prefix in selection.prefix_search.evaluations
+        ]
+
+        candidate = _as_mapping(golden_fold["candidate"], "candidate")
+        assert frozenset(candidate) == {
+            "candidate_id",
+            "feature_order",
+            "state_count",
+            "model_family",
+            "hash",
+        }
+        assert candidate["candidate_id"] == selection.final_candidate.candidate_id
+        assert candidate["feature_order"] == list(selection.final_candidate.feature_order)
+        assert candidate["state_count"] == selection.final_candidate.state_count
+        assert candidate["model_family"] == selection.final_candidate.model_family
+        assert candidate["hash"] == content_hash(selection.final_candidate)
+        assert candidate["model_family"] in _GOLDEN_MODEL_FAMILIES
+        assert len(candidate["feature_order"]) == golden_fold["l_star"]
+
+        final_grid = _as_mapping(golden_fold["final_grid"], "final grid")
+        assert frozenset(final_grid) == {"candidate_ids", "aggregate_hashes", "selection_hash"}
+        candidate_ids = tuple(final_grid["candidate_ids"])
+        assert candidate_ids == FINAL_CANDIDATE_IDS
+        assert len(final_grid["aggregate_hashes"]) == len(FINAL_CANDIDATE_IDS)
+        assert final_grid["aggregate_hashes"] == [
+            content_hash(aggregate) for aggregate in selection.final_grid.grid.aggregates
+        ]
+        assert final_grid["selection_hash"] == content_hash(selection.final_grid.selection)
+        assert golden_fold["selection_hash"] == content_hash(selection)
+        assert golden_fold["outer_result_hash"] == fold.result_hash
+        assert golden_fold["outer"] == {
+            "soft_nmi": fold.outer_teacher_final_soft_nmi,
+            "shared_timestamp_count": fold.outer_shared_timestamp_count,
+            "valid": fold.valid,
+            "failure_reason": fold.failure_reason,
+        }
+
+    assert snapshot["validity"] == {
+        "valid_fold_count": result.valid_fold_count,
+        "valid_fold_rate": result.valid_fold_rate,
+        "latest_complete_fold_valid": result.latest_complete_fold_valid,
+        "production_eligible": result.production_eligible,
+        "failure_reason": result.failure_reason,
+    }
+    assert snapshot["stability"] == evidence.evidence["stability"]
+    assert snapshot["hashes"] == {
+        "policy_hash": result.policy_hash,
+        "result_hash": result.result_hash,
+        "evidence_hash": evidence.evidence_hash,
+        "catalog_hash": fixture.catalog.catalog_hash,
+        "source_data_hash": fixture.source_data_hash,
+    }
+
+
 def _evaluate_with_selection_capture(
     rows: pd.DataFrame,
     catalog: object,
@@ -495,14 +698,61 @@ def _assert_selected_likelihood_parity(
     likelihood_count = 0
     for dossier in dossiers:
         likelihoods = cast(list[dict[str, object]], dossier["likelihoods"])
-        assert likelihoods
+        assert len(likelihoods) >= 2
+        assert len(likelihoods) % 2 == 0
+        candidate_id = str(dossier["final_candidate_id"])
+        expected_family = (
+            "gmm_hmm" if candidate_id.startswith("gmm_hmm_") else candidate_id.rsplit("_k", 1)[0]
+        )
+        assert expected_family in _GOLDEN_MODEL_FAMILIES
         assert {item["scope"] for item in likelihoods} == {"TRAIN", "OOS"}
+        assert all(item["model_family"] == expected_family for item in likelihoods)
+        fold_scope_pairs = {(item["fold_index"], item["scope"]) for item in likelihoods}
+        fold_indices = {item["fold_index"] for item in likelihoods}
+        assert len(likelihoods) == 2 * len(fold_indices)
+        assert fold_scope_pairs == {
+            (fold_index, scope) for fold_index in fold_indices for scope in ("TRAIN", "OOS")
+        }
         for item in likelihoods:
+            assert isinstance(item["fold_index"], int) and item["fold_index"] >= 1
             actual = independent.independent_hmm_log_likelihood(item)
             assert actual == pytest.approx(float(item["log_likelihood"]), abs=1.0e-10)
             likelihood_count += 1
     assert likelihood_count >= 2 * len(dossiers)
     return likelihood_count
+
+
+def _assert_canonical_process_rerun(
+    result: AdaptiveEvaluationResult,
+    evidence: GlobalV4Evidence,
+    result_path: Path,
+    evidence_path: Path,
+) -> tuple[bytes, bytes]:
+    """Require a spawned rerun to emit the exact canonical bytes, not just equal hashes."""
+
+    assert result_path.is_file()
+    assert evidence_path.is_file()
+    result_bytes = result_path.read_bytes()
+    evidence_bytes = evidence_path.read_bytes()
+    expected_result_bytes = canonical_json(result)
+    expected_evidence_bytes = evidence.canonical_json()
+    assert result_bytes == expected_result_bytes
+    assert evidence_bytes == expected_evidence_bytes
+    assert hashlib.sha256(result_bytes).hexdigest() == content_hash(result)
+    assert hashlib.sha256(evidence_bytes).hexdigest() == evidence.evidence_hash
+    return result_bytes, evidence_bytes
+
+
+def _randomized_semantic_labels(fixture: SyntheticGlobalV4) -> dict[str, str]:
+    """Return deterministic labels with exactly the fixture's feature identity set."""
+
+    features = tuple(fixture.semantic_labels)
+    labels = {feature: f"randomized_{index}" for index, feature in enumerate(reversed(features))}
+    if set(labels) != set(features) or labels == fixture.semantic_labels:
+        raise AssertionError(
+            "semantic-label mutation is not a true identity-preserving randomization"
+        )
+    return labels
 
 
 def _independent_process_worker(
@@ -513,7 +763,7 @@ def _independent_process_worker(
 ) -> None:
     fixture = build_synthetic_global_v4()
     snapshot_bytes = Path(snapshot_path).read_bytes()
-    generated_snapshot = fixture.rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    generated_snapshot = fixture.canonical_snapshot_bytes
     if snapshot_bytes != generated_snapshot:
         raise AssertionError("independent process did not use the pinned snapshot bytes")
     if hashlib.sha256(snapshot_bytes).hexdigest() != fixture.source_data_hash:
@@ -521,6 +771,10 @@ def _independent_process_worker(
     labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))
     if not isinstance(labels, dict):
         raise TypeError("randomized semantic labels must be a JSON object")
+    if set(labels) != set(fixture.semantic_labels) or any(
+        not isinstance(value, str) for value in labels.values()
+    ):
+        raise AssertionError("randomized semantic labels must preserve the feature identity set")
     fixture.semantic_labels.clear()
     fixture.semantic_labels.update(labels)
     result, captured = _evaluate_with_selection_capture(
@@ -723,16 +977,13 @@ def test_global_v4_full_compute_and_independent_math_proof(
 
     golden_snapshot = _golden_snapshot(fixture, result, captured, evidence)
     golden_hash = content_hash(golden_snapshot)
+    _assert_complete_golden_snapshot(golden_snapshot, fixture, result, captured, evidence)
     assert golden_hash == PR231_GOLDEN_SNAPSHOT_HASH
 
     snapshot_path = tmp_path / "pr231-pinned-snapshot.csv"
-    snapshot_bytes = fixture.rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    snapshot_bytes = fixture.canonical_snapshot_bytes
     snapshot_path.write_bytes(snapshot_bytes)
-    randomized_labels = {
-        feature: f"randomized_{index}"
-        for index, feature in enumerate(reversed(tuple(fixture.semantic_labels)))
-    }
-    assert randomized_labels != fixture.semantic_labels
+    randomized_labels = _randomized_semantic_labels(fixture)
     labels_path = tmp_path / "pr231-randomized-labels.json"
     labels_path.write_text(json.dumps(randomized_labels, sort_keys=True) + "\n", encoding="utf-8")
     independent_result_path = tmp_path / "pr231-independent-result.json"
@@ -754,10 +1005,12 @@ def test_global_v4_full_compute_and_independent_math_proof(
         independent.join()
         pytest.fail("independent PR-231 process rerun exceeded one hour")
     assert independent.exitcode == 0
-    independent_result_bytes = independent_result_path.read_bytes()
-    independent_evidence_bytes = independent_evidence_path.read_bytes()
-    assert independent_result_bytes == canonical_json(result)
-    assert independent_evidence_bytes == evidence.canonical_json()
+    independent_result_bytes, independent_evidence_bytes = _assert_canonical_process_rerun(
+        result,
+        evidence,
+        independent_result_path,
+        independent_evidence_path,
+    )
 
     last_fold = result.outer_folds[-1]
     mutated_feature = last_fold.final_configuration.feature_order[0]
@@ -770,18 +1023,20 @@ def test_global_v4_full_compute_and_independent_math_proof(
     )
     mutated_rows = fixture.rows.copy()
     mutated_rows.loc[mutation_index, mutated_feature] += 10_000.0
-    mutated_snapshot_bytes = mutated_rows.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    mutated_snapshot_bytes = canonical_snapshot_bytes(mutated_rows)
     mutated_fixture = SyntheticGlobalV4(
         mutated_rows,
         fixture.catalog,
         dict(fixture.semantic_labels),
         hashlib.sha256(mutated_snapshot_bytes).hexdigest(),
     )
+    assert hashlib.sha256(mutated_snapshot_bytes).hexdigest() != fixture.source_data_hash
     mutated_result, mutated_captured = _evaluate_with_selection_capture(
         mutated_fixture.rows, mutated_fixture.catalog, profile
     )
     mutated_evidence = _evidence(mutated_fixture, mutated_result, mutated_captured)
     assert mutated_result.result_hash != result.result_hash
+    assert mutated_evidence.evidence_hash != evidence.evidence_hash
     assert mutated_result.outer_folds[-1].result_hash != last_fold.result_hash
     for index, fold in enumerate(result.outer_folds[:-1]):
         assert canonical_json(mutated_result.outer_folds[index]) == canonical_json(fold)
