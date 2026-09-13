@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import random
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -283,6 +284,57 @@ def test_multiple_interruption_points_match_uninterrupted_root(tmp_path: Path) -
             return node.identity.key.encode("utf-8")
 
         with pytest.raises(RuntimeError, match="forced interruption"):
+            ResumableEvaluationExecutor(store).execute(run, graph, interrupted)
+        resumed = ResumableEvaluationExecutor(store).execute(
+            run,
+            graph,
+            lambda node, parents: node.identity.key.encode("utf-8"),
+        )
+        assert resumed.root_evidence_hash == baseline.root_evidence_hash
+        assert resumed.reused_unit_count == interruption - 1
+        assert resumed.computed_unit_count == 120 - (interruption - 1)
+
+
+def test_seeded_random_interruption_matrix_matches_uninterrupted_root(tmp_path: Path) -> None:
+    """Exercise reproducible interruption points across the full 120-unit graph."""
+
+    run = identity()
+    nodes = tuple(
+        WorkUnitNode(
+            make_work_unit(
+                run,
+                unit_type="inner_fold",
+                coordinates=(("index", f"{index:03d}"),),
+            )
+        )
+        for index in range(120)
+    )
+    graph = EvaluationWorkGraph.from_nodes(run, nodes)
+    baseline = ResumableEvaluationExecutor(SQLiteEvaluationRunStore(tmp_path / "baseline")).execute(
+        run,
+        graph,
+        lambda node, parents: node.identity.key.encode("utf-8"),
+    )
+    interruption_points = random.Random(243).sample(range(1, 121), 12)
+    assert len(interruption_points) == 12
+
+    for interruption in interruption_points:
+        store = SQLiteEvaluationRunStore(tmp_path / f"random-{interruption}")
+        calls = 0
+
+        def interrupted(
+            node: WorkUnitNode,
+            parents: tuple[bytes, ...],
+            interruption_point: int = interruption,
+        ) -> bytes:
+            nonlocal calls
+            del parents
+            calls += 1
+            if calls == interruption_point:
+                raise RuntimeError("seeded forced interruption")
+            return node.identity.key.encode("utf-8")
+
+        with pytest.raises(RuntimeError, match="seeded forced interruption"):
             ResumableEvaluationExecutor(store).execute(run, graph, interrupted)
         resumed = ResumableEvaluationExecutor(store).execute(
             run,

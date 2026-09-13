@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from market_regime_engine.contracts import SourceLineage
+from market_regime_engine.evaluation_runs import snapshot as snapshot_module
 from market_regime_engine.evaluation_runs.contracts import DatasetSnapshotIdentity
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
 from market_regime_engine.features.ports import (
@@ -93,3 +94,20 @@ def test_snapshot_persists_catalog_and_identity_for_source_free_resume(tmp_path:
 
     assert store.load_identity(identity.key) == identity
     assert store.load_catalog(identity) == catalog
+
+
+def test_snapshot_filesystem_boundary_never_exposes_partial_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+
+    def fail_directory_sync(_path: Path) -> None:
+        raise RuntimeError("forced filesystem boundary")
+
+    monkeypatch.setattr(snapshot_module, "_fsync_directory", fail_directory_sync)
+    with pytest.raises(RuntimeError, match="forced filesystem boundary"):
+        store.finalize(identity, snapshot)
+    with pytest.raises(ValueError, match="incomplete"):
+        store.load(identity)
