@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import market_regime_engine.evaluations.plots as plots_module
 from market_regime_engine.evaluations.plots import render_global_v4_diagnostics
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
@@ -249,6 +251,43 @@ def test_global_v4_diagnostics_are_png_only_and_source_hash_deterministic(tmp_pa
         for entry in first
         if entry.plot_type != "final_12_model_same_vector_comparison"
     )
+
+
+def test_global_v4_diagnostics_splits_fold_plot_families_into_process_tasks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    result = _result()
+    selections = {fold.fold_index: _selection(fold.fold_index) for fold in result.outer_folds}
+    worker_counts: list[int] = []
+
+    class InlineProcessPool:
+        def __init__(self, max_workers: int, **_kwargs: object) -> None:
+            worker_counts.append(max_workers)
+
+        def __enter__(self) -> InlineProcessPool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function, *args: object, **kwargs: object) -> Future[object]:
+            future: Future[object] = Future()
+            future.set_result(function(*args, **kwargs))
+            return future
+
+    monkeypatch.setattr(plots_module, "cpu_process_pool", InlineProcessPool)
+    render_global_v4_diagnostics(
+        result,
+        selections,
+        tmp_path,
+        max_workers=86,
+    )
+
+    # Eight whole-evaluation plots plus one state-information and one final
+    # grid task per outer fold.  The explicit 86-worker request is bounded by
+    # this actual task count rather than by the number of plot families.
+    assert worker_counts == [min(14, plots_module.cpu_worker_count(86))]
 
 
 def test_global_v4_diagnostics_render_complete_all_invalid_result(tmp_path) -> None:

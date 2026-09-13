@@ -850,6 +850,7 @@ def _render_global_v4_plot_task(
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
     root: Path,
+    fold_index: int | None = None,
 ) -> tuple[GlobalV4PlotManifestEntry, ...]:
     """Render one independent plot family in a separate interpreter."""
 
@@ -861,11 +862,21 @@ def _render_global_v4_plot_task(
     if plot_type == "cluster_size":
         return (_cluster_size_plot(root, items),)
     if plot_type == "state_information":
-        return _state_information_plots(root, items)
+        if fold_index is None:
+            return _state_information_plots(root, items)
+        selected = tuple(item for item in items if item[0].fold_index == fold_index)
+        if len(selected) != 1:
+            raise ValueError(f"state-information task references unknown fold {fold_index}")
+        return _state_information_plots(root, selected)
     if plot_type == "prefix":
         return (_prefix_plot(root, items),)
     if plot_type == "final_grid":
-        return _final_grid_plots(root, items)
+        if fold_index is None:
+            return _final_grid_plots(root, items)
+        selected = tuple(item for item in items if item[0].fold_index == fold_index)
+        if len(selected) != 1:
+            raise ValueError(f"final-grid task references unknown fold {fold_index}")
+        return _final_grid_plots(root, selected)
     if plot_type == "outer_nmi":
         return (_outer_nmi_plot(root, result),)
     if plot_type == "selection_history":
@@ -897,34 +908,49 @@ def render_global_v4_diagnostics(
     if not isinstance(output_dir, Path):
         raise TypeError("global v4 plot output_dir must be a pathlib.Path")
     items = _selections_by_fold(selections, result)
-    if not items:
-        root = output_dir / "plots"
-        task_types: tuple[str, ...] = ("outer_nmi", "no_selection")
-    else:
-        task_types = (
-            "quality",
-            "silhouette",
-            "cluster_size",
-            "state_information",
-            "prefix",
-            "final_grid",
-            "outer_nmi",
-            "selection_history",
-            "feature_frequency",
-            "cluster_stability",
+    if items:
+        # Keep single-report plots as one task, but split the fold-indexed
+        # families so a long run with many outer folds can occupy more
+        # independent interpreters and keep every independent plot task
+        # eligible for the full CPU budget.  The order below is the historical
+        # manifest order and is therefore part of the byte-stable contract.
+        task_specs: list[tuple[str, int | None]] = [
+            ("quality", None),
+            ("silhouette", None),
+            ("cluster_size", None),
+        ]
+        task_specs.extend(("state_information", fold.fold_index) for fold, _selection in items)
+        task_specs.append(("prefix", None))
+        task_specs.extend(("final_grid", fold.fold_index) for fold, _selection in items)
+        task_specs.extend(
+            (
+                ("outer_nmi", None),
+                ("selection_history", None),
+                ("feature_frequency", None),
+                ("cluster_stability", None),
+            )
         )
     root = output_dir / "plots"
-    worker_limit = cpu_worker_count(max_workers, task_count=len(task_types))
+    if not items:
+        task_specs = [("outer_nmi", None), ("no_selection", None)]
+    worker_limit = cpu_worker_count(max_workers, task_count=len(task_specs))
     if worker_limit == 1:
         task_results = [
-            _render_global_v4_plot_task(plot_type, result, selections, root)
-            for plot_type in task_types
+            _render_global_v4_plot_task(plot_type, result, selections, root, fold_index)
+            for plot_type, fold_index in task_specs
         ]
     else:
         with cpu_process_pool(worker_limit) as executor:
             futures = [
-                executor.submit(_render_global_v4_plot_task, plot_type, result, selections, root)
-                for plot_type in task_types
+                executor.submit(
+                    _render_global_v4_plot_task,
+                    plot_type,
+                    result,
+                    selections,
+                    root,
+                    fold_index,
+                )
+                for plot_type, fold_index in task_specs
             ]
             # Consume in canonical task order so the manifest remains byte-stable.
             task_results = [future.result() for future in futures]
