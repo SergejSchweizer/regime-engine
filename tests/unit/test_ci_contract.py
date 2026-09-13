@@ -30,6 +30,11 @@ def test_long_hermetic_proof_is_local_only() -> None:
     assert "pr231-computation-proof.json" in runner
 
 
+def test_external_feature_postgres_smoke_script_is_executable() -> None:
+    script = ROOT / "scripts" / "verify_feature_postgres.sh"
+    assert script.stat().st_mode & 0o111
+
+
 def test_local_pre_commit_hook_runs_only_hermetic_integration_tests() -> None:
     hook = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     assert "id: hermetic-integration-tests" in hook
