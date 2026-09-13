@@ -196,3 +196,16 @@ def test_pickleable_custom_adapter_factory_uses_process_workers(
 
     assert worker_counts == [2]
     assert result.winner.seed == 131
+
+
+def test_checkpointed_technical_start_failure_remains_retryable() -> None:
+    error = RuntimeError("temporary backend failure")
+
+    with pytest.raises(RuntimeError, match="temporary backend failure"):
+        multistart_module._evaluate_start(
+            [[0.0]],
+            state_count=2,
+            adapter_factory=factory({MULTISTART_SEEDS[0]: error}),
+            seed=MULTISTART_SEEDS[0],
+            retryable_technical_failure=True,
+        )
