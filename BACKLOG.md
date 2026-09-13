@@ -5,12 +5,12 @@ Status date: 2026-09-13
 ## Current execution state
 
 - **Active worktree:** `main`; no implementation worktree branches remain.
-- **Reference base:** `2c7a490` (`origin/main`); local `main` is aligned with
-  the remote reference branch before this backlog update.
-- **Latest implementation commit:** `2c7a490` completes the parallel audit
-  dossier handoff on top of the merged resumability, MLflow Model Metrics,
-  PCA and process-parallel work. The Spearman pair and hierarchy-cut kernels
-  now use GIL-independent process workers with deterministic result assembly.
+- **Reference base:** `origin/main` as checked on 2026-09-13; local `main` is
+  aligned with the remote reference branch before this backlog update.
+- **Latest implementation:** the parallel audit dossier handoff is complete
+  on top of the merged resumability, MLflow Model Metrics, PCA and
+  process-parallel work. The Spearman pair and hierarchy-cut kernels now use
+  GIL-independent process workers with deterministic result assembly.
   The remaining full current-source audit and final production-eligibility
   evidence are tracked under PR-231, PR-232, PR-250 and PR-253.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
