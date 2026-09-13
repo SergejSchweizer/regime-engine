@@ -22,6 +22,7 @@ from market_regime_engine.mlflow_support.metric_catalog import (
     require_metric_definition,
     validate_metric_points,
 )
+from market_regime_engine.mlflow_support.pca_metrics import pca_metric_points
 from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.mlflow_support.state_diagnostics_metrics import (
     build_state_diagnostic_evidence,
@@ -567,6 +568,8 @@ def model_metric_points(
         )
         if fold.valid and fold.model_artifact is not None and fold.alignment is not None:
             state_step_offset += max(len(fold.oos_timestamps), evaluation.state_count) + 1
+    if any(fold.pca_scaler_artifact is not None for fold in evaluation.folds):
+        points.extend(pca_metric_points(evaluation, fold_timestamps=fold_timestamps))
     result = tuple(points)
     validate_metric_points(result)
     return result
