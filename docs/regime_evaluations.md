@@ -44,12 +44,11 @@ From the repository checkout:
 ./scripts/run_xetra_v4_cron.sh
 ```
 
-The wrapper loads `.env`, reads the ignored `config.yaml` feature-source
-metadata, verifies external MLflow health, enforces a non-blocking lock, and
-runs the complete v4 evaluation against one read-only source snapshot.
+The wrapper reads the ignored `config.yaml` deployment metadata, verifies
+external MLflow health, enforces a non-blocking lock, and runs the complete v4
+evaluation against one read-only source snapshot. No `.env` file is loaded.
 
-`REGIME_EVALUATION_CHECKPOINT_ROOT` (or its alias
-`REGIME_ENGINE_STATE_ROOT`) must point to an absolute persistent volume outside
+`evaluation.checkpoint_root` must point to an absolute persistent volume outside
 the checkout. The root stores the immutable input snapshot and post-run audit
 artifacts, but no durable computation-position ledger. The full evaluation is
 intentionally non-resumable: after an interruption, rerun the cron command and

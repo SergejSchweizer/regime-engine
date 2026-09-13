@@ -4,7 +4,7 @@ The public lifecycle profile is exactly `xetra`; the registered MLflow model is 
 
 ## Scheduled model cycle
 
-The recommended cadence is exactly every 7 days. `scripts/model_cycle.sh` is the cron-safe entry point and must run from the repository checkout with the project `.venv`. It invokes the installed `regime-engine` CLI directly and uses the external MLflow service configured by `MLFLOW_TRACKING_URI` (default `http://10.10.1.3:5000`). It does not build containers, use a Docker context, or contact a second serving process.
+The recommended cadence is exactly every 7 days. `scripts/model_cycle.sh` is the cron-safe entry point and must run from the repository checkout with the project `.venv`. It invokes the installed `regime-engine` CLI directly and reads the external MLflow service from the ignored `config.yaml` (the production endpoint is `http://10.10.1.3:5000`). It does not build containers, use a Docker context, or contact a second serving process.
 
 A non-blocking `flock` keyed by profile prevents overlapping scheduled cycles. If another `xetra` cycle already owns the lock, the later invocation exits successfully as a deterministic no-op.
 

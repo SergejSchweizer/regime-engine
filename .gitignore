@@ -24,7 +24,6 @@ dist/
 # Local environment files and secrets
 .env
 .env.*
-!.env.example
 config.yaml
 secrets/
 *.pem

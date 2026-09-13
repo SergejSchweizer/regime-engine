@@ -1,10 +1,41 @@
 # Copy to config.yaml on the deployment host. This file is intentionally ignored.
-# Store only PostgreSQL connection metadata and a local password-file path; never
-# put a password, DSN, certificate private key, or other credential value here.
+# Store deployment metadata and a local password-file path; never put a
+# password, DSN, certificate private key, or other credential value here.
+mlflow:
+  tracking_uri: http://10.10.1.3:5000
+  registry_uri: http://10.10.1.3:5000
 feature_postgres:
   host: 10.10.1.3
   port: 54321
   database: <required-regime-loader-serving-database>
   user: regime-engine
-  sslmode: require
+  sslmode: disable
   password_file: /absolute/path/to/regime_feature_password
+evaluation:
+  checkpoint_root: /absolute/path/to/evaluation-checkpoints
+runtime:
+  cpu_workers: 86
+  native_threads: 1
+environment:
+  MLFLOW_SERVER_ALLOWED_HOSTS: 10.10.1.3,localhost,127.0.0.1
+  MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: http://10.10.1.3:5000,http://localhost:5000,http://127.0.0.1:5000
+  MLFLOW_WORKERS: 4
+  MLFLOW_THREADS_PER_WORKER: 4
+  MLFLOW_HTTP_TIMEOUT_SECONDS: 120
+  MLFLOW_GRACEFUL_TIMEOUT_SECONDS: 30
+  REGIME_MODEL_ALIAS_CACHE_TTL_SECONDS: 30
+  REGIME_PG_POOL_MIN_SIZE: 1
+  REGIME_PG_POOL_MAX_SIZE: 4
+  REGIME_PG_ACQUIRE_TIMEOUT_SECONDS: 5
+  REGIME_PG_STATEMENT_TIMEOUT_SECONDS: 30
+  REGIME_FEATURE_PG_CONNECTION_BUDGET: 16
+  REGIME_REPLAY_MAX_ROWS: 10000
+  REGIME_REPLAY_MAX_INTERNAL_ROWS: 15000
+  REGIME_REPLAY_MAX_RANGE_DAYS: 14610
+  REGIME_REPLAY_TIMEOUT_SECONDS: 60
+  REGIME_REPLAY_MAX_RESPONSE_BYTES: 26214400
+  REGIME_REPLAY_MAX_CONCURRENCY_PER_WORKER: 1
+  REGIME_SOURCE_STALE_WARN_DAYS: 4
+  REGIME_SOURCE_STALE_FAIL_DAYS: 7
+  REGIME_MODEL_STALE_WARN_DAYS: 14
+  REGIME_MODEL_STALE_FAIL_DAYS: 35

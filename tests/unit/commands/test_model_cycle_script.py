@@ -14,8 +14,9 @@ def test_model_cycle_script_is_bash_valid_and_uses_external_mlflow() -> None:
     assert 'PROFILE="${REGIME_ENGINE_PROFILE:-xetra}"' in text
     assert "flock -n 9" in text
     assert ".venv/bin/regime-engine" in text
-    assert "MLFLOW_TRACKING_URI=" in text
-    assert "http://10.10.1.3:5000" in text
+    assert "scripts/export_config_env.py" in text
+    assert 'source "$ROOT/.env"' not in text
+    assert "http://10.10.1.3:5000" not in text
 
 
 def test_model_cycle_script_runs_exact_changed_source_sequence_without_promotion() -> None:
