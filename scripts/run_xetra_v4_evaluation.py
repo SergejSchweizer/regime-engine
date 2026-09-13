@@ -288,6 +288,7 @@ def _run(performance: PerformanceRecorder) -> None:
         result,
         selections,
         prefix_evaluations=prefix_evaluations,
+        max_workers=cpu_worker_count(None),
     )
     expectations_path = audit_root / f"{run_identity.key}.json"
     expectations_path.write_text(

@@ -21,11 +21,13 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold
 from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
     OuterFoldResult,
 )
 from market_regime_engine.inference.filtering import causal_filter
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 
 def _complete_rows(source_rows: pd.DataFrame, feature_order: tuple[str, ...]) -> np.ndarray:
@@ -280,14 +282,15 @@ def build_math_expectations(
     selections: Mapping[int, V4ConfigurationSelection],
     prefix_payloads: Mapping[int, Mapping[str, bytes]] | None = None,
     prefix_evaluations: Mapping[int, Mapping[tuple[int, str], WalkForwardEvaluation]] | None = None,
+    max_workers: int | None = None,
 ) -> dict[str, object]:
     """Serialize deterministic first/middle/last outer-fold audit dossiers."""
 
     if not result.outer_folds:
         raise ValueError("math audit requires at least one outer fold")
     audited = _audited_outer_folds(result, selections)
-    fold_audits = tuple(
-        _fold_math_expectations(
+    tasks = tuple(
+        (
             source_rows,
             outer_fold,
             selections[outer_fold.fold_index],
@@ -298,6 +301,14 @@ def build_math_expectations(
         )
         for outer_fold in audited
     )
+    worker_count = cpu_worker_count(max_workers, task_count=len(tasks))
+    if worker_count == 1:
+        fold_audits = tuple(_fold_math_expectations(*task) for task in tasks)
+    else:
+        with cpu_process_pool(worker_count) as executor:
+            futures = tuple(executor.submit(_fold_math_expectations, *task) for task in tasks)
+            # Preserve first/middle/last audit order independently of completion order.
+            fold_audits = tuple(future.result() for future in futures)
     first = fold_audits[0]
     return {
         # Keep the first dossier at the top level for human-readable summaries.
