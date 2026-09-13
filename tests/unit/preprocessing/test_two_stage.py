@@ -78,3 +78,30 @@ def test_two_stage_scaler_round_trip_and_invalid_inputs_fail_closed() -> None:
     assert np.array_equal(restored.transform(rows[:10]), artifact.transform(rows[:10]))
     with pytest.raises(ValueError, match="raw feature order"):
         artifact.transform(np.ones((2, 2)))
+
+
+def test_two_stage_can_select_raw_and_generated_columns_in_candidate_order() -> None:
+    timestamps, rows = _source()
+    probe = fit_pca_hmm_scaler(
+        timestamps,
+        rows,
+        raw_feature_order=("a", "b", "c"),
+        inner_fold_id="inner_fold_001",
+        fit_start=START,
+        fit_end=START + timedelta(days=80),
+    )
+    component = probe.pca_fit.artifact.generated_feature_names[0]
+    selected = fit_pca_hmm_scaler(
+        timestamps,
+        rows,
+        raw_feature_order=("a", "b", "c"),
+        inner_fold_id="inner_fold_001",
+        fit_start=START,
+        fit_end=START + timedelta(days=80),
+        model_feature_order=("b", component),
+    )
+
+    assert selected.model_feature_order == ("b", component)
+    assert selected.hmm_scaler.feature_order == ("b", component)
+    assert selected.transform(rows[:5]).shape == (5, 2)
+    assert PCATwoStageScalerArtifact.from_canonical_json(selected.to_canonical_json()) == selected

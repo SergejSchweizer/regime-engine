@@ -31,6 +31,8 @@ def test_v4_uses_a_dedicated_explicit_discovery_contract() -> None:
     profile = load_profile(PROFILE)
     assert profile.profile_id == "xetra"
     assert profile.profile_config_version == 4
+    assert profile.pca.enabled is False
+    assert profile.pca.variance_threshold == 0.90
     assert profile.feature_discovery is not None
     assert profile.feature_discovery.final_candidate_ids == FINAL_CANDIDATE_IDS
     assert profile.feature_discovery.maximum_prefix_length == 8
@@ -89,6 +91,16 @@ def test_v4_one_field_mutation_and_missing_discovery_fail_closed() -> None:
     raw = _raw()
     del raw["feature_discovery"]
     with pytest.raises(ValueError, match="feature_discovery"):
+        load_profile_mapping(raw)
+
+    raw = _raw()
+    raw["pca"] = {"enabled": True, "variance_threshold": 0.0}
+    with pytest.raises(ValueError, match="variance_threshold"):
+        load_profile_mapping(raw)
+
+    raw = _raw()
+    del raw["pca"]
+    with pytest.raises(ValueError, match="pca"):
         load_profile_mapping(raw)
 
 

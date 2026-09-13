@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from math import isfinite
 from statistics import fmean, pstdev
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -54,6 +54,8 @@ class _CandidateProcessTask:
     plan: WalkForwardPlan
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
+    pca_raw_feature_order: tuple[str, ...] | None
+    pca_variance_threshold: float
 
 
 def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEvaluation:
@@ -66,6 +68,8 @@ def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEv
         candidate=task.candidate,
         adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
         max_workers=1,
+        pca_raw_feature_order=task.pca_raw_feature_order,
+        pca_variance_threshold=task.pca_variance_threshold,
     )
 
 
@@ -235,6 +239,8 @@ def _default_runner(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> WalkForwardEvaluation:
     return run_walk_forward_candidate(
         source_rows,
@@ -244,6 +250,8 @@ def _default_runner(
         adapter_factory=adapter_factory,
         max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
+        pca_raw_feature_order=pca_raw_feature_order,
+        pca_variance_threshold=pca_variance_threshold,
     )
 
 
@@ -257,6 +265,8 @@ def evaluate_candidate_grid(
     runner: CandidateRunner = _default_runner,
     max_workers: int | None = None,
     seed_checkpoint_factory: SeedCheckpointFactory | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> CandidateGridEvaluation:
     """Evaluate K2/K3/K4/K5 concurrently against one frozen source/fold/feature contract."""
 
@@ -313,14 +323,24 @@ def evaluate_candidate_grid(
                 )
 
             def compute() -> WalkForwardEvaluation:
+                kwargs: dict[str, Any] = {
+                    "max_workers": max_workers,
+                    "seed_checkpoint_factory": scoped_seed_checkpoint,
+                }
+                if pca_raw_feature_order is not None:
+                    kwargs.update(
+                        {
+                            "pca_raw_feature_order": pca_raw_feature_order,
+                            "pca_variance_threshold": pca_variance_threshold,
+                        }
+                    )
                 return _default_runner(
                     source_rows,
                     plan,
                     profile,
                     candidate,
                     candidate_adapter,
-                    max_workers=max_workers,
-                    seed_checkpoint_factory=scoped_seed_checkpoint,
+                    **kwargs,
                 )
 
             return stage_checkpoint.run(
@@ -332,7 +352,22 @@ def evaluate_candidate_grid(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        return runner(source_rows, plan, profile, candidate, candidate_adapter)
+        if pca_raw_feature_order is not None and runner is not _default_runner:
+            raise ValueError(
+                "PCA candidate-grid evaluation requires the canonical candidate runner"
+            )
+        if pca_raw_feature_order is None:
+            return runner(source_rows, plan, profile, candidate, candidate_adapter)
+        return _default_runner(
+            source_rows,
+            plan,
+            profile,
+            candidate,
+            candidate_adapter,
+            max_workers=max_workers,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_variance_threshold,
+        )
 
     use_processes = (
         runner is _default_runner
@@ -342,7 +377,14 @@ def evaluate_candidate_grid(
     )
     if use_processes:
         tasks = tuple(
-            _CandidateProcessTask(source_rows, plan, profile, candidate)
+            _CandidateProcessTask(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                pca_raw_feature_order,
+                pca_variance_threshold,
+            )
             for candidate in scheduled_candidates
         )
         with cpu_process_pool(worker_limit) as executor:

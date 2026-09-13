@@ -143,6 +143,8 @@ class _OuterProcessContext:
     nested_worker_limits: tuple[int, ...]
     run_store_root: str | None
     run_identity: EvaluationRunIdentity | None
+    pca_raw_feature_order: tuple[str, ...] | None
+    pca_variance_threshold: float
 
 
 _OUTER_PROCESS_CONTEXT: _OuterProcessContext | None = None
@@ -181,6 +183,8 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
             max_workers=_nested_worker_limit_for_fold(
                 context.nested_worker_limits, fold.fold_index
             ),
+            pca_raw_feature_order=context.pca_raw_feature_order,
+            pca_variance_threshold=context.pca_variance_threshold,
         )
     store = SQLiteEvaluationRunStore(context.run_store_root)
     unit = WorkUnitIdentity(
@@ -209,6 +213,8 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
         max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
+        pca_raw_feature_order=context.pca_raw_feature_order,
+        pca_variance_threshold=context.pca_variance_threshold,
         stage_checkpoint=StageCheckpoint(context.run_identity, store, fold.fold_id),
     )
     store.complete_work_unit(
@@ -247,6 +253,8 @@ def _evaluate_outer_fold_process_with_selection(
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
         max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
+        pca_raw_feature_order=context.pca_raw_feature_order,
+        pca_variance_threshold=context.pca_variance_threshold,
         selection_sink=lambda _fold_index, selection: captured.append(selection),
         prefix_evaluation_sink=lambda prefix_length, candidate_id, evaluation: (
             prefix_evaluations.__setitem__((prefix_length, candidate_id), evaluation)
@@ -423,11 +431,18 @@ def select_v4_configuration(
     max_workers: int | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
     prefix_evaluation_sink: PrefixEvaluationSink | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float | None = None,
 ) -> V4ConfigurationSelection:
     """Run the complete adaptive chain using only one immutable Outer-TRAIN frame."""
 
     build_id = catalog.lineage.source_build_id if source_build_id is None else source_build_id
     snapshot = _validate_train_inputs(train_rows, catalog, profile, build_id)
+    if profile.pca.enabled and pca_raw_feature_order is None:
+        raise ValueError("enabled PCA profile requires pca_raw_feature_order")
+    pca_threshold = (
+        profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
+    )
     train_start = snapshot.rows[0].timestamp
     train_end = snapshot.rows[-1].timestamp
     definition_hash, execution_hash = _selection_hashes(
@@ -521,6 +536,8 @@ def select_v4_configuration(
                 else run_provisional_gaussian_candidate,
                 max_workers=max_workers,
                 seed_checkpoint_factory=seed_checkpoint_factory,
+                pca_raw_feature_order=pca_raw_feature_order,
+                pca_variance_threshold=pca_threshold,
             ),
             parents=(prototypes,),
         ),
@@ -574,6 +591,8 @@ def select_v4_configuration(
                 max_workers=max_workers,
                 seed_checkpoint_factory=seed_checkpoint_factory,
                 evaluation_sink=prefix_evaluation_sink,
+                pca_raw_feature_order=pca_raw_feature_order,
+                pca_variance_threshold=pca_threshold,
             ),
             parents=(winner_selection, teacher_reference),
         ),
@@ -595,6 +614,8 @@ def select_v4_configuration(
                 runner=grid_runner,
                 max_workers=max_workers,
                 seed_checkpoint_factory=seed_checkpoint_factory,
+                pca_raw_feature_order=pca_raw_feature_order,
+                pca_variance_threshold=pca_threshold,
             ),
             parents=(prefix_search,),
         ),
@@ -736,6 +757,8 @@ def _evaluate_outer_fold(
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationSink | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float | None = None,
 ) -> OuterFoldResult:
     """Evaluate one outer fold; callers may persist this atomic result."""
 
@@ -753,6 +776,8 @@ def _evaluate_outer_fold(
             max_workers=max_workers,
             stage_checkpoint=stage_checkpoint,
             prefix_evaluation_sink=prefix_evaluation_sink,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_variance_threshold,
         )
     except (ValueError, TypeError) as exc:
         return _invalid_outer_fold(
@@ -875,6 +900,8 @@ def evaluate_global_regime_v4(
     run_identity: EvaluationRunIdentity | None = None,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float | None = None,
 ) -> AdaptiveEvaluationResult:
     """Run every outer fold with TRAIN-only adaptive selection and frozen TEST use."""
 
@@ -882,6 +909,13 @@ def evaluate_global_regime_v4(
         raise ValueError("run_store and run_identity must be supplied together")
     if not isinstance(source_rows, pd.DataFrame):
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
+    if profile.pca.enabled and pca_raw_feature_order is None:
+        raise ValueError("enabled PCA profile requires pca_raw_feature_order")
+    pca_threshold = (
+        profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
+    )
+    if not 0.0 < pca_threshold <= 1.0:
+        raise ValueError("PCA variance_threshold must be in (0,1]")
     if run_store is not None and run_identity is not None:
         state = run_store.open_run(run_identity)
         run_store.enable_write_ahead_logging()
@@ -940,6 +974,8 @@ def evaluate_global_regime_v4(
                 max_workers=nested_worker_limit_for_fold(fold),
                 selection_sink=selection_sink,
                 prefix_evaluation_sink=fold_prefix_sink,
+                pca_raw_feature_order=pca_raw_feature_order,
+                pca_variance_threshold=pca_threshold,
             )
 
         unit = WorkUnitIdentity(
@@ -971,6 +1007,8 @@ def evaluate_global_regime_v4(
                     source_build_id=build_id,
                     max_workers=nested_worker_limit_for_fold(fold),
                     stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                    pca_raw_feature_order=pca_raw_feature_order,
+                    pca_variance_threshold=pca_threshold,
                 )
                 selection_sink(fold.fold_index, selection)
             return cached
@@ -987,6 +1025,8 @@ def evaluate_global_regime_v4(
             max_workers=nested_worker_limit_for_fold(fold),
             selection_sink=selection_sink,
             prefix_evaluation_sink=fold_prefix_sink,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_threshold,
             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
         )
         run_store.complete_work_unit(
@@ -1025,6 +1065,8 @@ def evaluate_global_regime_v4(
             nested_worker_limits=nested_worker_limits,
             run_store_root=str(run_store.root),
             run_identity=run_identity,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_threshold,
         )
         available_methods = multiprocessing.get_all_start_methods()
         if "fork" in available_methods and threading.current_thread() is threading.main_thread():
@@ -1049,6 +1091,8 @@ def evaluate_global_regime_v4(
                             source_build_id=build_id,
                             max_workers=nested_worker_limit_for_fold(fold),
                             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                            pca_raw_feature_order=pca_raw_feature_order,
+                            pca_variance_threshold=pca_threshold,
                         )
                         selection_sink(fold.fold_index, selection)
                     outer_results.append(fold_result)
@@ -1074,6 +1118,8 @@ def evaluate_global_regime_v4(
                             source_build_id=build_id,
                             max_workers=nested_worker_limit_for_fold(fold),
                             stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                            pca_raw_feature_order=pca_raw_feature_order,
+                            pca_variance_threshold=pca_threshold,
                         )
                         selection_sink(fold.fold_index, selection)
                     outer_results.append(fold_result)
@@ -1088,6 +1134,8 @@ def evaluate_global_regime_v4(
             nested_worker_limits=nested_worker_limits,
             run_store_root=None,
             run_identity=None,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_threshold,
         )
         _initialize_outer_process_context(context)
         with cpu_process_pool(
@@ -1192,6 +1240,8 @@ def evaluate_global_regime_v4_from_source(
     evaluation_contract_version: int = 1,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float | None = None,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
 
@@ -1270,6 +1320,8 @@ def evaluate_global_regime_v4_from_source(
         run_identity=run_identity,
         selection_sink=selection_sink,
         prefix_evaluation_sink=prefix_evaluation_sink,
+        pca_raw_feature_order=pca_raw_feature_order,
+        pca_variance_threshold=pca_variance_threshold,
     )
 
 

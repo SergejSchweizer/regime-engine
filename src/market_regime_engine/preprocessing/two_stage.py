@@ -35,12 +35,20 @@ class PCATwoStageScalerArtifact:
 
     pca_fit: PCAFitResult
     hmm_scaler: StandardScalerArtifact
+    selected_feature_order: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         raw_order = self.pca_fit.feature_order
-        expected_order = raw_order + self.pca_fit.artifact.generated_feature_names
-        if self.hmm_scaler.feature_order != expected_order:
-            raise ValueError("HMM scaler order must be raw features followed by PCA components")
+        full_order = raw_order + self.pca_fit.artifact.generated_feature_names
+        model_order = (
+            full_order if self.selected_feature_order is None else self.selected_feature_order
+        )
+        if not model_order or len(set(model_order)) != len(model_order):
+            raise ValueError("PCA/HMM model feature order must be unique and non-empty")
+        if any(feature not in full_order for feature in model_order):
+            raise ValueError("PCA/HMM model feature order contains unknown features")
+        if self.hmm_scaler.feature_order != model_order:
+            raise ValueError("HMM scaler order must equal the selected PCA model features")
 
     @property
     def raw_feature_order(self) -> tuple[str, ...]:
@@ -57,7 +65,10 @@ class PCATwoStageScalerArtifact:
     def transform(self, raw_rows: npt.ArrayLike) -> ArrayF64:
         raw = _raw_matrix(raw_rows, len(self.raw_feature_order))
         generated = self.pca_fit.transform(raw)
-        return self.hmm_scaler.transform(np.column_stack((raw, generated)))
+        full = np.column_stack((raw, generated))
+        full_order = self.raw_feature_order + self.pca_fit.artifact.generated_feature_names
+        selected = full[:, [full_order.index(name) for name in self.model_feature_order]]
+        return self.hmm_scaler.transform(selected)
 
     def to_canonical_json(self) -> str:
         return json.dumps(
@@ -65,6 +76,7 @@ class PCATwoStageScalerArtifact:
                 "artifact_schema": "RegimeEnginePCATwoStageScaler.v1",
                 "hmm_scaler": json.loads(self.hmm_scaler.to_canonical_json()),
                 "pca_fit": json.loads(self.pca_fit.to_canonical_json()),
+                "selected_feature_order": list(self.model_feature_order),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -74,22 +86,33 @@ class PCATwoStageScalerArtifact:
     @classmethod
     def from_canonical_json(cls, payload: str) -> PCATwoStageScalerArtifact:
         raw = json.loads(payload)
-        expected = {"artifact_schema", "hmm_scaler", "pca_fit"}
+        expected = {"artifact_schema", "hmm_scaler", "pca_fit", "selected_feature_order"}
         if not isinstance(raw, dict) or set(raw) != expected:
             raise ValueError("unknown/missing PCA two-stage scaler fields")
         if raw["artifact_schema"] != "RegimeEnginePCATwoStageScaler.v1":
             raise ValueError("unsupported PCA two-stage scaler schema")
         pca_payload = raw["pca_fit"]
         scaler_payload = raw["hmm_scaler"]
+        selected_payload = raw["selected_feature_order"]
         if not isinstance(pca_payload, dict) or not isinstance(scaler_payload, dict):
             raise ValueError("PCA two-stage scaler payloads must be objects")
+        if (
+            not isinstance(selected_payload, list)
+            or not selected_payload
+            or any(not isinstance(value, str) for value in selected_payload)
+        ):
+            raise ValueError("PCA two-stage selected feature order must be a string list")
         pca_fit = PCAFitResult.from_canonical_json(
             json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
         )
         hmm_scaler = StandardScalerArtifact.from_canonical_json(
             json.dumps(scaler_payload, sort_keys=True, separators=(",", ":"))
         )
-        return cls(pca_fit=pca_fit, hmm_scaler=hmm_scaler)
+        return cls(
+            pca_fit=pca_fit,
+            hmm_scaler=hmm_scaler,
+            selected_feature_order=tuple(selected_payload),
+        )
 
 
 def fit_pca_hmm_scaler(
@@ -101,6 +124,7 @@ def fit_pca_hmm_scaler(
     fit_start: datetime,
     fit_end: datetime,
     variance_threshold: float = 0.90,
+    model_feature_order: tuple[str, ...] | None = None,
 ) -> PCATwoStageScalerArtifact:
     """Fit PCA on frozen Inner-TRAIN, then fit HMM scaling on PCA-augmented TRAIN."""
 
@@ -120,12 +144,24 @@ def fit_pca_hmm_scaler(
     selected_indices = tuple(by_timestamp[timestamp] for timestamp in pca_fit.selected_timestamps)
     selected_raw = raw[np.asarray(selected_indices, dtype=np.intp)]
     selected_pca = pca_fit.transform(selected_raw)
-    model_order = raw_feature_order + pca_fit.artifact.generated_feature_names
+    full_order = raw_feature_order + pca_fit.artifact.generated_feature_names
+    model_order = full_order if model_feature_order is None else model_feature_order
+    if not model_order or len(set(model_order)) != len(model_order):
+        raise ValueError("PCA/HMM model feature order must be unique and non-empty")
+    if any(feature not in full_order for feature in model_order):
+        raise ValueError("PCA/HMM model feature order contains unknown features")
+    selected = np.column_stack((selected_raw, selected_pca))[
+        :, [full_order.index(name) for name in model_order]
+    ]
     hmm_scaler = fit_standard_scaler(
-        np.column_stack((selected_raw, selected_pca)),
+        selected,
         model_order,
     )
-    return PCATwoStageScalerArtifact(pca_fit=pca_fit, hmm_scaler=hmm_scaler)
+    return PCATwoStageScalerArtifact(
+        pca_fit=pca_fit,
+        hmm_scaler=hmm_scaler,
+        selected_feature_order=model_order,
+    )
 
 
 __all__ = ["PCATwoStageScalerArtifact", "fit_pca_hmm_scaler"]

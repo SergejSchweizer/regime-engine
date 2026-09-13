@@ -218,6 +218,20 @@ class EvaluationGates:
 
 
 @dataclass(frozen=True, slots=True)
+class PCAConfig:
+    """Explicit opt-in contract for fold-local PCA augmentation."""
+
+    enabled: bool
+    variance_threshold: float
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("PCA enabled must be a boolean")
+        if not 0.0 < self.variance_threshold <= 1.0:
+            raise ValueError("PCA variance_threshold must be in (0,1]")
+
+
+@dataclass(frozen=True, slots=True)
 class FeatureDiscoveryConfig:
     """Explicit, semantic-free configuration for global discovery v4."""
 
@@ -396,6 +410,7 @@ class ModelProfile:
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
     feature_discovery: FeatureDiscoveryConfig
+    pca: PCAConfig
     gmm_hmms: tuple[GMMHMMConfig, ...] = ()
     student_t_hmm: StudentTHMMConfig | None = None
 

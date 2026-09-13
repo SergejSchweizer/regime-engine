@@ -3,6 +3,9 @@ profile_config_version: 4
 registered_model: regime-xetra
 production_alias: champion
 challenger_alias: challenger
+pca:
+  enabled: false
+  variance_threshold: 0.90
 feature_discovery:
   evaluation_id: global_regime_v4
   policy_id: xetra_global_regime_v4

@@ -57,6 +57,14 @@ class PCAGeneratedFeatureSet:
         return tuple(name for name in self.catalog.feature_names if name.startswith("pca_pc_"))
 
     @property
+    def raw_feature_names(self) -> tuple[str, ...]:
+        """Return the immutable raw source order used by the PCA fit."""
+
+        generated = set(self.generated_feature_names)
+        raw = tuple(name for name in self.catalog.feature_names if name not in generated)
+        return raw
+
+    @property
     def provenance_hash(self) -> str:
         payload = {
             "catalog_hash": self.catalog.catalog_hash,
