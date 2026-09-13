@@ -308,6 +308,8 @@ def _run(performance: PerformanceRecorder) -> None:
             str(snapshot_path),
             "--expectations",
             str(expectations_path),
+            "--workers",
+            str(cpu_worker_count(None)),
         ],
         text=True,
     )

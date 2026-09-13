@@ -11,14 +11,60 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor
 from math import fsum, log
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pyarrow.ipc as ipc
 from scipy.special import gammaln, logsumexp
 from scipy.stats import rankdata
 from sklearn.metrics import silhouette_samples
+
+_AUDIT_COLUMNS: dict[str, np.ndarray] | None = None
+_AUDIT_THREAD_LIMITER: object | None = None
+
+
+def _initialize_audit_worker(columns: dict[str, np.ndarray]) -> None:
+    """Install immutable audit inputs and one native numerical lane per worker."""
+
+    global _AUDIT_COLUMNS, _AUDIT_THREAD_LIMITER
+    _AUDIT_COLUMNS = columns
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[name] = "1"
+    try:
+        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+    except ImportError:
+        _AUDIT_THREAD_LIMITER = None
+    else:
+        limiter = threadpool_limits(limits=1)
+        limiter.__enter__()
+        _AUDIT_THREAD_LIMITER = limiter
+
+
+def _audit_worker_count(requested: int | None, task_count: int) -> int:
+    if task_count < 1:
+        return 1
+    if requested is not None and requested < 1:
+        raise ValueError("workers must be positive")
+    affinity = getattr(os, "sched_getaffinity", None)
+    available = len(affinity(0)) if affinity is not None else (os.cpu_count() or 1)
+    return min(requested or available, max(1, available), task_count)
+
+
+def _audit_process_context() -> multiprocessing.context.BaseContext:
+    methods = multiprocessing.get_all_start_methods()
+    if "fork" in methods:
+        return multiprocessing.get_context("fork")
+    return multiprocessing.get_context("spawn")
 
 
 def _read_snapshot(path: Path) -> dict[str, np.ndarray]:
@@ -60,6 +106,62 @@ def independent_distance(columns: dict[str, np.ndarray], features: tuple[str, ..
                 correlation
             )
     return result
+
+
+def _distance_chunk(
+    columns: dict[str, np.ndarray],
+    features: tuple[str, ...],
+    pairs: tuple[tuple[int, int], ...],
+) -> tuple[tuple[int, int, float], ...]:
+    values: list[tuple[int, int, float]] = []
+    for left_index, right_index in pairs:
+        left, right = _complete(columns[features[left_index]], columns[features[right_index]])
+        left_rank = rankdata(left, method="average")
+        right_rank = rankdata(right, method="average")
+        correlation = float(np.corrcoef(left_rank, right_rank)[0, 1])
+        values.append((left_index, right_index, 1.0 - abs(correlation)))
+    return tuple(values)
+
+
+def _process_distance_chunk(
+    task: tuple[int, tuple[str, ...], tuple[tuple[int, int], ...]],
+) -> tuple[int, tuple[tuple[int, int, float], ...]]:
+    if _AUDIT_COLUMNS is None:
+        raise RuntimeError("audit process worker was not initialized")
+    dossier_index, features, pairs = task
+    return dossier_index, _distance_chunk(_AUDIT_COLUMNS, features, pairs)
+
+
+def _process_feature_score(
+    task: tuple[int, str, dict[str, object], str],
+) -> tuple[int, float, float]:
+    if _AUDIT_COLUMNS is None:
+        raise RuntimeError("audit process worker was not initialized")
+    item_index, feature, item, timestamp_column = task
+    information_ratio, eta_squared = independent_feature_score(
+        _AUDIT_COLUMNS[feature],
+        _AUDIT_COLUMNS[timestamp_column],
+        tuple(item["teacher_timestamps"]),
+        tuple(tuple(row) for row in item["teacher_probabilities"]),
+    )
+    return item_index, information_ratio, eta_squared
+
+
+def _process_nmi(
+    task: tuple[int, dict[str, object]],
+) -> tuple[int, float]:
+    item_index, item = task
+    return item_index, independent_soft_nmi(
+        tuple(item["candidate_timestamps"]),
+        tuple(tuple(row) for row in item["candidate_probabilities"]),
+        tuple(item["teacher_timestamps"]),
+        tuple(tuple(row) for row in item["teacher_probabilities"]),
+    )
+
+
+def _process_likelihood(task: tuple[int, dict[str, object]]) -> tuple[int, float]:
+    item_index, item = task
+    return item_index, independent_hmm_log_likelihood(item)
 
 
 def independent_information_ratio(
@@ -470,26 +572,149 @@ def _audit_dossiers(expected: object) -> tuple[dict[str, object], ...]:
     return dossiers
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--snapshot", type=Path, required=True)
-    parser.add_argument(
-        "--expectations",
-        type=Path,
-        required=True,
-        help="JSON containing independently auditable expected primitive outputs",
-    )
-    args = parser.parse_args()
-    columns = _read_snapshot(args.snapshot)
-    expected = json.loads(args.expectations.read_text(encoding="utf-8"))
+def verify_expectations(
+    columns: dict[str, np.ndarray],
+    expected: object,
+    *,
+    max_workers: int | None = None,
+) -> dict[str, object]:
+    """Verify all dossiers, using independent processes for CPU-heavy primitives."""
+
     dossiers = _audit_dossiers(expected)
+    distance_tasks: list[tuple[int, tuple[str, ...], tuple[tuple[int, int], ...]]] = []
+    feature_tasks: list[tuple[int, str, dict[str, object], str]] = []
+    nmi_tasks: list[tuple[int, dict[str, object]]] = []
+    likelihood_tasks: list[tuple[int, dict[str, object]]] = []
+    dossier_features: list[tuple[str, ...]] = []
+    for dossier_index, dossier in enumerate(dossiers):
+        features = tuple(str(feature) for feature in dossier["feature_order"])
+        dossier_features.append(features)
+        pairs = tuple(
+            (left_index, right_index)
+            for left_index in range(len(features))
+            for right_index in range(left_index)
+        )
+        # Use several chunks per worker so a large feature universe can keep
+        # all available processes busy without creating one future per pair.
+        chunk_size = max(1, (len(pairs) + 31) // 32)
+        distance_tasks.extend(
+            (
+                dossier_index,
+                features,
+                pairs[offset : offset + chunk_size],
+            )
+            for offset in range(0, len(pairs), chunk_size)
+        )
+
+        raw_feature_scores = dossier.get("feature_scores", [])
+        if not isinstance(raw_feature_scores, list):
+            raise SystemExit("feature score expectations must be a list")
+        timestamp_column = str(dossier["timestamp_column"])
+        for raw_item in raw_feature_scores:
+            if not isinstance(raw_item, dict):
+                raise SystemExit("feature score expectation must be an object")
+            feature_tasks.append(
+                (len(feature_tasks), str(raw_item["feature"]), raw_item, timestamp_column)
+            )
+
+        raw_nmi = dossier.get("prefix_nmi", [])
+        if not isinstance(raw_nmi, list):
+            raise SystemExit("soft-NMI expectations must be a list")
+        for raw_item in raw_nmi:
+            if not isinstance(raw_item, dict):
+                raise SystemExit("soft-NMI expectation must be an object")
+            nmi_tasks.append((len(nmi_tasks), raw_item))
+
+        likelihood_items = dossier.get("likelihoods", dossier.get("gaussian_likelihoods", []))
+        if not isinstance(likelihood_items, list):
+            raise SystemExit("likelihood expectations must be a list")
+        for raw_item in likelihood_items:
+            if not isinstance(raw_item, dict):
+                raise SystemExit("likelihood expectation must be an object")
+            likelihood_tasks.append((len(likelihood_tasks), raw_item))
+
+    task_count = len(distance_tasks) + len(feature_tasks) + len(nmi_tasks) + len(likelihood_tasks)
+    worker_count = _audit_worker_count(max_workers, task_count)
+    if worker_count > 1:
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=_audit_process_context(),
+            initializer=_initialize_audit_worker,
+            initargs=(columns,),
+        ) as executor:
+            distance_futures = tuple(
+                executor.submit(_process_distance_chunk, task) for task in distance_tasks
+            )
+            feature_futures = tuple(
+                executor.submit(_process_feature_score, task) for task in feature_tasks
+            )
+            nmi_futures = tuple(executor.submit(_process_nmi, task) for task in nmi_tasks)
+            likelihood_futures = tuple(
+                executor.submit(_process_likelihood, task) for task in likelihood_tasks
+            )
+            distance_results = tuple(future.result() for future in distance_futures)
+            feature_results = tuple(future.result() for future in feature_futures)
+            nmi_results = tuple(future.result() for future in nmi_futures)
+            likelihood_results = tuple(future.result() for future in likelihood_futures)
+    else:
+        distance_results = tuple(
+            (
+                dossier_index,
+                _distance_chunk(columns, features, pairs),
+            )
+            for dossier_index, features, pairs in distance_tasks
+        )
+        feature_results = tuple(
+            (
+                item_index,
+                *independent_feature_score(
+                    columns[feature],
+                    columns[timestamp_column],
+                    tuple(item["teacher_timestamps"]),
+                    tuple(tuple(row) for row in item["teacher_probabilities"]),
+                ),
+            )
+            for item_index, feature, item, timestamp_column in feature_tasks
+        )
+        nmi_results = tuple(
+            (
+                item_index,
+                independent_soft_nmi(
+                    tuple(item["candidate_timestamps"]),
+                    tuple(tuple(row) for row in item["candidate_probabilities"]),
+                    tuple(item["teacher_timestamps"]),
+                    tuple(tuple(row) for row in item["teacher_probabilities"]),
+                ),
+            )
+            for item_index, item in nmi_tasks
+        )
+        likelihood_results = tuple(
+            (item_index, independent_hmm_log_likelihood(item))
+            for item_index, item in likelihood_tasks
+        )
+
+    distances = {
+        index: np.zeros((len(features), len(features)), dtype=float)
+        for index, features in enumerate(dossier_features)
+    }
+    for dossier_index, values in distance_results:
+        for left_index, right_index, value in values:
+            distances[dossier_index][left_index, right_index] = value
+            distances[dossier_index][right_index, left_index] = value
+
     distance_errors: list[float] = []
     feature_score_errors: list[float] = []
     nmi_errors: list[float] = []
     likelihood_errors: list[float] = []
-    for dossier in dossiers:
-        features = tuple(dossier["feature_order"])
-        distance = independent_distance(columns, features)
+    feature_values = {
+        index: (information_ratio, eta_squared)
+        for index, information_ratio, eta_squared in feature_results
+    }
+    nmi_values = {index: value for index, value in nmi_results}
+    likelihood_values = {index: value for index, value in likelihood_results}
+    for dossier_index, dossier in enumerate(dossiers):
+        features = dossier_features[dossier_index]
+        distance = distances[dossier_index]
         expected_distance = np.asarray(dossier["distance"], dtype=float)
         if expected_distance.shape != distance.shape:
             raise SystemExit("distance expectation dimensions are invalid")
@@ -505,35 +730,40 @@ def main() -> None:
                 raise SystemExit("silhouette audit failed")
 
         timestamp_column = str(dossier["timestamp_column"])
-        for item in dossier.get("feature_scores", []):
-            feature = str(item["feature"])
-            information_ratio, eta_squared = independent_feature_score(
-                columns[feature],
-                columns[timestamp_column],
-                tuple(item["teacher_timestamps"]),
-                tuple(tuple(row) for row in item["teacher_probabilities"]),
-            )
+        raw_feature_scores = dossier.get("feature_scores", [])
+        assert isinstance(raw_feature_scores, list)
+        feature_offset = sum(
+            len(cast(list[object], other.get("feature_scores", [])))
+            for other in dossiers[:dossier_index]
+        )
+        for item_index, item in enumerate(raw_feature_scores):
+            assert isinstance(item, dict)
+            information_ratio, eta_squared = feature_values[feature_offset + item_index]
             feature_score_errors.extend(
                 (
                     abs(information_ratio - float(item["state_information_ratio"])),
                     abs(eta_squared - float(item["eta_squared"])),
                 )
             )
-        for item in dossier.get("prefix_nmi", []):
-            actual = independent_soft_nmi(
-                tuple(item["candidate_timestamps"]),
-                tuple(tuple(row) for row in item["candidate_probabilities"]),
-                tuple(item["teacher_timestamps"]),
-                tuple(tuple(row) for row in item["teacher_probabilities"]),
-            )
+        raw_nmi = dossier.get("prefix_nmi", [])
+        assert isinstance(raw_nmi, list)
+        nmi_offset = sum(
+            len(cast(list[object], other.get("prefix_nmi", [])))
+            for other in dossiers[:dossier_index]
+        )
+        for item_index, item in enumerate(raw_nmi):
+            assert isinstance(item, dict)
+            actual = nmi_values[nmi_offset + item_index]
             nmi_errors.append(abs(actual - float(item["soft_regime_nmi"])))
         likelihood_items = dossier.get("likelihoods", dossier.get("gaussian_likelihoods", []))
-        if not isinstance(likelihood_items, list):
-            raise SystemExit("likelihood expectations must be a list")
-        for item in likelihood_items:
-            if not isinstance(item, dict):
-                raise SystemExit("likelihood expectation must be an object")
-            actual = independent_hmm_log_likelihood(item)
+        assert isinstance(likelihood_items, list)
+        likelihood_offset = sum(
+            len(cast(list[object], other.get("likelihoods", other.get("gaussian_likelihoods", []))))
+            for other in dossiers[:dossier_index]
+        )
+        for item_index, item in enumerate(likelihood_items):
+            assert isinstance(item, dict)
+            actual = likelihood_values[likelihood_offset + item_index]
             likelihood_errors.append(abs(actual - float(item["log_likelihood"])))
         if distance_errors[-1] > 1.0e-10:
             raise SystemExit(f"distance audit failed: max_abs_error={distance_errors[-1]:.12g}")
@@ -548,23 +778,38 @@ def main() -> None:
     if maximum_likelihood_error > 1.0e-10:
         raise SystemExit("HMM likelihood audit failed")
 
-    print(
-        json.dumps(
-            {
-                "audited_outer_fold_indices": [
-                    int(dossier["outer_fold_index"]) for dossier in dossiers
-                ]
-                if "fold_audits" in expected
-                else [],
-                "audited_outer_fold_count": len(dossiers),
-                "distance_max_abs_error": maximum_distance_error,
-                "feature_score_max_abs_error": maximum_feature_score_error,
-                "soft_nmi_max_abs_error": maximum_nmi_error,
-                "gaussian_likelihood_max_abs_error": maximum_likelihood_error,
-                "status": "verified",
-            }
-        )
+    return {
+        "audited_outer_fold_indices": [int(dossier["outer_fold_index"]) for dossier in dossiers]
+        if isinstance(expected, dict) and "fold_audits" in expected
+        else [],
+        "audited_outer_fold_count": len(dossiers),
+        "distance_max_abs_error": maximum_distance_error,
+        "feature_score_max_abs_error": maximum_feature_score_error,
+        "soft_nmi_max_abs_error": maximum_nmi_error,
+        "gaussian_likelihood_max_abs_error": maximum_likelihood_error,
+        "status": "verified",
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot", type=Path, required=True)
+    parser.add_argument(
+        "--expectations",
+        type=Path,
+        required=True,
+        help="JSON containing independently auditable expected primitive outputs",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="maximum independent audit processes (default: all allowed CPUs)",
+    )
+    args = parser.parse_args()
+    columns = _read_snapshot(args.snapshot)
+    expected = json.loads(args.expectations.read_text(encoding="utf-8"))
+    print(json.dumps(verify_expectations(columns, expected, max_workers=args.workers)))
 
 
 if __name__ == "__main__":
