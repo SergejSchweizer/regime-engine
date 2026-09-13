@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import random
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
-from time import monotonic, sleep
+from time import sleep
 from typing import NoReturn
 
 import pytest
@@ -46,7 +47,7 @@ def identity() -> EvaluationRunIdentity:
 def _parallel_compute(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
     del parents
     sleep(0.2)
-    return node.identity.key.encode("utf-8")
+    return f"{node.identity.key}:{os.getpid()}".encode()
 
 
 def _process_executor_worker(root: str) -> tuple[str, int, int]:
@@ -124,18 +125,18 @@ def test_independent_pickleable_units_use_process_workers(tmp_path: Path) -> Non
     )
     graph = EvaluationWorkGraph.from_nodes(run, nodes)
     store = SQLiteEvaluationRunStore(tmp_path)
-    started = monotonic()
     result = ResumableEvaluationExecutor(store, max_workers=4).execute(
         run, graph, _parallel_compute
     )
-    elapsed = monotonic() - started
 
     assert result.computed_unit_count == 4
     assert result.reused_unit_count == 0
-    assert elapsed < 0.65
+    payloads = tuple(store.load_completed_work_unit(run, node.identity) for node in nodes)
+    assert all(payload is not None for payload in payloads)
+    assert len({payload.rsplit(b":", 1)[1] for payload in payloads if payload is not None}) > 1
     assert all(
-        store.load_completed_work_unit(run, node.identity) == node.identity.key.encode("utf-8")
-        for node in nodes
+        payload is not None and payload.startswith(node.identity.key.encode("utf-8") + b":")
+        for node, payload in zip(nodes, payloads, strict=True)
     )
 
 
