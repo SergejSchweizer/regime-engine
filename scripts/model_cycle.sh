@@ -20,42 +20,10 @@ command -v flock >/dev/null 2>&1 || fail "flock is required for single-run locki
 [[ -x "$ROOT/.venv/bin/regime-engine" ]] || fail "missing .venv/bin/regime-engine"
 [[ -f "$CONFIG_FILE" ]] || fail "feature PostgreSQL config not found: $CONFIG_FILE"
 
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT/.env"
-  set +a
-fi
-
 export REGIME_ENGINE_ROOT="$ROOT"
-export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-http://10.10.1.3:5000}"
 # Native BLAS/OpenMP threads are deliberately one per explicit process/task;
 # otherwise each HMM worker creates a second machine-sized thread pool.
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
-export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
-eval "$($ROOT/.venv/bin/python - "$CONFIG_FILE" <<'PY'
-from __future__ import annotations
-
-import shlex
-import sys
-from pathlib import Path
-
-import yaml
-
-config = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-feature_postgres = config["feature_postgres"]
-for key, variable in {
-    "host": "REGIME_FEATURE_PGHOST",
-    "port": "REGIME_FEATURE_PGPORT",
-    "database": "REGIME_FEATURE_PGDATABASE",
-    "user": "REGIME_FEATURE_PGUSER",
-    "sslmode": "REGIME_FEATURE_PGSSLMODE",
-    "password_file": "REGIME_FEATURE_PGPASSWORD_FILE",
-}.items():
-    print(f"export {variable}={shlex.quote(str(feature_postgres[key]))}")
-PY
-)"
+eval "$($ROOT/.venv/bin/python "$ROOT/scripts/export_config_env.py" "$CONFIG_FILE")"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
