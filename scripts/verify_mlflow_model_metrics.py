@@ -73,7 +73,20 @@ def _point_tuple(point: Any) -> tuple[str, int, float, int]:
             float(point["value"]),
             int(cast(int | float | str, timestamp)),
         )
-    return (str(point.key), int(point.step), float(point.value), int(point.timestamp))
+    timestamp = getattr(point, "timestamp_ms", getattr(point, "timestamp", 0))
+    return (
+        str(point.key),
+        int(point.step),
+        float(point.value),
+        int(cast(int | float | str, timestamp)),
+    )
+
+
+def _metric_points(points: Any) -> tuple[MetricPoint, ...]:
+    return tuple(
+        MetricPoint(key, value, step, timestamp)
+        for key, step, value, timestamp in map(_point_tuple, points)
+    )
 
 
 def audit(
@@ -94,6 +107,11 @@ def audit(
     actual_by_name: dict[str, list[Any]] = {}
     for model in actual_models:
         actual_by_name.setdefault(model.name, []).append(model)
+    actual_points_by_name = {
+        name: _metric_points(models[0].metrics or ())
+        for name, models in actual_by_name.items()
+        if len(models) == 1
+    }
 
     missing_models = set(expected_by_name) - set(actual_by_name)
     unexpected_models = set(actual_by_name) - set(expected_by_name)
@@ -130,8 +148,9 @@ def audit(
                 if item.emitted
             )
             if name in ledger_states
-            else tuple(model.metrics or ())
+            else actual_points_by_name[name]
         )
+        actual_points_by_name[name] = actual_points
         actual_tuples = tuple(_point_tuple(item) for item in actual_points)
         expected_tuples = tuple(_point_tuple(item) for item in expected.get("points", ()))
         expected_identity = {(key, step) for key, step, _value, _timestamp in expected_tuples}
@@ -181,9 +200,7 @@ def audit(
                 continue
             model = models[0]
             group_points[name] = tuple(
-                MetricPoint(key, value, step, timestamp)
-                for key, step, value, timestamp in map(_point_tuple, model.metrics or ())
-                if key == metric_key
+                point for point in actual_points_by_name[name] if point.key == metric_key
             )
             group_tags[name] = {str(key): str(value) for key, value in model.tags.items()}
         if len(group_points) != len(model_names) or any(
