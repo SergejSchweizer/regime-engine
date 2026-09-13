@@ -9,20 +9,22 @@ Status date: 2026-09-13
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
   on top of the merged resumability, MLflow Model Metrics, PCA and
-  process-parallel work. Follow-up PRs #333–#339 are also merged: global
+  process-parallel work. Follow-up PRs #333–#343 are also merged: global
   diagnostic plot families are split into independent process tasks, audit
   worker sizing respects affinity/cgroup limits, proof-bundle identities are
   cross-checked, duplicate MLflow comparison-group names are rejected, and
   resumable MLflow metric exports now bind ledger state to one LoggedModel and
-  fail closed on remote divergence. The Spearman pair and hierarchy-cut
-  kernels now use GIL-independent process workers with deterministic result
-  assembly.
+  fail closed on remote divergence. Durable snapshots now verify their Arrow
+  payload hashes, terminal ledger payloads are immutable, and checkpointed
+  multistart backend failures remain retryable while deterministic validation
+  failures remain cacheable. The Spearman pair and hierarchy-cut kernels now
+  use GIL-independent process workers with deterministic result assembly.
   The remaining full current-source audit and final production-eligibility
   evidence are tracked under PR-231, PR-232, PR-250 and PR-253.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
-  crash-boundary hardening is included through PRs #259–#339.
+  crash-boundary hardening is included through PRs #259–#343.
 - **Current CPU topology/performance implementation:** the runtime now sizes
   workers from Linux process affinity and the active cgroup quota, exposes
   physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
@@ -44,9 +46,9 @@ Status date: 2026-09-13
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#339 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#343 are merged except #277,
   #284 and #317, which are closed without merge; no GitHub PRs are open and no
-  `pr/*` remote branches remain. The implementation branches for #303–#339
+  `pr/*` remote branches remain. The implementation branches for #303–#343
   have therefore been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -83,7 +85,7 @@ Status date: 2026-09-13
   `/health` endpoint returns `200 OK`; the evaluation experiment and
   `regime-xetra` registered model are currently absent. No production objects
   have been deleted. The full non-external suite passes under `pytest -n auto`
-  (`586 passed` for the non-integration/non-external selector). The corrected hermetic full-computation proof
+  (`589 passed` for the non-integration/non-external selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
   MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
   (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
@@ -126,7 +128,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-13, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. PRs #270–#339
+update. GitHub has no open PRs. PRs #270–#343
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -209,6 +211,8 @@ still required.
 | PR-336 | IMPLEMENTED | Closed; duplicate MLflow comparison-group model audit |
 | PR-338 | IMPLEMENTED | Closed; proof-bundle identity and mutation-evidence audit |
 | PR-339 | IMPLEMENTED | Closed; MLflow metric-ledger remote-authority audit |
+| PR-342 | IMPLEMENTED | Closed; durable snapshot integrity and terminal-payload hash audit |
+| PR-343 | IMPLEMENTED | Closed; retry checkpointed multistart technical failures |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -220,13 +224,13 @@ still required.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
-PRs **#270–#339** are merged except **#277, #284 and #317**, which are
+PRs **#270–#343** are merged except **#277, #284 and #317**, which are
 closed without merge and have no active implementation branch. There are no
 open GitHub PRs and no remote `pr/*` branches. The merged follow-ups include
 the PCA completion (#303–#313), local test parallelization (#312), tracking
 parallelization (#314, #324), lineage/CPU/process safety (#315–#323,
 #329–#330), independent-audit parallelization (#325–#326), and audit
-contract hardening (#333–#339).
+contract hardening (#333–#343).
 
 ---
 
