@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
@@ -55,9 +56,80 @@ def _audit_worker_count(requested: int | None, task_count: int) -> int:
         return 1
     if requested is not None and requested < 1:
         raise ValueError("workers must be positive")
+    available = _audit_available_cpu_count()
+    return min(requested or available, available, task_count)
+
+
+def _audit_affinity_cpu_count() -> int:
+    """Return CPUs allowed by the process affinity mask, with a portable fallback."""
+
     affinity = getattr(os, "sched_getaffinity", None)
-    available = len(affinity(0)) if affinity is not None else (os.cpu_count() or 1)
-    return min(requested or available, max(1, available), task_count)
+    if affinity is not None:
+        try:
+            return max(1, len(affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def _audit_cgroup_cpu_limit(
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+    membership_path: Path = Path("/proc/self/cgroup"),
+) -> int | None:
+    """Read hard CPU quotas from the active cgroup, independently of production code.
+
+    Both cgroup v2 ``cpu.max`` and cgroup v1 ``cpu.cfs_*`` are supported.  A
+    missing, unlimited, or malformed quota is ignored; an integer worker count
+    is conservative for fractional quotas (for example, 1.5 CPUs permits one
+    CPU-bound process).
+    """
+
+    roots = [cgroup_root]
+    try:
+        membership = membership_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        membership = []
+    for line in membership:
+        fields = line.split(":", 2)
+        if len(fields) != 3:
+            continue
+        _hierarchy, controllers, relative_path = fields
+        if controllers == "":
+            roots.append(cgroup_root / relative_path.lstrip("/"))
+        elif "cpu" in controllers.split(","):
+            roots.append(cgroup_root / "cpu" / relative_path.lstrip("/"))
+
+    limits: list[int] = []
+    for root in dict.fromkeys(roots):
+        try:
+            cpu_max = (root / "cpu.max").read_text(encoding="utf-8").split()
+        except OSError:
+            cpu_max = []
+        if cpu_max and cpu_max[0] != "max":
+            try:
+                quota = int(cpu_max[0])
+                period = int(cpu_max[1]) if len(cpu_max) > 1 else 100_000
+            except ValueError:
+                quota = period = 0
+            if quota > 0 and period > 0:
+                limits.append(max(1, math.floor(quota / period)))
+
+        try:
+            quota = int((root / "cpu.cfs_quota_us").read_text(encoding="utf-8").strip())
+            period = int((root / "cpu.cfs_period_us").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        if quota > 0 and period > 0:
+            limits.append(max(1, math.floor(quota / period)))
+    return min(limits) if limits else None
+
+
+def _audit_available_cpu_count() -> int:
+    """Return the CPUs usable by this verifier under affinity and cgroup limits."""
+
+    affinity_count = _audit_affinity_cpu_count()
+    quota = _audit_cgroup_cpu_limit()
+    return max(1, min(affinity_count, quota)) if quota is not None else affinity_count
 
 
 def _audit_process_context() -> multiprocessing.context.BaseContext:

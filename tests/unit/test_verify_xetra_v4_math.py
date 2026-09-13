@@ -75,6 +75,47 @@ def test_parallel_audit_verification_uses_canonical_results() -> None:
     assert report["distance_max_abs_error"] == 0.0
 
 
+def test_audit_worker_count_respects_affinity_cgroup_and_task_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setattr(module, "_audit_affinity_cpu_count", lambda: 86)
+    monkeypatch.setattr(module, "_audit_cgroup_cpu_limit", lambda: 4)
+
+    assert module._audit_available_cpu_count() == 4
+    assert module._audit_worker_count(None, 100) == 4
+    assert module._audit_worker_count(86, 100) == 4
+    assert module._audit_worker_count(2, 100) == 2
+    assert module._audit_worker_count(None, 3) == 3
+
+
+def test_audit_cgroup_reader_supports_v2_quota(tmp_path: Path) -> None:
+    module = _module()
+    cgroup_root = tmp_path / "cgroup"
+    cgroup_root.mkdir()
+    (cgroup_root / "cpu.max").write_text("350000 100000\n", encoding="utf-8")
+    membership = tmp_path / "membership"
+    membership.write_text("0::/worker\n", encoding="utf-8")
+    nested = cgroup_root / "worker"
+    nested.mkdir()
+    (nested / "cpu.max").write_text("250000 100000\n", encoding="utf-8")
+
+    assert module._audit_cgroup_cpu_limit(cgroup_root, membership) == 2
+
+
+def test_audit_cgroup_reader_supports_v1_quota(tmp_path: Path) -> None:
+    module = _module()
+    cgroup_root = tmp_path / "cgroup"
+    cpu_root = cgroup_root / "cpu" / "worker"
+    cpu_root.mkdir(parents=True)
+    (cpu_root / "cpu.cfs_quota_us").write_text("450000\n", encoding="utf-8")
+    (cpu_root / "cpu.cfs_period_us").write_text("100000\n", encoding="utf-8")
+    membership = tmp_path / "membership"
+    membership.write_text("2:cpu,cpuacct:/worker\n", encoding="utf-8")
+
+    assert module._audit_cgroup_cpu_limit(cgroup_root, membership) == 4
+
+
 def test_independent_gaussian_likelihood_uses_forward_scaling() -> None:
     module = _module()
     actual = module.independent_gaussian_log_likelihood(
