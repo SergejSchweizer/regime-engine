@@ -1217,6 +1217,10 @@ class DeploymentSelection:
             raise ValueError("deployment configuration must use model_version_local identity")
         if self.configuration.source_build_id not in {None, self.source_build_id}:
             raise ValueError("deployment configuration source build does not match selection")
+        if self.configuration.catalog_hash not in {None, self.source_catalog_hash}:
+            raise ValueError("deployment configuration catalog does not match selection")
+        if self.configuration.feature_discovery_hash != self.discovery_hash:
+            raise ValueError("deployment configuration discovery hash does not match selection")
         _digest(self.discovery_hash, "discovery_hash")
 
     @property

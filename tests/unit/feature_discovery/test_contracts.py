@@ -630,6 +630,11 @@ def test_candidate_prefix_outer_and_deployment_boundaries_are_explicit() -> None
             deployment,
             configuration=replace(final_config("model_version_local"), source_build_id="other"),
         ),
+        lambda: replace(deployment, discovery_hash="d" * 64),
+        lambda: replace(
+            deployment,
+            configuration=replace(final_config("model_version_local"), catalog_hash="d" * 64),
+        ),
         lambda: replace(deployment, discovery_hash="x"),
     )
 

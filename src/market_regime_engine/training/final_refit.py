@@ -156,6 +156,16 @@ def final_production_refit(
     if deployment_selection.configuration.feature_order != candidate.feature_order:
         raise ValueError("final-refit features differ from deployment selection")
     if (
+        deployment_selection.configuration.feature_discovery_hash
+        != deployment_selection.discovery_hash
+    ):
+        raise ValueError("final-refit deployment discovery hash is inconsistent")
+    if deployment_selection.configuration.catalog_hash not in {
+        None,
+        deployment_selection.source_catalog_hash,
+    }:
+        raise ValueError("final-refit deployment catalog hash is inconsistent")
+    if (
         candidate.feature_selection_definition_hash
         != winning_evaluation.feature_selection_definition_hash
         or candidate.feature_selection_execution_hash
@@ -173,6 +183,10 @@ def final_production_refit(
         deployment_selection.deployment_selection_cutoff,
         "deployment_selection_cutoff",
     )
+    if lineage.max_timestamp is None:
+        raise ValueError("final refit source lineage must include max_timestamp")
+    if cutoff != lineage.max_timestamp:
+        raise ValueError("deployment selection cutoff must equal source lineage maximum")
     raw_feature_order = (
         candidate.feature_order if pca_raw_feature_order is None else pca_raw_feature_order
     )
