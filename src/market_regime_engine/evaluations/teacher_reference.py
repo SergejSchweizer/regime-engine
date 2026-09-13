@@ -19,13 +19,13 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
-from market_regime_engine.models.gaussian_hmm import HmmlearnGaussianHMMAdapter
 from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.preprocessing.scaling import (
     StandardScalerArtifact,
     fit_standard_scaler,
 )
 from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
 from market_regime_engine.training.multistart import MultistartResult, run_multistart
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
@@ -257,7 +257,7 @@ def refit_frozen_teacher(
     active_factory = (
         adapter_factory
         if adapter_factory is not None
-        else lambda: HmmlearnGaussianHMMAdapter(reference.prototype_features)
+        else CandidateAdapterFactory("gaussian_hmm", reference.prototype_features)
     )
     multistart = run_multistart(
         scaled_train,
