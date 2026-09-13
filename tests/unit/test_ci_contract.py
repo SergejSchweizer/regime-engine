@@ -41,7 +41,8 @@ def test_local_pre_commit_hook_runs_only_hermetic_integration_tests() -> None:
     hook = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     assert "id: hermetic-integration-tests" in hook
     assert (
-        'entry: .venv/bin/pytest -n 1 tests -m "integration and not slow and not external"' in hook
+        "entry: .venv/bin/pytest -n auto tests -m "
+        '"integration and not slow and not external"' in hook
     )
     assert "pass_filenames: false" in hook
     assert "always_run: true" in hook

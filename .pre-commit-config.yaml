@@ -7,7 +7,7 @@ repos:
     hooks:
       - id: hermetic-integration-tests
         name: Hermetic integration tests
-        entry: .venv/bin/pytest -n 1 tests -m "integration and not slow and not external"
+        entry: .venv/bin/pytest -n auto tests -m "integration and not slow and not external"
         language: system
         pass_filenames: false
         always_run: true
