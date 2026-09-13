@@ -100,6 +100,58 @@ def test_resume_reuses_completed_seed_fits_after_interruption(tmp_path: Path) ->
     assert all(calls.count(seed) == 1 for seed in MULTISTART_SEEDS if seed != 37)
 
 
+@pytest.mark.parametrize(
+    "interrupted_seeds",
+    ((11,), (11, 37), (11, 37, 71)),
+    ids=("seed-1", "seeds-1-3", "seeds-1-3-5"),
+)
+def test_interruption_matrix_retries_only_missing_seeds(
+    tmp_path: Path,
+    interrupted_seeds: tuple[int, ...],
+) -> None:
+    """Every completed seed survives a multi-seed interruption and is reused."""
+
+    identity = run_identity()
+    store = SQLiteEvaluationRunStore(tmp_path)
+    store.open_run(identity)
+    checkpoint = HMMSeedCheckpoint(
+        run_identity=identity,
+        store=store,
+        candidate_id="gaussian_hmm_k2_full",
+        fold_id="fold_001",
+        state_count=2,
+    )
+    calls: list[int] = []
+    interrupted = set(interrupted_seeds)
+    with pytest.raises(KeyboardInterrupt):
+        run_multistart(
+            [[0.0], [1.0]],
+            state_count=2,
+            adapter_factory=lambda: Adapter(calls, interrupted),
+            checkpoint=checkpoint,
+            max_workers=len(MULTISTART_SEEDS),
+        )
+
+    assert set(calls) == set(MULTISTART_SEEDS)
+    assert all(
+        checkpoint.load(seed) is not None
+        for seed in MULTISTART_SEEDS
+        if seed not in interrupted_seeds
+    )
+
+    result = run_multistart(
+        [[0.0], [1.0]],
+        state_count=2,
+        adapter_factory=lambda: Adapter(calls, interrupted),
+        checkpoint=checkpoint,
+        max_workers=len(MULTISTART_SEEDS),
+    )
+    assert result.winner.seed == 11
+    assert all(calls.count(seed) == 2 for seed in interrupted_seeds)
+    assert all(calls.count(seed) == 1 for seed in MULTISTART_SEEDS if seed not in interrupted_seeds)
+    assert all(checkpoint.load(seed) is not None for seed in MULTISTART_SEEDS)
+
+
 def test_concurrent_multistart_workers_commit_one_consistent_seed_payload(
     tmp_path: Path,
 ) -> None:
