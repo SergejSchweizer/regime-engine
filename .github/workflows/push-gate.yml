@@ -82,7 +82,7 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
         run: |
-          .venv/bin/coverage run -m pytest tests -m "not integration and not external"
+          .venv/bin/coverage run -m pytest -n auto tests -m "not integration and not external"
           .venv/bin/python -c 'import market_regime_engine; assert market_regime_engine.__version__ == "0.1.0"'
           if compgen -G ".coverage.unit.*" > /dev/null; then
             .venv/bin/coverage combine --append --data-file=.coverage.unit .coverage.unit.*

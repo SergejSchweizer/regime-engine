@@ -11,7 +11,7 @@ def test_quality_contract_and_gate_workflows_cannot_diverge() -> None:
     assert project["tool"]["coverage"]["report"]["fail_under"] == 90
     for name in ("merge-gate.yml", "push-gate.yml"):
         workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        assert 'pytest tests -m "not integration and not external"' in workflow
+        assert 'pytest -n auto tests -m "not integration and not external"' in workflow
         assert "integration:" not in workflow
         assert "needs: [lint, type, unit, integration]" not in workflow
         assert "coverage-integration" not in workflow
