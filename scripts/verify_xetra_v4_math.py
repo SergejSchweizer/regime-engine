@@ -117,7 +117,7 @@ def _audit_cgroup_cpu_limit(
         try:
             quota = int((root / "cpu.cfs_quota_us").read_text(encoding="utf-8").strip())
             period = int((root / "cpu.cfs_period_us").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         if quota > 0 and period > 0:
             limits.append(max(1, math.floor(quota / period)))
