@@ -510,7 +510,13 @@ def select_v4_configuration(
         QualityFilterResult,
         checkpoint(
             "quality",
-            lambda: filter_outer_train_quality(catalog, snapshot, train_start, train_end),
+            lambda: filter_outer_train_quality(
+                catalog,
+                snapshot,
+                train_start,
+                train_end,
+                max_workers=max_workers,
+            ),
         ),
     )
     distance = cast(
