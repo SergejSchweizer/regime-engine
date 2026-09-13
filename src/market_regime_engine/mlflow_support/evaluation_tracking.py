@@ -91,6 +91,7 @@ class _PreparedFoldTracking:
     fold_evidence: dict[str, object]
     final_grid_plan: WalkForwardPlan | None
     candidates: tuple[_PreparedCandidateTracking, ...]
+    artifacts_materialized: bool = False
 
 
 def _running_statistics(
@@ -501,6 +502,38 @@ def _prepare_global_v4_fold_tracking(
     return _PreparedFoldTracking(fold_evidence, resolved_final_grid_plan, tuple(prepared))
 
 
+def _materialize_candidate_tracking_artifacts(
+    candidate: WalkForwardEvaluation,
+    evidence_json: bytes,
+    candidate_dir: Path,
+) -> None:
+    """Write one candidate's CPU-heavy local tracking artifacts.
+
+    Candidate directories are disjoint, so these writes can safely happen in
+    independent worker processes.  MLflow API calls remain in the coordinator;
+    this worker only produces immutable local files that are later uploaded in
+    canonical candidate order.
+    """
+
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "candidate_evidence.json").write_bytes(evidence_json)
+    if not any(item.valid and item.pca_scaler_artifact is not None for item in candidate.folds):
+        return
+    pca_entries = render_pca_diagnostics(candidate, candidate_dir)
+    pca_manifest_entries: list[dict[str, object]] = []
+    for entry in pca_entries:
+        manifest_entry = entry.as_dict()
+        manifest_entry["png_path"] = str(Path(entry.png_path).relative_to(candidate_dir))
+        pca_manifest_entries.append(manifest_entry)
+    _write_json(
+        candidate_dir / "pca_plot_manifest.json",
+        {
+            "candidate_id": candidate.candidate_id,
+            "entries": pca_manifest_entries,
+        },
+    )
+
+
 def build_global_v4_evidence(
     result: AdaptiveEvaluationResult,
     *,
@@ -716,25 +749,11 @@ def _track_global_v4_fold(
         for prepared_candidate in prepared.candidates:
             candidate = prepared_candidate.evaluation
             candidate_dir = model_root / candidate.candidate_id
-            candidate_dir.mkdir(parents=True, exist_ok=True)
-            (candidate_dir / "candidate_evidence.json").write_bytes(
-                prepared_candidate.evidence_json
-            )
-            if any(item.valid and item.pca_scaler_artifact is not None for item in candidate.folds):
-                pca_entries = render_pca_diagnostics(candidate, candidate_dir)
-                pca_manifest_entries: list[dict[str, object]] = []
-                for entry in pca_entries:
-                    manifest_entry = entry.as_dict()
-                    manifest_entry["png_path"] = str(
-                        Path(entry.png_path).relative_to(candidate_dir)
-                    )
-                    pca_manifest_entries.append(manifest_entry)
-                _write_json(
-                    candidate_dir / "pca_plot_manifest.json",
-                    {
-                        "candidate_id": candidate.candidate_id,
-                        "entries": pca_manifest_entries,
-                    },
+            if not prepared.artifacts_materialized:
+                _materialize_candidate_tracking_artifacts(
+                    candidate,
+                    prepared_candidate.evidence_json,
+                    candidate_dir,
                 )
             model_id = _project_candidate_logged_model(
                 port,
@@ -846,6 +865,53 @@ def track_global_v4_evaluation(
                 ]
                 # Preserve canonical fold order regardless of process completion order.
                 prepared_folds = tuple(future.result() for future in futures)
+        artifact_tasks = tuple(
+            (
+                prepared_candidate.evaluation,
+                prepared_candidate.evidence_json,
+                directory
+                / "logged_models"
+                / f"outer_fold_{fold.fold_index:03d}"
+                / prepared_candidate.evaluation.candidate_id,
+            )
+            for (fold, _selection), prepared in zip(
+                preparation_tasks,
+                prepared_folds,
+                strict=True,
+            )
+            for prepared_candidate in prepared.candidates
+        )
+        if artifact_tasks:
+            artifact_workers = cpu_worker_count(
+                requested_workers,
+                task_count=len(artifact_tasks),
+            )
+            if artifact_workers == 1:
+                for candidate, evidence_json, candidate_dir in artifact_tasks:
+                    _materialize_candidate_tracking_artifacts(
+                        candidate,
+                        evidence_json,
+                        candidate_dir,
+                    )
+            else:
+                with cpu_process_pool(artifact_workers) as executor:
+                    artifact_futures = [
+                        executor.submit(
+                            _materialize_candidate_tracking_artifacts,
+                            candidate,
+                            evidence_json,
+                            candidate_dir,
+                        )
+                        for candidate, evidence_json, candidate_dir in artifact_tasks
+                    ]
+                    # Await in canonical candidate order; file writes themselves
+                    # may complete in any order without changing the manifest.
+                    for future in artifact_futures:
+                        future.result()
+            prepared_folds = tuple(
+                replace(prepared, artifacts_materialized=bool(prepared.candidates))
+                for prepared in prepared_folds
+            )
         fold_results = [
             _track_global_v4_fold(
                 port,

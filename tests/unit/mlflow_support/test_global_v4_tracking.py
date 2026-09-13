@@ -338,6 +338,24 @@ def test_tracking_preparation_worker_matches_inline_payload() -> None:
     assert parallel == inline
 
 
+def test_candidate_tracking_artifact_worker_writes_immutable_evidence_file(
+    tmp_path: Path,
+) -> None:
+    candidate = SimpleNamespace(candidate_id="gaussian_hmm_k2_full", folds=())
+    candidate_dir = tmp_path / "logged_models" / "outer_fold_001" / candidate.candidate_id
+
+    with cpu_process_pool(2) as executor:
+        executor.submit(
+            module._materialize_candidate_tracking_artifacts,
+            candidate,
+            b'{"candidate":1}\n',
+            candidate_dir,
+        ).result()
+
+    assert (candidate_dir / "candidate_evidence.json").read_bytes() == b'{"candidate":1}\n'
+    assert not tuple(candidate_dir.glob("*.png"))
+
+
 def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarchy(
     tmp_path: Path,
 ) -> None:
