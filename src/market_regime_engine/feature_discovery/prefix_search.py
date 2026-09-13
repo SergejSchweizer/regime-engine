@@ -24,7 +24,7 @@ from market_regime_engine.evaluation.walk_forward import (
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.evaluations.provisional_teacher import build_inner_walk_forward_plan
 from market_regime_engine.feature_discovery.contracts import (
     MAX_PREFIX_LENGTH,
@@ -71,20 +71,30 @@ class _PrefixProcessTask:
     max_workers: int
     pca_raw_feature_order: tuple[str, ...] | None
     pca_variance_threshold: float
+    runner: PrefixCandidateRunner
 
 
 def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluation:
     """Run one prefix candidate in a separate interpreter."""
 
-    return run_walk_forward_candidate(
+    candidate_adapter = cast(AdapterFactory, adapter_factory(task.profile, task.candidate))
+    if task.runner is run_prefix_gaussian_candidate:
+        return run_walk_forward_candidate(
+            task.source_rows,
+            plan=task.plan,
+            profile=task.profile,
+            candidate=task.candidate,
+            adapter_factory=candidate_adapter,
+            max_workers=task.max_workers,
+            pca_raw_feature_order=task.pca_raw_feature_order,
+            pca_variance_threshold=task.pca_variance_threshold,
+        )
+    return task.runner(
         task.source_rows,
-        plan=task.plan,
-        profile=task.profile,
-        candidate=task.candidate,
-        adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
-        max_workers=task.max_workers,
-        pca_raw_feature_order=task.pca_raw_feature_order,
-        pca_variance_threshold=task.pca_variance_threshold,
+        task.plan,
+        task.profile,
+        task.candidate,
+        candidate_adapter,
     )
 
 
@@ -183,9 +193,10 @@ def _evaluate_candidates(
         )
 
     use_processes = (
-        runner is run_prefix_gaussian_candidate
-        and seed_checkpoint_factory is None
+        seed_checkpoint_factory is None
         and worker_limit > 1
+        and is_pickleable(runner)
+        and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
     )
     if use_processes:
         nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
@@ -198,6 +209,7 @@ def _evaluate_candidates(
                 nested_limits[index % worker_limit],
                 pca_raw_feature_order,
                 pca_variance_threshold,
+                runner,
             )
             for index, candidate in enumerate(candidates)
         )

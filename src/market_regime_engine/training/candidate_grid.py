@@ -18,7 +18,7 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.feature_discovery.contracts import content_hash
 from market_regime_engine.profiles.config import ModelProfile
@@ -57,20 +57,35 @@ class _CandidateProcessTask:
     max_workers: int
     pca_raw_feature_order: tuple[str, ...] | None
     pca_variance_threshold: float
+    runner: CandidateRunner
+    adapter_factory_builder: AdapterFactoryBuilder | None
 
 
 def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEvaluation:
     """Evaluate one candidate outside the caller's interpreter/GIL."""
 
-    return run_walk_forward_candidate(
+    candidate_adapter = (
+        task.adapter_factory_builder(task.candidate)
+        if task.adapter_factory_builder is not None
+        else cast(AdapterFactory, adapter_factory(task.profile, task.candidate))
+    )
+    if task.runner is _default_runner:
+        return run_walk_forward_candidate(
+            task.source_rows,
+            plan=task.plan,
+            profile=task.profile,
+            candidate=task.candidate,
+            adapter_factory=candidate_adapter,
+            max_workers=task.max_workers,
+            pca_raw_feature_order=task.pca_raw_feature_order,
+            pca_variance_threshold=task.pca_variance_threshold,
+        )
+    return task.runner(
         task.source_rows,
-        plan=task.plan,
-        profile=task.profile,
-        candidate=task.candidate,
-        adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
-        max_workers=task.max_workers,
-        pca_raw_feature_order=task.pca_raw_feature_order,
-        pca_variance_threshold=task.pca_variance_threshold,
+        task.plan,
+        task.profile,
+        task.candidate,
+        candidate_adapter,
     )
 
 
@@ -372,10 +387,10 @@ def evaluate_candidate_grid(
         )
 
     use_processes = (
-        runner is _default_runner
-        and adapter_factory_builder is None
-        and seed_checkpoint_factory is None
+        seed_checkpoint_factory is None
         and worker_limit > 1
+        and is_pickleable(runner)
+        and (adapter_factory_builder is None or is_pickleable(adapter_factory_builder))
     )
     if use_processes:
         nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
@@ -388,6 +403,8 @@ def evaluate_candidate_grid(
                 nested_limits[index % worker_limit],
                 pca_raw_feature_order,
                 pca_variance_threshold,
+                runner,
+                adapter_factory_builder,
             )
             for index, candidate in enumerate(scheduled_candidates)
         )
