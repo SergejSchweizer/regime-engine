@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from sklearn.metrics import silhouette_samples
 
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
@@ -60,6 +61,21 @@ def test_parallel_audit_verification_uses_canonical_results() -> None:
             "timestamp_column": "timestamp_m1",
             "feature_order": list(features),
             "distance": distance,
+            "silhouette_clusters": [
+                {
+                    "cluster_count": 2,
+                    "labels": [0, 0, 1],
+                    "mean": float(
+                        np.mean(
+                            silhouette_samples(
+                                np.asarray(distance, dtype=float),
+                                np.asarray([0, 0, 1], dtype=int),
+                                metric="precomputed",
+                            )
+                        )
+                    ),
+                }
+            ],
         }
         for index in range(3)
     ]
@@ -73,6 +89,70 @@ def test_parallel_audit_verification_uses_canonical_results() -> None:
     assert report["status"] == "verified"
     assert report["audited_outer_fold_indices"] == [0, 1, 2]
     assert report["distance_max_abs_error"] == 0.0
+    assert report["silhouette_max_abs_error"] == 0.0
+
+
+def test_audit_rejects_nonfinite_expected_distance_instead_of_passing_nan() -> None:
+    module = _module()
+    columns = {
+        "timestamp_m1": np.asarray([0, 1, 2], dtype=object),
+        "feature_a": np.asarray([0.0, 1.0, 2.0]),
+        "feature_b": np.asarray([2.0, 1.0, 0.0]),
+    }
+    with pytest.raises(SystemExit, match="finite"):
+        module.verify_expectations(
+            columns,
+            {
+                "outer_fold_index": 0,
+                "timestamp_column": "timestamp_m1",
+                "feature_order": ["feature_a", "feature_b"],
+                "distance": [[0.0, float("nan")], [float("nan"), 0.0]],
+            },
+            max_workers=1,
+        )
+
+
+def test_audit_rejects_rank_pairs_without_two_complete_observations() -> None:
+    module = _module()
+    columns = {
+        "timestamp_m1": np.asarray([0, 1], dtype=object),
+        "feature_a": np.asarray([1.0, None], dtype=object),
+        "feature_b": np.asarray([2.0, None], dtype=object),
+    }
+    with pytest.raises(ValueError, match="at least two complete"):
+        module.verify_expectations(
+            columns,
+            {
+                "outer_fold_index": 0,
+                "timestamp_column": "timestamp_m1",
+                "feature_order": ["feature_a", "feature_b"],
+                "distance": [[0.0, 0.0], [0.0, 0.0]],
+            },
+            max_workers=1,
+        )
+
+
+def test_soft_nmi_rejects_empty_timestamp_intersection() -> None:
+    module = _module()
+    with pytest.raises(ValueError, match="shared timestamps"):
+        module.independent_soft_nmi(
+            ("2026-01-01",),
+            ((1.0, 0.0),),
+            ("2026-01-02",),
+            ((1.0, 0.0),),
+        )
+
+
+def test_likelihood_rejects_non_normalized_transition_rows() -> None:
+    module = _module()
+    with pytest.raises(ValueError, match="transition rows"):
+        module.independent_gaussian_log_likelihood(
+            np.asarray([[0.0]], dtype=float),
+            np.asarray([1.0]),
+            np.asarray([[0.5]]),
+            np.asarray([[0.0]]),
+            np.asarray([[[1.0]]]),
+        )
 
 
 def test_audit_worker_count_respects_affinity_cgroup_and_task_limits(
