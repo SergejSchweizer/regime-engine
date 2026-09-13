@@ -177,6 +177,52 @@ def _require_retired_version(version: Any, expected_version: str) -> None:
         raise ValueError(f"refusing to delete accepted v4 model version {expected_version}")
 
 
+def _registry_legacy_survivors(
+    client: Any,
+) -> tuple[tuple[str, ...], tuple[dict[str, str], ...]]:
+    """Return every non-v4 version and alias in the exact production model."""
+
+    search = getattr(client, "search_model_versions", None)
+    get_registered = getattr(client, "get_registered_model", None)
+    if not callable(search) or not callable(get_registered):
+        raise TypeError(
+            "legacy cleanup client must enumerate model versions and registered-model aliases"
+        )
+    versions = tuple(search("name='regime-xetra'"))
+    by_version = {str(version.version): version for version in versions}
+    retired_versions = tuple(
+        sorted(
+            version_id for version_id, version in by_version.items() if not _version_is_v4(version)
+        )
+    )
+    try:
+        registered = get_registered(REGISTERED_MODEL_NAME)
+    except Exception as error:
+        if _is_missing_error(error):
+            return retired_versions, ()
+        raise
+    aliases = getattr(registered, "aliases", {}) or {}
+    retired_aliases: list[dict[str, str]] = []
+    for alias, target in sorted(dict(aliases).items()):
+        target_version = str(target)
+        version = by_version.get(target_version)
+        if version is None:
+            try:
+                version = client.get_model_version(REGISTERED_MODEL_NAME, target_version)
+            except Exception as error:
+                if _is_missing_error(error):
+                    retired_aliases.append(
+                        {"alias": str(alias), "version": target_version, "reason": "missing target"}
+                    )
+                    continue
+                raise
+        if alias not in ALLOWED_ALIASES or not _version_is_v4(version):
+            retired_aliases.append(
+                {"alias": str(alias), "version": target_version, "reason": "legacy target"}
+            )
+    return retired_versions, tuple(retired_aliases)
+
+
 def execute_retired_registered_model_cleanup(
     client: Any,
     inventory: dict[str, object],
@@ -196,6 +242,35 @@ def execute_retired_registered_model_cleanup(
     aliases = inventory.get("aliases", [])
     if not isinstance(versions, list) or not isinstance(aliases, list):
         raise ValueError("legacy inventory versions/aliases must be lists")
+    inventory_retired_versions, inventory_retired_aliases = _registry_legacy_survivors(client)
+    listed_versions = {
+        str(item.get("version"))
+        for item in versions
+        if isinstance(item, dict) and isinstance(item.get("version"), str)
+    }
+    for item in versions:
+        if not isinstance(item, dict) or not isinstance(item.get("version"), str):
+            raise ValueError("legacy inventory contains an invalid model version")
+        try:
+            version = client.get_model_version(REGISTERED_MODEL_NAME, item["version"])
+        except Exception as error:
+            if _is_missing_error(error):
+                continue
+            raise
+        _require_retired_version(version, item["version"])
+    if not set(inventory_retired_versions).issubset(listed_versions):
+        raise ValueError("legacy inventory does not enumerate every current legacy model version")
+    listed_aliases = {
+        (str(item.get("alias")), str(item.get("version")))
+        for item in aliases
+        if isinstance(item, dict)
+        and isinstance(item.get("alias"), str)
+        and isinstance(item.get("version"), str)
+    }
+    if any(
+        (item["alias"], item["version"]) not in listed_aliases for item in inventory_retired_aliases
+    ):
+        raise ValueError("legacy inventory does not enumerate every current legacy alias")
     plan: list[dict[str, str]] = []
     for item in versions:
         if not isinstance(item, dict) or not isinstance(item.get("version"), str):
@@ -309,14 +384,22 @@ def execute_retired_registered_model_cleanup(
                     "expected_version": expected_target,
                 }
             )
+    remaining_retired_versions, remaining_retired_aliases = _registry_legacy_survivors(client)
     proof: dict[str, object] = {
         "scope": "retired_registered_models",
         "tracking_uri": expected_tracking_uri,
         "model_name": REGISTERED_MODEL_NAME,
         "plan": list(ordered_plan),
-        "surviving_versions": sorted(survivors),
-        "surviving_aliases": surviving_aliases,
-        "status": "verified" if not survivors and not surviving_aliases else "failed",
+        "surviving_versions": sorted(set(survivors) | set(remaining_retired_versions)),
+        "surviving_aliases": [*surviving_aliases, *remaining_retired_aliases],
+        "status": (
+            "verified"
+            if not survivors
+            and not surviving_aliases
+            and not remaining_retired_versions
+            and not remaining_retired_aliases
+            else "failed"
+        ),
     }
     if proof["status"] != "verified":
         raise RuntimeError("legacy registered-model cleanup left targeted objects behind")
