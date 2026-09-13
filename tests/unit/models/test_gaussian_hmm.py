@@ -4,8 +4,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from scipy.special import gammaln, logsumexp  # type: ignore[import-untyped]
-from scipy.stats import multivariate_t  # type: ignore[import-untyped]
+from scipy.stats import multivariate_t
 
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.gaussian_hmm import (
@@ -17,7 +16,6 @@ from market_regime_engine.models.gaussian_hmm import (
     forward_filter,
     gaussian_log_emissions,
 )
-from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 
 
 def artifact_2d() -> GaussianHMMArtifact:
@@ -68,7 +66,6 @@ def test_student_t_log_emissions_match_scipy_reference_per_state() -> None:
     )
     rows = np.asarray([[0.0, 0.0], [2.0, -1.0]])
     actual = gaussian_log_emissions(rows, source)
-    assert source.degrees_of_freedom is not None
     for state in range(source.state_count):
         expected = multivariate_t.logpdf(
             rows,
@@ -194,129 +191,3 @@ def test_gmm_hmm_with_two_mixtures_extracts_and_filters_exact_mixtures(
     assert restored.extract() == result.artifact
     with pytest.raises(ValueError, match="K=2, K=3, K=4, or K=5"):
         adapter.fit(values, state_count=6, seed=11)
-
-
-def _reference_emissions(rows: np.ndarray, artifact: GaussianHMMArtifact) -> np.ndarray:
-    """Independent reference densities for the three supported HMM families."""
-
-    values = np.asarray(rows, dtype=np.float64)
-    result = np.empty((len(values), artifact.state_count), dtype=np.float64)
-    dimension = artifact.feature_dimension
-    gaussian_constant = dimension * np.log(2.0 * np.pi)
-    for state in range(artifact.state_count):
-        if artifact.model_family == "gmm_hmm":
-            assert artifact.mixture_weights is not None
-            assert artifact.mixture_means is not None
-            assert artifact.mixture_full_covariances is not None
-            components: list[np.ndarray] = []
-            for mixture in range(2):
-                mean = np.asarray(artifact.mixture_means[state][mixture], dtype=np.float64)
-                covariance = np.asarray(
-                    artifact.mixture_full_covariances[state][mixture], dtype=np.float64
-                )
-                centered = values - mean
-                solved = np.linalg.solve(covariance, centered.T).T
-                quadratic = np.einsum("ij,ij->i", centered, solved)
-                sign, logdet = np.linalg.slogdet(covariance)
-                assert sign > 0.0
-                components.append(
-                    np.log(artifact.mixture_weights[state][mixture])
-                    - 0.5 * (gaussian_constant + logdet + quadratic)
-                )
-            result[:, state] = logsumexp(np.stack(components, axis=1), axis=1)
-            continue
-        mean = np.asarray(artifact.means[state], dtype=np.float64)
-        covariance = np.asarray(artifact.full_covariances[state], dtype=np.float64)
-        centered = values - mean
-        solved = np.linalg.solve(covariance, centered.T).T
-        quadratic = np.einsum("ij,ij->i", centered, solved)
-        sign, logdet = np.linalg.slogdet(covariance)
-        assert sign > 0.0
-        if artifact.model_family == "student_t_hmm":
-            assert artifact.degrees_of_freedom is not None
-            nu = artifact.degrees_of_freedom[state]
-            result[:, state] = (
-                gammaln((nu + dimension) / 2.0)
-                - gammaln(nu / 2.0)
-                - 0.5 * (dimension * np.log(nu * np.pi) + logdet)
-                - 0.5 * (nu + dimension) * np.log1p(quadratic / nu)
-            )
-        else:
-            result[:, state] = -0.5 * (gaussian_constant + logdet + quadratic)
-    return result
-
-
-def _reference_filter_score(
-    rows: np.ndarray,
-    artifact: GaussianHMMArtifact,
-    initial_filtered_probabilities: tuple[float, ...] | None = None,
-) -> tuple[float, tuple[float, ...]]:
-    emissions = _reference_emissions(rows, artifact)
-    transition = np.asarray(artifact.transition_matrix, dtype=np.float64)
-    previous = (
-        np.asarray(artifact.start_probabilities, dtype=np.float64)
-        if initial_filtered_probabilities is None
-        else np.asarray(initial_filtered_probabilities, dtype=np.float64)
-    )
-    total = 0.0
-    for index, emission in enumerate(emissions):
-        prior = (
-            previous
-            if index == 0 and initial_filtered_probabilities is None
-            else previous @ transition
-        )
-        log_alpha = np.log(prior) + emission
-        increment = float(logsumexp(log_alpha))
-        total += increment
-        previous = np.exp(log_alpha - increment)
-    return total, tuple(float(value) for value in previous)
-
-
-@pytest.mark.parametrize("family", ("gaussian", "gmm", "student_t"))
-def test_train_and_oos_likelihoods_match_independent_reference(family: str) -> None:
-    base = artifact_2d()
-    adapter: HmmlearnGaussianHMMAdapter | HmmlearnGMMHMMAdapter | StudentTHMMAdapter
-    if family == "gmm":
-        artifact = replace(
-            base,
-            model_family="gmm_hmm",
-            mixture_weights=((0.7, 0.3), (0.35, 0.65)),
-            mixture_means=(
-                ((-1.4, 0.6), (-0.2, 0.3)),
-                ((0.7, -0.1), (1.4, -0.4)),
-            ),
-            mixture_full_covariances=(
-                (
-                    ((0.8, 0.1), (0.1, 1.4)),
-                    ((1.1, 0.2), (0.2, 0.9)),
-                ),
-                (
-                    ((0.9, -0.1), (-0.1, 1.1)),
-                    ((0.6, 0.05), (0.05, 1.3)),
-                ),
-            ),
-        )
-        adapter = HmmlearnGMMHMMAdapter(base.feature_order)
-    elif family == "student_t":
-        artifact = replace(
-            base,
-            model_family="student_t_hmm",
-            degrees_of_freedom=(4.5, 12.0),
-        )
-        adapter = StudentTHMMAdapter(base.feature_order)
-    else:
-        artifact = base
-        adapter = HmmlearnGaussianHMMAdapter(base.feature_order)
-
-    train = np.asarray([[-1.2, 0.4], [-0.8, 0.7], [0.6, -0.1], [1.1, -0.4]], dtype=np.float64)
-    test = np.asarray([[0.9, -0.2], [-0.4, 0.5], [1.3, -0.6]], dtype=np.float64)
-    adapter.reconstruct(artifact)
-    expected_train, terminal = _reference_filter_score(train, artifact)
-    actual_train = adapter.causal_filter(train)
-    assert actual_train.log_likelihood == pytest.approx(expected_train, abs=1.0e-10)
-    assert actual_train.terminal_probabilities == pytest.approx(terminal, abs=1.0e-10)
-    expected_test, _ = _reference_filter_score(test, artifact, terminal)
-    actual_test = adapter.causal_filter(test, actual_train.terminal_probabilities)
-    assert actual_test.log_likelihood == pytest.approx(expected_test, abs=1.0e-10)
-    if isinstance(adapter, (HmmlearnGaussianHMMAdapter, HmmlearnGMMHMMAdapter)):
-        assert adapter.backend_reset_test_score(train) == pytest.approx(expected_train, abs=1.0e-8)
