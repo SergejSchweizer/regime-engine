@@ -90,7 +90,7 @@ from market_regime_engine.features.ports import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import CandidateRunner as GridCandidateRunner
 
@@ -100,26 +100,9 @@ PrefixEvaluationPayloadSink = Callable[[int, int, str, WalkForwardEvaluation], N
 
 
 def _nested_worker_limits(total_worker_budget: int, outer_worker_count: int) -> tuple[int, ...]:
-    """Share one CPU budget between outer processes and nested stages.
+    """Share one CPU budget between outer processes and nested stages."""
 
-    An outer process is itself a CPU lane. When it runs a candidate grid or
-    multistart pool, those child processes must come from the remaining
-    budget; otherwise every outer process can independently create a
-    machine-sized pool and oversubscribe the host. The remainder is assigned
-    to individual outer-fold slots so a budget such as 86 is used fully when
-    24 folds run concurrently, rather than rounding down to 72 processes.
-    """
-
-    if total_worker_budget < 1 or outer_worker_count < 1:
-        raise ValueError("worker budget and outer worker count must be positive")
-    if outer_worker_count == 1:
-        return (total_worker_budget,)
-    baseline = max(1, (total_worker_budget - outer_worker_count) // outer_worker_count)
-    remainder = max(
-        0,
-        total_worker_budget - outer_worker_count - baseline * outer_worker_count,
-    )
-    return tuple(baseline + int(slot < remainder) for slot in range(outer_worker_count))
+    return nested_worker_limits(total_worker_budget, outer_worker_count)
 
 
 def _nested_worker_limit_for_fold(worker_limits: tuple[int, ...], fold_index: int) -> int:
