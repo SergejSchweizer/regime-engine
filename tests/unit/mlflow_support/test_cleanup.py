@@ -102,6 +102,14 @@ class RegisteredClient:
         assert name == "regime-xetra"
         return self.versions[self.aliases[alias]]
 
+    def get_registered_model(self, name: str) -> object:
+        assert name == "regime-xetra"
+        return SimpleNamespace(aliases=dict(self.aliases))
+
+    def search_model_versions(self, filter_string: str) -> list[object]:
+        assert filter_string == "name='regime-xetra'"
+        return list(self.versions.values())
+
     def get_model_version(self, name: str, version: str) -> object:
         assert name == "regime-xetra"
         if version not in self.versions:
@@ -128,7 +136,7 @@ class RegisteredClient:
 
 def test_retired_cleanup_requires_v4_champion_and_retargets_alias() -> None:
     client = RegisteredClient()
-    inventory = {
+    inventory: dict[str, object] = {
         "tracking_uri": "http://10.10.1.3:5000",
         "model_name": "regime-xetra",
         "versions": [{"version": "1"}],
@@ -156,7 +164,7 @@ def test_retired_cleanup_requires_v4_champion_and_retargets_alias() -> None:
 
 def test_retired_cleanup_refuses_v4_target() -> None:
     client = RegisteredClient()
-    inventory = {
+    inventory: dict[str, object] = {
         "tracking_uri": "http://10.10.1.3:5000",
         "model_name": "regime-xetra",
         "versions": [{"version": "2"}],
@@ -168,3 +176,26 @@ def test_retired_cleanup_refuses_v4_target() -> None:
             inventory,
             expected_tracking_uri="http://10.10.1.3:5000",
         )
+
+
+def test_retired_cleanup_rejects_incomplete_inventory_before_mutation() -> None:
+    client = RegisteredClient()
+    client.versions["3"] = SimpleNamespace(
+        version="3", source="runs:/legacy/package-3", tags={"profile_config_version": "2"}
+    )
+    inventory: dict[str, object] = {
+        "tracking_uri": "http://10.10.1.3:5000",
+        "model_name": "regime-xetra",
+        "versions": [{"version": "1"}],
+        "aliases": [{"alias": "challenger", "version": "1", "retarget_version": "2"}],
+    }
+
+    with pytest.raises(ValueError, match="every current legacy model version"):
+        execute_retired_registered_model_cleanup(
+            client,
+            inventory,
+            expected_tracking_uri="http://10.10.1.3:5000",
+        )
+
+    assert client.operations == []
+    assert set(client.versions) == {"1", "2", "3"}
