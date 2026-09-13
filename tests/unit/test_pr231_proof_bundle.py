@@ -31,6 +31,7 @@ def _write_bundle(root: Path, *, repository_sha: str = "a" * 40) -> None:
             "golden_snapshot_hash": golden,
             "result_hash": result_hash,
             "evidence_hash": evidence_hash,
+            "selected_likelihood_records_recomputed": 2,
         },
         "tracking-and-plots": {
             "plot_manifest_path": str(root / "plots.json"),
@@ -38,14 +39,18 @@ def _write_bundle(root: Path, *, repository_sha: str = "a" * 40) -> None:
             "evidence_hash": evidence_hash,
         },
         "independent-process-and-labels": {
+            "snapshot_sha256": "e" * 64,
             "result_sha256": result_hash,
             "evidence_sha256": evidence_hash,
             "canonical_result_bytes_equal": True,
             "canonical_evidence_bytes_equal": True,
         },
         "future-mutation-isolation": {
+            "mutation_row_index": 10,
+            "mutation_feature": "feature_a",
             "baseline_result_hash": result_hash,
             "baseline_evidence_hash": evidence_hash,
+            "mutated_result_hash": "f" * 64,
             "final_fold_changed": True,
             "earlier_fold_result_bytes_equal": True,
             "earlier_selection_bytes_equal": True,
@@ -56,6 +61,7 @@ def _write_bundle(root: Path, *, repository_sha: str = "a" * 40) -> None:
         proof_path = root / f"{phase}-proof.json"
         proof_path.write_text(json.dumps({"phase": phase, **values}) + "\n", encoding="utf-8")
         metadata = {
+            "workflow": "local",
             "phase": phase,
             "repository_sha": repository_sha,
             "golden_snapshot_hash": golden,
@@ -148,3 +154,44 @@ def test_verify_rejects_metadata_symlink_outside_bundle(tmp_path: Path) -> None:
 
     assert report["status"] == "failed"
     assert any("metadata for pipeline-math is outside" in error for error in report["errors"])
+
+
+def test_verify_rejects_missing_likelihood_recomputations(tmp_path: Path) -> None:
+    module = _module()
+    _write_bundle(tmp_path)
+    proof_path = tmp_path / "pipeline-math-proof.json"
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    proof["selected_likelihood_records_recomputed"] = 0
+    proof_path.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+
+    report = module.verify(tmp_path)
+
+    assert report["status"] == "failed"
+    assert any("fewer than two" in error for error in report["errors"])
+
+
+def test_verify_rejects_unchanged_mutation_result(tmp_path: Path) -> None:
+    module = _module()
+    _write_bundle(tmp_path)
+    proof_path = tmp_path / "future-mutation-isolation-proof.json"
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    proof["mutated_result_hash"] = proof["baseline_result_hash"]
+    proof_path.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+
+    report = module.verify(tmp_path)
+
+    assert report["status"] == "failed"
+    assert any("mutated result hash did not change" in error for error in report["errors"])
+
+
+def test_verify_rejects_symlink_loop_without_crashing(tmp_path: Path) -> None:
+    module = _module()
+    _write_bundle(tmp_path)
+    metadata_path = tmp_path / "pr231-pipeline-math.json"
+    metadata_path.unlink()
+    metadata_path.symlink_to(metadata_path)
+
+    report = module.verify(tmp_path)
+
+    assert report["status"] == "failed"
+    assert any("missing metadata sidecar" in error for error in report["errors"])

@@ -56,7 +56,11 @@ def _resolve_bundle_path(
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = (relative_to or root) / candidate
-    resolved = candidate.resolve()
+    try:
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        errors.append(f"{label} cannot be resolved: {value} ({exc})")
+        return None
     try:
         resolved.relative_to(root)
     except ValueError:
@@ -89,6 +93,8 @@ def verify(output_dir: str | Path) -> dict[str, object]:
             errors.append(f"invalid metadata sidecar {metadata_path.name}: {exc}")
             continue
         metadata[phase] = item
+        if item.get("workflow") != "local":
+            errors.append(f"metadata for {phase} is not a local proof")
         proof_value = item.get("computation_proof_path")
         if not isinstance(proof_value, str):
             errors.append(f"missing computation proof path for {phase}")
@@ -138,6 +144,11 @@ def verify(output_dir: str | Path) -> dict[str, object]:
         errors.append("pipeline-math proof does not match the metadata golden hash")
     pipeline_result_hash = _proof_hash(pipeline, "result_hash", "pipeline-math", errors)
     pipeline_evidence_hash = _proof_hash(pipeline, "evidence_hash", "pipeline-math", errors)
+    likelihood_count = pipeline.get("selected_likelihood_records_recomputed")
+    if type(likelihood_count) is not int or likelihood_count < 2:
+        errors.append(
+            "pipeline-math has fewer than two independently recomputed likelihood records"
+        )
     tracking = proofs.get("tracking-and-plots", {})
     tracking_result_hash = _proof_hash(tracking, "result_hash", "tracking-and-plots", errors)
     tracking_evidence_hash = _proof_hash(tracking, "evidence_hash", "tracking-and-plots", errors)
@@ -165,7 +176,10 @@ def verify(output_dir: str | Path) -> dict[str, object]:
                 errors.append("tracking-and-plots manifest has no entries")
             else:
                 for index, entry in enumerate(entries):
-                    png_value = entry.get("png_path") if isinstance(entry, dict) else None
+                    if not isinstance(entry, dict):
+                        errors.append(f"tracking-and-plots manifest entry {index} is not an object")
+                        continue
+                    png_value = entry.get("png_path")
                     png_path = (
                         _resolve_bundle_path(
                             root,
@@ -180,6 +194,7 @@ def verify(output_dir: str | Path) -> dict[str, object]:
                     if png_path is None or not png_path.is_file():
                         errors.append(f"missing plot artifact {index}: {png_value}")
     independent = proofs.get("independent-process-and-labels", {})
+    _proof_hash(independent, "snapshot_sha256", "independent-process-and-labels", errors)
     independent_result_hash = _proof_hash(
         independent,
         "result_sha256",
@@ -208,6 +223,18 @@ def verify(output_dir: str | Path) -> dict[str, object]:
         "future-mutation-isolation",
         errors,
     )
+    mutated_result_hash = _proof_hash(
+        mutation,
+        "mutated_result_hash",
+        "future-mutation-isolation",
+        errors,
+    )
+    mutation_row_index = mutation.get("mutation_row_index")
+    if type(mutation_row_index) is not int or mutation_row_index < 0:
+        errors.append("future-mutation-isolation has an invalid mutation_row_index")
+    mutation_feature = mutation.get("mutation_feature")
+    if not isinstance(mutation_feature, str) or not mutation_feature.strip():
+        errors.append("future-mutation-isolation has no mutation_feature")
     for field in (
         "final_fold_changed",
         "earlier_fold_result_bytes_equal",
@@ -233,6 +260,12 @@ def verify(output_dir: str | Path) -> dict[str, object]:
         ):
             if value is not None and value != pipeline_evidence_hash:
                 errors.append(f"{phase} evidence hash does not match pipeline-math")
+    if (
+        mutation_result_hash is not None
+        and mutated_result_hash is not None
+        and mutated_result_hash == mutation_result_hash
+    ):
+        errors.append("future-mutation-isolation mutated result hash did not change")
 
     return {
         "workflow": "local",
