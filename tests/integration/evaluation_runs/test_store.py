@@ -72,7 +72,7 @@ def test_sqlite_claim_completion_idempotency_and_terminal_invalid(tmp_path: Path
     assert store.claim_work_unit(run, first, owner="worker-a")
     assert not store.claim_work_unit(run, first, owner="worker-b")
     payload = b"canonical-unit-payload"
-    store.complete_work_unit(run, first, payload)
+    store.complete_work_unit(run, first, payload, owner="worker-a")
     assert store.load_completed_work_unit(run, first) == payload
     assert not store.claim_work_unit(run, first)
     with pytest.raises(ValueError, match="immutable"):
@@ -104,7 +104,7 @@ def test_sqlite_reclaims_expired_lease_and_retries_technical_failure(tmp_path: P
             ((NOW - timedelta(days=1)).isoformat(), run.key, pending.key),
         )
     assert store.claim_work_unit(run, pending, owner="worker-b")
-    store.fail_work_unit(run, pending, "temporary database outage")
+    store.fail_work_unit(run, pending, "temporary database outage", owner="worker-b")
     assert store.claim_work_unit(run, pending, owner="worker-c")
 
 
@@ -134,7 +134,12 @@ def test_process_exit_before_ledger_commit_never_creates_false_complete(
             ((NOW - timedelta(days=1)).isoformat(), run.key, work_unit.key),
         )
     assert store.claim_work_unit(run, work_unit, owner="recovery-worker")
-    store.complete_work_unit(run, work_unit, b"recomputed-after-crash")
+    store.complete_work_unit(
+        run,
+        work_unit,
+        b"recomputed-after-crash",
+        owner="recovery-worker",
+    )
     assert store.load_completed_work_unit(run, work_unit) == b"recomputed-after-crash"
 
 
