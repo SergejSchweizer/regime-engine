@@ -283,24 +283,31 @@ def _run(performance: PerformanceRecorder) -> None:
         columns=snapshot.feature_names,
     )
     audit_rows.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
-    expectations = build_math_expectations(
-        audit_rows,
-        result,
-        selections,
-        prefix_evaluations=prefix_evaluations,
-        max_workers=cpu_worker_count(None),
-    )
-    expectations_path = audit_root / f"{run_identity.key}.json"
-    expectations_path.write_text(
-        json.dumps(expectations, default=str, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
     snapshot_root = (
         Path(arguments.snapshot_root)
         if arguments.snapshot_root is not None
         else checkpoint_root / "snapshots"
     )
     snapshot_path = snapshot_root / run_identity.dataset_snapshot_key / "snapshot.arrow"
+    expectations = build_math_expectations(
+        audit_rows,
+        result,
+        selections,
+        prefix_evaluations=prefix_evaluations,
+        max_workers=cpu_worker_count(None),
+        source_identity={
+            "source_build_id": audit_catalog.lineage.source_build_id,
+            "source_data_sha256": audit_catalog.lineage.data_sha256,
+            "source_catalog_hash": audit_catalog.catalog_hash,
+            "dataset_snapshot_key": run_identity.dataset_snapshot_key,
+            "snapshot_sha256": sha256(snapshot_path.read_bytes()).hexdigest(),
+        },
+    )
+    expectations_path = audit_root / f"{run_identity.key}.json"
+    expectations_path.write_text(
+        json.dumps(expectations, default=str, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     audit_output = subprocess.check_output(
         [
             str(root / ".venv/bin/python"),

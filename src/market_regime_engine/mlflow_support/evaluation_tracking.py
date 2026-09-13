@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -979,8 +980,20 @@ def track_global_v4_evaluation(
                 replace(prepared, artifacts_materialized=bool(prepared.candidates))
                 for prepared in prepared_folds
             )
-        fold_results = [
-            _track_global_v4_fold(
+        fold_tasks = tuple(
+            (fold, selection, prepared)
+            for (fold, selection), prepared in zip(preparation_tasks, prepared_folds, strict=True)
+        )
+
+        def track_fold(
+            task: tuple[
+                OuterFoldResult,
+                V4ConfigurationSelection | None,
+                _PreparedFoldTracking,
+            ],
+        ) -> tuple[tuple[str, str], tuple[tuple[str, str], ...]]:
+            fold, selection, prepared = task
+            return _track_global_v4_fold(
                 port,
                 writer,
                 evidence=evidence,
@@ -991,8 +1004,18 @@ def track_global_v4_evaluation(
                 metric_ledger=metric_ledger,
                 prepared=prepared,
             )
-            for (fold, selection), prepared in zip(preparation_tasks, prepared_folds, strict=True)
-        ]
+
+        # MLflow calls and artifact uploads are I/O-bound. Run independent
+        # outer-fold tracking concurrently, while collecting futures in the
+        # canonical fold order so returned IDs and downstream manifests remain
+        # deterministic. CPU-heavy preparation above remains process-backed.
+        fold_workers = min(tracking_workers, len(fold_tasks))
+        if fold_workers == 1:
+            fold_results = [track_fold(task) for task in fold_tasks]
+        else:
+            with ThreadPoolExecutor(max_workers=fold_workers) as tracking_executor:
+                fold_futures = [tracking_executor.submit(track_fold, task) for task in fold_tasks]
+                fold_results = [future.result() for future in fold_futures]
         tracked_folds.extend(item[0] for item in fold_results)
         logged_model_ids.extend(
             model_id for _fold, model_ids in fold_results for model_id in model_ids

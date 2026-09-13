@@ -15,6 +15,7 @@ import math
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
+from hashlib import sha256
 from math import fsum, log
 from pathlib import Path
 from typing import cast
@@ -1118,14 +1119,41 @@ def _assemble_distances(
     return distances
 
 
+def _validate_source_identity(expected: object, snapshot_sha256: str | None) -> None:
+    """Require audit metadata to remain bound to the immutable snapshot."""
+
+    if not isinstance(expected, dict):
+        raise SystemExit("math expectations must be a JSON object")
+    raw_identity = expected.get("source_identity")
+    if raw_identity is None:
+        return
+    if not isinstance(raw_identity, dict):
+        raise SystemExit("source_identity must be an object")
+    required = (
+        "source_build_id",
+        "source_data_sha256",
+        "source_catalog_hash",
+        "dataset_snapshot_key",
+        "snapshot_sha256",
+    )
+    for key in required:
+        value = raw_identity.get(key)
+        if not isinstance(value, str) or not value:
+            raise SystemExit(f"source_identity.{key} must be a non-empty string")
+    if snapshot_sha256 is not None and raw_identity["snapshot_sha256"] != snapshot_sha256:
+        raise SystemExit("source identity snapshot hash does not match the audit snapshot")
+
+
 def verify_expectations(
     columns: dict[str, np.ndarray],
     expected: object,
     *,
     max_workers: int | None = None,
+    snapshot_sha256: str | None = None,
 ) -> dict[str, object]:
     """Verify all dossiers, using independent processes for CPU-heavy primitives."""
 
+    _validate_source_identity(expected, snapshot_sha256)
     immutable_columns = _immutable_columns(columns)
     dossiers = _audit_dossiers(expected)
     distance_tasks: list[tuple[int, tuple[str, ...], tuple[tuple[int, int], ...]]] = []
@@ -1419,7 +1447,17 @@ def main() -> None:
     args = parser.parse_args()
     columns = _read_snapshot(args.snapshot)
     expected = json.loads(args.expectations.read_text(encoding="utf-8"))
-    print(json.dumps(verify_expectations(columns, expected, max_workers=args.workers)))
+    snapshot_sha256 = sha256(args.snapshot.read_bytes()).hexdigest()
+    print(
+        json.dumps(
+            verify_expectations(
+                columns,
+                expected,
+                max_workers=args.workers,
+                snapshot_sha256=snapshot_sha256,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":

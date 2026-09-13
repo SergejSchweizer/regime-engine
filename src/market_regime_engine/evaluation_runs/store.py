@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -12,7 +13,6 @@ from hashlib import sha256
 from pathlib import Path
 from string import hexdigits
 from typing import cast
-from uuid import uuid4
 
 from market_regime_engine.evaluation_runs.contracts import (
     EvaluationRunIdentity,
@@ -49,6 +49,12 @@ class WorkUnitState:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _default_lease_owner() -> str:
+    """Identify the current execution lane for implicit lease ownership."""
+
+    return f"pid={os.getpid()};thread={threading.get_ident()}"
 
 
 def _parse_utc(value: str | None, field: str) -> datetime | None:
@@ -244,7 +250,7 @@ class SQLiteEvaluationRunStore:
             raise ValueError("work unit does not belong to evaluation run")
         if lease_seconds < 1:
             raise ValueError("lease_seconds must be positive")
-        owner = owner or f"{os.getpid()}-{uuid4().hex}"
+        owner = owner or _default_lease_owner()
         now = _utc_now()
         expires = now + timedelta(seconds=lease_seconds)
         with self._connect() as connection:
@@ -425,6 +431,7 @@ class SQLiteEvaluationRunStore:
         payload: bytes,
         *,
         domain_invalid: bool = False,
+        owner: str | None = None,
     ) -> None:
         if unit.evaluation_run_key != identity.key:
             raise ValueError("work unit does not belong to evaluation run")
@@ -455,6 +462,9 @@ class SQLiteEvaluationRunStore:
                 return
             if existing_status is not WorkUnitStatus.RUNNING:
                 raise ValueError("only a running work unit can be completed")
+            expected_owner = owner or _default_lease_owner()
+            if row["lease_owner"] != expected_owner:
+                raise ValueError("work unit lease owner changed before completion")
             now = _utc_now().isoformat()
             updated = connection.execute(
                 """
@@ -473,6 +483,8 @@ class SQLiteEvaluationRunStore:
         identity: EvaluationRunIdentity,
         unit: WorkUnitIdentity,
         failure: str,
+        *,
+        owner: str | None = None,
     ) -> None:
         if not failure or failure.strip() != failure:
             raise ValueError("technical failure metadata must be non-empty and trimmed")
@@ -483,6 +495,9 @@ class SQLiteEvaluationRunStore:
                 raise ValueError("work unit was not claimed with the requested input")
             if WorkUnitStatus(row["status"]) is not WorkUnitStatus.RUNNING:
                 raise ValueError("only a running work unit can record a technical failure")
+            expected_owner = owner or _default_lease_owner()
+            if row["lease_owner"] != expected_owner:
+                raise ValueError("work unit lease owner changed before failure recording")
             connection.execute(
                 """
                 UPDATE work_units SET status='PENDING', lease_owner=NULL,

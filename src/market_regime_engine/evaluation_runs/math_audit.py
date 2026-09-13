@@ -283,6 +283,7 @@ def build_math_expectations(
     prefix_payloads: Mapping[int, Mapping[str, bytes]] | None = None,
     prefix_evaluations: Mapping[int, Mapping[tuple[int, str], WalkForwardEvaluation]] | None = None,
     max_workers: int | None = None,
+    source_identity: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Serialize deterministic first/middle/last outer-fold audit dossiers."""
 
@@ -310,13 +311,16 @@ def build_math_expectations(
             # Preserve first/middle/last audit order independently of completion order.
             fold_audits = tuple(future.result() for future in futures)
     first = fold_audits[0]
-    return {
+    payload: dict[str, object] = {
         # Keep the first dossier at the top level for human-readable summaries.
         **first,
         "schema_version": 2,
         "audit_outer_fold_indices": [cast(int, item["outer_fold_index"]) for item in fold_audits],
         "fold_audits": list(fold_audits),
     }
+    if source_identity is not None:
+        payload["source_identity"] = dict(source_identity)
+    return payload
 
 
 __all__ = ["build_math_expectations"]
