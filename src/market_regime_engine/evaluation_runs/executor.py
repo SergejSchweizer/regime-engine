@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, as_completed
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import monotonic, sleep
@@ -157,9 +158,11 @@ class ResumableEvaluationExecutor:
                 cached, acquired = self._load_or_claim(identity, execution_node)
                 remaining.pop(node.identity.key)
                 if cached is not None:
-                    payloads[unit.key] = cached
-                    # Keep the structural alias available to children when a
-                    # caller omitted parent hashes from the graph identity.
+                    # The graph key is the canonical structural key.  The
+                    # execution identity may contain parent hashes that were
+                    # filled in at runtime; that identity is for the ledger
+                    # input hash only and must never become a second root
+                    # evidence entry during resume.
                     payloads[node.identity.key] = cached
                     reused += 1
                 else:
@@ -170,29 +173,23 @@ class ResumableEvaluationExecutor:
             if not claimed:
                 continue
 
-            results: list[tuple[WorkUnitNode, object | None, Exception | None]] = []
-            use_processes = process_safe and len(claimed) > 1
-            if use_processes:
-                worker_limit = min(len(claimed), self._max_workers or len(claimed))
-                with cpu_process_pool(worker_limit) as process_pool:
-                    futures: list[tuple[WorkUnitNode, Future[bytes]]] = [
-                        (node, process_pool.submit(compute, node, parents))
-                        for node, parents in claimed
-                    ]
-                    for node, future in futures:
-                        try:
-                            results.append((node, future.result(), None))
-                        except Exception as exc:
-                            results.append((node, None, exc))
-            else:
-                for node, parents in claimed:
-                    try:
-                        results.append((node, compute(node, parents), None))
-                    except Exception as exc:
-                        results.append((node, None, exc))
+            errors: dict[str, BaseException] = {}
+            terminal_keys: set[str] = set()
 
-            first_error: Exception | None = None
-            for node, result, error in results:
+            def consume_result(
+                node: WorkUnitNode,
+                result: object | None,
+                error: BaseException | None,
+                *,
+                _errors: dict[str, BaseException] = errors,
+                _terminal_keys: set[str] = terminal_keys,
+            ) -> None:
+                """Durably consume one result while retaining graph order."""
+
+                nonlocal computed
+                key = node.identity.key
+                if key in _terminal_keys:
+                    return
                 if error is not None:
                     if isinstance(error, DomainInvalid):
                         invalid_payload = canonical_json(
@@ -204,21 +201,112 @@ class ResumableEvaluationExecutor:
                             invalid_payload,
                             domain_invalid=True,
                         )
-                        payloads[node.identity.key] = invalid_payload
+                        payloads[key] = invalid_payload
+                        _terminal_keys.add(key)
                         computed += 1
                     else:
                         self._store.fail_work_unit(
                             identity, node.identity, "technical compute failure"
                         )
-                        if first_error is None:
-                            first_error = error
-                    continue
-                payloads[node.identity.key] = self._complete_result(
-                    self._store, identity, node, result
-                )
+                        _terminal_keys.add(key)
+                        _errors[key] = error
+                    return
+                try:
+                    payload = self._complete_result(self._store, identity, node, result)
+                except Exception as exc:
+                    # Invalid callback payloads are already released by
+                    # ``_complete_result`` and are retryable like any other
+                    # technical callback failure.
+                    _errors[key] = exc
+                    _terminal_keys.add(key)
+                    return
+                payloads[key] = payload
+                _terminal_keys.add(key)
                 computed += 1
-            if first_error is not None:
-                raise first_error
+
+            use_processes = process_safe and len(claimed) > 1
+            if use_processes:
+                worker_limit = min(len(claimed), self._max_workers or len(claimed))
+                futures: dict[Future[bytes], WorkUnitNode] = {}
+                processed: set[Future[bytes]] = set()
+                interrupted = False
+                try:
+                    with cpu_process_pool(worker_limit) as process_pool:
+                        futures = {
+                            process_pool.submit(compute, node, parents): node
+                            for node, parents in claimed
+                        }
+                        for future in as_completed(futures):
+                            node = futures[future]
+                            processed.add(future)
+                            try:
+                                result = future.result()
+                            except BaseException as exc:
+                                # A BaseException raised by a child is still
+                                # a failed process boundary, not a reason to
+                                # lose successful siblings.  A parent signal
+                                # interrupts the as_completed iterator and is
+                                # handled by the outer exception path below.
+                                consume_result(node, None, exc)
+                            else:
+                                # Persist as soon as each worker completes;
+                                # waiting for the slowest sibling would widen
+                                # the crash window and discard finished work.
+                                consume_result(node, result, None)
+                except BaseException:
+                    interrupted = True
+                    raise
+                finally:
+                    # Process-pool shutdown waits for already submitted work,
+                    # so harvest every completed future even when the parent
+                    # was interrupted while waiting on the pool.
+                    for future, node in futures.items():
+                        if future in processed or not future.done():
+                            continue
+                        processed.add(future)
+                        try:
+                            result = future.result()
+                        except BaseException as exc:
+                            try:
+                                consume_result(node, None, exc)
+                            except BaseException:
+                                if not interrupted:
+                                    raise
+                        else:
+                            try:
+                                consume_result(node, result, None)
+                            except BaseException:
+                                if not interrupted:
+                                    raise
+
+                    # A cancelled future has no result to harvest.  Release
+                    # its claim so a retry does not wait for the full lease;
+                    # no terminal payload was committed by this executor.
+                    if interrupted:
+                        for node, _parents in claimed:
+                            if node.identity.key in terminal_keys:
+                                continue
+                            with suppress(RuntimeError, ValueError):
+                                self._store.fail_work_unit(
+                                    identity,
+                                    node.identity,
+                                    "process execution interrupted",
+                                )
+                                # Another executor may have reclaimed or
+                                # completed the unit while this one stopped.
+            else:
+                for node, parents in claimed:
+                    try:
+                        result = compute(node, parents)
+                    except Exception as exc:
+                        consume_result(node, None, exc)
+                    else:
+                        consume_result(node, result, None)
+
+            for node, _parents in claimed:
+                error = errors.get(node.identity.key)
+                if error is not None:
+                    raise error
 
         root_payload = canonical_json(
             {
