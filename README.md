@@ -83,6 +83,14 @@ Each phase creates its own metadata and proof sidecar below
 `all` mode remains available, but is not required when validating one phase.
 Sub-phases reuse a commit- and fixture-bound local baseline cache when they
 share the same output directory; a missing or stale cache is recomputed.
+After the selected phases finish, verify one complete bundle without rerunning
+any computation:
+
+```bash
+.venv/bin/python scripts/verify_pr231_subproof_bundle.py \
+  --output-dir .artifacts/pr231-hermetic-proof \
+  --json-out .artifacts/pr231-hermetic-proof/pr231-proof-bundle.json
+```
 
 It writes timing metadata, the JUnit report and the computation proof sidecar
 to `.artifacts/pr231-hermetic-proof` by default. Set
