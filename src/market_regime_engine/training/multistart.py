@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import threading
 import warnings
 from collections.abc import Callable, Iterator
@@ -14,11 +13,10 @@ from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
-from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
 
 if TYPE_CHECKING:
     from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
@@ -132,14 +130,6 @@ def _evaluate_start(
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
 
 
-def _pickleable(value: object) -> bool:
-    try:
-        pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-    except pickle.PickleError, TypeError, AttributeError:
-        return False
-    return True
-
-
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
     """Choose from starts tied to the exact global maximum likelihood."""
 
@@ -220,7 +210,7 @@ def run_multistart(
                     from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
 
                     checkpoint.save(seed, SeedFitOutcome(*outcome))
-        elif isinstance(adapter_factory, CandidateAdapterFactory) and _pickleable(adapter_factory):
+        elif is_pickleable(adapter_factory):
             # hmmlearn fitting is CPU-bound and its Python-facing orchestration
             # does not scale reliably in a thread pool.  Process workers give
             # each independent seed its own interpreter/GIL while preserving
