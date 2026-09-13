@@ -44,7 +44,9 @@ case "$PHASE" in
 esac
 
 RUN_METADATA="$OUTPUT_DIR/pr231-${PHASE}.json"
-JUNIT_XML="$OUTPUT_DIR/pr231-junit.xml"
+# Keep phase reports independent so separate sub-proof invocations can share
+# one output directory without racing on a common JUnit file.
+JUNIT_XML="$OUTPUT_DIR/pr231-${PHASE}-junit.xml"
 START_EPOCH="$(date +%s)"
 STARTED_UTC="$(date -u --iso-8601=seconds)"
 set +e
@@ -69,7 +71,7 @@ PR231_ROOT="$ROOT" \
 PR231_RUN_METADATA="$RUN_METADATA" \
 PR231_COMPUTATION_PROOF="$COMPUTATION_PROOF" \
 PR231_PHASE="$PHASE" \
-PR231_COMMAND=".venv/bin/pytest -q -n 1 ${TEST_SELECTOR#$ROOT/} -m 'integration and slow' --junitxml=pr231-junit.xml" \
+PR231_COMMAND=".venv/bin/pytest -q -n 1 ${TEST_SELECTOR#$ROOT/} -m 'integration and slow' --junitxml=pr231-${PHASE}-junit.xml" \
   "$ROOT/.venv/bin/python" - <<'PY'
 from __future__ import annotations
 
