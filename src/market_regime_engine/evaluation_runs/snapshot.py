@@ -256,7 +256,8 @@ class ArrowDatasetSnapshotStore:
         if len(dataset_snapshot_key) != 64:
             raise ValueError("dataset_snapshot_key must be a SHA-256 digest")
         manifest_path = self._root / dataset_snapshot_key / "manifest.json"
-        if not manifest_path.is_file():
+        arrow_path = self._root / dataset_snapshot_key / "snapshot.arrow"
+        if not manifest_path.is_file() or not arrow_path.is_file():
             raise ValueError("dataset snapshot is missing or incomplete")
         try:
             manifest = json.loads(manifest_path.read_bytes())
@@ -272,12 +273,24 @@ class ArrowDatasetSnapshotStore:
             raise ValueError("dataset snapshot identity hash does not match requested key")
         if manifest.get("dataset_snapshot_key") != dataset_snapshot_key:
             raise ValueError("dataset snapshot key does not match manifest")
+        arrow_sha256 = manifest.get("arrow_sha256")
+        if not isinstance(arrow_sha256, str):
+            raise ValueError("dataset snapshot Arrow hash is missing from manifest")
+        try:
+            actual_arrow_sha256 = sha256(arrow_path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ValueError("dataset snapshot Arrow file is unreadable") from exc
+        if actual_arrow_sha256 != arrow_sha256:
+            raise ValueError("dataset snapshot Arrow hash does not match manifest")
         return identity
 
     @staticmethod
     def _read_arrow_bytes(snapshot: FeatureSnapshot, path: Path) -> bytes:
         expected = _arrow_table(snapshot)
-        actual = ipc.open_file(path).read_all()
+        try:
+            actual = ipc.open_file(path).read_all()
+        except (OSError, pa.ArrowException) as exc:
+            raise ValueError("dataset snapshot Arrow file is invalid") from exc
         if not actual.equals(expected):
             raise ValueError("dataset snapshot rows differ from immutable snapshot")
         return path.read_bytes()

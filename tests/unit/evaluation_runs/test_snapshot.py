@@ -79,6 +79,31 @@ def test_arrow_snapshot_is_immutable_and_corruption_fails_closed(tmp_path: Path)
         store.load(identity)
 
 
+def test_snapshot_missing_arrow_fails_closed_for_identity_and_rows(tmp_path: Path) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    store.finalize(identity, snapshot)
+
+    (tmp_path / identity.key / "snapshot.arrow").unlink()
+
+    with pytest.raises(ValueError, match="missing or incomplete"):
+        store.load_identity(identity.key)
+    with pytest.raises(ValueError, match="missing or incomplete"):
+        store.load(identity)
+
+
+def test_snapshot_invalid_arrow_bytes_fail_closed_during_finalize(tmp_path: Path) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    store.finalize(identity, snapshot)
+
+    arrow_path = tmp_path / identity.key / "snapshot.arrow"
+    arrow_path.write_bytes(b"not an Arrow IPC file")
+
+    with pytest.raises(ValueError, match="Arrow file is invalid"):
+        store.finalize(identity, snapshot)
+
+
 def test_snapshot_persists_catalog_and_identity_for_source_free_resume(tmp_path: Path) -> None:
     snapshot, identity = snapshot_and_identity()
     catalog = FeatureCatalogSnapshot.from_entries(

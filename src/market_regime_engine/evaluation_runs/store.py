@@ -445,7 +445,11 @@ class SQLiteEvaluationRunStore:
                 raise ValueError("work unit was not claimed with the requested input")
             existing_status = WorkUnitStatus(row["status"])
             if existing_status in {WorkUnitStatus.COMPLETE, WorkUnitStatus.DOMAIN_INVALID}:
-                if row["payload_hash"] != payload_hash or row["payload"] != payload:
+                if (
+                    existing_status is not status
+                    or row["payload_hash"] != payload_hash
+                    or row["payload"] != payload
+                ):
                     raise ValueError("terminal work unit is immutable")
                 connection.commit()
                 return
@@ -569,6 +573,7 @@ class SQLiteEvaluationRunStore:
                 if (
                     row["root_identity_hash"] != root_identity_hash
                     or row["final_payload"] != payload
+                    or row["final_payload_hash"] != payload_hash
                 ):
                     raise ValueError("completed evaluation root/payload is immutable")
                 connection.commit()
