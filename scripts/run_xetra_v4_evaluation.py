@@ -29,6 +29,7 @@ from market_regime_engine.evaluations.global_regime_v4 import (
     evaluate_global_regime_v4,
     evaluate_global_regime_v4_from_source,
 )
+from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
 from market_regime_engine.features.ports import FeatureRequest
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.features.postgres_source import PostgresFeatureSource
@@ -86,6 +87,25 @@ def _tracking_worker_count(task_count: int) -> int:
         int(configured) if configured else None,
         task_count=task_count,
     )
+
+
+def _require_full_audit_eligibility(
+    result: AdaptiveEvaluationResult,
+    selections: dict[int, V4ConfigurationSelection],
+) -> None:
+    """Fail closed unless every valid outer fold has a complete policy selection."""
+
+    valid_fold_indices = tuple(sorted(fold.fold_index for fold in result.outer_folds if fold.valid))
+    selected_fold_indices = tuple(sorted(selections))
+    if not valid_fold_indices:
+        raise RuntimeError("full Xetra v4 audit requires at least one valid outer fold")
+    if selected_fold_indices != valid_fold_indices:
+        raise RuntimeError(
+            "full Xetra v4 audit requires one policy selection for every valid outer fold; "
+            f"valid={valid_fold_indices}, selections={selected_fold_indices}"
+        )
+    if not result.production_eligible:
+        raise RuntimeError("full Xetra v4 audit requires a production-eligible outer-policy result")
 
 
 def _run(performance: PerformanceRecorder) -> None:
@@ -196,6 +216,7 @@ def _run(performance: PerformanceRecorder) -> None:
                 selection_sink=selections.__setitem__,
                 prefix_evaluation_sink=record_prefix_evaluation,
             )
+    _require_full_audit_eligibility(result, selections)
     if run_identity is None:
         catalog = observed["catalog"]
         snapshot = observed["snapshot"]
