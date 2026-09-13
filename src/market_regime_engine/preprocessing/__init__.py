@@ -1,6 +1,10 @@
 """Train-only preprocessing primitives."""
 
 from market_regime_engine.preprocessing.pca import PCAArtifact, fit_pca_transformer
+from market_regime_engine.preprocessing.pca_features import (
+    PCAGeneratedFeatureSet,
+    materialize_pca_generated_features,
+)
 from market_regime_engine.preprocessing.pca_policy import (
     PCA_SOURCE_UNIVERSE,
     PCAFitClock,
@@ -17,8 +21,10 @@ __all__ = [
     "PCAArtifact",
     "PCAFitClock",
     "PCAFitResult",
+    "PCAGeneratedFeatureSet",
     "StandardScalerArtifact",
     "fit_pca_inner_train",
     "fit_pca_transformer",
     "fit_standard_scaler",
+    "materialize_pca_generated_features",
 ]
