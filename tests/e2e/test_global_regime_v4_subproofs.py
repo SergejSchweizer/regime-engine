@@ -341,6 +341,7 @@ def test_global_v4_subproof_future_mutation_isolation() -> None:
             "mutation_row_index": mutation_index,
             "mutation_feature": mutated_feature,
             "baseline_result_hash": state.result.result_hash,
+            "baseline_evidence_hash": state.evidence.evidence_hash,
             "mutated_result_hash": mutated_result.result_hash,
             "final_fold_changed": True,
             "earlier_fold_result_bytes_equal": True,
