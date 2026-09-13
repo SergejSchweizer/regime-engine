@@ -359,7 +359,7 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
         }
     changed = final_production_refit(
         future,
-        lineage=lineage(future),
+        lineage=lineage(rows),
         candidate=candidate(),
         winning_evaluation=evaluation,
         deployment_selection=deployment_selection(rows, evaluation),
@@ -369,6 +369,26 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
     assert changed.hmm == baseline.hmm
     assert changed.terminal_filtered_probabilities == baseline.terminal_filtered_probabilities
     assert changed.trained_through_timestamp == baseline.trained_through_timestamp
+
+
+def test_final_refit_rejects_deployment_cutoff_after_source_lineage_maximum() -> None:
+    rows = source_rows(1325)
+    evaluation = winning_evaluation(rows.iloc[:-2].reset_index(drop=True))
+    deployment = deployment_selection(rows, evaluation)
+    drifted_cutoff = replace(
+        deployment,
+        deployment_selection_cutoff=rows["timestamp_m1"].iloc[-2],
+    )
+
+    with pytest.raises(ValueError, match="source lineage maximum"):
+        final_production_refit(
+            rows,
+            lineage=lineage(rows),
+            candidate=candidate(),
+            winning_evaluation=evaluation,
+            deployment_selection=drifted_cutoff,
+            adapter_factory_builder=lambda item: DeterministicAdapter,
+        )
 
 
 def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
