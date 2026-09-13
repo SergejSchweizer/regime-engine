@@ -31,6 +31,10 @@ from market_regime_engine.inference.predictive_likelihood import (
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
+from market_regime_engine.preprocessing.two_stage import (
+    PCATwoStageScalerArtifact,
+    fit_pca_hmm_scaler,
+)
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.states.alignment import (
     StateAlignment,
@@ -100,6 +104,7 @@ class WalkForwardFoldResult:
     skipped_train_incomplete_count: int
     skipped_test_incomplete_count: int
     scaler_artifact: StandardScalerArtifact | None = None
+    pca_scaler_artifact: PCATwoStageScalerArtifact | None = None
     multistart_result: MultistartResult | None = None
     model_artifact: GaussianHMMArtifact | None = None
     alignment: StateAlignment | None = None
@@ -142,6 +147,11 @@ class WalkForwardFoldResult:
             self.test_source_observation_count
         ):
             raise ValueError("TEST model/skipped counts must reconcile to source rows")
+        if self.pca_scaler_artifact is not None and (
+            self.scaler_artifact is None
+            or self.pca_scaler_artifact.hmm_scaler != self.scaler_artifact
+        ):
+            raise ValueError("PCA two-stage artifact must contain the fold HMM scaler")
         if self.valid == (self.failure_reason is not None):
             raise ValueError("valid fold must have no failure reason; invalid fold must have one")
         for field_name in (
@@ -314,6 +324,27 @@ def _validate_candidate_contract(
         raise ValueError("Xetra v4 walk-forward candidates require feature contract version 4")
 
 
+def _validate_pca_raw_feature_order(
+    raw_feature_order: tuple[str, ...] | None,
+    candidate_feature_order: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    if raw_feature_order is None:
+        return None
+    if (
+        not raw_feature_order
+        or len(set(raw_feature_order)) != len(raw_feature_order)
+        or any(not name or name.strip() != name for name in raw_feature_order)
+    ):
+        raise ValueError("PCA raw feature order must be non-empty and duplicate-free")
+    if any(name.startswith("pca_pc_") for name in raw_feature_order):
+        raise ValueError("PCA raw feature order cannot contain generated PCA feature names")
+    if len(candidate_feature_order) <= len(raw_feature_order):
+        raise ValueError("PCA candidate feature order must include generated PCA features")
+    if candidate_feature_order[: len(raw_feature_order)] != raw_feature_order:
+        raise ValueError("PCA candidate feature order must begin with the raw feature order")
+    return raw_feature_order
+
+
 def _fold_source_frames(
     source_rows: pd.DataFrame,
     fold: WalkForwardFold,
@@ -390,6 +421,7 @@ def _valid_fold_result(
     skipped_train: int,
     skipped_test: int,
     scaler: StandardScalerArtifact,
+    pca_scaler: PCATwoStageScalerArtifact | None,
     multistart: MultistartResult,
     artifact: GaussianHMMArtifact,
     alignment: StateAlignment,
@@ -416,6 +448,7 @@ def _valid_fold_result(
         skipped_train_incomplete_count=skipped_train,
         skipped_test_incomplete_count=skipped_test,
         scaler_artifact=scaler,
+        pca_scaler_artifact=pca_scaler,
         multistart_result=multistart,
         model_artifact=artifact,
         alignment=alignment,
@@ -473,8 +506,17 @@ def run_walk_forward_candidate(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> WalkForwardEvaluation:
-    """Evaluate one frozen-feature K candidate without rerunning feature selection."""
+    """Evaluate one frozen-feature K candidate without rerunning feature selection.
+
+    When ``pca_raw_feature_order`` is supplied, each fold fits PCA exclusively
+    on that fold's complete raw TRAIN rows, then fits HMM standardization on
+    the resulting raw-plus-PCA TRAIN matrix.  TEST rows are transformed only
+    with those fold-local artifacts.  The candidate feature order must be the
+    raw order followed by the generated PCA names.
+    """
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
         raise ValueError("walk-forward runner supports only the Xetra v4 profile")
@@ -492,9 +534,14 @@ def run_walk_forward_candidate(
         or candidate.state_count not in profile.student_t_hmm.candidate_states
     ):
         raise ValueError("resolved Student-t candidate differs from the model profile")
+    pca_raw_order = _validate_pca_raw_feature_order(
+        pca_raw_feature_order,
+        candidate.feature_order,
+    )
     if plan.evaluation_cutoff is None or not plan.folds:
         raise ValueError("walk-forward plan must contain at least one complete fold")
-    timestamps = _validate_source_rows(source_rows, candidate.feature_order)
+    source_feature_order = candidate.feature_order if pca_raw_order is None else pca_raw_order
+    timestamps = _validate_source_rows(source_rows, source_feature_order)
     if timestamps[0] != plan.folds[0].train_start:
         raise ValueError("source sequence start does not match walk-forward plan")
     if plan.evaluation_cutoff != plan.folds[-1].test_end:
@@ -502,21 +549,25 @@ def run_walk_forward_candidate(
 
     results: list[WalkForwardFoldResult] = []
     reference_signatures: tuple[StateSignature, ...] | None = None
-    first_train_source, _ = _fold_source_frames(source_rows, plan.folds[0])
-    first_train_rows, _, _ = _complete_case(first_train_source, candidate.feature_order)
-    reference_scaler = fit_standard_scaler(first_train_rows, candidate.feature_order)
+    reference_scaler: StandardScalerArtifact | None = None
+    if pca_raw_order is None:
+        first_train_source, _ = _fold_source_frames(source_rows, plan.folds[0])
+        first_train_rows, _, _ = _complete_case(first_train_source, candidate.feature_order)
+        reference_scaler = fit_standard_scaler(first_train_rows, candidate.feature_order)
     for fold in plan.folds:
         train_model_count = 0
         test_model_count = 0
         skipped_train = fold.train_source_observations
         skipped_test = fold.test_source_observations
+        pca_scaler: PCATwoStageScalerArtifact | None = None
         try:
             train_source, test_source = _fold_source_frames(source_rows, fold)
-            train_rows, _, skipped_train = _complete_case(train_source, candidate.feature_order)
+            train_order = candidate.feature_order if pca_raw_order is None else pca_raw_order
+            train_rows, train_timestamps, skipped_train = _complete_case(train_source, train_order)
             train_model_count = int(train_rows.shape[0])
             test_rows, test_timestamps, skipped_test = _complete_case(
                 test_source,
-                candidate.feature_order,
+                train_order,
             )
             test_model_count = int(test_rows.shape[0])
             if train_model_count < profile.walk_forward.minimum_model_train_observations:
@@ -528,9 +579,30 @@ def run_walk_forward_candidate(
                     f"retained TEST observations are below pinned minimum 42: {test_model_count}"
                 )
 
-            scaler = fit_standard_scaler(train_rows, candidate.feature_order)
-            scaled_train = scaler.transform(train_rows)
-            scaled_test = scaler.transform(test_rows)
+            if pca_raw_order is None:
+                scaler = fit_standard_scaler(train_rows, candidate.feature_order)
+                scaled_train = scaler.transform(train_rows)
+                scaled_test = scaler.transform(test_rows)
+            else:
+                pca_scaler = fit_pca_hmm_scaler(
+                    train_timestamps,
+                    train_rows,
+                    raw_feature_order=pca_raw_order,
+                    inner_fold_id=fold.fold_id,
+                    fit_start=fold.train_start,
+                    fit_end=fold.train_end,
+                    variance_threshold=pca_variance_threshold,
+                )
+                if pca_scaler.model_feature_order != candidate.feature_order:
+                    raise ValueError(
+                        "fold-local PCA generated feature order differs from candidate order"
+                    )
+                scaler = pca_scaler.hmm_scaler
+                scaled_train = pca_scaler.transform(train_rows)
+                scaled_test = pca_scaler.transform(test_rows)
+            if reference_scaler is None:
+                reference_scaler = scaler
+            assert reference_scaler is not None
             checkpoint = (
                 None if seed_checkpoint_factory is None else seed_checkpoint_factory(fold.fold_id)
             )
@@ -631,6 +703,7 @@ def run_walk_forward_candidate(
                 skipped_train=skipped_train,
                 skipped_test=skipped_test,
                 scaler=scaler,
+                pca_scaler=pca_scaler,
                 multistart=multistart,
                 artifact=artifact,
                 alignment=alignment,
