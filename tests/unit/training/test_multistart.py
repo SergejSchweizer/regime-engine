@@ -65,6 +65,16 @@ class FakeAdapter:
         raise AssertionError(f"unused: {rows}, {initial_filtered_probabilities}")
 
 
+class PickleableFactory:
+    """Top-level adapter factory used to exercise the process-backed path."""
+
+    def __init__(self, outcomes: Mapping[int, FitResult | Exception]) -> None:
+        self._outcomes = dict(outcomes)
+
+    def __call__(self) -> FakeAdapter:
+        return FakeAdapter(self._outcomes)
+
+
 def factory(outcomes: Mapping[int, FitResult | Exception]):
     return lambda: FakeAdapter(outcomes)
 
@@ -88,6 +98,20 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS
     assert result.diagnostics[6].failure_reason == "RuntimeError: numerical failure"
     assert result.diagnostics[7].failure_reason == "not converged"
+
+
+def test_pickleable_custom_factory_uses_process_backed_multistart() -> None:
+    outcomes: dict[int, FitResult | Exception] = {
+        seed: fit_result(seed, float(index)) for index, seed in enumerate(MULTISTART_SEEDS)
+    }
+    result = run_multistart(
+        [[0.0], [1.0]],
+        state_count=2,
+        adapter_factory=PickleableFactory(outcomes),
+        max_workers=2,
+    )
+    assert result.valid_start_count == len(MULTISTART_SEEDS)
+    assert result.winner.seed == 131
 
 
 def test_numeric_tie_within_1e12_prefers_lower_seed() -> None:

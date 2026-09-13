@@ -18,7 +18,6 @@ from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
-from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
 
 if TYPE_CHECKING:
     from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
@@ -220,13 +219,15 @@ def run_multistart(
                     from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
 
                     checkpoint.save(seed, SeedFitOutcome(*outcome))
-        elif isinstance(adapter_factory, CandidateAdapterFactory) and _pickleable(adapter_factory):
+        elif _pickleable(adapter_factory):
             # hmmlearn fitting is CPU-bound and its Python-facing orchestration
-            # does not scale reliably in a thread pool.  Process workers give
-            # each independent seed its own interpreter/GIL while preserving
-            # the exact pinned seed order in the parent.  A threaded caller
-            # must use spawn so workers do not inherit its locks; a top-level
-            # caller can use fork without that nested-parent hazard.
+            # does not scale reliably in a thread pool.  Any pickleable
+            # adapter factory can be isolated safely, not only the built-in
+            # CandidateAdapterFactory. Process workers give each independent
+            # seed its own interpreter/GIL while preserving the exact pinned
+            # seed order in the parent. A threaded caller must use spawn so
+            # workers do not inherit its locks; a top-level caller can use
+            # fork without that nested-parent hazard.
             with (
                 _reserve_cpu_slots(pending_worker_limit) as reserved_workers,
                 warnings.catch_warnings(),
