@@ -23,6 +23,28 @@ def _read_mapping(path: Path) -> dict[str, Any]:
     return value
 
 
+def _resolve_bundle_path(
+    root: Path,
+    value: str,
+    *,
+    label: str,
+    errors: list[str],
+    relative_to: Path | None = None,
+) -> Path | None:
+    """Resolve a sidecar path and require it to remain inside the bundle."""
+
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = (relative_to or root) / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        errors.append(f"{label} is outside the proof bundle: {value}")
+        return None
+    return resolved
+
+
 def verify(output_dir: str | Path) -> dict[str, object]:
     """Return a machine-readable verification report without running computation."""
 
@@ -45,8 +67,13 @@ def verify(output_dir: str | Path) -> dict[str, object]:
         if not isinstance(proof_value, str):
             errors.append(f"missing computation proof path for {phase}")
             continue
-        proof_path = Path(proof_value)
-        if not proof_path.is_file():
+        proof_path = _resolve_bundle_path(
+            root,
+            proof_value,
+            label=f"computation proof for {phase}",
+            errors=errors,
+        )
+        if proof_path is None or not proof_path.is_file():
             errors.append(f"missing computation proof sidecar for {phase}: {proof_path}")
             continue
         try:
@@ -75,8 +102,43 @@ def verify(output_dir: str | Path) -> dict[str, object]:
         errors.append("pipeline-math proof does not match the metadata golden hash")
     tracking = proofs.get("tracking-and-plots", {})
     plot_manifest = tracking.get("plot_manifest_path")
-    if not isinstance(plot_manifest, str) or not Path(plot_manifest).is_file():
+    plot_manifest_path = (
+        _resolve_bundle_path(
+            root,
+            plot_manifest,
+            label="plot manifest",
+            errors=errors,
+        )
+        if isinstance(plot_manifest, str)
+        else None
+    )
+    if plot_manifest_path is None or not plot_manifest_path.is_file():
         errors.append("tracking-and-plots proof has no plot manifest")
+    else:
+        try:
+            manifest = _read_mapping(plot_manifest_path)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid tracking-and-plots manifest: {exc}")
+        else:
+            entries = manifest.get("entries")
+            if not isinstance(entries, list) or not entries:
+                errors.append("tracking-and-plots manifest has no entries")
+            else:
+                for index, entry in enumerate(entries):
+                    png_value = entry.get("png_path") if isinstance(entry, dict) else None
+                    png_path = (
+                        _resolve_bundle_path(
+                            root,
+                            png_value,
+                            label=f"plot artifact {index}",
+                            errors=errors,
+                            relative_to=plot_manifest_path.parent,
+                        )
+                        if isinstance(png_value, str)
+                        else None
+                    )
+                    if png_path is None or not png_path.is_file():
+                        errors.append(f"missing plot artifact {index}: {png_value}")
     independent = proofs.get("independent-process-and-labels", {})
     for field in ("canonical_result_bytes_equal", "canonical_evidence_bytes_equal"):
         if independent.get(field) is not True:

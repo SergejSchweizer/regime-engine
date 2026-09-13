@@ -18,6 +18,12 @@ def _module() -> Any:
 
 def _write_bundle(root: Path, *, repository_sha: str = "a" * 40) -> None:
     golden = "b" * 64
+    (root / "plots").mkdir()
+    (root / "plots" / "quality.png").write_bytes(b"png")
+    (root / "plots.json").write_text(
+        json.dumps({"entries": [{"png_path": "plots/quality.png"}]}),
+        encoding="utf-8",
+    )
     proof_values: dict[str, dict[str, object]] = {
         "pipeline-math": {"golden_snapshot_hash": golden},
         "tracking-and-plots": {"plot_manifest_path": str(root / "plots.json")},
@@ -32,7 +38,6 @@ def _write_bundle(root: Path, *, repository_sha: str = "a" * 40) -> None:
             "earlier_evidence_bytes_equal": True,
         },
     }
-    (root / "plots.json").write_text("{}\n", encoding="utf-8")
     for phase, values in proof_values.items():
         proof_path = root / f"{phase}-proof.json"
         proof_path.write_text(json.dumps({"phase": phase, **values}) + "\n", encoding="utf-8")
@@ -65,3 +70,19 @@ def test_verify_rejects_mixed_commits_and_failed_phase(tmp_path: Path) -> None:
     assert report["status"] == "failed"
     assert any("one repository SHA" in error for error in report["errors"])
     assert any("did not pass: pipeline-math" in error for error in report["errors"])
+
+
+def test_verify_rejects_proof_paths_outside_the_bundle(tmp_path: Path) -> None:
+    module = _module()
+    _write_bundle(tmp_path)
+    outside = tmp_path.parent / "proof-outside-bundle.json"
+    outside.write_text('{"phase":"pipeline-math"}\n', encoding="utf-8")
+    metadata_path = tmp_path / "pr231-pipeline-math.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["computation_proof_path"] = str(outside)
+    metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+
+    report = module.verify(tmp_path)
+
+    assert report["status"] == "failed"
+    assert any("outside the proof bundle" in error for error in report["errors"])
