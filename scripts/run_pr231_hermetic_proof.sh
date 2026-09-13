@@ -51,10 +51,10 @@ START_EPOCH="$(date +%s)"
 STARTED_UTC="$(date -u --iso-8601=seconds)"
 set +e
 if [[ "$PHASE" == "all" ]]; then
-  PR231_PROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q -n 1 \
+  PR231_PROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q -n auto \
     "$TEST_SELECTOR" -m "integration and slow" --junitxml="$JUNIT_XML"
 else
-  PR231_SUBPROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q -n 1 \
+  PR231_SUBPROOF_OUTPUT="$COMPUTATION_PROOF" "$ROOT/.venv/bin/pytest" -q -n auto \
     "$TEST_SELECTOR" -m "integration and slow" --junitxml="$JUNIT_XML"
 fi
 EXIT_CODE=$?
@@ -71,7 +71,7 @@ PR231_ROOT="$ROOT" \
 PR231_RUN_METADATA="$RUN_METADATA" \
 PR231_COMPUTATION_PROOF="$COMPUTATION_PROOF" \
 PR231_PHASE="$PHASE" \
-PR231_COMMAND=".venv/bin/pytest -q -n 1 ${TEST_SELECTOR#$ROOT/} -m 'integration and slow' --junitxml=pr231-${PHASE}-junit.xml" \
+PR231_COMMAND=".venv/bin/pytest -q -n auto ${TEST_SELECTOR#$ROOT/} -m 'integration and slow' --junitxml=pr231-${PHASE}-junit.xml" \
   "$ROOT/.venv/bin/python" - <<'PY'
 from __future__ import annotations
 
