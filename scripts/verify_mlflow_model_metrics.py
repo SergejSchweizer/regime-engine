@@ -187,13 +187,16 @@ def audit(
         if definition is None or not isinstance(model_names, (list, tuple)):
             domain_violations += 1
             continue
+        normalized_model_names = tuple(str(model_name) for model_name in model_names)
+        if len(normalized_model_names) != len(set(normalized_model_names)):
+            domain_violations += 1
+            continue
         declared_domain = group.get("comparison_domain")
         if declared_domain is not None and str(declared_domain) != definition.comparison_domain:
             domain_violations += 1
         group_points: dict[str, tuple[MetricPoint, ...]] = {}
         group_tags: dict[str, dict[str, str]] = {}
-        for model_name in model_names:
-            name = str(model_name)
+        for name in normalized_model_names:
             models = actual_by_name.get(name, [])
             if len(models) != 1:
                 domain_violations += 1
@@ -203,7 +206,7 @@ def audit(
                 point for point in actual_points_by_name[name] if point.key == metric_key
             )
             group_tags[name] = {str(key): str(value) for key, value in model.tags.items()}
-        if len(group_points) != len(model_names) or any(
+        if len(group_points) != len(normalized_model_names) or any(
             not points for points in group_points.values()
         ):
             continue
