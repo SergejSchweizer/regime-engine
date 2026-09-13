@@ -114,6 +114,7 @@ def _evaluate_start(
     state_count: int,
     adapter_factory: AdapterFactory,
     seed: int,
+    retryable_technical_failure: bool = False,
 ) -> tuple[StartDiagnostic, FitResult | None]:
     try:
         result = adapter_factory().fit(train_rows, state_count, seed)
@@ -126,7 +127,16 @@ def _evaluate_start(
         if not isfinite(result.train_log_likelihood):
             return _failure(seed, "non-finite TRAIN log likelihood", converged=True), None
         return _successful_diagnostic(result), result
+    except (ValueError, TypeError) as exc:
+        # These are deterministic domain/contract failures.  They are safe
+        # to cache and make the same seed terminally invalid on a restart.
+        return _failure(seed, f"{type(exc).__name__}: {exc}"), None
     except Exception as exc:
+        # An adapter/backend failure is not a statistical result.  With a
+        # checkpoint it must remain retryable; without one retain the
+        # historical no-checkpoint behavior of counting it as a failed start.
+        if retryable_technical_failure:
+            raise
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
 
 
@@ -204,6 +214,7 @@ def run_multistart(
                     state_count=state_count,
                     adapter_factory=adapter_factory,
                     seed=seed,
+                    retryable_technical_failure=checkpoint is not None,
                 )
                 pending_results[seed] = outcome
                 if checkpoint is not None:
@@ -229,6 +240,7 @@ def run_multistart(
                         state_count=state_count,
                         adapter_factory=adapter_factory,
                         seed=seed,
+                        retryable_technical_failure=checkpoint is not None,
                     )
                     for seed in pending_seeds
                 }
@@ -274,6 +286,7 @@ def run_multistart(
                     state_count=state_count,
                     adapter_factory=adapter_factory,
                     seed=seed,
+                    retryable_technical_failure=checkpoint is not None,
                 )
                 if checkpoint is not None:
                     from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
