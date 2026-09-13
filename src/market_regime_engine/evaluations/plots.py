@@ -911,7 +911,8 @@ def render_global_v4_diagnostics(
     if items:
         # Keep single-report plots as one task, but split the fold-indexed
         # families so a long run with many outer folds can occupy more
-        # independent interpreters.  The order below is the historical
+        # independent interpreters and keep every independent plot task
+        # eligible for the full CPU budget.  The order below is the historical
         # manifest order and is therefore part of the byte-stable contract.
         task_specs: list[tuple[str, int | None]] = [
             ("quality", None),
