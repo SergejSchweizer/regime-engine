@@ -21,7 +21,10 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold
 from market_regime_engine.evaluations.global_regime_v4 import V4ConfigurationSelection
-from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
+from market_regime_engine.feature_discovery.contracts import (
+    AdaptiveEvaluationResult,
+    OuterFoldResult,
+)
 from market_regime_engine.inference.filtering import causal_filter
 
 
@@ -173,24 +176,15 @@ def _prefix_nmi_items(
     return items
 
 
-def build_math_expectations(
+def _fold_math_expectations(
     source_rows: pd.DataFrame,
-    result: AdaptiveEvaluationResult,
-    selections: Mapping[int, V4ConfigurationSelection],
-    prefix_payloads: Mapping[int, Mapping[str, bytes]] | None = None,
-    prefix_evaluations: Mapping[int, Mapping[tuple[int, str], WalkForwardEvaluation]] | None = None,
+    outer_fold: OuterFoldResult,
+    selection: V4ConfigurationSelection,
+    prefix_payloads: Mapping[str, bytes] | None,
+    prefix_evaluations: Mapping[tuple[int, str], WalkForwardEvaluation] | None,
 ) -> dict[str, object]:
-    """Serialize first-fold math evidence and representative final likelihoods."""
+    """Serialize one independently auditable outer-fold math dossier."""
 
-    if not result.outer_folds:
-        raise ValueError("math audit requires at least one outer fold")
-    first_outer = next(
-        (fold for fold in result.outer_folds if fold.fold_index in selections),
-        None,
-    )
-    if first_outer is None:
-        raise ValueError("no valid outer-fold selection is available for math audit")
-    selection = selections[first_outer.fold_index]
     feature_order = selection.distance.feature_order
     clusters = []
     silhouette_by_count = dict(selection.clusters.silhouette_curve)
@@ -238,18 +232,16 @@ def build_math_expectations(
         )
 
     prefix_nmi: list[dict[str, object]] = []
+    outer_fold_index = int(outer_fold.fold_index)
     if prefix_payloads is not None or prefix_evaluations is not None:
-        for outer_fold_index, selected in sorted(selections.items()):
-            prefix_nmi.extend(
-                _prefix_nmi_items(
-                    selected,
-                    outer_fold_index,
-                    None if prefix_payloads is None else prefix_payloads.get(outer_fold_index, {}),
-                    None
-                    if prefix_evaluations is None
-                    else prefix_evaluations.get(outer_fold_index, {}),
-                )
+        prefix_nmi.extend(
+            _prefix_nmi_items(
+                selection,
+                outer_fold_index,
+                prefix_payloads,
+                prefix_evaluations,
             )
+        )
 
     return {
         "timestamp_column": "timestamp_m1",
@@ -259,8 +251,60 @@ def build_math_expectations(
         "feature_scores": feature_scores,
         "prefix_nmi": prefix_nmi,
         "likelihoods": likelihoods,
-        "outer_fold_index": first_outer.fold_index,
+        "outer_fold_index": outer_fold_index,
         "final_candidate_id": selection.final_candidate.candidate_id,
+    }
+
+
+def _audited_outer_folds(
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+) -> tuple[OuterFoldResult, ...]:
+    """Select first, middle and last valid outer folds in canonical order."""
+
+    valid = tuple(
+        sorted(
+            (fold for fold in result.outer_folds if fold.valid and fold.fold_index in selections),
+            key=lambda fold: fold.fold_index,
+        )
+    )
+    if not valid:
+        raise ValueError("no valid outer-fold selection is available for math audit")
+    selected_indices = tuple(dict.fromkeys((0, len(valid) // 2, len(valid) - 1)))
+    return tuple(valid[index] for index in selected_indices)
+
+
+def build_math_expectations(
+    source_rows: pd.DataFrame,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+    prefix_payloads: Mapping[int, Mapping[str, bytes]] | None = None,
+    prefix_evaluations: Mapping[int, Mapping[tuple[int, str], WalkForwardEvaluation]] | None = None,
+) -> dict[str, object]:
+    """Serialize deterministic first/middle/last outer-fold audit dossiers."""
+
+    if not result.outer_folds:
+        raise ValueError("math audit requires at least one outer fold")
+    audited = _audited_outer_folds(result, selections)
+    fold_audits = tuple(
+        _fold_math_expectations(
+            source_rows,
+            outer_fold,
+            selections[outer_fold.fold_index],
+            None if prefix_payloads is None else prefix_payloads.get(outer_fold.fold_index, {}),
+            None
+            if prefix_evaluations is None
+            else prefix_evaluations.get(outer_fold.fold_index, {}),
+        )
+        for outer_fold in audited
+    )
+    first = fold_audits[0]
+    return {
+        # Keep the first dossier at the top level for human-readable summaries.
+        **first,
+        "schema_version": 2,
+        "audit_outer_fold_indices": [cast(int, item["outer_fold_index"]) for item in fold_audits],
+        "fold_audits": list(fold_audits),
     }
 
 

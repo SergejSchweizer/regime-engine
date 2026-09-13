@@ -445,6 +445,31 @@ def independent_hmm_log_likelihood(item: dict[str, object]) -> float:
     raise ValueError(f"unsupported likelihood model family: {family}")
 
 
+def _audit_dossiers(expected: object) -> tuple[dict[str, object], ...]:
+    """Return the fold dossiers, validating the deterministic audit contract."""
+
+    if not isinstance(expected, dict):
+        raise SystemExit("math expectations must be a JSON object")
+    raw_dossiers = expected.get("fold_audits")
+    if raw_dossiers is None:
+        return (expected,)
+    if not isinstance(raw_dossiers, list) or not raw_dossiers:
+        raise SystemExit("fold_audits must be a non-empty list")
+    dossiers = tuple(item for item in raw_dossiers if isinstance(item, dict))
+    if len(dossiers) != len(raw_dossiers):
+        raise SystemExit("each fold audit must be an object")
+    try:
+        indices = tuple(int(item["outer_fold_index"]) for item in dossiers)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit("each fold audit must declare outer_fold_index") from error
+    if indices != tuple(sorted(set(indices))):
+        raise SystemExit("fold audit outer-fold indices must be unique and sorted")
+    declared = expected.get("audit_outer_fold_indices")
+    if declared != list(indices):
+        raise SystemExit("audit_outer_fold_indices does not match fold_audits")
+    return dossiers
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
@@ -457,53 +482,62 @@ def main() -> None:
     args = parser.parse_args()
     columns = _read_snapshot(args.snapshot)
     expected = json.loads(args.expectations.read_text(encoding="utf-8"))
-    features = tuple(expected["feature_order"])
-    distance = independent_distance(columns, features)
-    expected_distance = np.asarray(expected["distance"], dtype=float)
-    distance_error = float(np.max(np.abs(distance - expected_distance)))
-    if distance_error > 1.0e-10:
-        raise SystemExit(f"distance audit failed: max_abs_error={distance_error:.12g}")
-
-    for cluster in expected.get("silhouette_clusters", []):
-        labels = np.asarray(cluster["labels"], dtype=int)
-        samples = silhouette_samples(distance, labels, metric="precomputed")
-        actual = float(np.mean(np.where(labels == -1, 0.0, samples)))
-        if abs(actual - float(cluster["mean"])) > 1.0e-10:
-            raise SystemExit("silhouette audit failed")
-
+    dossiers = _audit_dossiers(expected)
+    distance_errors: list[float] = []
     feature_score_errors: list[float] = []
-    for item in expected.get("feature_scores", []):
-        feature = str(item["feature"])
-        information_ratio, eta_squared = independent_feature_score(
-            columns[feature],
-            columns[expected["timestamp_column"]],
-            tuple(item["teacher_timestamps"]),
-            tuple(tuple(row) for row in item["teacher_probabilities"]),
-        )
-        feature_score_errors.extend(
-            (
-                abs(information_ratio - float(item["state_information_ratio"])),
-                abs(eta_squared - float(item["eta_squared"])),
-            )
-        )
     nmi_errors: list[float] = []
-    for item in expected.get("prefix_nmi", []):
-        actual = independent_soft_nmi(
-            tuple(item["candidate_timestamps"]),
-            tuple(tuple(row) for row in item["candidate_probabilities"]),
-            tuple(item["teacher_timestamps"]),
-            tuple(tuple(row) for row in item["teacher_probabilities"]),
-        )
-        nmi_errors.append(abs(actual - float(item["soft_regime_nmi"])))
     likelihood_errors: list[float] = []
-    likelihood_items = expected.get("likelihoods", expected.get("gaussian_likelihoods", []))
-    if not isinstance(likelihood_items, list):
-        raise SystemExit("likelihood expectations must be a list")
-    for item in likelihood_items:
-        if not isinstance(item, dict):
-            raise SystemExit("likelihood expectation must be an object")
-        actual = independent_hmm_log_likelihood(item)
-        likelihood_errors.append(abs(actual - float(item["log_likelihood"])))
+    for dossier in dossiers:
+        features = tuple(dossier["feature_order"])
+        distance = independent_distance(columns, features)
+        expected_distance = np.asarray(dossier["distance"], dtype=float)
+        if expected_distance.shape != distance.shape:
+            raise SystemExit("distance expectation dimensions are invalid")
+        distance_errors.append(float(np.max(np.abs(distance - expected_distance))))
+
+        for cluster in dossier.get("silhouette_clusters", []):
+            labels = np.asarray(cluster["labels"], dtype=int)
+            if labels.shape != (len(features),):
+                raise SystemExit("silhouette label dimensions are invalid")
+            samples = silhouette_samples(distance, labels, metric="precomputed")
+            actual = float(np.mean(np.where(labels == -1, 0.0, samples)))
+            if abs(actual - float(cluster["mean"])) > 1.0e-10:
+                raise SystemExit("silhouette audit failed")
+
+        timestamp_column = str(dossier["timestamp_column"])
+        for item in dossier.get("feature_scores", []):
+            feature = str(item["feature"])
+            information_ratio, eta_squared = independent_feature_score(
+                columns[feature],
+                columns[timestamp_column],
+                tuple(item["teacher_timestamps"]),
+                tuple(tuple(row) for row in item["teacher_probabilities"]),
+            )
+            feature_score_errors.extend(
+                (
+                    abs(information_ratio - float(item["state_information_ratio"])),
+                    abs(eta_squared - float(item["eta_squared"])),
+                )
+            )
+        for item in dossier.get("prefix_nmi", []):
+            actual = independent_soft_nmi(
+                tuple(item["candidate_timestamps"]),
+                tuple(tuple(row) for row in item["candidate_probabilities"]),
+                tuple(item["teacher_timestamps"]),
+                tuple(tuple(row) for row in item["teacher_probabilities"]),
+            )
+            nmi_errors.append(abs(actual - float(item["soft_regime_nmi"])))
+        likelihood_items = dossier.get("likelihoods", dossier.get("gaussian_likelihoods", []))
+        if not isinstance(likelihood_items, list):
+            raise SystemExit("likelihood expectations must be a list")
+        for item in likelihood_items:
+            if not isinstance(item, dict):
+                raise SystemExit("likelihood expectation must be an object")
+            actual = independent_hmm_log_likelihood(item)
+            likelihood_errors.append(abs(actual - float(item["log_likelihood"])))
+        if distance_errors[-1] > 1.0e-10:
+            raise SystemExit(f"distance audit failed: max_abs_error={distance_errors[-1]:.12g}")
+    maximum_distance_error = max(distance_errors, default=0.0)
     maximum_feature_score_error = max(feature_score_errors, default=0.0)
     maximum_nmi_error = max(nmi_errors, default=0.0)
     maximum_likelihood_error = max(likelihood_errors, default=0.0)
@@ -517,7 +551,13 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "distance_max_abs_error": distance_error,
+                "audited_outer_fold_indices": [
+                    int(dossier["outer_fold_index"]) for dossier in dossiers
+                ]
+                if "fold_audits" in expected
+                else [],
+                "audited_outer_fold_count": len(dossiers),
+                "distance_max_abs_error": maximum_distance_error,
                 "feature_score_max_abs_error": maximum_feature_score_error,
                 "soft_nmi_max_abs_error": maximum_nmi_error,
                 "gaussian_likelihood_max_abs_error": maximum_likelihood_error,

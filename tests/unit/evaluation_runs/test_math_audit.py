@@ -92,7 +92,7 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
         ),
     )
     result = SimpleNamespace(
-        outer_folds=(SimpleNamespace(fold_index=1, train_end=timestamps[1]),),
+        outer_folds=(SimpleNamespace(fold_index=1, train_end=timestamps[1], valid=True),),
     )
 
     expectations = build_math_expectations(
@@ -114,3 +114,27 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
     prefix_nmi = cast(list[dict[str, object]], expectations["prefix_nmi"])
     assert len(prefix_nmi) == 1
     assert prefix_nmi[0]["candidate_id"] == "gaussian_hmm_k2_full"
+    assert expectations["schema_version"] == 2
+    assert expectations["audit_outer_fold_indices"] == [1]
+    assert len(cast(list[dict[str, object]], expectations["fold_audits"])) == 1
+
+    five_fold_result = SimpleNamespace(
+        outer_folds=tuple(
+            SimpleNamespace(fold_index=index, train_end=timestamps[1], valid=True)
+            for index in range(1, 6)
+        ),
+    )
+    five_fold_expectations = build_math_expectations(
+        rows,
+        cast(Any, five_fold_result),
+        {index: cast(Any, selection) for index in range(1, 6)},
+        prefix_evaluations={
+            index: {(2, "gaussian_hmm_k2_full"): cast(Any, SimpleNamespace(valid_folds=(fold,)))}
+            for index in range(1, 6)
+        },
+    )
+    assert five_fold_expectations["audit_outer_fold_indices"] == [1, 3, 5]
+    assert [
+        item["outer_fold_index"]
+        for item in cast(list[dict[str, object]], five_fold_expectations["fold_audits"])
+    ] == [1, 3, 5]
