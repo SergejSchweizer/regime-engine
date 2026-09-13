@@ -42,7 +42,7 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import aggregate_candidate
 
@@ -68,6 +68,7 @@ class _PrefixProcessTask:
     plan: WalkForwardPlan
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
+    max_workers: int
     pca_raw_feature_order: tuple[str, ...] | None
     pca_variance_threshold: float
 
@@ -81,7 +82,7 @@ def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluati
         profile=task.profile,
         candidate=task.candidate,
         adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
-        max_workers=1,
+        max_workers=task.max_workers,
         pca_raw_feature_order=task.pca_raw_feature_order,
         pca_variance_threshold=task.pca_variance_threshold,
     )
@@ -101,6 +102,7 @@ def _evaluate_candidates(
     """Evaluate one prefix's candidates concurrently with deterministic output assembly."""
 
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
+    total_worker_budget = cpu_worker_count(max_workers)
 
     def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
         if seed_checkpoint_factory is not None and runner is run_prefix_gaussian_candidate:
@@ -186,16 +188,18 @@ def _evaluate_candidates(
         and worker_limit > 1
     )
     if use_processes:
+        nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
         tasks = tuple(
             _PrefixProcessTask(
                 source_rows,
                 plan,
                 profile,
                 candidate,
+                nested_limits[index % worker_limit],
                 pca_raw_feature_order,
                 pca_variance_threshold,
             )
-            for candidate in candidates
+            for index, candidate in enumerate(candidates)
         )
         with cpu_process_pool(worker_limit) as executor:
             futures = {

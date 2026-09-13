@@ -28,7 +28,7 @@ from market_regime_engine.profiles.resolution import (
     expected_candidate_ids,
     validate_candidate_comparison_inputs,
 )
-from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
 from market_regime_engine.training.adapter_factory import adapter_factory
 
 if TYPE_CHECKING:
@@ -54,6 +54,7 @@ class _CandidateProcessTask:
     plan: WalkForwardPlan
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
+    max_workers: int
     pca_raw_feature_order: tuple[str, ...] | None
     pca_variance_threshold: float
 
@@ -67,7 +68,7 @@ def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEv
         profile=task.profile,
         candidate=task.candidate,
         adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
-        max_workers=1,
+        max_workers=task.max_workers,
         pca_raw_feature_order=task.pca_raw_feature_order,
         pca_variance_threshold=task.pca_variance_threshold,
     )
@@ -282,6 +283,7 @@ def evaluate_candidate_grid(
         raise ValueError("candidate grid requires a non-empty complete walk-forward plan")
 
     worker_limit = cpu_worker_count(max_workers, task_count=len(resolved_profile.candidates))
+    total_worker_budget = cpu_worker_count(max_workers)
     scheduled_candidates = tuple(
         next(
             candidate
@@ -376,16 +378,18 @@ def evaluate_candidate_grid(
         and worker_limit > 1
     )
     if use_processes:
+        nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
         tasks = tuple(
             _CandidateProcessTask(
                 source_rows,
                 plan,
                 profile,
                 candidate,
+                nested_limits[index % worker_limit],
                 pca_raw_feature_order,
                 pca_variance_threshold,
             )
-            for candidate in scheduled_candidates
+            for index, candidate in enumerate(scheduled_candidates)
         )
         with cpu_process_pool(worker_limit) as executor:
             process_futures = {

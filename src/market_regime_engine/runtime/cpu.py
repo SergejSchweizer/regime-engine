@@ -159,3 +159,29 @@ def cpu_worker_count(requested: int | None = None, *, task_count: int | None = N
             raise ValueError("task_count must be at least 1")
         value = min(value, task_count)
     return value
+
+
+def nested_worker_limits(total_worker_budget: int, outer_worker_count: int) -> tuple[int, ...]:
+    """Partition a CPU budget between outer processes and their child pools.
+
+    Each outer process occupies one lane while it waits for its independent
+    child work.  The returned values are therefore the child-pool sizes for
+    each outer slot.  A value of one intentionally means serial work inside
+    that slot, avoiding a second process when the budget is already exhausted.
+    Remainder lanes are assigned deterministically to the first slots.
+    """
+
+    if total_worker_budget < 1 or outer_worker_count < 1:
+        raise ValueError("worker budget and outer worker count must be positive")
+    if outer_worker_count > total_worker_budget:
+        raise ValueError("outer worker count cannot exceed the total worker budget")
+    if outer_worker_count == 1:
+        # The single outer slot is the caller itself, not an additional pool
+        # process, so it may consume the complete requested child budget.
+        return (total_worker_budget,)
+    baseline = max(1, (total_worker_budget - outer_worker_count) // outer_worker_count)
+    remainder = max(
+        0,
+        total_worker_budget - outer_worker_count - baseline * outer_worker_count,
+    )
+    return tuple(baseline + int(slot < remainder) for slot in range(outer_worker_count))

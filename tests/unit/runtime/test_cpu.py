@@ -4,7 +4,11 @@ import os
 
 import pytest
 
-from market_regime_engine.runtime.cpu import cpu_topology, cpu_worker_count
+from market_regime_engine.runtime.cpu import (
+    cpu_topology,
+    cpu_worker_count,
+    nested_worker_limits,
+)
 
 
 def test_topology_is_affinity_aware() -> None:
@@ -25,3 +29,30 @@ def test_worker_count_respects_task_count_and_explicit_limit() -> None:
 def test_worker_count_uses_deployment_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REGIME_CPU_WORKERS", "3")
     assert cpu_worker_count(task_count=99) == min(3, len(os.sched_getaffinity(0)))
+
+
+@pytest.mark.parametrize(
+    ("total_budget", "outer_workers", "expected"),
+    (
+        (86, 12, (7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6)),
+        (86, 24, (3,) * 14 + (2,) * 10),
+        (24, 24, (1,) * 24),
+        (86, 1, (86,)),
+    ),
+)
+def test_nested_worker_limits_partition_outer_and_child_budget(
+    total_budget: int,
+    outer_workers: int,
+    expected: tuple[int, ...],
+) -> None:
+    limits = nested_worker_limits(total_budget, outer_workers)
+    assert limits == expected
+    if outer_workers == 1:
+        assert limits[0] == total_budget
+    else:
+        assert outer_workers + sum(value for value in limits if value > 1) == total_budget
+
+
+def test_nested_worker_limits_rejects_impossible_outer_count() -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        nested_worker_limits(2, 3)
