@@ -27,7 +27,9 @@ def test_long_hermetic_proof_is_local_only() -> None:
     assert '"integration and slow"' in runner
     assert "PR231_PROOF_OUTPUT" in runner
     assert 'RUN_METADATA="$OUTPUT_DIR/pr231-${PHASE}.json"' in runner
+    assert 'JUNIT_XML="$OUTPUT_DIR/pr231-${PHASE}-junit.xml"' in runner
     assert "pr231-computation-proof.json" in runner
+    assert "--junitxml=pr231-${PHASE}-junit.xml" in runner
 
 
 def test_external_feature_postgres_smoke_script_is_executable() -> None:
