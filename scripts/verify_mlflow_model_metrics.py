@@ -7,7 +7,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from mlflow.tracking import MlflowClient
 
@@ -23,6 +23,25 @@ _REQUIRED_TAGS = {
     "regime_engine.feature_dimension",
     "regime_engine.scope",
 }
+
+
+def _comparison_domain_tags(comparison_domain: str) -> set[str]:
+    """Return tags required to prove one metric's comparison domain."""
+
+    tags = {
+        "regime_engine.dataset_snapshot_key",
+        "regime_engine.evaluation_plan_hash",
+    }
+    if comparison_domain == "same_feature_vector_source_plan":
+        tags.update(
+            {
+                "regime_engine.feature_order_sha256",
+                "regime_engine.feature_dimension",
+            }
+        )
+    elif comparison_domain == "fold_local_only":
+        tags.add("regime_engine.outer_fold_id")
+    return tags
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,13 +66,27 @@ class AuditCounts:
 
 def _point_tuple(point: Any) -> tuple[str, int, float, int]:
     if isinstance(point, dict):
+        timestamp = point.get("timestamp_ms", point.get("timestamp", 0))
         return (
             str(point["key"]),
             int(point["step"]),
             float(point["value"]),
-            int(point.get("timestamp_ms", point.get("timestamp", 0))),
+            int(cast(int | float | str, timestamp)),
         )
-    return (str(point.key), int(point.step), float(point.value), int(point.timestamp))
+    timestamp = getattr(point, "timestamp_ms", getattr(point, "timestamp", 0))
+    return (
+        str(point.key),
+        int(point.step),
+        float(point.value),
+        int(cast(int | float | str, timestamp)),
+    )
+
+
+def _metric_points(points: Any) -> tuple[MetricPoint, ...]:
+    return tuple(
+        MetricPoint(key, value, step, timestamp)
+        for key, step, value, timestamp in map(_point_tuple, points)
+    )
 
 
 def audit(
@@ -74,6 +107,11 @@ def audit(
     actual_by_name: dict[str, list[Any]] = {}
     for model in actual_models:
         actual_by_name.setdefault(model.name, []).append(model)
+    actual_points_by_name = {
+        name: _metric_points(models[0].metrics or ())
+        for name, models in actual_by_name.items()
+        if len(models) == 1
+    }
 
     missing_models = set(expected_by_name) - set(actual_by_name)
     unexpected_models = set(actual_by_name) - set(expected_by_name)
@@ -110,8 +148,9 @@ def audit(
                 if item.emitted
             )
             if name in ledger_states
-            else tuple(model.metrics or ())
+            else actual_points_by_name[name]
         )
+        actual_points_by_name[name] = actual_points
         actual_tuples = tuple(_point_tuple(item) for item in actual_points)
         expected_tuples = tuple(_point_tuple(item) for item in expected.get("points", ()))
         expected_identity = {(key, step) for key, step, _value, _timestamp in expected_tuples}
@@ -128,6 +167,55 @@ def audit(
         actual_keys = {key for key, _step, _value, _timestamp in actual_tuples}
         expected_keys = {key for key, _step, _value, _timestamp in expected_tuples}
         unexpected_metric_key_count += len(actual_keys - expected_keys)
+        for key in actual_keys:
+            definition = metric_definition(key)
+            if definition is None:
+                continue
+            domain_tags = _comparison_domain_tags(definition.comparison_domain)
+            if any(not model.tags.get(tag) for tag in domain_tags):
+                domain_violations += 1
+
+    comparison_groups = expectation.get("comparison_groups", ())
+    if not isinstance(comparison_groups, (list, tuple)):
+        raise ValueError("comparison_groups must be a list")
+    for group in comparison_groups:
+        if not isinstance(group, dict):
+            raise ValueError("comparison group must be an object")
+        metric_key = str(group.get("metric_key", ""))
+        definition = metric_definition(metric_key)
+        model_names = group.get("model_names", ())
+        if definition is None or not isinstance(model_names, (list, tuple)):
+            domain_violations += 1
+            continue
+        declared_domain = group.get("comparison_domain")
+        if declared_domain is not None and str(declared_domain) != definition.comparison_domain:
+            domain_violations += 1
+        group_points: dict[str, tuple[MetricPoint, ...]] = {}
+        group_tags: dict[str, dict[str, str]] = {}
+        for model_name in model_names:
+            name = str(model_name)
+            models = actual_by_name.get(name, [])
+            if len(models) != 1:
+                domain_violations += 1
+                continue
+            model = models[0]
+            group_points[name] = tuple(
+                point for point in actual_points_by_name[name] if point.key == metric_key
+            )
+            group_tags[name] = {str(key): str(value) for key, value in model.tags.items()}
+        if len(group_points) != len(model_names) or any(
+            not points for points in group_points.values()
+        ):
+            continue
+        identities = {
+            tuple(
+                group_tags[name].get(tag, "")
+                for tag in _comparison_domain_tags(definition.comparison_domain)
+            )
+            for name in group_points
+        }
+        if any(not all(identity) for identity in identities) or len(identities) != 1:
+            domain_violations += 1
 
     actual_model_points = tuple(tuple(model.metrics or ()) for model in actual_models)
     for points in actual_model_points:
@@ -157,7 +245,7 @@ def audit(
         tag_violation_count=tag_violations,
         comparison_domain_violation_count=domain_violations,
     )
-    report = {
+    report: dict[str, object] = {
         "tracking_uri": tracking_uri,
         "experiment_name": experiment_name,
         "counts": asdict(counts),
