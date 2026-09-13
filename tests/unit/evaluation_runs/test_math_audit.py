@@ -132,6 +132,7 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
             index: {(2, "gaussian_hmm_k2_full"): cast(Any, SimpleNamespace(valid_folds=(fold,)))}
             for index in range(1, 6)
         },
+        max_workers=2,
     )
     assert five_fold_expectations["audit_outer_fold_indices"] == [1, 3, 5]
     assert [
