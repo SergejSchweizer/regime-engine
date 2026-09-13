@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import pickle
 import threading
 import warnings
 from collections.abc import Callable, Iterator
@@ -15,6 +16,16 @@ from typing import cast
 from market_regime_engine.runtime.cpu import cpu_worker_count
 
 _NATIVE_THREAD_LIMITER: object | None = None
+
+
+def is_pickleable(value: object) -> bool:
+    """Return whether ``value`` can cross the process-pool boundary."""
+
+    try:
+        pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+    except AttributeError, OSError, pickle.PickleError, TypeError:
+        return False
+    return True
 
 
 def _limit_native_numerical_threads() -> None:
