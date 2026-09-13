@@ -287,7 +287,7 @@ def test_global_v4_diagnostics_splits_fold_plot_families_into_process_tasks(
     # Eight whole-evaluation plots plus one state-information and one final
     # grid task per outer fold.  The explicit 86-worker request is bounded by
     # this actual task count rather than by the number of plot families.
-    assert worker_counts == [14]
+    assert worker_counts == [min(14, plots_module.cpu_worker_count(86))]
 
 
 def test_global_v4_diagnostics_render_complete_all_invalid_result(tmp_path) -> None:

@@ -919,9 +919,7 @@ def render_global_v4_diagnostics(
             ("silhouette", None),
             ("cluster_size", None),
         ]
-        task_specs.extend(
-            ("state_information", fold.fold_index) for fold, _selection in items
-        )
+        task_specs.extend(("state_information", fold.fold_index) for fold, _selection in items)
         task_specs.append(("prefix", None))
         task_specs.extend(("final_grid", fold.fold_index) for fold, _selection in items)
         task_specs.extend(
