@@ -338,10 +338,11 @@ def _validate_pca_raw_feature_order(
         raise ValueError("PCA raw feature order must be non-empty and duplicate-free")
     if any(name.startswith("pca_pc_") for name in raw_feature_order):
         raise ValueError("PCA raw feature order cannot contain generated PCA feature names")
-    if len(candidate_feature_order) <= len(raw_feature_order):
-        raise ValueError("PCA candidate feature order must include generated PCA features")
-    if candidate_feature_order[: len(raw_feature_order)] != raw_feature_order:
-        raise ValueError("PCA candidate feature order must begin with the raw feature order")
+    if any(
+        name not in raw_feature_order and not name.startswith("pca_pc_")
+        for name in candidate_feature_order
+    ):
+        raise ValueError("PCA candidate feature order contains an unknown feature")
     return raw_feature_order
 
 
@@ -513,9 +514,9 @@ def run_walk_forward_candidate(
 
     When ``pca_raw_feature_order`` is supplied, each fold fits PCA exclusively
     on that fold's complete raw TRAIN rows, then fits HMM standardization on
-    the resulting raw-plus-PCA TRAIN matrix.  TEST rows are transformed only
-    with those fold-local artifacts.  The candidate feature order must be the
-    raw order followed by the generated PCA names.
+    the selected raw-plus-PCA TRAIN columns. TEST rows are transformed only
+    with those fold-local artifacts. Candidate features may be any ordered
+    subset of the complete raw-plus-generated PCA universe.
     """
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
@@ -592,6 +593,7 @@ def run_walk_forward_candidate(
                     fit_start=fold.train_start,
                     fit_end=fold.train_end,
                     variance_threshold=pca_variance_threshold,
+                    model_feature_order=candidate.feature_order,
                 )
                 if pca_scaler.model_feature_order != candidate.feature_order:
                     raise ValueError(

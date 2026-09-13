@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -68,6 +68,8 @@ class _PrefixProcessTask:
     plan: WalkForwardPlan
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
+    pca_raw_feature_order: tuple[str, ...] | None
+    pca_variance_threshold: float
 
 
 def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluation:
@@ -80,6 +82,8 @@ def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluati
         candidate=task.candidate,
         adapter_factory=cast(AdapterFactory, adapter_factory(task.profile, task.candidate)),
         max_workers=1,
+        pca_raw_feature_order=task.pca_raw_feature_order,
+        pca_variance_threshold=task.pca_variance_threshold,
     )
 
 
@@ -91,6 +95,8 @@ def _evaluate_candidates(
     runner: PrefixCandidateRunner,
     max_workers: int | None,
     seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate one prefix's candidates concurrently with deterministic output assembly."""
 
@@ -123,14 +129,24 @@ def _evaluate_candidates(
                 )
 
             def compute() -> WalkForwardEvaluation:
+                kwargs: dict[str, Any] = {
+                    "max_workers": max_workers,
+                    "seed_checkpoint_factory": scoped_seed_checkpoint,
+                }
+                if pca_raw_feature_order is not None:
+                    kwargs.update(
+                        {
+                            "pca_raw_feature_order": pca_raw_feature_order,
+                            "pca_variance_threshold": pca_variance_threshold,
+                        }
+                    )
                 return run_prefix_gaussian_candidate(
                     source_rows,
                     plan,
                     profile,
                     candidate,
                     cast(AdapterFactory, adapter_factory(profile, candidate)),
-                    max_workers=max_workers,
-                    seed_checkpoint_factory=scoped_seed_checkpoint,
+                    **kwargs,
                 )
 
             return stage_checkpoint.run(
@@ -143,12 +159,25 @@ def _evaluate_candidates(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        return runner(
+        if pca_raw_feature_order is not None and runner is not run_prefix_gaussian_candidate:
+            raise ValueError("PCA prefix evaluation requires the canonical candidate runner")
+        if pca_raw_feature_order is None:
+            return runner(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                cast(AdapterFactory, adapter_factory(profile, candidate)),
+            )
+        return run_prefix_gaussian_candidate(
             source_rows,
             plan,
             profile,
             candidate,
             cast(AdapterFactory, adapter_factory(profile, candidate)),
+            max_workers=max_workers,
+            pca_raw_feature_order=pca_raw_feature_order,
+            pca_variance_threshold=pca_variance_threshold,
         )
 
     use_processes = (
@@ -158,7 +187,15 @@ def _evaluate_candidates(
     )
     if use_processes:
         tasks = tuple(
-            _PrefixProcessTask(source_rows, plan, profile, candidate) for candidate in candidates
+            _PrefixProcessTask(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                pca_raw_feature_order,
+                pca_variance_threshold,
+            )
+            for candidate in candidates
         )
         with cpu_process_pool(worker_limit) as executor:
             futures = {
@@ -246,6 +283,8 @@ def run_prefix_gaussian_candidate(
     *,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> WalkForwardEvaluation:
     """Run one Gaussian prefix candidate through the shared walk-forward runner."""
 
@@ -257,6 +296,8 @@ def run_prefix_gaussian_candidate(
         adapter_factory=candidate_adapter_factory,
         max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
+        pca_raw_feature_order=pca_raw_feature_order,
+        pca_variance_threshold=pca_variance_threshold,
     )
 
 
@@ -330,6 +371,8 @@ def search_ranked_prefixes(
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
     evaluation_sink: PrefixEvaluationSink | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> PrefixSearchResult:
     """Evaluate every exact ranked prefix and choose only by teacher soft NMI.
 
@@ -399,6 +442,8 @@ def search_ranked_prefixes(
                     candidates,
                     runner,
                     max_workers,
+                    pca_raw_feature_order=pca_raw_feature_order,
+                    pca_variance_threshold=pca_variance_threshold,
                 )
             else:
                 evaluations_by_id = _evaluate_candidates(
@@ -409,6 +454,8 @@ def search_ranked_prefixes(
                     runner,
                     max_workers,
                     seed_checkpoint_factory,
+                    pca_raw_feature_order,
+                    pca_variance_threshold,
                 )
             raw_evaluations = tuple(
                 evaluations_by_id[candidate.candidate_id] for candidate in candidates

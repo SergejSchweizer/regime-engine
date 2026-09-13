@@ -8,12 +8,15 @@ import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.evaluations.global_regime_v4 import (
     V4ConfigurationSelection,
+    evaluate_global_regime_v4,
     select_v4_configuration,
 )
+from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
 from market_regime_engine.preprocessing.pca_features import PCAGeneratedFeatureSet
 from market_regime_engine.profiles.config import ModelProfile
 
 PCASelector = Callable[..., V4ConfigurationSelection]
+PCAEvaluator = Callable[..., AdaptiveEvaluationResult]
 
 
 def _as_v4_frame(generated: PCAGeneratedFeatureSet) -> pd.DataFrame:
@@ -45,13 +48,44 @@ def select_v4_configuration_with_pca(
 
     if not isinstance(generated, PCAGeneratedFeatureSet):
         raise TypeError("PCA v4 selection requires a generated feature set")
+    if not profile.pca.enabled:
+        raise ValueError("PCA v4 selection requires profile.pca.enabled=true")
     return selector(
         _as_v4_frame(generated),
         catalog=generated.catalog,
         profile=profile,
         source_build_id=generated.catalog.lineage.source_build_id,
         max_workers=max_workers,
+        pca_raw_feature_order=generated.raw_feature_names,
+        pca_variance_threshold=profile.pca.variance_threshold,
     )
 
 
-__all__ = ["select_v4_configuration_with_pca"]
+def evaluate_global_regime_v4_with_pca(
+    generated: PCAGeneratedFeatureSet,
+    *,
+    profile: ModelProfile,
+    evaluator: PCAEvaluator = evaluate_global_regime_v4,
+    max_workers: int | None = None,
+) -> AdaptiveEvaluationResult:
+    """Run the complete global policy on one immutable generated snapshot."""
+
+    if not isinstance(generated, PCAGeneratedFeatureSet):
+        raise TypeError("PCA v4 evaluation requires a generated feature set")
+    if not profile.pca.enabled:
+        raise ValueError("PCA v4 evaluation requires profile.pca.enabled=true")
+    return evaluator(
+        _as_v4_frame(generated),
+        catalog=generated.catalog,
+        profile=profile,
+        source_build_id=generated.catalog.lineage.source_build_id,
+        max_workers=max_workers,
+        pca_raw_feature_order=generated.raw_feature_names,
+        pca_variance_threshold=profile.pca.variance_threshold,
+    )
+
+
+__all__ = [
+    "evaluate_global_regime_v4_with_pca",
+    "select_v4_configuration_with_pca",
+]

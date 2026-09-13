@@ -178,6 +178,8 @@ def evaluate_final_v4_grid(
     runner: CandidateRunner | None = None,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float = 0.90,
 ) -> FinalV4GridEvaluation:
     """Run the exact final 12 candidates and apply statistical ranking once."""
 
@@ -220,6 +222,8 @@ def evaluate_final_v4_grid(
         runner=_default_runner if runner is None else runner,
         max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
+        pca_raw_feature_order=pca_raw_feature_order,
+        pca_variance_threshold=pca_variance_threshold,
     )
     reason: str | None
     try:

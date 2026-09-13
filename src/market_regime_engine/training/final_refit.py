@@ -20,6 +20,10 @@ from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import fit_standard_scaler
+from market_regime_engine.preprocessing.two_stage import (
+    PCATwoStageScalerArtifact,
+    fit_pca_hmm_scaler,
+)
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_first_fold
@@ -130,6 +134,8 @@ def final_production_refit(
     deployment_selection: DeploymentSelection,
     profile: ModelProfile | None = None,
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
+    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_variance_threshold: float | None = None,
 ) -> ProductionModelArtifact:
     """Fit one fresh production artifact without rerunning selection or candidate ranking."""
 
@@ -167,13 +173,40 @@ def final_production_refit(
         deployment_selection.deployment_selection_cutoff,
         "deployment_selection_cutoff",
     )
+    raw_feature_order = (
+        candidate.feature_order if pca_raw_feature_order is None else pca_raw_feature_order
+    )
     matrix, retained_timestamps, skipped = _refit_matrix(
         source_rows,
-        feature_order=candidate.feature_order,
+        feature_order=raw_feature_order,
         evaluation_cutoff=cutoff,
     )
-    scaler = fit_standard_scaler(matrix, candidate.feature_order)
-    scaled = scaler.transform(matrix)
+    pca_scaler: PCATwoStageScalerArtifact | None = None
+    if pca_raw_feature_order is None:
+        scaler = fit_standard_scaler(matrix, candidate.feature_order)
+        scaled = scaler.transform(matrix)
+    else:
+        if profile is None or not profile.pca.enabled:
+            raise ValueError("PCA final refit requires profile.pca.enabled=true")
+        pca_threshold = (
+            profile.pca.variance_threshold
+            if pca_variance_threshold is None
+            else pca_variance_threshold
+        )
+        pca_scaler = fit_pca_hmm_scaler(
+            retained_timestamps,
+            matrix,
+            raw_feature_order=pca_raw_feature_order,
+            inner_fold_id="production",
+            fit_start=retained_timestamps[0],
+            fit_end=retained_timestamps[-1],
+            variance_threshold=pca_threshold,
+            model_feature_order=candidate.feature_order,
+        )
+        if pca_scaler.model_feature_order != candidate.feature_order:
+            raise ValueError("production PCA generated feature order differs from candidate")
+        scaler = pca_scaler.hmm_scaler
+        scaled = pca_scaler.transform(matrix)
     multistart = run_multistart(
         scaled,
         state_count=candidate.state_count,
@@ -222,4 +255,5 @@ def final_production_refit(
         terminal_filtered_probabilities=terminal,
         retained_observation_count=len(retained_timestamps),
         skipped_incomplete_observation_count=skipped,
+        pca_scaler=pca_scaler,
     )

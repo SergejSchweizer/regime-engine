@@ -15,6 +15,7 @@ from market_regime_engine.profiles.config import (
     GaussianHMMConfig,
     GMMHMMConfig,
     ModelProfile,
+    PCAConfig,
     StudentTHMMConfig,
     WalkForwardConfig,
 )
@@ -27,6 +28,7 @@ type ProfileDataclass = (
     | GMMHMMConfig
     | StudentTHMMConfig
     | EvaluationGates
+    | PCAConfig
 )
 
 
@@ -56,6 +58,7 @@ def _require_mapping(value: Any, field: str) -> Mapping[str, Any]:
 def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     top = _strict_kwargs(ModelProfile, raw)
     feature_discovery_value = top.pop("feature_discovery")
+    pca_raw = _require_mapping(top.pop("pca"), "pca")
     walk_forward_raw = _require_mapping(top.pop("walk_forward"), "walk_forward")
     gaussian_hmm_raw = _require_mapping(top.pop("gaussian_hmm"), "gaussian_hmm")
     gates_raw = _require_mapping(top.pop("gates"), "gates")
@@ -96,6 +99,7 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
         walk_forward=WalkForwardConfig(**_strict_kwargs(WalkForwardConfig, walk_forward_raw)),
         gaussian_hmm=GaussianHMMConfig(**hmm_kwargs),
         gates=EvaluationGates(**_strict_kwargs(EvaluationGates, gates_raw)),
+        pca=PCAConfig(**_strict_kwargs(PCAConfig, pca_raw)),
         gmm_hmms=gmm_hmms,
         student_t_hmm=student_t_hmm,
     )

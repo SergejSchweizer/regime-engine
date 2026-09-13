@@ -23,6 +23,7 @@ from market_regime_engine.models.gaussian_hmm import (
 )
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
+from market_regime_engine.profiles.config import PCAConfig
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment
@@ -35,6 +36,7 @@ from market_regime_engine.training.final_refit import (
 
 PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 FEATURES = ("f0", "f1")
+PCA_FEATURES = ("f0", "f1", "pca_pc_001")
 
 
 def candidate() -> ResolvedCandidateProfile:
@@ -51,6 +53,20 @@ def candidate() -> ResolvedCandidateProfile:
     )
 
 
+def pca_candidate() -> ResolvedCandidateProfile:
+    return ResolvedCandidateProfile(
+        candidate_id="gaussian_hmm_k2_full",
+        state_count=2,
+        covariance_type="full",
+        feature_order=PCA_FEATURES,
+        feature_dimension=len(PCA_FEATURES),
+        source_build_id="build-1",
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        original_feature_universe=(*FEATURES, "pca_pc_001"),
+    )
+
+
 def artifact() -> GaussianHMMArtifact:
     return GaussianHMMArtifact(
         state_count=2,
@@ -62,6 +78,22 @@ def artifact() -> GaussianHMMArtifact:
             ((0.20, 0.02), (0.02, 0.20)),
             ((0.20, -0.02), (-0.02, 0.20)),
         ),
+    )
+
+
+def pca_artifact() -> GaussianHMMArtifact:
+    identity = (
+        (0.20, 0.0, 0.0),
+        (0.0, 0.20, 0.0),
+        (0.0, 0.0, 0.20),
+    )
+    return GaussianHMMArtifact(
+        state_count=2,
+        feature_order=PCA_FEATURES,
+        start_probabilities=(0.5, 0.5),
+        transition_matrix=((0.8, 0.2), (0.2, 0.8)),
+        means=((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)),
+        full_covariances=(identity, identity),
     )
 
 
@@ -152,6 +184,22 @@ class DeterministicAdapter:
         raise AssertionError("final refit uses backend-independent causal filter")
 
 
+class PCAAdapter(DeterministicAdapter):
+    def __init__(self) -> None:
+        self._artifact = pca_artifact()
+
+    def fit(self, train_rows: object, state_count: int, seed: int) -> FitResult:
+        assert state_count == 2
+        values = np.asarray(train_rows, dtype=np.float64)
+        return FitResult(
+            artifact=self._artifact,
+            train_log_likelihood=causal_filter(values, self._artifact).log_likelihood,
+            converged=True,
+            iterations=5,
+            seed=seed,
+        )
+
+
 def source_rows(row_count: int = 1323) -> pd.DataFrame:
     start = datetime(2020, 1, 1, tzinfo=UTC)
     timestamps = tuple(start + timedelta(days=index) for index in range(row_count))
@@ -192,18 +240,39 @@ def winning_evaluation(rows: pd.DataFrame):
     )
 
 
-def deployment_selection(rows: pd.DataFrame, evaluation) -> DeploymentSelection:
+def pca_winning_evaluation(rows: pd.DataFrame):
+    profile = replace(
+        load_profile(PROFILE_CONFIG),
+        pca=PCAConfig(enabled=True, variance_threshold=0.90),
+    )
+    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+    return run_walk_forward_candidate(
+        rows,
+        plan=plan,
+        profile=profile,
+        candidate=pca_candidate(),
+        adapter_factory=PCAAdapter,
+        pca_raw_feature_order=FEATURES,
+        pca_variance_threshold=profile.pca.variance_threshold,
+    )
+
+
+def deployment_selection(
+    rows: pd.DataFrame,
+    evaluation,
+    feature_order: tuple[str, ...] = FEATURES,
+) -> DeploymentSelection:
     return DeploymentSelection(
         source_build_id="build-1",
         source_catalog_hash="f" * 64,
         validation_evaluation_cutoff=evaluation.evaluation_cutoff,
         deployment_selection_cutoff=rows["timestamp_m1"].iloc[-1],
         configuration=FinalSelectedConfiguration(
-            feature_order=FEATURES,
+            feature_order=feature_order,
             candidate_id="gaussian_hmm_k2_full",
             state_count=2,
             model_family="gaussian_hmm",
-            selected_prefix_length=len(FEATURES),
+            selected_prefix_length=len(feature_order),
             feature_discovery_hash="a" * 64,
             source_build_id="build-1",
             catalog_hash="f" * 64,
@@ -242,6 +311,32 @@ def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> N
     assert sum(result.terminal_filtered_probabilities) == pytest.approx(1.0)
     assert result.winning_seed == 11
     assert result.hmm.feature_order == result.scaler.feature_order == FEATURES
+
+
+def test_final_refit_reconstructs_and_persists_fold_independent_pca() -> None:
+    rows = source_rows(1324)
+    evaluation = pca_winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
+    profile = replace(
+        load_profile(PROFILE_CONFIG),
+        pca=PCAConfig(enabled=True, variance_threshold=0.90),
+    )
+    result = final_production_refit(
+        rows,
+        lineage=lineage(rows),
+        candidate=pca_candidate(),
+        winning_evaluation=evaluation,
+        deployment_selection=deployment_selection(rows, evaluation, PCA_FEATURES),
+        profile=profile,
+        adapter_factory_builder=lambda item: PCAAdapter,
+        pca_raw_feature_order=FEATURES,
+    )
+
+    assert result.pca_scaler is not None
+    assert result.pca_scaler.raw_feature_order == FEATURES
+    assert result.pca_scaler.model_feature_order == PCA_FEATURES
+    assert result.pca_scaler.pca_fit.clock.inner_fold_id == "production"
+    assert result.scaler == result.pca_scaler.hmm_scaler
+    assert result.hmm.feature_order == PCA_FEATURES
 
 
 def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
