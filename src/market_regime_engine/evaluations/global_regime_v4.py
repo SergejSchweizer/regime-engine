@@ -225,6 +225,29 @@ def _evaluate_outer_fold_process_with_selection(
     context = _OUTER_PROCESS_CONTEXT
     if context is None:
         raise RuntimeError("outer process context was not initialized")
+    store: SQLiteEvaluationRunStore | None = None
+    stage_checkpoint: StageCheckpoint | None = None
+    unit: WorkUnitIdentity | None = None
+    if context.run_store_root is not None and context.run_identity is not None:
+        store = SQLiteEvaluationRunStore(context.run_store_root)
+        unit = WorkUnitIdentity(
+            evaluation_run_key=context.run_identity.key,
+            unit_type="outer_fold",
+            coordinates=(("fold_id", fold.fold_id),),
+            unit_parameters=(
+                ("test_source_observations", str(fold.test_source_observations)),
+                ("train_source_observations", str(fold.train_source_observations)),
+            ),
+        )
+        cached_payload = store.load_completed_work_unit(context.run_identity, unit)
+        if cached_payload is not None:
+            cached = pickle.loads(cached_payload)
+            if not isinstance(cached, OuterFoldResult) or cached.fold_index != fold.fold_index:
+                raise ValueError("cached outer-fold payload is incompatible")
+            return cached, None, {}
+        if not store.claim_work_unit(context.run_identity, unit):
+            raise RuntimeError(f"outer fold work unit is currently claimed: {unit.key}")
+        stage_checkpoint = StageCheckpoint(context.run_identity, store, fold.fold_id)
     captured: list[V4ConfigurationSelection] = []
     prefix_evaluations: dict[tuple[int, str], WalkForwardEvaluation] = {}
     fold_result = _evaluate_outer_fold(
@@ -242,7 +265,14 @@ def _evaluate_outer_fold_process_with_selection(
         prefix_evaluation_sink=lambda prefix_length, candidate_id, evaluation: (
             prefix_evaluations.__setitem__((prefix_length, candidate_id), evaluation)
         ),
+        stage_checkpoint=stage_checkpoint,
     )
+    if store is not None and context.run_identity is not None and unit is not None:
+        store.complete_work_unit(
+            context.run_identity,
+            unit,
+            pickle.dumps(fold_result, protocol=pickle.HIGHEST_PROTOCOL),
+        )
     selection = captured[0] if fold_result.valid and captured else None
     return fold_result, selection, prefix_evaluations
 
@@ -1052,6 +1082,71 @@ def evaluate_global_regime_v4(
             pca_variance_threshold=pca_threshold,
         )
         available_methods = multiprocessing.get_all_start_methods()
+        process_with_selection = selection_sink is not None or prefix_evaluation_sink is not None
+        process_target = (
+            _evaluate_outer_fold_process_with_selection
+            if process_with_selection
+            else _evaluate_outer_fold_process
+        )
+
+        def consume_process_result(fold: WalkForwardFold, future: Any) -> OuterFoldResult:
+            if not process_with_selection:
+                fold_result = cast(OuterFoldResult, future.result())
+                if selection_sink is not None and fold_result.valid:
+                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                    selection = select_v4_configuration(
+                        train_rows,
+                        catalog=catalog,
+                        profile=profile,
+                        source_build_id=build_id,
+                        max_workers=nested_worker_limit_for_fold(fold),
+                        stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                        pca_raw_feature_order=pca_raw_feature_order,
+                        pca_variance_threshold=pca_threshold,
+                    )
+                    selection_sink(fold.fold_index, selection)
+                return fold_result
+
+            fold_result, captured_selection, captured_prefix_evaluations = cast(
+                tuple[
+                    OuterFoldResult,
+                    V4ConfigurationSelection | None,
+                    dict[tuple[int, str], WalkForwardEvaluation],
+                ],
+                future.result(),
+            )
+            if selection_sink is not None:
+                if captured_selection is not None:
+                    selection_sink(fold.fold_index, captured_selection)
+                elif fold_result.valid:
+                    # A completed outer-fold unit predates the in-worker
+                    # capture path. Replay only that cached fold so a restart
+                    # remains able to rebuild its tracking evidence.
+                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                    selection = select_v4_configuration(
+                        train_rows,
+                        catalog=catalog,
+                        profile=profile,
+                        source_build_id=build_id,
+                        max_workers=nested_worker_limit_for_fold(fold),
+                        stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
+                        pca_raw_feature_order=pca_raw_feature_order,
+                        pca_variance_threshold=pca_threshold,
+                    )
+                    selection_sink(fold.fold_index, selection)
+            if prefix_evaluation_sink is not None:
+                for (
+                    prefix_length,
+                    candidate_id,
+                ), evaluation in captured_prefix_evaluations.items():
+                    prefix_evaluation_sink(
+                        fold.fold_index,
+                        prefix_length,
+                        candidate_id,
+                        evaluation,
+                    )
+            return fold_result
+
         if "fork" in available_methods and threading.current_thread() is threading.main_thread():
             _initialize_outer_process_context(context)
             with cpu_process_pool(
@@ -1059,26 +1154,12 @@ def evaluate_global_regime_v4(
                 initializer=_initialize_outer_process_context,
             ) as process_executor:
                 futures = [
-                    process_executor.submit(_evaluate_outer_fold_process, fold)
-                    for fold in outer_plan.folds
+                    process_executor.submit(process_target, fold) for fold in outer_plan.folds
                 ]
-                outer_results = []
-                for fold, future in zip(outer_plan.folds, futures, strict=True):
-                    fold_result = future.result()
-                    if selection_sink is not None and fold_result.valid:
-                        train_rows = source_rows.iloc[: fold.train_source_observations].copy()
-                        selection = select_v4_configuration(
-                            train_rows,
-                            catalog=catalog,
-                            profile=profile,
-                            source_build_id=build_id,
-                            max_workers=nested_worker_limit_for_fold(fold),
-                            stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
-                            pca_raw_feature_order=pca_raw_feature_order,
-                            pca_variance_threshold=pca_threshold,
-                        )
-                        selection_sink(fold.fold_index, selection)
-                    outer_results.append(fold_result)
+                outer_results = [
+                    consume_process_result(fold, future)
+                    for fold, future in zip(outer_plan.folds, futures, strict=True)
+                ]
         else:
             with cpu_process_pool(
                 max_workers=outer_worker_limit,
@@ -1086,26 +1167,12 @@ def evaluate_global_regime_v4(
                 initargs=(context,),
             ) as process_executor:
                 futures = [
-                    process_executor.submit(_evaluate_outer_fold_process, fold)
-                    for fold in outer_plan.folds
+                    process_executor.submit(process_target, fold) for fold in outer_plan.folds
                 ]
-                outer_results = []
-                for fold, future in zip(outer_plan.folds, futures, strict=True):
-                    fold_result = future.result()
-                    if selection_sink is not None and fold_result.valid:
-                        train_rows = source_rows.iloc[: fold.train_source_observations].copy()
-                        selection = select_v4_configuration(
-                            train_rows,
-                            catalog=catalog,
-                            profile=profile,
-                            source_build_id=build_id,
-                            max_workers=nested_worker_limit_for_fold(fold),
-                            stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
-                            pca_raw_feature_order=pca_raw_feature_order,
-                            pca_variance_threshold=pca_threshold,
-                        )
-                        selection_sink(fold.fold_index, selection)
-                    outer_results.append(fold_result)
+                outer_results = [
+                    consume_process_result(fold, future)
+                    for fold, future in zip(outer_plan.folds, futures, strict=True)
+                ]
     elif use_process_outer_without_ledger:
         context = _OuterProcessContext(
             source_rows=source_rows,
@@ -1129,7 +1196,7 @@ def evaluate_global_regime_v4(
             submit = cast(Any, process_executor.submit)
             if selection_sink is None and prefix_evaluation_sink is None:
                 futures = [submit(_evaluate_outer_fold_process, fold) for fold in outer_plan.folds]
-                outer_results = [future.result() for future in futures]
+                outer_results = [cast(OuterFoldResult, future.result()) for future in futures]
             else:
                 futures = [
                     submit(_evaluate_outer_fold_process_with_selection, fold)
@@ -1166,7 +1233,7 @@ def evaluate_global_regime_v4(
             futures = [executor.submit(evaluate_fold, fold) for fold in outer_plan.folds]
             # Result order is part of the evaluation contract, independent of
             # completion order and scheduler timing.
-            outer_results = [future.result() for future in futures]
+            outer_results = [cast(OuterFoldResult, future.result()) for future in futures]
 
     valid_folds = tuple(fold for fold in outer_results if fold.valid)
     nmi_values = tuple(
