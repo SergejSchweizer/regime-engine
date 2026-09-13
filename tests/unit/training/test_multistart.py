@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from concurrent.futures import Future
+from dataclasses import dataclass, replace
 from math import nan
 
 import pytest
 
+import market_regime_engine.training.multistart as multistart_module
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.training.multistart import (
@@ -56,6 +58,14 @@ class FakeAdapter:
 
     def reconstruct(self, artifact: GaussianHMMArtifact) -> None:
         raise AssertionError(f"unused: {artifact}")
+
+
+@dataclass(frozen=True)
+class PickleableAdapterFactory:
+    outcomes: Mapping[int, FitResult | Exception]
+
+    def __call__(self) -> FakeAdapter:
+        return FakeAdapter(self.outcomes)
 
     def causal_filter(
         self,
@@ -153,3 +163,36 @@ def test_invalid_result_paths_are_counted_as_failed_starts() -> None:
 def test_invalid_state_count_fails_before_adapter_use() -> None:
     with pytest.raises(ValueError, match="K=2,3,4,5"):
         run_multistart([[0.0]], state_count=6, adapter_factory=factory({}))
+
+
+def test_pickleable_custom_adapter_factory_uses_process_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    worker_counts: list[int] = []
+
+    class _InlineProcessPool:
+        def __init__(self, max_workers: int, **_kwargs: object) -> None:
+            worker_counts.append(max_workers)
+
+        def __enter__(self) -> _InlineProcessPool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function, *args: object, **kwargs: object) -> Future[object]:
+            future: Future[object] = Future()
+            future.set_result(function(*args, **kwargs))
+            return future
+
+    monkeypatch.setattr(multistart_module, "cpu_process_pool", _InlineProcessPool)
+    result = run_multistart(
+        [[0.0], [1.0]],
+        state_count=2,
+        adapter_factory=PickleableAdapterFactory(outcomes),
+        max_workers=2,
+    )
+
+    assert worker_counts == [2]
+    assert result.winner.seed == 131
