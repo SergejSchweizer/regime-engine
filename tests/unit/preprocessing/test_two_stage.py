@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import numpy as np
+import pytest
+
+from market_regime_engine.preprocessing import (
+    PCATwoStageScalerArtifact,
+    fit_pca_hmm_scaler,
+)
+
+START = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _source(count: int = 120) -> tuple[tuple[datetime, ...], np.ndarray]:
+    index = np.arange(count, dtype=np.float64)
+    return (
+        tuple(START + timedelta(days=int(value)) for value in index),
+        np.column_stack(
+            (
+                np.sin(index / 5.0) + index / 100.0,
+                np.cos(index / 7.0) - index / 120.0,
+                np.sin(index / 11.0),
+            )
+        ),
+    )
+
+
+def test_two_stage_scaler_is_train_only_and_standardizes_augmented_train() -> None:
+    timestamps, rows = _source()
+    artifact = fit_pca_hmm_scaler(
+        timestamps,
+        rows,
+        raw_feature_order=("a", "b", "c"),
+        inner_fold_id="inner_fold_001",
+        fit_start=START + timedelta(days=10),
+        fit_end=START + timedelta(days=89),
+    )
+    future_rows = np.vstack((rows, np.full((10, 3), 1_000_000.0)))
+    future_timestamps = timestamps + tuple(
+        START + timedelta(days=index) for index in range(120, 130)
+    )
+    resumed = fit_pca_hmm_scaler(
+        future_timestamps,
+        future_rows,
+        raw_feature_order=("a", "b", "c"),
+        inner_fold_id="inner_fold_001",
+        fit_start=START + timedelta(days=10),
+        fit_end=START + timedelta(days=89),
+    )
+
+    assert artifact.fit_hash == resumed.fit_hash
+    selected = rows[10:90]
+    transformed = artifact.transform(selected)
+    assert np.allclose(np.mean(transformed, axis=0), 0.0, atol=1.0e-12)
+    assert np.allclose(np.var(transformed, axis=0), 1.0, atol=1.0e-12)
+    assert artifact.model_feature_order == (
+        "a",
+        "b",
+        "c",
+        *artifact.pca_fit.artifact.generated_feature_names,
+    )
+
+
+def test_two_stage_scaler_round_trip_and_invalid_inputs_fail_closed() -> None:
+    timestamps, rows = _source()
+    artifact = fit_pca_hmm_scaler(
+        timestamps,
+        rows,
+        raw_feature_order=("a", "b", "c"),
+        inner_fold_id="inner_fold_001",
+        fit_start=START,
+        fit_end=START + timedelta(days=80),
+    )
+    restored = PCATwoStageScalerArtifact.from_canonical_json(artifact.to_canonical_json())
+    assert restored == artifact
+    assert np.array_equal(restored.transform(rows[:10]), artifact.transform(rows[:10]))
+    with pytest.raises(ValueError, match="raw feature order"):
+        artifact.transform(np.ones((2, 2)))
