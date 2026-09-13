@@ -374,6 +374,21 @@ def _candidate_model_tags(
     candidate_id = evaluation.candidate_id
     model_family = candidate_id.split("_k", maxsplit=1)[0]
     mixture_count = "2" if model_family == "gmm_hmm" else "1"
+    pca_fit_hashes = tuple(
+        fold.pca_scaler_artifact.fit_hash
+        for fold in evaluation.folds
+        if fold.valid and fold.pca_scaler_artifact is not None
+    )
+    pca_tags = (
+        {
+            "regime_engine.pca_enabled": "true",
+            "regime_engine.pca_fit_hashes_sha256": sha256(
+                json.dumps(pca_fit_hashes, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            ).hexdigest(),
+        }
+        if pca_fit_hashes
+        else {}
+    )
     return {
         "regime_engine.metric_catalog_version": str(METRIC_CATALOG_VERSION),
         "regime_engine.profile_id": evaluation.profile_id,
@@ -396,6 +411,7 @@ def _candidate_model_tags(
         ),
         "regime_engine.scope": scope,
         **({"regime_engine.outer_fold_id": outer_fold_id} if outer_fold_id is not None else {}),
+        **pca_tags,
     }
 
 
