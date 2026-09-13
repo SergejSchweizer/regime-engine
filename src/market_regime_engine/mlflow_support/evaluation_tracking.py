@@ -42,6 +42,7 @@ from market_regime_engine.mlflow_support.model_metrics import (
     model_metric_points,
     outer_selection_metric_points,
 )
+from market_regime_engine.mlflow_support.pca_plots import render_pca_diagnostics
 from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
 from market_regime_engine.mlflow_support.tracking import (
     _aggregate_metric_points,
@@ -719,6 +720,22 @@ def _track_global_v4_fold(
             (candidate_dir / "candidate_evidence.json").write_bytes(
                 prepared_candidate.evidence_json
             )
+            if any(item.valid and item.pca_scaler_artifact is not None for item in candidate.folds):
+                pca_entries = render_pca_diagnostics(candidate, candidate_dir)
+                pca_manifest_entries: list[dict[str, object]] = []
+                for entry in pca_entries:
+                    manifest_entry = entry.as_dict()
+                    manifest_entry["png_path"] = str(
+                        Path(entry.png_path).relative_to(candidate_dir)
+                    )
+                    pca_manifest_entries.append(manifest_entry)
+                _write_json(
+                    candidate_dir / "pca_plot_manifest.json",
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "entries": pca_manifest_entries,
+                    },
+                )
             model_id = _project_candidate_logged_model(
                 port,
                 evaluation=candidate,
