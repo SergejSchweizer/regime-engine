@@ -467,39 +467,56 @@ def _prepare_global_v4_fold_tracking(
     if candidates and final_grid_plan is None:
         raise ValueError("selected v4 evaluation is missing its final-grid plan")
     resolved_final_grid_plan = cast(WalkForwardPlan, final_grid_plan)
-    prepared: list[_PreparedCandidateTracking] = []
-    for candidate in candidates:
-        aggregate = next(
-            item
-            for item in selection.final_grid.candidate_grid.aggregates
-            if item.candidate_id == candidate.candidate_id
+    prepared = tuple(
+        _prepare_global_v4_candidate_tracking(
+            fold,
+            selection,
+            fold_evidence,
+            candidate,
+            resolved_final_grid_plan,
         )
-        candidate_payload = {
-            "candidate_id": candidate.candidate_id,
-            "feature_order": list(candidate.feature_order),
-            "source_build_id": candidate.source_build_id,
-            "evaluation_plan_hash": candidate.evaluation_plan_hash,
-            "aggregate": _aggregate_record(aggregate),
-            "selection_context": fold_evidence,
-        }
-        points = (
-            _candidate_metric_points(candidate, resolved_final_grid_plan)
-            + _aggregate_metric_points(candidate)
-            + model_metric_points(
-                candidate,
-                fold_timestamps=tuple(item.test_end for item in resolved_final_grid_plan.folds),
-            )
-            + outer_selection_metric_points(selection, fold)
-        )
-        validate_metric_points(points)
-        prepared.append(
-            _PreparedCandidateTracking(
-                evaluation=candidate,
-                evidence_json=_json_bytes(candidate_payload),
-                metric_points=points,
-            )
-        )
+        for candidate in candidates
+    )
     return _PreparedFoldTracking(fold_evidence, resolved_final_grid_plan, tuple(prepared))
+
+
+def _prepare_global_v4_candidate_tracking(
+    fold: OuterFoldResult,
+    selection: V4ConfigurationSelection,
+    fold_evidence: dict[str, object],
+    candidate: WalkForwardEvaluation,
+    final_grid_plan: WalkForwardPlan,
+) -> _PreparedCandidateTracking:
+    """Prepare one candidate's evidence and metric points independently."""
+
+    aggregate = next(
+        item
+        for item in selection.final_grid.candidate_grid.aggregates
+        if item.candidate_id == candidate.candidate_id
+    )
+    candidate_payload = {
+        "candidate_id": candidate.candidate_id,
+        "feature_order": list(candidate.feature_order),
+        "source_build_id": candidate.source_build_id,
+        "evaluation_plan_hash": candidate.evaluation_plan_hash,
+        "aggregate": _aggregate_record(aggregate),
+        "selection_context": fold_evidence,
+    }
+    points = (
+        _candidate_metric_points(candidate, final_grid_plan)
+        + _aggregate_metric_points(candidate)
+        + model_metric_points(
+            candidate,
+            fold_timestamps=tuple(item.test_end for item in final_grid_plan.folds),
+        )
+        + outer_selection_metric_points(selection, fold)
+    )
+    validate_metric_points(points)
+    return _PreparedCandidateTracking(
+        evaluation=candidate,
+        evidence_json=_json_bytes(candidate_payload),
+        metric_points=points,
+    )
 
 
 def _materialize_candidate_tracking_artifacts(
@@ -846,25 +863,75 @@ def track_global_v4_evaluation(
             (fold, selections.get(fold.fold_index)) for fold in result.outer_folds
         )
         if tracking_workers == 1:
-            prepared_folds = tuple(
-                _prepare_global_v4_fold_tracking(
-                    fold,
-                    selection,
-                )
-                for fold, selection in preparation_tasks
+            fold_evidence = tuple(
+                _build_fold_evidence(fold, selection) for fold, selection in preparation_tasks
             )
         else:
             with cpu_process_pool(tracking_workers) as executor:
                 futures = [
-                    executor.submit(
-                        _prepare_global_v4_fold_tracking,
-                        fold,
-                        selection,
-                    )
+                    executor.submit(_build_fold_evidence, fold, selection)
                     for fold, selection in preparation_tasks
                 ]
                 # Preserve canonical fold order regardless of process completion order.
-                prepared_folds = tuple(future.result() for future in futures)
+                fold_evidence = tuple(future.result() for future in futures)
+        candidate_task_list: list[
+            tuple[
+                OuterFoldResult,
+                V4ConfigurationSelection,
+                dict[str, object],
+                WalkForwardEvaluation,
+                WalkForwardPlan,
+            ]
+        ] = []
+        for fold_position, (fold, selection) in enumerate(preparation_tasks):
+            if selection is None:
+                continue
+            candidates = tuple(getattr(selection.final_grid.candidate_grid, "evaluations", ()))
+            final_grid_plan = getattr(selection, "final_grid_plan", None)
+            if candidates and final_grid_plan is None:
+                raise ValueError("selected v4 evaluation is missing its final-grid plan")
+            for candidate in candidates:
+                candidate_task_list.append(
+                    (
+                        fold,
+                        selection,
+                        fold_evidence[fold_position],
+                        candidate,
+                        cast(WalkForwardPlan, final_grid_plan),
+                    )
+                )
+        candidate_tasks = tuple(candidate_task_list)
+        if candidate_tasks:
+            candidate_workers = cpu_worker_count(
+                requested_workers,
+                task_count=len(candidate_tasks),
+            )
+            if candidate_workers == 1:
+                prepared_candidates = tuple(
+                    _prepare_global_v4_candidate_tracking(*task) for task in candidate_tasks
+                )
+            else:
+                with cpu_process_pool(candidate_workers) as executor:
+                    candidate_futures = [
+                        executor.submit(_prepare_global_v4_candidate_tracking, *task)
+                        for task in candidate_tasks
+                    ]
+                    prepared_candidates = tuple(future.result() for future in candidate_futures)
+        else:
+            prepared_candidates = ()
+        candidates_by_fold: dict[int, list[_PreparedCandidateTracking]] = {
+            fold.fold_index: [] for fold, _selection in preparation_tasks
+        }
+        for task, prepared_candidate in zip(candidate_tasks, prepared_candidates, strict=True):
+            candidates_by_fold[task[0].fold_index].append(prepared_candidate)
+        prepared_folds = tuple(
+            _PreparedFoldTracking(
+                fold_evidence[fold_position],
+                getattr(selection, "final_grid_plan", None) if selection is not None else None,
+                tuple(candidates_by_fold[fold.fold_index]),
+            )
+            for fold_position, (fold, selection) in enumerate(preparation_tasks)
+        )
         artifact_tasks = tuple(
             (
                 prepared_candidate.evaluation,
