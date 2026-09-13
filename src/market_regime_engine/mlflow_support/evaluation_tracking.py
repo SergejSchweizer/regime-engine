@@ -997,7 +997,12 @@ def track_global_v4_evaluation(
         logged_model_ids.extend(
             model_id for _fold, model_ids in fold_results for model_id in model_ids
         )
-        entries = render_global_v4_diagnostics(result, selections, directory)
+        entries = render_global_v4_diagnostics(
+            result,
+            selections,
+            directory,
+            max_workers=requested_workers,
+        )
         manifest_entries: list[dict[str, object]] = []
         for entry in entries:
             port.log_artifact(parent_run_id, entry.png_path, "plots")
