@@ -309,6 +309,22 @@ def test_outer_fold_evidence_worker_matches_inline_payload() -> None:
     assert parallel == inline
 
 
+def test_adjacent_cluster_stability_is_derived_from_train_memberships() -> None:
+    selection = _selection()
+    first = SimpleNamespace(fold_index=1, valid=True)
+    second = SimpleNamespace(fold_index=2, valid=True)
+    result = SimpleNamespace(outer_folds=(first, second))
+
+    stability = module._adjacent_cluster_stability(result, {1: selection, 2: selection})
+
+    assert stability == [
+        {
+            "outer_fold_pair": [1, 2],
+            "mean_best_cluster_jaccard": 1.0,
+        }
+    ]
+
+
 def test_tracking_preparation_worker_matches_inline_payload() -> None:
     fold = _result().outer_folds[0]
     selection = _selection()

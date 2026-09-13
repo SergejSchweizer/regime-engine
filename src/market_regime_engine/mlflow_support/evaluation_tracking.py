@@ -9,6 +9,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from itertools import pairwise
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +28,7 @@ from market_regime_engine.evaluations.plots import render_global_v4_diagnostics
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     AdaptiveEvaluationResult,
+    ClusterSolution,
     FinalSelectedConfiguration,
     OuterFoldResult,
 )
@@ -402,6 +404,45 @@ def _build_fold_evidence(
     )
 
 
+def _cluster_membership_jaccard(previous: ClusterSolution, current: ClusterSolution) -> float:
+    """Return the mean best-match Jaccard score for adjacent fold clusters."""
+
+    previous_sets = tuple({*members} for _cluster, members in previous.memberships)
+    current_sets = tuple({*members} for _cluster, members in current.memberships)
+    if not previous_sets or not current_sets:
+        raise ValueError("cluster stability requires non-empty memberships")
+    return sum(
+        max(
+            len(current_members & previous_members) / len(current_members | previous_members)
+            for previous_members in previous_sets
+        )
+        for current_members in current_sets
+    ) / len(current_sets)
+
+
+def _adjacent_cluster_stability(
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, V4ConfigurationSelection],
+) -> list[dict[str, object]]:
+    """Build deterministic adjacent-fold stability evidence from TRAIN selections."""
+
+    items = tuple(
+        (fold, selections[fold.fold_index])
+        for fold in result.outer_folds
+        if fold.valid and fold.fold_index in selections
+    )
+    return [
+        {
+            "outer_fold_pair": [previous.fold_index, current.fold_index],
+            "mean_best_cluster_jaccard": _cluster_membership_jaccard(
+                previous_selection.clusters,
+                current_selection.clusters,
+            ),
+        }
+        for (previous, previous_selection), (current, current_selection) in pairwise(items)
+    ]
+
+
 def _json_bytes(payload: object) -> bytes:
     """Serialize a local tracking payload with the coordinator's exact format."""
 
@@ -575,6 +616,10 @@ def build_global_v4_evidence(
             },
             "stability": {
                 "selection_sink": "outer_fold_train_only",
+                "adjacent_fold_cluster_membership_jaccard": _adjacent_cluster_stability(
+                    result,
+                    selections,
+                ),
                 "fold_feature_discovery_hashes": [
                     fold.final_configuration.feature_discovery_hash for fold in result.outer_folds
                 ],
