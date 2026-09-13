@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from market_regime_engine.mlflow_support.model_package import (
@@ -16,6 +18,7 @@ from market_regime_engine.mlflow_support.model_package import (
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
+from market_regime_engine.preprocessing import fit_pca_hmm_scaler
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 
 
@@ -67,6 +70,40 @@ def artifact() -> ProductionModelArtifact:
     )
 
 
+def pca_artifact() -> ProductionModelArtifact:
+    base = artifact()
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    timestamps = tuple(start + timedelta(days=index) for index in range(120))
+    index = np.arange(120, dtype=np.float64)
+    raw_rows = np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0)))
+    pca_scaler = fit_pca_hmm_scaler(
+        timestamps,
+        raw_rows,
+        raw_feature_order=("f0", "f1"),
+        inner_fold_id="fold_001",
+        fit_start=start,
+        fit_end=timestamps[-1],
+    )
+    dimension = len(pca_scaler.model_feature_order)
+    covariance = tuple(
+        tuple(0.2 if row == column else 0.0 for column in range(dimension))
+        for row in range(dimension)
+    )
+    hmm = replace(
+        base.hmm,
+        feature_order=pca_scaler.model_feature_order,
+        means=tuple(tuple(-1.0 for _ in range(dimension)) for _ in range(2)),
+        full_covariances=(covariance, covariance),
+    )
+    return replace(
+        base,
+        feature_order=pca_scaler.model_feature_order,
+        scaler=pca_scaler.hmm_scaler,
+        hmm=hmm,
+        pca_scaler=pca_scaler,
+    )
+
+
 def test_json_roundtrip_is_lossless_and_deterministic() -> None:
     original = artifact()
     payload = production_artifact_json(original)
@@ -103,6 +140,18 @@ def test_gmm_hmm_json_roundtrip_preserves_two_mixture_emissions() -> None:
     assert json.loads(payload)["hmm"]["model_family"] == "gmm_hmm"
 
 
+def test_pca_lineage_json_roundtrip_preserves_two_stage_artifact() -> None:
+    original = pca_artifact()
+    payload = production_artifact_json(original)
+
+    restored = production_artifact_from_json(payload)
+
+    assert restored == original
+    assert json.loads(payload)["pca_scaler"]["artifact_schema"] == (
+        "RegimeEnginePCATwoStageScaler.v1"
+    )
+
+
 def test_student_t_hmm_json_roundtrip_preserves_state_degrees_of_freedom() -> None:
     base = artifact()
     student = replace(
@@ -120,7 +169,7 @@ def test_student_t_hmm_json_roundtrip_preserves_state_degrees_of_freedom() -> No
     ]
 
 
-def test_save_load_package_roundtrip_and_immutability(tmp_path) -> None:
+def test_save_load_package_roundtrip_and_immutability(tmp_path: Path) -> None:
     original = artifact()
     package = save_production_package(original, tmp_path / "model")
     assert (package / MLMODEL_FILE).is_file()
@@ -130,7 +179,7 @@ def test_save_load_package_roundtrip_and_immutability(tmp_path) -> None:
         save_production_package(original, package)
 
 
-def test_package_fails_closed_on_metadata_and_payload_drift(tmp_path) -> None:
+def test_package_fails_closed_on_metadata_and_payload_drift(tmp_path: Path) -> None:
     package = save_production_package(artifact(), tmp_path / "model")
     mlmodel_path = package / MLMODEL_FILE
     metadata = json.loads(mlmodel_path.read_text(encoding="utf-8"))
@@ -166,8 +215,13 @@ def test_json_loader_rejects_root_shape_fields_and_schema() -> None:
     with pytest.raises(ValueError, match="scaler/HMM payloads must be mappings"):
         production_artifact_from_json(json.dumps(raw))
 
+    raw = json.loads(production_artifact_json(artifact()))
+    raw["pca_scaler"] = []
+    with pytest.raises(ValueError, match="PCA scaler payload"):
+        production_artifact_from_json(json.dumps(raw))
 
-def test_package_loader_rejects_missing_or_incompatible_mlmodel(tmp_path) -> None:
+
+def test_package_loader_rejects_missing_or_incompatible_mlmodel(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires MLmodel"):
         load_production_package(tmp_path / "missing")
 
@@ -188,7 +242,7 @@ def test_package_loader_rejects_missing_or_incompatible_mlmodel(tmp_path) -> Non
         load_production_package(package)
 
 
-def test_package_loader_rejects_runtime_version_drift(tmp_path) -> None:
+def test_package_loader_rejects_runtime_version_drift(tmp_path: Path) -> None:
     package = save_production_package(artifact(), tmp_path / "bad-mlflow")
     path = package / MLMODEL_FILE
     metadata = json.loads(path.read_text(encoding="utf-8"))

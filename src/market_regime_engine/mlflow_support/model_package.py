@@ -10,6 +10,7 @@ from typing import Any
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing.two_stage import PCATwoStageScalerArtifact
 
 PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v4"
 PACKAGE_DATA_FILE = "production_model.json"
@@ -91,6 +92,11 @@ def production_artifact_payload(artifact: ProductionModelArtifact) -> dict[str, 
         "inference_origin_timestamp": _timestamp(artifact.inference_origin_timestamp),
         "profile_config_version": artifact.profile_config_version,
         "profile_id": artifact.profile_id,
+        "pca_scaler": (
+            None
+            if artifact.pca_scaler is None
+            else json.loads(artifact.pca_scaler.to_canonical_json())
+        ),
         "registered_model": artifact.registered_model,
         "retained_observation_count": artifact.retained_observation_count,
         "scaler": _scaler_payload(artifact.scaler),
@@ -137,6 +143,7 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         "inference_origin_timestamp",
         "profile_config_version",
         "profile_id",
+        "pca_scaler",
         "registered_model",
         "retained_observation_count",
         "scaler",
@@ -164,6 +171,15 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     hmm_payload = payload["hmm"]
     if not isinstance(scaler_payload, dict) or not isinstance(hmm_payload, dict):
         raise ValueError("production scaler/HMM payloads must be mappings")
+    pca_payload = payload["pca_scaler"]
+    if pca_payload is None:
+        pca_scaler = None
+    elif isinstance(pca_payload, dict):
+        pca_scaler = PCATwoStageScalerArtifact.from_canonical_json(
+            json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
+        )
+    else:
+        raise ValueError("production PCA scaler payload must be a mapping or null")
 
     scaler = StandardScalerArtifact(
         feature_order=tuple(scaler_payload["feature_order"]),
@@ -253,6 +269,7 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         ),
         retained_observation_count=int(payload["retained_observation_count"]),
         skipped_incomplete_observation_count=int(payload["skipped_incomplete_observation_count"]),
+        pca_scaler=pca_scaler,
     )
 
 
