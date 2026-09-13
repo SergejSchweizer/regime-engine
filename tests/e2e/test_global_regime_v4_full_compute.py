@@ -45,7 +45,7 @@ from tests.fixtures.global_regime_v4.synthetic import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-PR231_GOLDEN_SNAPSHOT_HASH = "a609a32cf99642cf65f1064b798cec55b3b5b104a5946e01fa334dbc85a4283f"
+PR231_GOLDEN_SNAPSHOT_HASH = "d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65"
 
 
 def _independent_soft_nmi(
@@ -182,6 +182,24 @@ def _independent_cluster_solution(
         )
 
 
+def _independent_cluster_jaccard(previous: ClusterSolution, current: ClusterSolution) -> float:
+    """Recompute adjacent-fold cluster stability from membership primitives."""
+
+    previous_sets = tuple({*members} for _cluster, members in previous.memberships)
+    current_sets = tuple({*members} for _cluster, members in current.memberships)
+    if not previous_sets or not current_sets:
+        raise AssertionError("cluster stability requires non-empty memberships")
+    return float(
+        fmean(
+            max(
+                len(current_members & previous_members) / len(current_members | previous_members)
+                for previous_members in previous_sets
+            )
+            for current_members in current_sets
+        )
+    )
+
+
 def _independent_distance(rows: pd.DataFrame, feature_order: tuple[str, ...]) -> np.ndarray:
     matrix = np.zeros((len(feature_order), len(feature_order)), dtype=np.float64)
     for left_index, left_name in enumerate(feature_order):
@@ -203,6 +221,19 @@ def _evidence(
     selections: Mapping[int, object],
 ) -> GlobalV4Evidence:
     ordered = tuple(selections[index] for index in sorted(selections))
+    adjacent_stability = [
+        {
+            "outer_fold_pair": [
+                result.outer_folds[index].fold_index,
+                result.outer_folds[index + 1].fold_index,
+            ],
+            "mean_best_cluster_jaccard": _independent_cluster_jaccard(
+                ordered[index].clusters,
+                ordered[index + 1].clusters,
+            ),
+        }
+        for index in range(len(ordered) - 1)
+    ]
     groups = {
         "identity": {"policy_id": "xetra_global_regime_v4", "schema_version": 1},
         "lineage": {
@@ -251,7 +282,10 @@ def _evidence(
             "valid_fold_rate": result.valid_fold_rate,
             "production_eligible": result.production_eligible,
         },
-        "stability": {"adjacent_cluster_stability": []},
+        "stability": {
+            "selection_sink": "outer_fold_train_only",
+            "adjacent_fold_cluster_membership_jaccard": adjacent_stability,
+        },
     }
     return GlobalV4Evidence(
         SOURCE_BUILD_ID,
@@ -280,17 +314,108 @@ def _golden_snapshot(
         "folds": [
             {
                 "fold_index": fold.fold_index,
-                "train_source_observations": 1260 + (fold.fold_index - 1) * 63,
-                "test_source_observations": 63,
+                "source_observations": {
+                    "train": 1260 + (fold.fold_index - 1) * 63,
+                    "test": 63,
+                },
+                "m_star": selection.clusters.selected_count,
+                "cluster_memberships": [
+                    {"cluster_id": cluster_id, "features": list(features)}
+                    for cluster_id, features in selection.clusters.memberships
+                ],
+                "cluster_candidates": [
+                    {
+                        "m": cluster_count,
+                        "memberships": [
+                            {"cluster_id": cluster_id, "features": list(features)}
+                            for cluster_id, features in memberships
+                        ],
+                    }
+                    for cluster_count, memberships in selection.clusters.candidate_memberships
+                ],
+                "cluster_solution_hash": selection.clusters.solution_hash,
+                "prototypes": {
+                    "features": list(selection.prototypes.prototypes),
+                    "mean_distance_hash": content_hash(selection.prototypes.mean_distances),
+                    "hash": content_hash(selection.prototypes),
+                },
+                "teacher": {
+                    "candidate_id": selection.teacher_reference.candidate_id,
+                    "state_count": selection.teacher_reference.state_count,
+                    "prototype_features": list(selection.teacher_reference.prototype_features),
+                    "inner_plan_hash": selection.teacher_reference.inner_plan_hash,
+                    "reference_hash": selection.teacher_reference.reference_hash,
+                    "candidate_aggregate_hashes": [
+                        {
+                            "candidate_id": aggregate.candidate_id,
+                            "hash": content_hash(aggregate),
+                        }
+                        for aggregate in selection.teacher_evaluation.candidate_aggregates
+                    ],
+                    "selection_hash": content_hash(selection.teacher_evaluation.selection),
+                },
+                "feature_scores": [
+                    {
+                        "feature_name": score.feature_name,
+                        "state_information_ratio": score.state_information_ratio,
+                        "eta_squared": score.eta_squared,
+                        "hash": content_hash(score),
+                    }
+                    for score in selection.feature_scores
+                ],
+                "winners": {
+                    "ranked_features": list(selection.winner_selection.ranked_features),
+                    "hash": content_hash(selection.winner_selection),
+                },
+                "l_star": selection.prefix_search.selected_prefix_length,
+                "prefix_candidate_id": selection.prefix_search.selected_candidate_id,
+                "prefix_hashes": [
+                    content_hash(prefix) for prefix in selection.prefix_search.evaluations
+                ],
+                "candidate": {
+                    "candidate_id": selection.final_candidate.candidate_id,
+                    "feature_order": list(selection.final_candidate.feature_order),
+                    "state_count": selection.final_candidate.state_count,
+                    "model_family": selection.final_candidate.model_family,
+                    "hash": content_hash(selection.final_candidate),
+                },
+                "final_grid": {
+                    "candidate_ids": [
+                        candidate.candidate_id
+                        for candidate in selection.final_grid.grid.evaluations
+                    ],
+                    "aggregate_hashes": [
+                        content_hash(aggregate)
+                        for aggregate in selection.final_grid.grid.aggregates
+                    ],
+                    "selection_hash": content_hash(selection.final_grid.selection),
+                },
                 "selection_hash": content_hash(selection),
                 "outer_result_hash": fold.result_hash,
-                "outer_soft_nmi": fold.outer_teacher_final_soft_nmi,
-                "valid": fold.valid,
+                "outer": {
+                    "soft_nmi": fold.outer_teacher_final_soft_nmi,
+                    "shared_timestamp_count": fold.outer_shared_timestamp_count,
+                    "valid": fold.valid,
+                    "failure_reason": fold.failure_reason,
+                },
             }
             for fold, selection in zip(result.outer_folds, ordered, strict=True)
         ],
-        "result_hash": result.result_hash,
-        "evidence_hash": evidence.evidence_hash,
+        "validity": {
+            "valid_fold_count": result.valid_fold_count,
+            "valid_fold_rate": result.valid_fold_rate,
+            "latest_complete_fold_valid": result.latest_complete_fold_valid,
+            "production_eligible": result.production_eligible,
+            "failure_reason": result.failure_reason,
+        },
+        "stability": evidence.evidence["stability"],
+        "hashes": {
+            "policy_hash": result.policy_hash,
+            "result_hash": result.result_hash,
+            "evidence_hash": evidence.evidence_hash,
+            "catalog_hash": fixture.catalog.catalog_hash,
+            "source_data_hash": fixture.source_data_hash,
+        },
     }
 
 

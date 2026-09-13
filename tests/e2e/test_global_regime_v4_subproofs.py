@@ -44,7 +44,7 @@ from tests.fixtures.global_regime_v4.synthetic import SyntheticGlobalV4, build_s
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-_BASELINE_CACHE_SCHEMA = 1
+_BASELINE_CACHE_SCHEMA = 2
 
 
 @dataclass(frozen=True, slots=True)
