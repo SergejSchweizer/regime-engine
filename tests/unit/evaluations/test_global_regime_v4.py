@@ -18,12 +18,17 @@ from market_regime_engine.evaluation.selection import (
     StatisticalChampionSelection,
 )
 from market_regime_engine.evaluation.walk_forward import AdapterFactory, WalkForwardEvaluation
-from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan, plan_walk_forward
+from market_regime_engine.evaluation.walk_forward_splits import (
+    WalkForwardFold,
+    WalkForwardPlan,
+    plan_walk_forward,
+)
 from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
 from market_regime_engine.evaluations.teacher_reference import FrozenTeacherRefit
 from market_regime_engine.feature_discovery.contracts import (
+    OuterFoldResult,
     PrefixEvaluation,
     PrefixSearchResult,
     PrototypeSet,
@@ -145,6 +150,28 @@ def _model_evaluation(timestamps: tuple[datetime, ...]) -> SimpleNamespace:
         oos_filtered_probabilities=((0.5, 0.5),) * len(timestamps),
     )
     return SimpleNamespace(valid_folds=(fold,))
+
+
+def _pickleable_outer_callback(
+    source_rows: pd.DataFrame,
+    plan: WalkForwardPlan,
+    profile: ModelProfile,
+    candidate: ResolvedCandidateProfile,
+    candidate_adapter_factory: AdapterFactory,
+) -> WalkForwardEvaluation:
+    del source_rows, plan, profile, candidate, candidate_adapter_factory
+    raise AssertionError("the process-routing test must not execute the callback inline")
+
+
+def _pickleable_teacher_callback(
+    train_rows: pd.DataFrame,
+    test_rows: pd.DataFrame,
+    *,
+    reference: ProvisionalTeacherReference,
+    profile: ModelProfile,
+) -> FrozenTeacherRefit:
+    del train_rows, test_rows, reference, profile
+    raise AssertionError("the process-routing test must not execute the callback inline")
 
 
 def _selection_stub(catalog: FeatureCatalogSnapshot) -> global_v4.V4ConfigurationSelection:
@@ -439,6 +466,60 @@ def test_global_policy_input_and_outer_continuation_failures_are_explicit(
         "outer refit/TEST continuation failed" in (fold.failure_reason or "")
         for fold in result.outer_folds
     )
+
+
+def test_pickleable_custom_outer_callbacks_use_process_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    rows = _rows()
+    process_worker_counts: list[int] = []
+
+    class _CompletedFuture:
+        def __init__(self, value: OuterFoldResult) -> None:
+            self._value = value
+
+        def result(self) -> OuterFoldResult:
+            return self._value
+
+    class _InlineProcessPool:
+        def __init__(self, max_workers: int, **_kwargs: object) -> None:
+            process_worker_counts.append(max_workers)
+
+        def __enter__(self) -> _InlineProcessPool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function, fold: WalkForwardFold) -> _CompletedFuture:
+            return _CompletedFuture(function(fold))
+
+    def fake_process_fold(fold: WalkForwardFold) -> OuterFoldResult:
+        configuration = global_v4._fallback_configuration(catalog, "build-1", fold, "synthetic")
+        return global_v4._invalid_outer_fold(fold, configuration, "synthetic process test")
+
+    monkeypatch.setattr(global_v4, "cpu_process_pool", _InlineProcessPool)
+    monkeypatch.setattr(global_v4, "_evaluate_outer_fold_process", fake_process_fold)
+
+    class _UnexpectedThreadPool:
+        def __init__(self, **_kwargs: object) -> None:
+            raise AssertionError("pickleable outer callbacks must not use a thread pool")
+
+    monkeypatch.setattr(global_v4, "ThreadPoolExecutor", _UnexpectedThreadPool)
+    result = global_v4.evaluate_global_regime_v4(
+        rows,
+        catalog=catalog,
+        profile=profile,
+        outer_runner=_pickleable_outer_callback,
+        teacher_refitter=_pickleable_teacher_callback,
+        max_workers=2,
+    )
+
+    assert process_worker_counts == [2]
+    assert len(result.outer_folds) == 3
+    assert result.valid_fold_count == 0
 
 
 def test_failure_configuration_requires_two_catalog_features() -> None:

@@ -41,7 +41,7 @@ from market_regime_engine.evaluations.final_v4_grid import (
 from market_regime_engine.evaluations.final_v4_grid import (
     _candidates as final_candidates,
 )
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalCandidateRunner,
     ProvisionalTeacherEvaluation,
@@ -1053,16 +1053,17 @@ def evaluate_global_regime_v4(
         run_store is not None
         and run_identity is not None
         and _evaluate_outer_fold.__module__ == __name__
-        and outer_runner is run_prefix_gaussian_candidate
-        and teacher_refitter is refit_frozen_teacher
+        and select_v4_configuration is _DEFAULT_SELECT_V4_CONFIGURATION
+        and is_pickleable(outer_runner)
+        and is_pickleable(teacher_refitter)
         and outer_worker_limit > 1
     )
     use_process_outer_without_ledger = (
         run_store is None
         and run_identity is None
         and select_v4_configuration is _DEFAULT_SELECT_V4_CONFIGURATION
-        and outer_runner is run_prefix_gaussian_candidate
-        and teacher_refitter is refit_frozen_teacher
+        and is_pickleable(outer_runner)
+        and is_pickleable(teacher_refitter)
         and outer_worker_limit > 1
     )
     if use_process_outer:
