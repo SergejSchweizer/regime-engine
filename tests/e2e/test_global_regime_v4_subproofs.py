@@ -31,6 +31,7 @@ from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.loader import load_profile
 from tests.e2e.test_global_regime_v4_full_compute import (
     PR231_GOLDEN_SNAPSHOT_HASH,
+    _assert_selected_likelihood_parity,
     _evaluate_with_selection_capture,
     _evidence,
     _golden_snapshot,
@@ -194,12 +195,18 @@ def test_global_v4_subproof_pipeline_math() -> None:
 
     golden = _golden_snapshot(state.fixture, state.result, state.selections, state.evidence)
     assert content_hash(golden) == PR231_GOLDEN_SNAPSHOT_HASH
+    selected_likelihood_count = _assert_selected_likelihood_parity(
+        state.fixture,
+        state.result,
+        state.selections,
+    )
     _write_sidecar(
         "pipeline-math",
         {
             "result_hash": state.result.result_hash,
             "evidence_hash": state.evidence.evidence_hash,
             "golden_snapshot_hash": content_hash(golden),
+            "selected_likelihood_records_recomputed": selected_likelihood_count,
             "baseline_cache_reused": state.cache_reused,
         },
     )

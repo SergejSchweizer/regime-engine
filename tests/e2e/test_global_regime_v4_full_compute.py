@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import multiprocessing
 import os
@@ -11,6 +12,7 @@ from datetime import datetime
 from math import fsum, log
 from pathlib import Path
 from statistics import fmean, pstdev
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -22,6 +24,7 @@ from sklearn.metrics import silhouette_samples
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
 import market_regime_engine.feature_discovery.prefix_search as prefix_search
 from market_regime_engine.contracts import SourceLineage
+from market_regime_engine.evaluation_runs.math_audit import build_math_expectations
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.teacher_reference import refit_frozen_teacher
@@ -461,6 +464,47 @@ def _per_fold_evidence_payload(evidence: GlobalV4Evidence, index: int) -> dict[s
     }
 
 
+def _independent_math_verifier() -> Any:
+    path = Path(__file__).parents[2] / "scripts" / "verify_xetra_v4_math.py"
+    spec = importlib.util.spec_from_file_location("verify_xetra_v4_math", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load independent math verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _assert_selected_likelihood_parity(
+    fixture: SyntheticGlobalV4,
+    result: AdaptiveEvaluationResult,
+    selections: Mapping[int, object],
+) -> int:
+    """Independently recompute selected TRAIN/OOS likelihood evidence."""
+
+    by_outer_fold = {
+        fold.fold_index: selections[1260 + (fold.fold_index - 1) * 63]
+        for fold in result.outer_folds
+    }
+    expectations = build_math_expectations(
+        fixture.rows,
+        result,
+        cast(Any, by_outer_fold),
+    )
+    dossiers = cast(list[dict[str, object]], expectations["fold_audits"])
+    independent = _independent_math_verifier()
+    likelihood_count = 0
+    for dossier in dossiers:
+        likelihoods = cast(list[dict[str, object]], dossier["likelihoods"])
+        assert likelihoods
+        assert {item["scope"] for item in likelihoods} == {"TRAIN", "OOS"}
+        for item in likelihoods:
+            actual = independent.independent_hmm_log_likelihood(item)
+            assert actual == pytest.approx(float(item["log_likelihood"]), abs=1.0e-10)
+            likelihood_count += 1
+    assert likelihood_count >= 2 * len(dossiers)
+    return likelihood_count
+
+
 def _independent_process_worker(
     snapshot_path: str,
     labels_path: str,
@@ -656,6 +700,12 @@ def test_global_v4_full_compute_and_independent_math_proof(
             abs=1.0e-10,
         )
 
+    selected_likelihood_count = _assert_selected_likelihood_parity(
+        fixture,
+        result,
+        captured,
+    )
+
     evidence = _evidence(fixture, result, captured)
     tracking_uri = f"sqlite:///{(tmp_path / 'mlflow.db').resolve()}"
     tracked_selections = {
@@ -758,6 +808,7 @@ def test_global_v4_full_compute_and_independent_math_proof(
             "independent_canonical_evidence_bytes_equal": independent_evidence_bytes
             == evidence.canonical_json(),
             "randomized_semantic_labels_recomputed": True,
+            "selected_likelihood_records_recomputed": selected_likelihood_count,
             "mutation": {
                 "row_index": mutation_index,
                 "feature_name": mutated_feature,
