@@ -243,3 +243,61 @@ def test_model_metrics_verifier_accepts_compatible_comparison_group(
 
     assert report["status"] == "verified"
     assert report["counts"]["comparison_domain_violation_count"] == 0
+
+
+def test_model_metrics_verifier_rejects_duplicate_comparison_group_model_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    run_id = port.start_run(run_name="audit")
+    model_name = "evaluation-a-fold-1-candidate-a"
+    tags = {
+        "regime_engine.metric_catalog_version": "1",
+        "regime_engine.evaluation_plan_hash": "plan",
+        "regime_engine.dataset_snapshot_key": "dataset",
+        "regime_engine.evaluation_run_key": "run",
+        "regime_engine.feature_order_sha256": "features",
+        "regime_engine.feature_dimension": "2",
+        "regime_engine.scope": "candidate",
+    }
+    model_id = port.create_logged_model(
+        name=model_name,
+        source_run_id=run_id,
+        model_type="candidate-a",
+        tags=tags,
+    )
+    point = MetricPoint("oos_predictive_loglik_per_obs", -1.25, 1, 100)
+    port.log_model_metric_points(model_id, (point,))
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": point.key,
+                            "value": point.value,
+                            "step": point.step,
+                            "timestamp_ms": point.timestamp_ms,
+                        }
+                    ],
+                }
+            ],
+            "comparison_groups": [
+                {
+                    "metric_key": point.key,
+                    "model_names": [model_name, model_name],
+                    "comparison_domain": "same_feature_vector_source_plan",
+                }
+            ],
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["comparison_domain_violation_count"] == 1
