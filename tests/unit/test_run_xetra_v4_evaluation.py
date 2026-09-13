@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,3 +76,26 @@ def test_full_evaluation_does_not_accept_a_resume_key(
     monkeypatch.setattr(sys, "argv", ["run_xetra_v4_evaluation.py", "--run-key", "old-run"])
     with pytest.raises(SystemExit):
         module._run(None)
+
+
+def test_full_audit_requires_all_valid_fold_selections_and_policy_eligibility() -> None:
+    module = _module()
+    eligible = SimpleNamespace(
+        outer_folds=(
+            SimpleNamespace(fold_index=2, valid=True),
+            SimpleNamespace(fold_index=1, valid=True),
+            SimpleNamespace(fold_index=3, valid=False),
+        ),
+        production_eligible=True,
+    )
+    module._require_full_audit_eligibility(eligible, {1: object(), 2: object()})
+
+    with pytest.raises(RuntimeError, match="every valid outer fold"):
+        module._require_full_audit_eligibility(eligible, {1: object()})
+
+    ineligible = SimpleNamespace(
+        outer_folds=(SimpleNamespace(fold_index=1, valid=True),),
+        production_eligible=False,
+    )
+    with pytest.raises(RuntimeError, match="production-eligible"):
+        module._require_full_audit_eligibility(ineligible, {1: object()})
