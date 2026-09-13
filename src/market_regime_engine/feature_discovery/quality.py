@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import fsum, isfinite
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     MIN_ELIGIBLE_FEATURES,
     MIN_FEATURE_COVERAGE,
@@ -18,6 +20,7 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -39,6 +42,41 @@ def _population_variance(values: tuple[float, ...]) -> float:
     if not isfinite(variance):
         raise ValueError("population variance must be finite")
     return variance
+
+
+@dataclass(frozen=True, slots=True)
+class _QualityFeatureTask:
+    """Pickle-safe independent quality calculation for one feature."""
+
+    feature_name: str
+    source_position: int
+    values: tuple[float, ...]
+    source_count: int
+
+
+def _quality_feature(task: _QualityFeatureTask) -> FeatureQuality:
+    finite_count = len(task.values)
+    coverage = finite_count / task.source_count
+    variance = _population_variance(task.values)
+    if coverage < MIN_FEATURE_COVERAGE:
+        eligible = False
+        reason = "coverage_below_minimum"
+    elif variance <= MIN_FEATURE_VARIANCE:
+        eligible = False
+        reason = "variance_below_or_equal_minimum"
+    else:
+        eligible = True
+        reason = None
+    return FeatureQuality(
+        feature_name=task.feature_name,
+        source_position=task.source_position,
+        train_observation_count=task.source_count,
+        finite_observation_count=finite_count,
+        coverage=coverage,
+        population_variance=variance,
+        eligible=eligible,
+        rejection_reason=reason,
+    )
 
 
 def _materialize_train_rows(
@@ -88,6 +126,7 @@ def filter_outer_train_quality(
     snapshot: FeatureSnapshot,
     train_start: datetime,
     train_end: datetime,
+    max_workers: int | None = None,
 ) -> QualityFilterResult:
     """Filter every catalog feature using only one exact Outer-TRAIN snapshot.
 
@@ -103,7 +142,6 @@ def filter_outer_train_quality(
     rows = _materialize_train_rows(snapshot, catalog, train_start, train_end)
     source_count = len(rows)
     values_by_feature: list[list[float]] = [[] for _ in catalog.entries]
-    finite_counts = [0] * len(catalog.entries)
 
     for row in rows:
         for index, value in enumerate(row.values):
@@ -118,35 +156,23 @@ def filter_outer_train_quality(
                 # invocation, never a feature-level rejection.
                 raise ValueError("non-null feature values must be finite")
             values_by_feature[index].append(numeric)
-            finite_counts[index] += 1
 
-    quality: list[FeatureQuality] = []
-    for entry, values, finite_count in zip(
-        catalog.entries, values_by_feature, finite_counts, strict=True
-    ):
-        coverage = finite_count / source_count
-        variance = _population_variance(tuple(values))
-        if coverage < MIN_FEATURE_COVERAGE:
-            eligible = False
-            reason = "coverage_below_minimum"
-        elif variance <= MIN_FEATURE_VARIANCE:
-            eligible = False
-            reason = "variance_below_or_equal_minimum"
-        else:
-            eligible = True
-            reason = None
-        quality.append(
-            FeatureQuality(
-                feature_name=entry.feature_name,
-                source_position=entry.canonical_ordinal,
-                train_observation_count=source_count,
-                finite_observation_count=finite_count,
-                coverage=coverage,
-                population_variance=variance,
-                eligible=eligible,
-                rejection_reason=reason,
-            )
+    tasks = tuple(
+        _QualityFeatureTask(
+            entry.feature_name,
+            entry.canonical_ordinal,
+            tuple(values),
+            source_count,
         )
+        for entry, values in zip(catalog.entries, values_by_feature, strict=True)
+    )
+    worker_limit = cpu_worker_count(max_workers, task_count=len(tasks))
+    if worker_limit == 1:
+        quality = tuple(_quality_feature(task) for task in tasks)
+    else:
+        with cpu_process_pool(worker_limit) as executor:
+            futures = tuple(executor.submit(_quality_feature, task) for task in tasks)
+            quality = tuple(future.result() for future in futures)
 
     features = tuple(quality)
     eligible_features = tuple(item.feature_name for item in features if item.eligible)

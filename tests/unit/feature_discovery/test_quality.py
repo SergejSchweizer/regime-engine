@@ -6,6 +6,7 @@ from math import sqrt
 
 import pytest
 
+import market_regime_engine.feature_discovery.quality as quality_module
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.feature_discovery.quality import (
     _population_variance,
@@ -261,3 +262,51 @@ def test_fifty_feature_mixed_fixture_preserves_every_catalog_feature() -> None:
     assert len(result.features) == 50
     assert result.features[0].coverage == pytest.approx(19 / 20)
     assert result.eligible_features == names
+
+
+def test_quality_features_use_process_workers_when_budget_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = ("f0", "f1", "f2", "f3")
+    catalog = _catalog(names)
+    values = tuple(tuple(float(index + feature) for feature in range(4)) for index in range(10))
+    worker_counts: list[int] = []
+    serial = filter_outer_train_quality(
+        catalog,
+        _snapshot(catalog, values),
+        BASE,
+        BASE + timedelta(days=9),
+        max_workers=1,
+    )
+
+    class _CompletedFuture:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class _InlineProcessPool:
+        def __init__(self, max_workers: int, **_kwargs: object) -> None:
+            worker_counts.append(max_workers)
+
+        def __enter__(self) -> _InlineProcessPool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function, task: object) -> _CompletedFuture:
+            return _CompletedFuture(function(task))
+
+    monkeypatch.setattr(quality_module, "cpu_process_pool", _InlineProcessPool)
+    parallel = filter_outer_train_quality(
+        catalog,
+        _snapshot(catalog, values),
+        BASE,
+        BASE + timedelta(days=9),
+        max_workers=2,
+    )
+
+    assert worker_counts == [2]
+    assert parallel == serial
