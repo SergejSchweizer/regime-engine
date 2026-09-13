@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import random
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -23,7 +24,7 @@ from market_regime_engine.evaluation_runs.graph import (
     WorkUnitNode,
     make_work_unit,
 )
-from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore
+from market_regime_engine.evaluation_runs.store import SQLiteEvaluationRunStore, WorkUnitStatus
 
 pytestmark = pytest.mark.integration
 
@@ -48,6 +49,27 @@ def _parallel_compute(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
     del parents
     sleep(0.2)
     return f"{node.identity.key}:{os.getpid()}".encode()
+
+
+def _stable_process_compute(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
+    del parents
+    return f"payload:{node.identity.key}".encode()
+
+
+def _out_of_order_compute(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
+    """Complete higher-indexed units first without changing their payloads."""
+
+    del parents
+    index = int(dict(node.identity.coordinates)["index"])
+    sleep((8 - index) * 0.02)
+    return f"payload:{node.identity.key}".encode()
+
+
+def _crash_one_process(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
+    del parents
+    if dict(node.identity.coordinates).get("index") == "001":
+        os._exit(97)
+    return f"payload:{node.identity.key}".encode()
 
 
 def _process_executor_worker(root: str) -> tuple[str, int, int]:
@@ -138,6 +160,136 @@ def test_independent_pickleable_units_use_process_workers(tmp_path: Path) -> Non
         payload is not None and payload.startswith(node.identity.key.encode("utf-8") + b":")
         for node, payload in zip(nodes, payloads, strict=True)
     )
+
+
+def test_process_completion_order_cannot_change_root_payload(tmp_path: Path) -> None:
+    run = identity()
+    nodes = tuple(
+        WorkUnitNode(
+            make_work_unit(
+                run,
+                unit_type="independent",
+                coordinates=(("index", f"{index:03d}"),),
+            )
+        )
+        for index in range(8)
+    )
+    graph = EvaluationWorkGraph.from_nodes(run, nodes)
+
+    first_store = SQLiteEvaluationRunStore(tmp_path / "first")
+    first = ResumableEvaluationExecutor(first_store, max_workers=4).execute(
+        run, graph, _out_of_order_compute
+    )
+    second_store = SQLiteEvaluationRunStore(tmp_path / "second")
+    second = ResumableEvaluationExecutor(second_store, max_workers=4).execute(
+        run, graph, _out_of_order_compute
+    )
+
+    assert first.root_evidence_hash == second.root_evidence_hash
+    assert first.payload == second.payload
+    assert tuple(
+        first_store.load_completed_work_unit(run, node.identity) for node in nodes
+    ) == tuple(second_store.load_completed_work_unit(run, node.identity) for node in nodes)
+
+
+def test_resume_does_not_add_runtime_parent_hash_aliases_to_root(tmp_path: Path) -> None:
+    run = identity()
+    root = make_work_unit(run, unit_type="root")
+    child = make_work_unit(run, unit_type="child")
+    grandchild = make_work_unit(run, unit_type="grandchild")
+    graph = EvaluationWorkGraph.from_nodes(
+        run,
+        (
+            WorkUnitNode(root),
+            WorkUnitNode(child, (root.key,)),
+            WorkUnitNode(grandchild, (child.key,)),
+        ),
+    )
+
+    baseline = ResumableEvaluationExecutor(SQLiteEvaluationRunStore(tmp_path / "baseline")).execute(
+        run, graph, _stable_process_compute
+    )
+
+    calls: list[str] = []
+
+    def interrupt_before_grandchild(node: WorkUnitNode, parents: tuple[bytes, ...]) -> bytes:
+        del parents
+        calls.append(node.identity.key)
+        if node.identity.key == grandchild.key:
+            raise RuntimeError("synthetic interruption")
+        return f"payload:{node.identity.key}".encode()
+
+    interrupted_store = SQLiteEvaluationRunStore(tmp_path / "interrupted")
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        ResumableEvaluationExecutor(interrupted_store).execute(
+            run, graph, interrupt_before_grandchild
+        )
+    assert calls == [root.key, child.key, grandchild.key]
+
+    resumed = ResumableEvaluationExecutor(interrupted_store).execute(
+        run, graph, _stable_process_compute
+    )
+    assert resumed.root_evidence_hash == baseline.root_evidence_hash
+    assert resumed.payload == baseline.payload
+    assert resumed.computed_unit_count == 1
+    assert resumed.reused_unit_count == 2
+
+
+def test_expired_claim_is_reclaimed_and_retried_without_waiting(tmp_path: Path) -> None:
+    run = identity()
+    node = make_work_unit(run, unit_type="independent", coordinates=(("index", "000"),))
+    graph = EvaluationWorkGraph.from_nodes(run, (WorkUnitNode(node),))
+    store = SQLiteEvaluationRunStore(tmp_path)
+    store.open_run(run)
+    assert store.claim_work_unit(run, node, owner="crashed-owner")
+
+    with store._connect() as connection:  # test the persisted lease boundary directly
+        connection.execute(
+            "UPDATE work_units SET lease_expires_at=? WHERE run_key=? AND work_unit_key=?",
+            ("2000-01-01T00:00:00+00:00", run.key, node.key),
+        )
+
+    result = ResumableEvaluationExecutor(store).execute(run, graph, _stable_process_compute)
+    state = store.work_unit_state(run, node)
+    assert result.computed_unit_count == 1
+    assert state is not None
+    assert state.status is WorkUnitStatus.COMPLETE
+    assert state.attempt_count == 2
+
+
+def test_process_worker_crash_releases_claims_for_immediate_retry(tmp_path: Path) -> None:
+    run = identity()
+    nodes = tuple(
+        WorkUnitNode(
+            make_work_unit(
+                run,
+                unit_type="independent",
+                coordinates=(("index", f"{index:03d}"),),
+            )
+        )
+        for index in range(4)
+    )
+    graph = EvaluationWorkGraph.from_nodes(run, nodes)
+    store = SQLiteEvaluationRunStore(tmp_path / "crashed")
+
+    with pytest.raises(BrokenProcessPool):
+        ResumableEvaluationExecutor(store, max_workers=4).execute(run, graph, _crash_one_process)
+
+    states = tuple(store.work_unit_state(run, node.identity) for node in nodes)
+    assert all(state is not None for state in states)
+    assert all(
+        state is not None and state.status in {WorkUnitStatus.PENDING, WorkUnitStatus.COMPLETE}
+        for state in states
+    )
+
+    resumed = ResumableEvaluationExecutor(store, max_workers=4).execute(
+        run, graph, _stable_process_compute
+    )
+    baseline = ResumableEvaluationExecutor(SQLiteEvaluationRunStore(tmp_path / "baseline")).execute(
+        run, graph, _stable_process_compute
+    )
+    assert resumed.root_evidence_hash == baseline.root_evidence_hash
+    assert resumed.payload == baseline.payload
 
 
 def test_executor_caches_domain_invalid_without_retry(tmp_path: Path) -> None:
