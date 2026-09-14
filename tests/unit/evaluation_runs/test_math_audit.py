@@ -119,6 +119,7 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
     )
 
     assert expectations["feature_order"] == ["f0", "f1"]
+    assert expectations["final_feature_order"] == ["f0"]
     assert expectations["silhouette_clusters"]
     assert expectations["feature_scores"]
     likelihoods = cast(list[dict[str, object]], expectations["likelihoods"])

@@ -198,6 +198,7 @@ def _selection_search_evidence(
             {
                 "outer_fold_index": fold_index,
                 "eligible_feature_count": feature_count,
+                "eligible_feature_names": list(selection.distance.feature_order),
                 "ranked_feature_count": ranked_count,
                 "cluster_count_candidates": list(actual_cluster_counts),
                 "prefix_length_candidates": list(actual_prefix_lengths),

@@ -78,19 +78,56 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path, dict[str, float]]:
     observations = [[0.0], [1.0]]
     families = ("gaussian_hmm", "gmm_hmm", "student_t_hmm")
     expected_likelihoods = {family: _known_likelihood(family, observations) for family in families}
+    audited_features = ["feature_a", "feature_b", "pca_pc_001"]
+    audited_distance = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    teacher_timestamps = ["2026-01-01", "2026-01-02"]
+    teacher_probabilities = [[1.0, 0.0], [0.0, 1.0]]
+    feature_scores = [
+        {
+            "feature": feature,
+            "teacher_timestamps": teacher_timestamps,
+            "teacher_probabilities": teacher_probabilities,
+            "state_information_ratio": 1.0,
+            "eta_squared": 1.0,
+        }
+        for feature in audited_features
+    ]
     dossiers = [
         {
             "outer_fold_index": fold_index,
             "timestamp_column": "timestamp_m1",
-            "feature_order": ["feature_a", "feature_b"],
-            "distance": [[0.0, 0.0], [0.0, 0.0]],
+            "feature_order": audited_features,
+            "final_feature_order": audited_features[:2],
+            "distance": audited_distance,
+            "silhouette_clusters": [{"cluster_count": 2, "labels": [0, 0, 1], "mean": 0.0}],
+            "feature_scores": feature_scores,
+            "prefix_nmi": [
+                {
+                    "outer_fold_index": fold_index,
+                    "prefix_length": 2,
+                    "candidate_id": "gaussian_hmm_k2_full",
+                    "candidate_timestamps": teacher_timestamps,
+                    "candidate_probabilities": teacher_probabilities,
+                    "teacher_timestamps": teacher_timestamps,
+                    "teacher_probabilities": teacher_probabilities,
+                    "soft_regime_nmi": 1.0,
+                }
+            ],
             "likelihoods": [
                 {
                     **_likelihood_item(family, observations),
                     "fold_index": fold_index,
                     "scope": "TRAIN",
+                    "feature_order": audited_features[:2],
                     "log_likelihood": expected_likelihoods[family],
-                }
+                },
+                {
+                    **_likelihood_item(family, observations),
+                    "fold_index": fold_index,
+                    "scope": "OOS",
+                    "feature_order": audited_features[:2],
+                    "log_likelihood": expected_likelihoods[family],
+                },
             ],
         }
         for fold_index, family in zip((1, 2, 3), families, strict=True)
@@ -177,6 +214,7 @@ def _strict_current_contract(
         {
             "outer_fold_index": index,
             "eligible_feature_count": 3,
+            "eligible_feature_names": ["feature_a", "feature_b", "pca_pc_001"],
             "ranked_feature_count": 2,
             "cluster_count_candidates": [2],
             "prefix_length_candidates": [2],
@@ -321,6 +359,66 @@ def test_strict_current_contract_requires_bounds_identity_folds_and_resources(
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "message"),
+    (
+        ("feature_scores", "feature_scores do not cover"),
+        ("silhouette_clusters", "silhouette_clusters do not cover"),
+        ("prefix_nmi", "prefix_nmi does not cover"),
+    ),
+)
+def test_strict_current_contract_rejects_incomplete_math_dossiers(
+    tmp_path: Path, field: str, message: str
+) -> None:
+    module = _verifier()
+    snapshot_path, expectations_path, _expected = _bundle(tmp_path)
+    expectations = json.loads(expectations_path.read_text(encoding="utf-8"))
+    contract = _strict_current_contract(module, snapshot_path)
+    expectations.update(
+        {
+            "schema_version": 3,
+            "audit_contract": contract,
+            "valid_outer_fold_indices": [1, 2, 3],
+            "audit_outer_fold_indices": [1, 2, 3],
+        }
+    )
+    expectations["fold_audits"][0][field] = []
+    columns = module._read_snapshot(snapshot_path)
+    with pytest.raises(SystemExit, match=message):
+        module.verify_expectations(
+            columns,
+            expectations,
+            max_workers=1,
+            snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+            require_current_audit_contract=True,
+        )
+
+
+def test_strict_current_contract_rejects_source_row_loss(tmp_path: Path) -> None:
+    module = _verifier()
+    snapshot_path, expectations_path, _expected = _bundle(tmp_path)
+    expectations = json.loads(expectations_path.read_text(encoding="utf-8"))
+    contract = _strict_current_contract(module, snapshot_path)
+    expectations.update(
+        {
+            "schema_version": 3,
+            "audit_contract": contract,
+            "valid_outer_fold_indices": [1, 2, 3],
+            "audit_outer_fold_indices": [1, 2, 3],
+        }
+    )
+    expectations["audit_contract"]["source_bounds"]["source_row_count"] = 4
+    columns = module._read_snapshot(snapshot_path)
+    with pytest.raises(SystemExit, match="all source rows"):
+        module.verify_expectations(
+            columns,
+            expectations,
+            max_workers=1,
+            snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+            require_current_audit_contract=True,
+        )
+
+
 def test_public_likelihood_callable_checks_all_supported_families() -> None:
     module = _verifier()
     observations = [[0.0], [1.0]]
@@ -337,6 +435,7 @@ def test_public_verifier_accepts_first_middle_last_fold_bundle(tmp_path: Path) -
         "timestamp_m1": np.asarray(["2026-01-01", "2026-01-02", "2026-01-03"], dtype=object),
         "feature_a": np.asarray([0.0, 1.0, 2.0]),
         "feature_b": np.asarray([2.0, 1.0, 0.0]),
+        "pca_pc_001": np.asarray([0.0, 1.0, 2.0]),
     }
     expectations = json.loads(expectations_path.read_text(encoding="utf-8"))
 

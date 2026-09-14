@@ -292,6 +292,7 @@ def _fold_math_expectations(
     return {
         "timestamp_column": "timestamp_m1",
         "feature_order": list(feature_order),
+        "final_feature_order": list(final_evaluation.feature_order),
         "distance": [list(row) for row in selection.distance.distances],
         "silhouette_clusters": clusters,
         "feature_scores": feature_scores,
