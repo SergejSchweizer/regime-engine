@@ -30,14 +30,16 @@ def test_current_xetra_full_audit_is_opt_in_and_records_complete_evidence() -> N
     assert completed.returncode == 0, completed.stderr
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["production_eligible"] is True
-    assert summary["outer_fold_count"] >= 1
+    valid_outer_fold_indices = summary["valid_outer_fold_indices"]
+    assert summary["outer_fold_count"] == len(valid_outer_fold_indices)
+    assert len(valid_outer_fold_indices) >= 3
     assert summary["valid_fold_rate"] == 1.0
     assert summary["evidence_hash"]
     assert Path(summary["math_audit_expectations"]).is_file()
     assert Path(summary["math_audit_report"]).is_file()
 
     contract = summary["audit_contract"]
-    assert contract["schema_version"] == 1
+    assert contract["schema_version"] == 2
     assert contract["source_request"] == {
         "mode": "schema_discovery",
         "feature_names": [],
@@ -50,6 +52,26 @@ def test_current_xetra_full_audit_is_opt_in_and_records_complete_evidence() -> N
     assert contract["valid_outer_fold_indices"] == summary["valid_outer_fold_indices"]
     assert contract["audit_outer_fold_indices"] == summary["audit_outer_fold_indices"]
     assert len(contract["audit_outer_fold_indices"]) == 3
+    assert contract["pca"]["mandatory"] is True
+    assert contract["pca"]["component_count"] == 8
+    assert contract["pca"]["generated_feature_names"] == [
+        f"pca_pc_{index:03d}" for index in range(1, 9)
+    ]
+    search_bounds = contract["search_bounds"]
+    per_fold = search_bounds["per_fold"]
+    assert [item["outer_fold_index"] for item in per_fold] == valid_outer_fold_indices
+    declared_final_ids = search_bounds["declared_bounds"]["candidate_families"][
+        "final_candidate_ids"
+    ]
+    assert len(declared_final_ids) == 12
+    for item in per_fold:
+        assert item["final_candidate_ids"] == declared_final_ids
+        assert item["cluster_count_candidates"] == list(
+            range(2, min(12, item["eligible_feature_count"] - 1) + 1)
+        )
+        assert item["prefix_length_candidates"] == list(
+            range(2, min(8, item["ranked_feature_count"]) + 1)
+        )
     assert set(contract["identity_hashes"]) >= {
         "source_build_id",
         "source_data_sha256",
@@ -76,6 +98,17 @@ def test_current_xetra_full_audit_is_opt_in_and_records_complete_evidence() -> N
     assert report["status"] == "verified"
     assert report["audit_contract_verified"] is True
     assert report["audited_outer_fold_indices"] == summary["audit_outer_fold_indices"]
+    assert report["audited_outer_fold_count"] == len(summary["audit_outer_fold_indices"])
+    assert report["outer_agreement_count"] == len(valid_outer_fold_indices)
+    for key in (
+        "distance_max_abs_error",
+        "silhouette_max_abs_error",
+        "feature_score_max_abs_error",
+        "soft_nmi_max_abs_error",
+        "outer_soft_nmi_max_abs_error",
+        "gaussian_likelihood_max_abs_error",
+    ):
+        assert report[key] <= 1.0e-10
 
     resource_path = Path(contract["resource_evidence"]["performance_report_path"])
     assert resource_path.is_file()

@@ -60,6 +60,12 @@ state-information/eta scores, valid-prefix soft NMI, and selected TRAIN/OOS
 Gaussian, GMM-HMM, or Student-t likelihoods. Any numerical discrepancy or
 source identity change fails the command.
 
+The current contract version is `audit_contract.schema_version=2` inside the
+expectation bundle (`schema_version=3`). The completed report must have
+`status=verified`, `audit_contract_verified=true`, exactly the declared
+first/middle/last audited folds, one outer-agreement record for every valid
+fold, and zero (within `1e-10`) for every reported maximum absolute error.
+
 Record the command transcript, exit code, wall-clock duration, peak memory,
 the summary JSON, the math-audit report, and the final evidence SHA-256 in the
 release evidence directory. Do not copy passwords or populated deployment
