@@ -291,6 +291,8 @@ MLflow/plot assembly, then exposed a golden snapshot mismatch: actual
 `d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65`.
 The hash must be reconciled with a deterministic rerun before PR-231 is
 accepted; it must not be replaced solely to make the test green.
+The failed run was executed from commit `fda344c84e377ec6979a60eda07772ee9103d86d`
+with `REGIME_CPU_WORKERS=86` and native numerical threads capped at one.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
