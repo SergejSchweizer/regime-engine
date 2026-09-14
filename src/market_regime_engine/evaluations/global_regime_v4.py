@@ -991,6 +991,8 @@ def _valid_outer_fold(
         teacher_reference_hash=content_hash(teacher_refit.model_artifact),
         outer_teacher_final_soft_nmi=agreement.soft_regime_nmi,
         outer_shared_timestamp_count=agreement.shared_timestamp_count,
+        teacher_oos_timestamps=teacher_refit.test_timestamps,
+        teacher_oos_filtered_probabilities=teacher_refit.test_filtered_probabilities,
     )
 
 

@@ -1088,6 +1088,8 @@ class OuterFoldResult:
     outer_shared_timestamp_count: int = 0
     valid: bool = True
     failure_reason: str | None = None
+    teacher_oos_timestamps: tuple[datetime, ...] = ()
+    teacher_oos_filtered_probabilities: tuple[tuple[float, ...], ...] = ()
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -1109,11 +1111,22 @@ class OuterFoldResult:
         _finite(self.oos_predictive_loglik_per_observation, "oos_predictive_loglik_per_observation")
         if len(self.oos_timestamps) != len(self.oos_filtered_probabilities):
             raise ValueError("outer OOS timestamps and probabilities must align")
+        if len(self.teacher_oos_timestamps) != len(self.teacher_oos_filtered_probabilities):
+            raise ValueError("teacher OOS timestamps and probabilities must align")
         if any(
             current <= previous
             for previous, current in zip(self.oos_timestamps, self.oos_timestamps[1:], strict=False)
         ):
             raise ValueError("outer OOS timestamps must be strictly increasing")
+        if any(
+            current <= previous
+            for previous, current in zip(
+                self.teacher_oos_timestamps,
+                self.teacher_oos_timestamps[1:],
+                strict=False,
+            )
+        ):
+            raise ValueError("teacher OOS timestamps must be strictly increasing")
         if self.valid and not self.oos_filtered_probabilities:
             raise ValueError("outer OOS evidence cannot be empty")
         for row in self.oos_filtered_probabilities:
@@ -1124,6 +1137,14 @@ class OuterFoldResult:
                 or abs(sum(row) - 1.0) > 1.0e-10
             ):
                 raise ValueError("outer OOS probabilities must be normalized and finite")
+        for row in self.teacher_oos_filtered_probabilities:
+            if len(row) != self.final_configuration.state_count:
+                raise ValueError("teacher OOS probability rows have inconsistent state dimension")
+            if (
+                any(not isfinite(value) or value < 0.0 for value in row)
+                or abs(sum(row) - 1.0) > 1.0e-10
+            ):
+                raise ValueError("teacher OOS probabilities must be normalized and finite")
         if self.teacher_reference_hash is not None:
             _digest(self.teacher_reference_hash, "teacher_reference_hash")
         if self.outer_shared_timestamp_count < 0:

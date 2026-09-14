@@ -312,6 +312,17 @@ def _aligned_probability_matrix(
     )
 
 
+def _shared_timestamp_count(left: object, right: object) -> int:
+    """Count timestamp keys shared by two validated probability series."""
+
+    left_times = tuple(left)
+    right_times = tuple(right)
+    return len(
+        set(_timestamp_key(value) for value in left_times)
+        & set(_timestamp_key(value) for value in right_times)
+    )
+
+
 def independent_distance(columns: dict[str, np.ndarray], features: tuple[str, ...]) -> np.ndarray:
     if not features or len(set(features)) != len(features):
         raise ValueError("distance feature order must be non-empty and duplicate-free")
@@ -1173,6 +1184,84 @@ def _contract_sha(value: object, name: str, *, git: bool = False) -> str:
     return value
 
 
+def _validate_outer_fold_agreements(
+    expected: object,
+    *,
+    valid_indices: tuple[int, ...] | None,
+    required: bool,
+) -> tuple[dict[str, object], ...]:
+    """Validate persisted final-vs-teacher arrays for every outer fold."""
+
+    if not isinstance(expected, dict):
+        raise SystemExit("math expectations must be an object")
+    raw = expected.get("outer_fold_agreements")
+    if raw is None:
+        if required:
+            raise SystemExit("outer_fold_agreements are required")
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise SystemExit("outer_fold_agreements must be a non-empty list")
+    result: list[dict[str, object]] = []
+    seen: set[int] = set()
+    valid_observed: list[int] = []
+    for index, value in enumerate(raw):
+        context = f"outer_fold_agreements[{index}]"
+        item = _required_mapping(value, context)
+        fold_index = item.get("outer_fold_index")
+        if isinstance(fold_index, bool) or not isinstance(fold_index, int) or fold_index < 1:
+            raise SystemExit(f"{context}.outer_fold_index is invalid")
+        if fold_index in seen:
+            raise SystemExit(f"{context}.outer_fold_index is duplicated")
+        seen.add(fold_index)
+        result_hash = item.get("result_hash")
+        if not isinstance(result_hash, str) or not _SHA256_RE.fullmatch(result_hash):
+            raise SystemExit(f"{context}.result_hash is invalid")
+        valid = item.get("valid")
+        if type(valid) is not bool:
+            raise SystemExit(f"{context}.valid is invalid")
+        if valid:
+            valid_observed.append(fold_index)
+            for key in (
+                "candidate_timestamps",
+                "candidate_probabilities",
+                "teacher_timestamps",
+                "teacher_probabilities",
+            ):
+                if key not in item:
+                    raise SystemExit(f"{context}.{key} is required for a valid fold")
+            try:
+                candidate_times, _candidate_matrix, _ = _aligned_probability_matrix(
+                    item["candidate_timestamps"],
+                    item["candidate_probabilities"],
+                    f"{context}.candidate",
+                )
+                teacher_times, _teacher_matrix, _ = _aligned_probability_matrix(
+                    item["teacher_timestamps"],
+                    item["teacher_probabilities"],
+                    f"{context}.teacher",
+                )
+                nmi = _finite_scalar(item.get("soft_regime_nmi"), f"{context}.soft_regime_nmi")
+            except ValueError as error:
+                raise SystemExit(str(error)) from error
+            if nmi < 0.0 or nmi > 1.0 + _AUDIT_TOLERANCE:
+                raise SystemExit(f"{context}.soft_regime_nmi is outside [0,1]")
+            shared = item.get("shared_timestamp_count")
+            if isinstance(shared, bool) or not isinstance(shared, int) or shared < 1:
+                raise SystemExit(f"{context}.shared_timestamp_count is invalid")
+            if shared != _shared_timestamp_count(candidate_times, teacher_times):
+                raise SystemExit(f"{context}.shared_timestamp_count is inconsistent")
+        else:
+            if item.get("soft_regime_nmi") is not None:
+                raise SystemExit(f"{context}.invalid fold must not contain soft_regime_nmi")
+        result.append(item)
+    observed_indices = tuple(sorted(seen))
+    if tuple(item["outer_fold_index"] for item in result) != observed_indices:
+        raise SystemExit("outer_fold_agreements must be in canonical fold order")
+    if valid_indices is not None and tuple(valid_observed) != valid_indices:
+        raise SystemExit("outer_fold_agreements do not cover every valid outer fold")
+    return tuple(result)
+
+
 def _required_mapping(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise SystemExit(f"{name} must be an object")
@@ -1428,6 +1517,11 @@ def _validate_current_audit_contract(
     if [item.get("outer_fold_index") for item in dossiers] != audit_indices:
         raise SystemExit("math dossiers do not match the declared audit outer-fold indices")
     _validate_search_bounds_contract(contract.get("search_bounds"), valid_indices)
+    raw_hashes = contract.get("outer_fold_result_hashes")
+    if not isinstance(raw_hashes, list) or len(raw_hashes) != len(valid_indices):
+        raise SystemExit("audit_contract.outer_fold_result_hashes is incomplete")
+    if any(not isinstance(value, str) or not _SHA256_RE.fullmatch(value) for value in raw_hashes):
+        raise SystemExit("audit_contract.outer_fold_result_hashes contains an invalid digest")
 
     resource = _required_mapping(
         contract.get("resource_evidence"), "audit_contract.resource_evidence"
@@ -1458,6 +1552,24 @@ def verify_expectations(
     dossiers = _audit_dossiers(expected)
     if require_current_audit_contract:
         _validate_current_audit_contract(expected, immutable_columns, dossiers, snapshot_sha256)
+        root = _required_mapping(expected, "math expectations")
+        valid_indices = tuple(cast(list[int], root["valid_outer_fold_indices"]))
+        outer_agreements = _validate_outer_fold_agreements(
+            expected,
+            valid_indices=valid_indices,
+            required=True,
+        )
+        contract = _required_mapping(root.get("audit_contract"), "audit_contract")
+        if [item["result_hash"] for item in outer_agreements] != contract.get(
+            "outer_fold_result_hashes"
+        ):
+            raise SystemExit("outer fold result hashes are not bound to the agreement evidence")
+    else:
+        outer_agreements = _validate_outer_fold_agreements(
+            expected,
+            valid_indices=None,
+            required=False,
+        )
     distance_tasks: list[tuple[int, tuple[str, ...], tuple[tuple[int, int], ...]]] = []
     feature_tasks: list[tuple[int, str, dict[str, object], str]] = []
     nmi_tasks: list[tuple[int, dict[str, object]]] = []
@@ -1469,6 +1581,7 @@ def verify_expectations(
     silhouette_specs: list[tuple[int, int, int, tuple[int, ...], float]] = []
     feature_task_indices: list[tuple[int, ...]] = []
     nmi_task_indices: list[tuple[int, ...]] = []
+    outer_nmi_task_indices: list[int] = []
     likelihood_task_indices: list[tuple[int, ...]] = []
     for dossier_index, dossier in enumerate(dossiers):
         (
@@ -1528,6 +1641,10 @@ def verify_expectations(
             dossier_likelihood_indices.append(len(likelihood_tasks))
             likelihood_tasks.append((len(likelihood_tasks), raw_item))
         likelihood_task_indices.append(tuple(dossier_likelihood_indices))
+
+    for item in outer_agreements:
+        outer_nmi_task_indices.append(len(nmi_tasks))
+        nmi_tasks.append((len(nmi_tasks), item))
 
     task_count = (
         len(distance_tasks)
@@ -1635,6 +1752,7 @@ def verify_expectations(
     silhouette_errors: list[float] = []
     feature_score_errors: list[float] = []
     nmi_errors: list[float] = []
+    outer_nmi_errors: list[float] = []
     likelihood_errors: list[float] = []
     feature_values = {
         index: (information_ratio, eta_squared)
@@ -1703,6 +1821,28 @@ def verify_expectations(
             )
         if distance_errors[-1] > _AUDIT_TOLERANCE:
             raise SystemExit(f"distance audit failed: max_abs_error={distance_errors[-1]:.12g}")
+
+    for task_index in outer_nmi_task_indices:
+        item = nmi_tasks[task_index][1]
+        nmi_errors.append(
+            _absolute_error(
+                nmi_values[task_index],
+                item["soft_regime_nmi"],
+                "outer soft-NMI",
+            )
+        )
+        actual_shared = _shared_timestamp_count(
+            item["candidate_timestamps"], item["teacher_timestamps"]
+        )
+        if actual_shared != item["shared_timestamp_count"]:
+            raise SystemExit("outer soft-NMI shared timestamp count changed")
+        outer_nmi_errors.append(
+            _absolute_error(
+                nmi_values[task_index],
+                item["soft_regime_nmi"],
+                "outer soft-NMI",
+            )
+        )
     maximum_distance_error = max(distance_errors, default=0.0)
     maximum_silhouette_error = max(silhouette_errors, default=0.0)
     maximum_feature_score_error = max(feature_score_errors, default=0.0)
@@ -1726,6 +1866,8 @@ def verify_expectations(
         "silhouette_max_abs_error": maximum_silhouette_error,
         "feature_score_max_abs_error": maximum_feature_score_error,
         "soft_nmi_max_abs_error": maximum_nmi_error,
+        "outer_soft_nmi_max_abs_error": max(outer_nmi_errors, default=0.0),
+        "outer_agreement_count": len(outer_agreements),
         "gaussian_likelihood_max_abs_error": maximum_likelihood_error,
         "status": "verified",
         "audit_contract_verified": require_current_audit_contract,

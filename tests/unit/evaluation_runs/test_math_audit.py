@@ -95,9 +95,19 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
             folds=(SimpleNamespace(train_source_observations=2, test_source_observations=2),),
         ),
     )
-    result = SimpleNamespace(
-        outer_folds=(SimpleNamespace(fold_index=1, train_end=timestamps[1], valid=True),),
+    outer_fold = SimpleNamespace(
+        fold_index=1,
+        train_end=timestamps[1],
+        valid=True,
+        result_hash="a" * 64,
+        oos_timestamps=timestamps[2:],
+        oos_filtered_probabilities=((0.5, 0.5),) * 2,
+        teacher_oos_timestamps=timestamps,
+        teacher_oos_filtered_probabilities=((0.5, 0.5),) * 4,
+        outer_teacher_final_soft_nmi=0.5,
+        outer_shared_timestamp_count=2,
     )
+    result = SimpleNamespace(outer_folds=(outer_fold,))
 
     expectations = build_math_expectations(
         rows,
@@ -121,10 +131,24 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
     assert expectations["schema_version"] == 2
     assert expectations["audit_outer_fold_indices"] == [1]
     assert len(cast(list[dict[str, object]], expectations["fold_audits"])) == 1
+    outer_agreements = cast(list[dict[str, object]], expectations["outer_fold_agreements"])
+    assert outer_agreements[0]["outer_fold_index"] == 1
+    assert outer_agreements[0]["shared_timestamp_count"] == 2
 
     five_fold_result = SimpleNamespace(
         outer_folds=tuple(
-            SimpleNamespace(fold_index=index, train_end=timestamps[1], valid=True)
+            SimpleNamespace(
+                fold_index=index,
+                train_end=timestamps[1],
+                valid=True,
+                result_hash=f"{index:064x}",
+                oos_timestamps=timestamps[2:],
+                oos_filtered_probabilities=((0.5, 0.5),) * 2,
+                teacher_oos_timestamps=timestamps,
+                teacher_oos_filtered_probabilities=((0.5, 0.5),) * 4,
+                outer_teacher_final_soft_nmi=0.5,
+                outer_shared_timestamp_count=2,
+            )
             for index in range(1, 6)
         ),
     )
