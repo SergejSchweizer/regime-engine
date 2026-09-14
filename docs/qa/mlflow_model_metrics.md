@@ -8,8 +8,8 @@ metric files rather than from MLflow's summary view; remote stores use the
 LoggedModel history returned by the tracking server. Model search is paged so
 the audit is not silently limited to the first 1,000 models.
 
-Run the namespace preflight before starting an evaluation. It includes active
-and deleted MLflow runs, so a green result is the required zero-survivor record
+Run the namespace preflight before starting an evaluation. It includes active,
+deleted and registry-side inventory, so a green result is the required zero-survivor record
 for the historical evaluation namespace:
 
 ```bash
@@ -21,8 +21,10 @@ for the historical evaluation namespace:
 ```
 
 The preflight is read-only. Its report records the experiment ID, complete run
-status/lifecycle inventory (including deleted runs), LoggedModel count, and
-`historical_objects_zero` flag.
+status/lifecycle inventory (including deleted runs), LoggedModel count, deleted
+LoggedModel IDs, and the complete registered-model/version inventory. The
+`historical_objects_zero` flag covers evaluation runs and LoggedModels; registry
+objects are reported but are intentionally not treated as evaluation survivors.
 Do not treat an empty post-run namespace as a successful completeness proof:
 the completed-evaluation invocation below uses `--require-nonempty` and an
 independently generated expectation.
@@ -53,7 +55,30 @@ per-LoggedModel evidence record.
 The expectation must be generated independently from the completed evaluation
 plan and pinned snapshot. It must enumerate every logical LoggedModel and every
 finite catalogued point; it must not be derived by rereading the same MLflow
-history being audited. The resumed run must be interrupted after tracking has
+history being audited. Build the strict, content-addressed bundle from an
+independent evidence manifest before running the verifier:
+
+```bash
+.venv/bin/python scripts/build_mlflow_model_metrics_expectation.py \
+  --source independent-model-metrics-evidence.json \
+  --output expectation.json
+```
+
+The strict verifier checks schema version, provenance, source-artifact hash,
+lineage tags and the canonical expectation hash. It also requires every
+audited LoggedModel to be `READY` and sourced by a `FINISHED` run:
+
+```bash
+.venv/bin/python scripts/verify_mlflow_model_metrics.py \
+  --tracking-uri "$RESUMED_MLFLOW_URI" \
+  --experiment "$RESUMED_EXPERIMENT" \
+  --expectation expectation.json \
+  --require-expectation-contract \
+  --require-terminal-model-runs \
+  --require-nonempty
+```
+
+The resumed run must be interrupted after tracking has
 started, restarted from its durable evaluation state, and compared only after
 both the resumed and uninterrupted namespaces are terminal.
 

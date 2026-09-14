@@ -672,3 +672,154 @@ def test_model_metrics_verifier_rejects_duplicate_comparison_group_model_names(
 
     assert report["status"] == "failed"
     assert report["counts"]["comparison_domain_violation_count"] == 1
+
+
+def _strict_expectation(module: Any, model_name: str, point: MetricPoint) -> dict[str, Any]:
+    tags = _standard_tags()
+    return module.build_expectation_bundle(
+        {
+            "provenance": {
+                "generator": "independent-test-evidence",
+                "source_artifact": "independent-evidence.json",
+                "source_artifact_sha256": "a" * 64,
+                "evaluation_run_key": tags["regime_engine.evaluation_run_key"],
+                "evaluation_plan_hash": tags["regime_engine.evaluation_plan_hash"],
+                "dataset_snapshot_key": tags["regime_engine.dataset_snapshot_key"],
+                "feature_order_sha256": tags["regime_engine.feature_order_sha256"],
+                "feature_dimension": tags["regime_engine.feature_dimension"],
+            },
+            "models": [
+                {
+                    "name": model_name,
+                    "required_tags": tags,
+                    "points": [
+                        {
+                            "key": point.key,
+                            "value": point.value,
+                            "step": point.step,
+                            "timestamp_ms": point.timestamp_ms,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_strict_expectation_contract_is_content_addressed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_count", 1.0, 0, 100),),
+    )
+    module = _verifier()
+    expectation = _strict_expectation(
+        module,
+        model_name,
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+    )
+
+    report = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        expectation,
+        require_expectation_contract=True,
+    )
+
+    assert report["expectation_contract_violations"] == []
+    assert report["counts"]["expectation_contract_violation_count"] == 0
+    assert len(expectation["provenance"]["evidence_sha256"]) == 64
+
+    expectation["models"][0]["points"][0]["value"] = 2.0
+    tampered = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        expectation,
+        require_expectation_contract=True,
+    )
+    assert tampered["status"] == "failed"
+    assert tampered["counts"]["expectation_contract_violation_count"] == 1
+
+
+def test_strict_terminal_contract_rejects_running_or_pending_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_count", 1.0, 0, 100),),
+    )
+    module = _verifier()
+    report = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        _strict_expectation(
+            module,
+            model_name,
+            MetricPoint("valid_fold_count", 1.0, 0, 100),
+        ),
+        require_expectation_contract=True,
+        require_terminal_model_runs=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["nonready_model_count"] == 1
+    assert report["counts"]["model_source_run_status_violation_count"] == 1
+
+
+def test_comparison_group_missing_metric_is_a_domain_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "missing-group-metric").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    run_id = port.start_run(run_name="audit")
+    tags = _standard_tags()
+    point = MetricPoint("oos_predictive_loglik_per_obs", -1.25, 1, 100)
+    names = ("evaluation-a-fold-1-candidate-a", "evaluation-a-fold-1-candidate-b")
+    expected_models = []
+    for index, model_name in enumerate(names):
+        model_id = port.create_logged_model(
+            name=model_name,
+            source_run_id=run_id,
+            model_type="candidate",
+            tags=tags,
+        )
+        actual_point = point if index == 0 else MetricPoint("valid_fold_count", 1.0, 0, 100)
+        port.log_model_metric_points(model_id, (actual_point,))
+        expected_models.append(
+            {
+                "name": model_name,
+                "points": [
+                    {
+                        "key": actual_point.key,
+                        "value": actual_point.value,
+                        "step": actual_point.step,
+                        "timestamp_ms": actual_point.timestamp_ms,
+                    }
+                ],
+            }
+        )
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {
+            "models": expected_models,
+            "comparison_groups": [
+                {
+                    "metric_key": point.key,
+                    "model_names": list(names),
+                    "comparison_domain": "same_feature_vector_source_plan",
+                }
+            ],
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["comparison_domain_violation_count"] >= 1

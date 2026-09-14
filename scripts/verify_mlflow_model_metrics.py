@@ -8,6 +8,7 @@ import json
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from typing import Any, cast
@@ -26,6 +27,24 @@ _REQUIRED_TAGS = {
     "regime_engine.feature_order_sha256",
     "regime_engine.feature_dimension",
     "regime_engine.scope",
+}
+_EXPECTATION_SCHEMA_VERSION = 1
+_EXPECTATION_PROVENANCE_FIELDS = {
+    "generator",
+    "source_artifact",
+    "source_artifact_sha256",
+    "evaluation_run_key",
+    "evaluation_plan_hash",
+    "dataset_snapshot_key",
+    "feature_order_sha256",
+    "feature_dimension",
+}
+_PROVENANCE_TAG_FIELDS = {
+    "evaluation_run_key": "regime_engine.evaluation_run_key",
+    "evaluation_plan_hash": "regime_engine.evaluation_plan_hash",
+    "dataset_snapshot_key": "regime_engine.dataset_snapshot_key",
+    "feature_order_sha256": "regime_engine.feature_order_sha256",
+    "feature_dimension": "regime_engine.feature_dimension",
 }
 
 
@@ -69,6 +88,13 @@ class AuditCounts:
     comparison_domain_violation_count: int
     historical_namespace_violation_count: int
     nonempty_model_set_violation_count: int
+    expectation_contract_violation_count: int
+    nonready_model_count: int
+    model_source_run_status_violation_count: int
+    nonterminal_run_count: int
+    deleted_logged_model_count: int
+    registered_model_count: int
+    registered_model_version_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,10 +142,157 @@ def _search_all_runs(client: MlflowClient, experiment_id: str) -> tuple[Any, ...
         page_token = str(next_token)
 
 
+def _search_all_registered_models(client: MlflowClient) -> tuple[Any, ...]:
+    """Read the complete registry namespace, including pages past the default."""
+
+    models: list[Any] = []
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"max_results": 1000}
+        if page_token is not None:
+            kwargs["page_token"] = page_token
+        page = client.search_registered_models(**kwargs)
+        models.extend(page)
+        next_token = getattr(page, "token", None)
+        if not next_token:
+            return tuple(models)
+        page_token = str(next_token)
+
+
+def _search_all_registered_model_versions(client: MlflowClient) -> tuple[Any, ...]:
+    """Read all registered versions so pending legacy IDs cannot be hidden."""
+
+    versions: list[Any] = []
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"max_results": 1000}
+        if page_token is not None:
+            kwargs["page_token"] = page_token
+        page = client.search_model_versions(**kwargs)
+        versions.extend(page)
+        next_token = getattr(page, "token", None)
+        if not next_token:
+            return tuple(versions)
+        page_token = str(next_token)
+
+
+def _deleted_logged_model_ids(client: MlflowClient) -> tuple[str, ...]:
+    """Return deleted LoggedModel IDs where the backend exposes that inventory."""
+
+    store = getattr(getattr(client, "_tracking_client", None), "store", None)
+    reader = getattr(store, "_get_deleted_logged_models", None)
+    if not callable(reader):
+        return ()
+    return tuple(sorted(str(model_id) for model_id in reader(older_than=0)))
+
+
+def _canonical_expectation_bytes(expectation: Mapping[str, Any]) -> bytes:
+    """Canonicalize an expectation while excluding its self-reported evidence hash."""
+
+    payload = dict(expectation)
+    provenance = payload.get("provenance")
+    if isinstance(provenance, Mapping):
+        normalized_provenance = dict(provenance)
+        normalized_provenance.pop("evidence_sha256", None)
+        payload["provenance"] = normalized_provenance
+    return (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+    ).encode("utf-8")
+
+
+def build_expectation_bundle(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a hashed expectation from independent evidence, never from MLflow.
+
+    ``source`` must contain the model/point manifest and its provenance.  The
+    returned bundle is the only form accepted by the strict CLI audit.  The
+    evidence hash covers every field except the hash itself, making accidental
+    edits detectable without contacting the tracking server.
+    """
+
+    bundle = dict(source)
+    bundle["schema_version"] = _EXPECTATION_SCHEMA_VERSION
+    provenance = bundle.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("expectation provenance must be an object")
+    normalized_provenance = dict(provenance)
+    normalized_provenance.pop("evidence_sha256", None)
+    bundle["provenance"] = normalized_provenance
+    bundle["provenance"]["evidence_sha256"] = sha256(
+        _canonical_expectation_bytes(bundle)
+    ).hexdigest()
+    violations = _expectation_contract_violations(bundle)
+    if violations:
+        raise ValueError("invalid expectation bundle: " + "; ".join(violations))
+    return bundle
+
+
+def _expectation_contract_violations(expectation: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return all strict expectation-contract violations deterministically."""
+
+    violations: list[str] = []
+    if expectation.get("schema_version") != _EXPECTATION_SCHEMA_VERSION:
+        violations.append("unsupported expectation schema_version")
+    provenance = expectation.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return ("expectation provenance is missing or not an object",)
+    missing = sorted(field for field in _EXPECTATION_PROVENANCE_FIELDS if not provenance.get(field))
+    violations.extend(f"missing provenance field: {field}" for field in missing)
+    source_hash = provenance.get("source_artifact_sha256")
+    if source_hash and (
+        not isinstance(source_hash, str)
+        or len(source_hash) != 64
+        or any(character not in "0123456789abcdef" for character in source_hash)
+    ):
+        violations.append("source_artifact_sha256 is not a lowercase SHA-256")
+    evidence_hash = provenance.get("evidence_sha256")
+    if (
+        not isinstance(evidence_hash, str)
+        or evidence_hash != sha256(_canonical_expectation_bytes(expectation)).hexdigest()
+    ):
+        violations.append("expectation evidence_sha256 does not match canonical content")
+    if provenance.get("feature_dimension") is not None:
+        try:
+            if int(provenance["feature_dimension"]) < 1:
+                violations.append("feature_dimension must be positive")
+        except TypeError, ValueError:
+            violations.append("feature_dimension must be an integer")
+
+    entries = expectation.get("models")
+    if not isinstance(entries, (list, tuple)):
+        violations.append("expectation models must be a list")
+        return tuple(violations)
+    names: list[str] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            violations.append(f"model expectation {index} is not an object")
+            continue
+        name = str(entry.get("name", ""))
+        if not name:
+            violations.append(f"model expectation {index} has no name")
+        names.append(name)
+        expected_tags = entry.get("required_tags")
+        if not isinstance(expected_tags, Mapping):
+            violations.append(f"model expectation {name!r} has no required_tags")
+            continue
+        for key in _REQUIRED_TAGS:
+            value = expected_tags.get(key)
+            if value is None or not str(value).strip():
+                violations.append(f"model expectation {name!r} has empty tag {key}")
+        for field, tag_key in _PROVENANCE_TAG_FIELDS.items():
+            if str(expected_tags.get(tag_key, "")) != str(provenance.get(field, "")):
+                violations.append(f"model expectation {name!r} disagrees with provenance {field}")
+    if len(names) != len(set(names)):
+        violations.append("expectation contains duplicate model names")
+    return tuple(violations)
+
+
 def _namespace_inventory(
     experiment_id: str,
     runs: tuple[Any, ...],
     models: tuple[Any, ...],
+    deleted_model_ids: tuple[str, ...],
+    registered_models: tuple[Any, ...],
+    registered_versions: tuple[Any, ...],
 ) -> dict[str, object]:
     """Return read-only evidence about the complete MLflow namespace."""
 
@@ -131,7 +304,17 @@ def _namespace_inventory(
         "run_status_counts": dict(sorted(status_counts.items())),
         "run_lifecycle_counts": dict(sorted(lifecycle_counts.items())),
         "logged_model_count": len(models),
-        "historical_objects_zero": not runs and not models,
+        "deleted_logged_model_count": len(deleted_model_ids),
+        "deleted_logged_model_ids": list(deleted_model_ids),
+        "registered_model_count": len(registered_models),
+        "registered_model_names": sorted(str(model.name) for model in registered_models),
+        "registered_model_version_count": len(registered_versions),
+        "registered_model_version_ids": sorted(
+            str(version.version) for version in registered_versions
+        ),
+        # Registered production packages are intentionally inventoried but
+        # are not part of the evaluation-namespace zero-survivor condition.
+        "historical_objects_zero": not runs and not models and not deleted_model_ids,
     }
 
 
@@ -380,6 +563,8 @@ def audit(
     baseline_experiment_name: str | None = None,
     require_clean_namespace: bool = False,
     require_nonempty_model_set: bool = False,
+    require_expectation_contract: bool = False,
+    require_terminal_model_runs: bool = False,
 ) -> dict[str, object]:
     if (baseline_tracking_uri is None) != (baseline_experiment_name is None):
         raise ValueError(
@@ -391,7 +576,20 @@ def audit(
         raise ValueError(f"MLflow experiment does not exist: {experiment_name}")
     actual_models = _search_all_logged_models(client, str(experiment.experiment_id))
     actual_runs = _search_all_runs(client, str(experiment.experiment_id))
-    namespace = _namespace_inventory(str(experiment.experiment_id), actual_runs, actual_models)
+    deleted_model_ids = _deleted_logged_model_ids(client)
+    registered_models = _search_all_registered_models(client)
+    registered_versions = _search_all_registered_model_versions(client)
+    namespace = _namespace_inventory(
+        str(experiment.experiment_id),
+        actual_runs,
+        actual_models,
+        deleted_model_ids,
+        registered_models,
+        registered_versions,
+    )
+    expectation_contract_violations = (
+        _expectation_contract_violations(expectation) if require_expectation_contract else ()
+    )
     expected_entries = tuple(expectation.get("models", ()))
     if not all(isinstance(item, dict) for item in expected_entries):
         raise ValueError("expectation models must be objects")
@@ -404,6 +602,23 @@ def audit(
         actual_by_name.setdefault(str(model.name), []).append(model)
     actual_model_points = tuple(
         (model, _model_metric_points(client, model)) for model in actual_models
+    )
+    run_by_id = {str(run.info.run_id): run for run in actual_runs}
+    terminal_run_statuses = {"FINISHED", "FAILED", "KILLED"}
+    nonterminal_run_count = sum(
+        str(run.info.status) not in terminal_run_statuses for run in actual_runs
+    )
+
+    def source_run_is_not_finished(model: Any) -> bool:
+        source_run_id = getattr(model, "source_run_id", None)
+        source_run = run_by_id.get(str(source_run_id)) if source_run_id is not None else None
+        return source_run is None or str(source_run.info.status) != "FINISHED"
+
+    model_source_run_status_violation_count = sum(
+        1 for model in actual_models if source_run_is_not_finished(model)
+    )
+    nonready_model_count = sum(
+        str(getattr(model, "status", "")) != "READY" for model in actual_models
     )
     actual_points_by_name = {
         name: points
@@ -433,7 +648,9 @@ def audit(
         if not isinstance(expected_tags, dict):
             raise ValueError(f"required_tags for LoggedModel {name!r} must be an object")
         required_tag_keys.update(str(key) for key in expected_tags)
-        tag_violations += sum(key not in tags for key in required_tag_keys)
+        tag_violations += sum(
+            key not in tags or not str(tags[key]).strip() for key in required_tag_keys
+        )
         tag_violations += sum(
             key in tags and tags[key] != str(value)
             for key, value in ((str(key), value) for key, value in expected_tags.items())
@@ -525,9 +742,10 @@ def audit(
                 point for point in actual_points_by_name[name] if point.key == metric_key
             )
             group_tags[name] = _tags(model)
-        if len(group_points) != len(normalized_model_names) or any(
-            not points for points in group_points.values()
-        ):
+        missing_group_points = len(normalized_model_names) - len(group_points)
+        missing_group_points += sum(not points for points in group_points.values())
+        if missing_group_points:
+            domain_violations += missing_group_points
             continue
         identities = {
             tuple(
@@ -565,6 +783,15 @@ def audit(
         nonempty_model_set_violation_count=int(
             require_nonempty_model_set and (not expected_entries or not actual_models)
         ),
+        expectation_contract_violation_count=len(expectation_contract_violations),
+        nonready_model_count=nonready_model_count if require_terminal_model_runs else 0,
+        model_source_run_status_violation_count=(
+            model_source_run_status_violation_count if require_terminal_model_runs else 0
+        ),
+        nonterminal_run_count=nonterminal_run_count,
+        deleted_logged_model_count=len(deleted_model_ids),
+        registered_model_count=len(registered_models),
+        registered_model_version_count=len(registered_versions),
     )
     model_summaries = tuple(
         {
@@ -586,7 +813,10 @@ def audit(
         "requirements": {
             "require_clean_namespace": require_clean_namespace,
             "require_nonempty_model_set": require_nonempty_model_set,
+            "require_expectation_contract": require_expectation_contract,
+            "require_terminal_model_runs": require_terminal_model_runs,
         },
+        "expectation_contract_violations": list(expectation_contract_violations),
         "counts": asdict(counts),
         "model_count_by_scope": dict(
             sorted(Counter(str(item["scope"]) for item in model_summaries).items())
@@ -612,6 +842,9 @@ def audit(
                     "comparison_domain_violation_count",
                     "historical_namespace_violation_count",
                     "nonempty_model_set_violation_count",
+                    "expectation_contract_violation_count",
+                    "nonready_model_count",
+                    "model_source_run_status_violation_count",
                 )
             )
             else "failed"
@@ -650,6 +883,16 @@ def main() -> None:
         help="fail unless both the expectation and MLflow contain LoggedModels",
     )
     parser.add_argument(
+        "--require-expectation-contract",
+        action="store_true",
+        help="require schema, provenance and canonical evidence-hash fields",
+    )
+    parser.add_argument(
+        "--require-terminal-model-runs",
+        action="store_true",
+        help="fail unless every audited LoggedModel is READY and sourced by a FINISHED run",
+    )
+    parser.add_argument(
         "--baseline-tracking-uri",
         help="uninterrupted MLflow URI for final resumed-vs-baseline parity evidence",
     )
@@ -672,6 +915,8 @@ def main() -> None:
         baseline_experiment_name=args.baseline_experiment,
         require_clean_namespace=args.require_clean_namespace,
         require_nonempty_model_set=args.require_nonempty,
+        require_expectation_contract=args.require_expectation_contract,
+        require_terminal_model_runs=args.require_terminal_model_runs,
     )
     rendered = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.json_out is not None:
