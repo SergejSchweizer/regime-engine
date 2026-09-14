@@ -164,8 +164,7 @@ def _require_production_eligible_source_clock(
         minimum_valid_fold_rate=0.0,
     )
     first_inner_train_valid = (
-        inner_clock.first_train_complete_observations
-        >= discovery.minimum_model_train_observations
+        inner_clock.first_train_complete_observations >= discovery.minimum_model_train_observations
         and all(
             variance > discovery.minimum_feature_variance
             for _name, variance in inner_clock.first_train_feature_variances
@@ -173,9 +172,7 @@ def _require_production_eligible_source_clock(
     )
 
     potentially_valid: list[int] = []
-    for outer_fold, outer_clock_fold in zip(
-        outer_plan.folds, outer_clock.folds, strict=True
-    ):
+    for outer_fold, outer_clock_fold in zip(outer_plan.folds, outer_clock.folds, strict=True):
         inner_prefix = tuple(
             fold for fold in inner_clock.folds if fold.test_end <= outer_fold.train_end
         )

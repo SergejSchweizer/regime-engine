@@ -108,9 +108,7 @@ def test_source_clock_preflight_preserves_the_eighty_percent_outer_gate() -> Non
         tuple(
             FeatureRow(
                 row.timestamp,
-                (row.values[0], row.values[1], None)
-                if 1260 <= index < 1290
-                else row.values,
+                (row.values[0], row.values[1], None) if 1260 <= index < 1290 else row.values,
             )
             for index, row in enumerate(complete_snapshot.rows)
         ),
