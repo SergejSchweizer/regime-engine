@@ -43,7 +43,8 @@ Status date: 2026-09-14
   opt-in paths, made coverage enforcement independent of cross-job artifacts,
   sized plot pools from all submitted tasks, parallelized ranked prefix lengths
   under one CPU budget, and added a pre-PCA source/model-clock preflight. Only
-  external acceptance evidence under PR-232/PR-250 is outstanding.
+  external acceptance evidence under PR-232/PR-250 is outstanding. The latest
+  process-only multistart hardening is merged in GitHub #383.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -260,7 +261,7 @@ still required.
 | PR-380 | IMPLEMENTATION MERGED | Plot preparation sizes process workers for every submitted candidate and parent task; merged in GitHub #379 after all gates; branch deleted |
 | PR-381 | IMPLEMENTATION MERGED | Ranked prefix lengths use bounded process-parallel execution with deterministic result/sink ordering; merged in GitHub #381 after rebase and all gates; branch deleted |
 | PR-382 | IMPLEMENTATION MERGED | Full current-Xetra evaluation performs raw source/model-clock eligibility checks before PCA/HMM work; merged in GitHub #380 after rebase and all gates; branch deleted |
-| PR-384 | IMPLEMENTED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures |
+| PR-384 | IMPLEMENTATION MERGED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures; merged in GitHub #383 after all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
