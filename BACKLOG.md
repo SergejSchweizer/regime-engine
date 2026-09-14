@@ -227,7 +227,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. GitHub PRs #270–#406
+update. GitHub has no open PRs. GitHub PRs #270–#408
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
