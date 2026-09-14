@@ -28,6 +28,10 @@ def _discovery(raw: dict[str, object]) -> dict[str, object]:
 
 
 def test_v4_uses_a_dedicated_explicit_discovery_contract() -> None:
+    raw = _raw()
+    pca = raw["pca"]
+    assert isinstance(pca, dict)
+    assert "enabled" not in pca
     profile = load_profile(PROFILE)
     assert profile.profile_id == "xetra"
     assert profile.profile_config_version == 4
