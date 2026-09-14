@@ -399,6 +399,7 @@ def _run(performance: PerformanceRecorder) -> None:
                 python_version=platform.python_version(),
                 selection_sink=selections.__setitem__,
                 prefix_evaluation_sink=record_prefix_evaluation,
+                require_production_eligible_source_clock=True,
             )
     valid_outer_fold_indices = _require_current_audit_eligibility(result, selections, profile)
     selection_search_evidence = _selection_search_evidence(

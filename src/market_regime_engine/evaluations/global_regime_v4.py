@@ -16,6 +16,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.model_clock import build_model_clock_preflight
 from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
@@ -46,6 +47,7 @@ from market_regime_engine.evaluations.process_parallel import cpu_process_pool, 
 from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalCandidateRunner,
     ProvisionalTeacherEvaluation,
+    build_inner_walk_forward_plan,
     run_provisional_gaussian_candidate,
     select_provisional_teacher,
 )
@@ -104,6 +106,104 @@ from market_regime_engine.training.candidate_grid import CandidateRunner as Grid
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _MIN_OUTER_TEST_SUPPORT = 42
 PrefixEvaluationPayloadSink = Callable[[int, int, str, WalkForwardEvaluation], None]
+
+
+def _require_production_eligible_source_clock(
+    catalog: FeatureCatalogSnapshot,
+    snapshot: FeatureSnapshot,
+    profile: ModelProfile,
+) -> tuple[int, ...]:
+    """Reject a raw source clock that cannot possibly pass production gates.
+
+    This structural check performs no PCA, feature discovery, or model fitting.
+    It cannot declare a source statistically eligible; it only proves when the
+    pinned complete-case clocks make production eligibility impossible.
+    """
+
+    raw_feature_order = _raw_feature_order(catalog)
+    if not raw_feature_order or snapshot.feature_names != catalog.feature_names:
+        raise RuntimeError("source/model-clock preflight requires the complete source catalog")
+    feature_positions = {name: index for index, name in enumerate(snapshot.feature_names)}
+    rows = pd.DataFrame(
+        {
+            _TIMESTAMP_COLUMN: tuple(row.timestamp for row in snapshot.rows),
+            **{
+                name: tuple(row.values[feature_positions[name]] for row in snapshot.rows)
+                for name in raw_feature_order
+            },
+        }
+    )
+    timestamps = tuple(row.timestamp for row in snapshot.rows)
+    outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
+    discovery = profile.feature_discovery
+    if len(outer_plan.folds) < discovery.minimum_outer_valid_folds:
+        raise RuntimeError(
+            "source/model-clock preflight cannot satisfy production eligibility: "
+            f"planned_outer_folds={len(outer_plan.folds)}, "
+            f"minimum_required={discovery.minimum_outer_valid_folds}"
+        )
+
+    outer_clock = build_model_clock_preflight(
+        rows,
+        raw_feature_order,
+        outer_plan,
+        minimum_model_train_observations=profile.walk_forward.minimum_model_train_observations,
+        minimum_model_test_observations=profile.walk_forward.minimum_model_test_observations,
+        # The complete production gate is evaluated below together with the
+        # inner selection clock. Keep this shared primitive descriptive here.
+        minimum_valid_fold_rate=0.0,
+    )
+    latest_outer_train_count = outer_plan.folds[-1].train_source_observations
+    inner_plan = build_inner_walk_forward_plan(timestamps[:latest_outer_train_count])
+    inner_clock = build_model_clock_preflight(
+        rows.iloc[:latest_outer_train_count],
+        raw_feature_order,
+        inner_plan,
+        minimum_model_train_observations=discovery.minimum_model_train_observations,
+        minimum_model_test_observations=discovery.minimum_model_test_observations,
+        minimum_valid_fold_rate=0.0,
+    )
+    first_inner_train_valid = (
+        inner_clock.first_train_complete_observations >= discovery.minimum_model_train_observations
+        and all(
+            variance > discovery.minimum_feature_variance
+            for _name, variance in inner_clock.first_train_feature_variances
+        )
+    )
+
+    potentially_valid: list[int] = []
+    for outer_fold, outer_clock_fold in zip(outer_plan.folds, outer_clock.folds, strict=True):
+        inner_prefix = tuple(
+            fold for fold in inner_clock.folds if fold.test_end <= outer_fold.train_end
+        )
+        inner_valid_rate = (
+            sum(fold.structurally_valid for fold in inner_prefix) / len(inner_prefix)
+            if inner_prefix
+            else 0.0
+        )
+        if (
+            outer_clock_fold.structurally_valid
+            and first_inner_train_valid
+            and inner_valid_rate >= discovery.minimum_model_clock_valid_fold_rate
+        ):
+            potentially_valid.append(outer_fold.fold_index)
+
+    potential_rate = len(potentially_valid) / len(outer_plan.folds)
+    latest_potentially_valid = outer_plan.folds[-1].fold_index in potentially_valid
+    if (
+        len(potentially_valid) < discovery.minimum_outer_valid_folds
+        or potential_rate < discovery.minimum_outer_valid_fold_rate
+        or not latest_potentially_valid
+    ):
+        raise RuntimeError(
+            "source/model-clock preflight cannot satisfy production eligibility: "
+            f"potentially_valid_outer_folds={len(potentially_valid)}/"
+            f"{len(outer_plan.folds)}, potential_valid_rate={potential_rate:.12g}, "
+            f"latest_outer_fold_valid={latest_potentially_valid}, "
+            f"first_inner_train_complete_observations="
+            f"{inner_clock.first_train_complete_observations}"
+        )
+    return tuple(potentially_valid)
 
 
 def _nested_worker_limits(total_worker_budget: int, outer_worker_count: int) -> tuple[int, ...]:
@@ -1405,6 +1505,7 @@ def evaluate_global_regime_v4_from_source(
     prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float | None = None,
+    require_production_eligible_source_clock: bool = False,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
 
@@ -1429,6 +1530,8 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source catalog and snapshot materialization digests differ")
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
+    if require_production_eligible_source_clock:
+        _require_production_eligible_source_clock(catalog, snapshot, profile)
     # PCA is mandatory for canonical Xetra v4.  Materialize it before any
     # quality, distance, scoring, clustering, or model-selection stage so the
     # generated components share the same feature-universe path as raw fields.
