@@ -11,6 +11,8 @@ then performs the complete v4 search and outer policy.
 - Install the exact repository environment with Python 3.14.7.
 - Configure an absolute persistent `REGIME_EVALUATION_CHECKPOINT_ROOT`
   outside the repository through `config.yaml`.
+- Configure absolute paths outside the repository for both
+  `REGIME_EVALUATION_SUMMARY_PATH` and `REGIME_PERFORMANCE_REPORT_PATH`.
 - Ensure the feature PostgreSQL password is available only through the
   configured password file.
 - Verify the external MLflow health endpoint before starting.
@@ -42,11 +44,15 @@ CPU cores without nested oversubscription.
 ## Required evidence
 
 Set `REGIME_EVALUATION_SUMMARY_PATH` to a durable path outside the repository.
-The JSON summary records the source build/data/catalog/profile/repository
-identities, Python and lockfile hashes, snapshot bounds, every outer-fold
-selection (`M*`, `L*`, candidate, `K`, OOS NMI and non-poolable OOS PLL),
-production eligibility, MLflow parent run, evidence hash, and paths to the
-independent math-audit expectations/report.
+The JSON summary records the complete unbounded schema-wide source request,
+source row/materialization bounds, source build/data/catalog/materialization/
+snapshot/profile/plan/repository/lockfile hashes, the exact bounded M/prefix/K/
+mixture/final-grid search envelope, every outer-fold selection (`M*`, `L*`,
+candidate, `K`, OOS NMI and non-poolable OOS PLL), the first/middle/last valid
+fold audit indices, production eligibility, MLflow parent run, evidence hash,
+and paths to the independent math-audit expectations/report and performance
+resource report. The independent verifier rejects a missing or altered audit
+envelope before tracking begins.
 
 The math-audit report must state the audited first, middle and last valid
 outer-fold indices. It independently checks distance, silhouette,

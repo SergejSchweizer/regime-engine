@@ -107,6 +107,168 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path, dict[str, float]]:
     return snapshot_path, expectations_path, expected_likelihoods
 
 
+def _strict_current_contract(
+    module: Any,
+    snapshot_path: Path,
+    *,
+    valid_indices: list[int] | None = None,
+) -> dict[str, object]:
+    indices = [1, 2, 3] if valid_indices is None else valid_indices
+    final_ids = [
+        "gaussian_hmm_k2_full",
+        "gaussian_hmm_k3_full",
+        "gaussian_hmm_k4_full",
+        "gaussian_hmm_k5_full",
+        "gmm_hmm_k2_m2_full",
+        "gmm_hmm_k3_m2_full",
+        "gmm_hmm_k4_m2_full",
+        "gmm_hmm_k5_m2_full",
+        "student_t_hmm_k2_full",
+        "student_t_hmm_k3_full",
+        "student_t_hmm_k4_full",
+        "student_t_hmm_k5_full",
+    ]
+    discovery = {
+        "feature_universe_mode": "all_non_timestamp_m1_double_precision",
+        "excluded_source_column": "timestamp_m1",
+        "feature_ordering": "postgresql_ordinal_position",
+        "cluster_count_min": 2,
+        "cluster_count_max": 12,
+        "provisional_state_counts": [2, 3, 4, 5],
+        "minimum_prefix_length": 2,
+        "maximum_prefix_length": 8,
+        "prefix_state_counts": [2, 3, 4, 5],
+        "inner_train_source_observations": 756,
+        "inner_test_source_observations": 63,
+        "inner_step_source_observations": 63,
+        "inner_partial_final_test": False,
+        "outer_train_source_observations": 1260,
+        "outer_test_source_observations": 63,
+        "outer_step_source_observations": 63,
+        "outer_partial_final_test": False,
+        "minimum_outer_valid_fold_rate": 0.8,
+        "minimum_outer_valid_folds": 3,
+    }
+    walk = {
+        "minimum_train_source_observations": 1260,
+        "test_source_observations": 63,
+        "step_source_observations": 63,
+        "allow_partial_final_test": False,
+        "minimum_model_train_observations": 504,
+        "minimum_model_test_observations": 42,
+    }
+    per_fold = [
+        {
+            "outer_fold_index": index,
+            "eligible_feature_count": 3,
+            "ranked_feature_count": 2,
+            "cluster_count_candidates": [2],
+            "prefix_length_candidates": [2],
+            "provisional_candidate_ids": [f"gaussian_hmm_k{k}_full" for k in (2, 3, 4, 5)],
+            "final_candidate_ids": final_ids,
+        }
+        for index in indices
+    ]
+    identity = {
+        "source_build_id": "source-build-1",
+        "source_data_sha256": "a" * 64,
+        "source_catalog_hash": "b" * 64,
+        "materialized_feature_data_sha256": "c" * 64,
+        "dataset_snapshot_key": "d" * 64,
+        "snapshot_sha256": hashlib.sha256(snapshot_path.read_bytes()).hexdigest(),
+        "profile_hash": "e" * 64,
+        "outer_plan_hash": "f" * 64,
+        "repository_commit_sha": "1" * 40,
+        "uv_lock_sha256": "2" * 64,
+    }
+    request = {
+        "mode": "schema_discovery",
+        "feature_names": [],
+        "start": None,
+        "end": None,
+        "all_source_rows": True,
+        "dynamic_catalog": True,
+    }
+    return {
+        "schema_version": 1,
+        "source_request": request,
+        "audit_source_request": request,
+        "source_bounds": {
+            "source_dataset": "xetra_gold",
+            "source_table": "regime_features_daily",
+            "source_row_count": 3,
+            "source_min_timestamp": "2026-01-01",
+            "source_max_timestamp": "2026-01-03",
+            "feature_count": 2,
+            "feature_names_sha256": module._json_sha256(["feature_a", "feature_b"]),
+            "materialized_row_count": 3,
+            "materialized_min_timestamp": "2026-01-01",
+            "materialized_max_timestamp": "2026-01-03",
+            "skipped_incomplete_row_count": 0,
+        },
+        "search_bounds": {
+            "declared_bounds": {
+                "feature_discovery": discovery,
+                "walk_forward": walk,
+                "candidate_families": {
+                    "gaussian_state_counts": [2, 3, 4, 5],
+                    "gaussian_multistart_seeds": [11, 23, 37, 53, 71, 89, 107, 131],
+                    "gmm_state_mixture_pairs": [[2, 2], [3, 2], [4, 2], [5, 2]],
+                    "student_t_state_counts": [2, 3, 4, 5],
+                    "final_candidate_ids": final_ids,
+                },
+            },
+            "per_fold": per_fold,
+        },
+        "identity_hashes": identity,
+        "valid_outer_fold_indices": indices,
+        "audit_outer_fold_indices": [indices[0], indices[len(indices) // 2], indices[-1]],
+        "resource_evidence": {
+            "performance_report_path": "/tmp/current-xetra-performance.json",
+            "available_logical_cpus": 4,
+            "native_thread_environment": {"OMP_NUM_THREADS": "1"},
+        },
+    }
+
+
+def test_strict_current_contract_requires_bounds_identity_folds_and_resources(
+    tmp_path: Path,
+) -> None:
+    module = _verifier()
+    snapshot_path, expectations_path, _expected = _bundle(tmp_path)
+    expectations = json.loads(expectations_path.read_text(encoding="utf-8"))
+    contract = _strict_current_contract(module, snapshot_path)
+    expectations.update(
+        {
+            "schema_version": 3,
+            "audit_contract": contract,
+            "valid_outer_fold_indices": [1, 2, 3],
+            "audit_outer_fold_indices": [1, 2, 3],
+        }
+    )
+    columns = module._read_snapshot(snapshot_path)
+    report = module.verify_expectations(
+        columns,
+        expectations,
+        max_workers=2,
+        snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+        require_current_audit_contract=True,
+    )
+    assert report["status"] == "verified"
+    assert report["audit_contract_verified"] is True
+
+    broken = json.loads(json.dumps(expectations))
+    del broken["audit_contract"]["source_request"]
+    with pytest.raises(SystemExit, match="source_request"):
+        module.verify_expectations(
+            columns,
+            broken,
+            max_workers=1,
+            snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+            require_current_audit_contract=True,
+        )
+
+
 def test_public_likelihood_callable_checks_all_supported_families() -> None:
     module = _verifier()
     observations = [[0.0], [1.0]]
