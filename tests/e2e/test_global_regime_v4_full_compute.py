@@ -50,7 +50,7 @@ from tests.fixtures.global_regime_v4.synthetic import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-PR231_GOLDEN_SNAPSHOT_HASH = "d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65"
+PR231_GOLDEN_SNAPSHOT_HASH = "c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924"
 
 _GOLDEN_TOP_LEVEL_KEYS = frozenset(
     {
