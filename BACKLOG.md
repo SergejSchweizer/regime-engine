@@ -253,6 +253,7 @@ still required.
 | PR-373 | IMPLEMENTATION MERGED | Removed the remaining PCA opt-in flag and made canonical Xetra v4 source evaluation unconditionally materialize the fixed PCA universe; local and CI gates passed in GitHub #372; branch deleted |
 | PR-374 | IMPLEMENTATION MERGED | Persisted final-vs-teacher Outer-Fold OOS arrays and independently verify soft NMI/shared support for every valid fold; local and CI gates passed in GitHub #373; branch deleted |
 | PR-378 | IMPLEMENTED | Removed stale lifecycle and metadata opt-in semantics: PCA is always materialized in the v4 source capture and its audit/MLflow identity is explicitly mandatory; local acceptance tests passed |
+| PR-379 | IMPLEMENTED | Push/merge gates now enforce unit coverage inside the unit lane and no longer depend on cross-job GitHub artifact download; local CI-contract tests passed |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |

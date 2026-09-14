@@ -15,8 +15,9 @@ def test_quality_contract_and_gate_workflows_cannot_diverge() -> None:
         assert "integration:" not in workflow
         assert "needs: [lint, type, unit, integration]" not in workflow
         assert "coverage-integration" not in workflow
-        assert "coverage-unit" in workflow
         assert "coverage report --data-file=.coverage.unit --fail-under=80" in workflow
+        assert "actions/download-artifact" not in workflow
+        assert "actions/upload-artifact" not in workflow
         assert "fail-under=90" not in workflow
         assert "test_global_regime_v4_full_compute.py" not in workflow
 
