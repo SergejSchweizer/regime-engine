@@ -1,36 +1,44 @@
-# Regime Engine — Dataset-Pinned, Idempotent and Resumable Evaluation Execution
+# Regime Engine — One-Shot, Dataset-Pinned Evaluation Execution
 
 Status date: 2026-09-10
 
-This document is an authoritative cross-cutting execution contract for the active
-Xetra v4 evaluation, audit, deployment-selection, and lifecycle workflows.
+This document is the authoritative execution contract for the active Xetra v4
+full evaluation, audit, deployment-selection, and lifecycle workflows.
 
-The statistical contract remains defined by `EVALUATION.md`. This document defines how an evaluation is bound to data and code, how work is committed durably, and how an interrupted run resumes without silently changing its dataset or recomputing already completed work.
+The statistical contract remains defined by `EVALUATION.md`. This document
+defines how one full evaluation is bound to data and code, how its evidence is
+written durably, and what happens after interruption.
 
-The requirements here must be incorporated into the active implementation backlog and into PR-210's canonical v4 contract before v4 orchestration is considered complete.
+The full evaluator is intentionally one-shot. It does not track a computation
+position, expose a run-key resume command, or resume completed HMM/discovery/
+tracking work. After interruption, the next invocation captures a new source
+snapshot and recomputes the complete evaluation from the beginning. Historical
+resumable-executor requirements below are superseded where they conflict with
+this explicit production contract; the reusable executor remains test
+infrastructure only.
+
+The requirements here are incorporated into the active implementation backlog
+and PR-210's canonical v4 contract.
 
 ---
 
 ## 1. Non-negotiable invariants
 
-Every public evaluation execution must satisfy all three properties:
+Every public full evaluation execution must satisfy these two properties:
 
 1. **Dataset pinned** — the evaluation is bound to one immutable dataset snapshot identity before statistical work starts.
-2. **Idempotent** — invoking the same evaluation again with the same complete identity returns/reuses the same logical run and cannot create a statistically different result.
-3. **Resumable** — after process, container, host, network, or tracking failure, execution resumes from the last durably completed atomic work unit instead of restarting the whole evaluation.
+2. **Evidence-pinned** — the resulting evidence records the complete source,
+   profile, plan, code, dependency, runtime, and audit identities.
 
-A run that cannot prove all three properties is not production-eligible.
+A run that cannot prove both properties is not production-eligible. A restart
+after interruption is a new one-shot invocation, not a continuation.
 
 ```mermaid
 flowchart LR
     A[Live PostgreSQL Gold] --> B[Capture immutable dataset snapshot]
     B --> C[DatasetSnapshotKey]
-    C --> D[EvaluationRunKey]
-    D --> E[Durable work-unit ledger]
-    E --> F[Execute only missing units]
-    F --> G[Canonical completed evidence]
-    G --> H[Same RunKey invoked again]
-    H --> I[Return existing completed result]
+    C --> D[One-shot full evaluation]
+    D --> E[Canonical completed evidence]
 ```
 
 ---
@@ -89,9 +97,10 @@ After the durable snapshot is finalized:
 
 - the database transaction is closed;
 - inner/outer evaluation reads only the durable snapshot;
-- restart/resume reads only the durable snapshot;
+- the current invocation reads only the durable snapshot;
 - a later change to the live PostgreSQL table cannot alter an in-progress run;
-- a resume operation must not silently recapture the current live table under the old run identity.
+- an interrupted later invocation captures a fresh snapshot instead of
+  silently reusing a computation position or an old run identity.
 
 If the durable snapshot bytes are missing or fail their persisted file/content hash, the run fails closed. It must not reconstruct the old run from a newer live dataset.
 
@@ -148,52 +157,50 @@ evaluation_run_key = SHA256(canonical_json(all statistical identity fields))
 
 Operational properties such as hostname, PID, start time, worker ID, MLflow run ID, temporary directory and lease timestamps are **not** part of the statistical key.
 
-Consequences:
+Consequences for one invocation:
 
-- same dataset + same profile + same evaluation plan + same code/dependency identity => same run key;
-- changed dataset => new run;
-- changed profile/config => new run;
-- changed evaluation plan/cutoff => new run;
-- changed code commit or dependency lock => new run;
-- an old interrupted run must not be resumed by a new incompatible code build.
+- the evidence identity includes the dataset, profile, evaluation plan,
+  repository, dependency lock, and Python identities;
+- changed dataset, profile/config, plan/cutoff, code commit, or dependency lock
+  produces a distinct evidence identity;
+- an old interrupted invocation is never resumed by a new code build.
 
-A deliberate evaluation with changed code is a new logical evaluation, not a continuation of the old one.
-
----
-
-## 4. Idempotency semantics
-
-The default public command is **resume-or-return**, never blind restart.
-
-For one `evaluation_run_key`:
-
-```text
-no run exists      -> create run, execute
-run is incomplete  -> resume missing/reclaimable work units
-run is complete    -> return existing result/evidence, perform no statistical recomputation
-run is corrupted   -> fail closed
-```
-
-A completed logical work unit is immutable. The implementation may not overwrite a completed unit with new bytes under the same unit key.
-
-A completed evaluation has exactly one canonical result root hash.
-
-Repeating the same command must therefore satisfy:
-
-```text
-same evaluation_run_key
-same dataset_snapshot_key
-same completed work-unit payload hashes
-same final statistical evidence SHA-256
-same selected configuration
-same numerical outputs within exact contract/tolerances
-```
-
-MLflow operational metadata may differ only where the tracking backend itself requires timestamps, but the same logical evaluation must attach to/reuse the already persisted evaluation identity and canonical evidence rather than create a second statistically distinct evaluation.
+A deliberate evaluation with changed code is a new evaluation, not a
+continuation of an old one.
 
 ---
 
-## 5. Durable run ledger
+## 4. Evidence and lifecycle idempotency
+
+The public full-evaluation command is a one-shot computation, not
+**resume-or-return**. It does not select an incomplete run or reuse completed
+statistical work after interruption.
+
+Within one successful invocation:
+
+```text
+capture snapshot -> compute every required stage -> audit -> track -> publish
+```
+
+Evidence files, summaries, and registered artifacts are immutable after
+publication. A later invocation uses a fresh invocation/evidence identity and
+must not overwrite or masquerade as the interrupted invocation. Registry
+mutations remain protected by compare-and-set lifecycle rules so one successful
+publication cannot create a duplicate challenger version.
+
+The separate metric-export harness has a narrower idempotency contract: it may
+reconcile missing metric points for one metric batch, but this does not resume
+any statistical computation.
+
+---
+
+## 5. Historical reusable executor (not the public full evaluator)
+
+The following run-ledger/work-unit sections describe reusable infrastructure
+and its local QA only. They do not authorize or require wiring a computation-
+position ledger into the public one-shot Xetra v4 evaluator. That evaluator
+uses the immutable snapshot for the current invocation and recomputes from the
+beginning after interruption.
 
 Evaluation progress must live in a durable store outside process memory.
 
@@ -245,7 +252,7 @@ A technical interruption leaves the unit reclaimable after its lease expires. Th
 
 ---
 
-## 6. Atomic work-unit granularity
+## 6. Historical work-unit granularity
 
 Resume granularity must be small enough that an expensive multi-hour run does not lose substantial completed work.
 
@@ -295,7 +302,7 @@ MLflow run IDs must never be used as work-unit keys.
 
 ---
 
-## 7. Work-unit input hashes
+## 7. Historical work-unit input hashes
 
 Every unit is bound to the exact output hashes of its parents plus its own source-controlled parameters.
 
@@ -326,7 +333,7 @@ No implicit cache invalidation or best-effort overwrite is allowed.
 
 ---
 
-## 8. Resume algorithm
+## 8. Historical resume algorithm (not used by the public full evaluator)
 
 The runner reconstructs the expected deterministic DAG from the persisted run identity and code version, then compares it with the ledger.
 
@@ -351,7 +358,7 @@ The resume path must never use "last log line" or wall-clock heuristics. Progres
 
 ---
 
-## 9. Crash-consistency requirements
+## 9. Historical crash-consistency requirements
 
 A unit is complete only after all of the following succeed:
 
@@ -369,7 +376,7 @@ There is no requirement to resume inside one floating-point matrix operation or 
 
 ---
 
-## 10. Concurrency and duplicate invocation
+## 10. Historical concurrency and duplicate-invocation requirements
 
 Only one executor may own one work unit at a time.
 
@@ -404,140 +411,137 @@ For the initial audited cutover where a particular validated dataset build is re
 
 MLflow is evidence/tracking, not the source of statistical identity.
 
-Required behavior:
+Required behavior for one completed full-run projection:
 
 - persist `evaluation_run_key` and `dataset_snapshot_key` as immutable run tags/params;
-- retain/reuse the logical parent MLflow run identity when resuming where the MLflow API permits;
-- child tracking corresponds to deterministic work-unit keys;
+- use stable source/evidence identity tags and canonical candidate/fold keys;
+- child tracking corresponds to canonical evidence units, not resume positions;
 - tracking timestamps and MLflow run IDs do not enter canonical statistical hashes;
-- a tracking outage cannot cause the evaluator to forget completed statistical work;
-- after tracking recovers, missing tracking artifacts may be replayed from durable canonical checkpoint payloads without recomputing the statistics;
+- an interrupted full evaluation is rerun from the beginning;
+- the separate metric-export harness may replay missing metric points without
+  recomputing statistics;
 - contradictory MLflow evidence for the same work-unit key/payload hash is a hard integrity error.
 
-The durable evaluation ledger is therefore authoritative for execution progress; canonical finalized statistics remain authoritative for statistical evidence.
+The completed snapshot and audit evidence are authoritative for the current
+invocation; the reusable historical ledger is not a public full-run progress
+source.
 
 ---
 
 ## 13. Completed-run and lifecycle behavior
 
-A completed evaluation invoked again with the same identity is a no-op statistically.
+A completed evaluation publishes immutable evidence for that invocation. A
+later model cycle captures a fresh source snapshot and starts a new one-shot
+evaluation. Registry mutation remains separately protected by compare-and-set
+lifecycle rules and must not create a duplicate challenger model version.
 
-For recurring model cycles:
-
-```text
-same dataset_snapshot_key + same evaluation identity
-    -> reuse completed evaluation
-    -> reuse deployment-selection result
-    -> reuse final artifact hash if already produced
-    -> do not register a duplicate challenger model version
-
-new dataset_snapshot_key
-    -> new evaluation run
-```
-
-Registry mutation remains separately protected by compare-and-set lifecycle rules. Resume/idempotency must extend through challenger registration so a crash after model registration but before CLI completion does not register the same artifact twice.
+Registry mutation remains separately protected by compare-and-set lifecycle
+rules so a successful publication cannot register the same artifact twice.
 
 ---
 
 ## 14. CLI semantics
 
-The normal operator command must default to resumable behavior.
+The normal operator command starts one complete, non-resumable evaluation.
 
 Required semantics:
 
 ```text
 evaluate xetra
-    if one compatible incomplete run is selected by invocation identity -> resume it
-    else capture current validated dataset snapshot and start/reuse its deterministic run
+    capture the current validated dataset snapshot and run every stage
 
-evaluate xetra --run-key <sha256>
-    resume/return exactly that run; never substitute a newer dataset
+after interruption
+    invoke evaluate xetra again; capture a new snapshot and restart from the beginning
 ```
 
-If multiple unfinished runs could match an underspecified invocation, fail with their run keys and require explicit selection. Never guess.
-
-A destructive "start over" command must not overwrite an existing logical run. If ever supported, it must create a clearly separate execution attempt namespace while preserving the original immutable run/evidence.
+There is no public `--run-key` resume command. A configured cycle lock prevents
+two full evaluations from running concurrently.
 
 ---
 
 ## 15. QA contract
 
-Resumability is not proven by restarting only between major phases. Tests must inject failures at deterministic boundaries.
+The active full-evaluation QA proves one-shot correctness, not
+computation-position resume. It must cover:
 
-Mandatory QA includes:
+- dataset pin: mutate live source after durable capture; the current
+  invocation remains bound to its immutable snapshot;
+- dataset mismatch/corruption: invalid snapshot bytes fail closed;
+- complete dynamic catalog, source/search bounds, and mandatory PCA identity;
+- deterministic one-shot hermetic execution with independent mathematical
+  recomputation;
+- all required candidate/prefix/fold evidence and exact final hashes;
+- source identity unchanged between capture and independent audit;
+- tracking/export conflicts fail closed and metric-batch retry creates no
+  duplicate or conflicting points;
+- registration crash safety and compare-and-set lifecycle behavior;
+- interruption semantics: an interrupted full evaluation is not resumed and a
+  subsequent invocation starts from a new complete source capture.
 
-- dataset pin: mutate live source after durable capture; resumed result remains byte-identical;
-- dataset mismatch: delete/corrupt durable snapshot; resume fails instead of reading current live source;
-- idempotency: run identical evaluation twice; second execution performs zero statistical work and returns same evidence hash;
-- code/config drift: change profile hash, plan hash, repository SHA or lock hash; old run is not resumed;
-- checkpoint resume: terminate after each major stage and after several expensive HMM units; restart skips every completed unit;
-- stale lease: simulate executor death; next executor reclaims only unfinished work;
-- domain invalidity: deterministic invalid fold/candidate remains terminal and is not retried;
-- payload corruption: completed unit with wrong payload hash fails closed;
-- dependency mismatch: changed parent hash under same unit key fails closed;
-- concurrency: two invocations cannot commit different payloads for one work-unit key;
-- MLflow outage: completed statistics survive and tracking can be replayed without refitting;
-- registration crash: challenger registration is exactly-once logically and duplicate artifact registration is prevented;
-- full hermetic E2E: forced interruption at multiple predetermined work units followed by restart produces the exact same final canonical evidence as an uninterrupted run;
-- full current-Xetra audit: evaluation transcript records dataset snapshot key, run key, reused/computed unit counts, resume events, and final evidence hash.
-
-For the hermetic proof, at least one injected crash must occur:
-
-1. during provisional HMM work;
-2. during prefix search;
-3. during final 12-model grid work;
-4. between outer folds;
-5. after statistical completion but before tracking/lifecycle completion.
-
-Every interrupted+resumed result must equal the uninterrupted golden result.
+The dedicated metric-export harness may separately test interrupted-versus-
+uninterrupted metric history parity. That test does not assert or imply
+statistical full-run resume.
 
 ---
 
 ## 16. Required integration into the active backlog
 
-The active backlog must treat this as a cross-cutting requirement, not a late operational enhancement.
+The active backlog must treat source pinning, one-shot lifecycle semantics,
+independent audit evidence, and metric-export retry safety as cross-cutting
+requirements, not as late operational enhancements.
 
 At minimum:
 
 - **PR-210**: add `DatasetSnapshotIdentity`, `EvaluationRunIdentity`, `WorkUnitIdentity` and canonical hash contracts.
 - **PR-212/213**: capture and durably materialize the exact dynamic dataset snapshot before model work; persist dataset snapshot key and file/content hash.
-- **PR-219/220**: ensure candidate/fold evaluation can execute as deterministic resumable work units without semantic coupling.
-- **PR-221**: checkpoint provisional K x inner-fold work.
-- **PR-226**: checkpoint each L x K x inner-fold work and reuse completed prefix work.
-- **PR-227**: checkpoint each of the 12 candidate x inner-fold units.
-- **PR-228**: make the outer-policy orchestrator a deterministic DAG executor over a durable run store; resume by default.
-- **PR-229**: include run/dataset/work-unit identity and checkpoint hashes in evidence schema while excluding operational lease timestamps from canonical statistics.
-- **PR-230**: make MLflow tracking replayable from completed durable units and bind all runs to run/snapshot keys.
-- **PR-231**: add forced-crash/resume hermetic equivalence tests.
-- **PR-232**: full-Xetra audit must be resumable and must prove no source recapture after restart.
-- **PR-233**: deployment selection gets its own deterministic work unit under the already pinned dataset snapshot.
+- **PR-219/220**: ensure candidate/fold evaluation is deterministic and
+  process-parallel without requiring public resume state.
+- **PR-221/226/227**: evaluate all provisional, prefix, and final candidates
+  in one complete invocation; reusable checkpoint tests are not public full-run
+  semantics.
+- **PR-229**: include source/evidence identity and audit hashes while
+  excluding operational timestamps from canonical statistics.
+- **PR-230**: make MLflow metric export idempotent and retry-safe without
+  tracking full-run computation position.
+- **PR-231**: add deterministic one-shot hermetic proof and independent
+  mathematical evidence.
+- **PR-232**: full-Xetra audit must use one complete source snapshot and must
+  rerun from the beginning after interruption.
+- **PR-233**: deployment selection is a deterministic post-evaluation step
+  bound to the completed source/evidence identity.
 - **PR-237**: recurring evaluation/refit/register lifecycle is idempotent end-to-end, including duplicate-registration prevention.
-- **PR-241**: final operations/documentation explains snapshot pinning, run keys, resume, corruption recovery and operator commands.
+- **PR-241**: final operations/documentation explains snapshot pinning,
+  evidence identity, one-shot restart, corruption recovery and operator
+  commands.
 
 Two implementation concerns must be explicit in backlog planning:
 
-1. a durable `EvaluationRunStore`/checkpoint implementation must land **before PR-228 orchestration**;
-2. seed-level multistart checkpointing is either implemented before full-source audit or recorded as explicit bounded technical debt; candidate/fold-level checkpointing is the minimum acceptable first milestone.
+1. the immutable source snapshot and independent audit evidence must be
+   finalized before tracking/publication;
+2. seed/candidate/fold checkpointing may remain reusable local infrastructure,
+   but it must not be exposed as a resume mode for the full evaluator.
 
-No public evaluation path may bypass the run identity and durable snapshot contract after the resumable execution layer is activated.
+No public evaluation path may bypass the source/evidence identity and durable
+snapshot contract. No public path may expose a computation-position resume
+mode for the full evaluator.
 
 ---
 
 ## 17. Definition of done
 
-The execution layer is complete only when all of the following are true:
+The execution contract is complete only when all of the following are true:
 
 - every evaluation has an explicit dataset snapshot key;
 - the exact source rows used by a run survive process/container restart;
-- every evaluation has a deterministic run key that includes dataset, profile, plan, code and dependency identity;
-- repeated invocation of a completed run performs no statistical recomputation;
-- interruption resumes from the last durable work-unit boundary;
-- completed work-unit bytes are immutable and hash-verified;
-- domain-invalid outcomes are cached as terminal evidence;
-- newer live data cannot contaminate an old in-progress run;
-- a changed dataset automatically creates a new run;
-- tracking outages do not destroy statistical progress;
-- duplicate concurrent execution cannot produce contradictory results;
+- every invocation has a deterministic source/evidence identity that includes
+  dataset, profile, plan, code and dependency identity;
+- a completed invocation publishes immutable evidence and a later invocation
+  starts a fresh complete run;
+- computation-position resume is not exposed by the full evaluator;
+- snapshot and audit bytes are immutable and hash-verified;
+- newer live data cannot contaminate the current invocation;
+- metric-export retries do not duplicate or conflict with existing points;
+- duplicate concurrent execution cannot publish contradictory artifacts;
 - challenger lifecycle actions are logically exactly-once;
-- forced-crash hermetic runs equal uninterrupted golden results;
-- the full current-Xetra evaluation can be stopped and restarted without losing completed expensive work or changing its pinned dataset.
+- deterministic one-shot hermetic runs match their independent golden evidence;
+- an interrupted full current-Xetra invocation is rerun from the beginning.
