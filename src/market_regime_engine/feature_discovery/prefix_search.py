@@ -619,7 +619,7 @@ def search_ranked_prefixes(
     )
     evaluated_prefixes: tuple[_EvaluatedPrefix, ...]
     if prefix_worker_limit == 1:
-        evaluated_prefixes = (_evaluate_prefix(prefix_tasks[0]),)
+        evaluated_prefixes = tuple(_evaluate_prefix(task) for task in prefix_tasks)
     else:
         nested_limits = nested_worker_limits(total_worker_budget, prefix_worker_limit)
         scheduled_tasks = tuple(
