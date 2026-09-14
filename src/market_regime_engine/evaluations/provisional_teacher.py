@@ -223,6 +223,11 @@ def _evaluate_candidates(
             return {candidate_id: futures[candidate_id].result() for candidate_id in futures}
     if worker_limit == 1:
         return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
+    if seed_checkpoint_factory is None or runner is not run_provisional_gaussian_candidate:
+        raise RuntimeError(
+            "parallel provisional-teacher evaluation requires a pickleable CPU runner; "
+            "set max_workers=1 for an explicitly serial custom runner"
+        )
     with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
         futures = {
             candidate.candidate_id: thread_executor.submit(evaluate, candidate)

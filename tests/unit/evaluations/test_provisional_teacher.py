@@ -181,7 +181,7 @@ def test_teacher_runs_only_gaussian_candidates_on_one_shared_prototype_contract(
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
         runner=runner,
-        max_workers=2,
+        max_workers=1,
     )
 
     assert {call[0] for call in calls} == {

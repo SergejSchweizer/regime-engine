@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -103,33 +102,26 @@ def test_nested_prefixes_choose_by_teacher_nmi_not_cross_dimension_likelihood() 
     )
 
 
-def test_prefixes_run_concurrently_but_sink_preserves_ranked_order() -> None:
+def test_non_pickleable_parallel_prefix_runner_fails_closed(monkeypatch) -> None:
     rows = source_rows()
-    all_prefixes_started = threading.Barrier(3)
-    sink_order: list[int] = []
-
-    def synchronized_runner(frame, plan, profile, candidate, candidate_adapter_factory):
-        if candidate.state_count == 2:
-            try:
-                all_prefixes_started.wait(timeout=2.0)
-            except threading.BrokenBarrierError as exc:
-                raise AssertionError("prefix lengths were not evaluated concurrently") from exc
-        return fake_runner(frame, plan, profile, candidate, candidate_adapter_factory)
-
-    result = module.search_ranked_prefixes(
-        rows,
-        ranked_features=FEATURES,
-        teacher=teacher(rows),
-        profile=load_profile("configs/profiles/xetra_v4.yaml"),
-        runner=synchronized_runner,
-        max_workers=3,
-        evaluation_sink=lambda prefix_length, _candidate_id, _evaluation: sink_order.append(
-            prefix_length
-        ),
+    monkeypatch.setattr(
+        module,
+        "cpu_worker_count",
+        lambda requested, task_count=None: min(requested or 4, task_count or requested or 4),
     )
 
-    assert tuple(item.prefix_length for item in result.evaluations) == (2, 3, 4)
-    assert sink_order == [2, 3, 4]
+    def synchronized_runner(frame, plan, profile, candidate, candidate_adapter_factory):
+        return fake_runner(frame, plan, profile, candidate, candidate_adapter_factory)
+
+    with pytest.raises(RuntimeError, match="pickleable CPU runner"):
+        module.search_ranked_prefixes(
+            rows,
+            ranked_features=FEATURES,
+            teacher=teacher(rows),
+            profile=load_profile("configs/profiles/xetra_v4.yaml"),
+            runner=synchronized_runner,
+            max_workers=3,
+        )
 
 
 def test_prefix_evaluation_sink_exposes_selected_raw_candidate_without_persistence() -> None:
@@ -169,6 +161,7 @@ def test_prefix_clock_preflight_happens_before_any_candidate_runner() -> None:
             teacher=teacher(rows),
             profile=load_profile("configs/profiles/xetra_v4.yaml"),
             runner=runner,
+            max_workers=1,
         )
     assert calls == []
 
