@@ -271,6 +271,27 @@ def _default_runner(
     )
 
 
+def _threaded_child_worker_limits(
+    total_worker_budget: int,
+    task_count: int,
+) -> tuple[int, ...]:
+    """Partition child-process lanes for a thread-orchestrated candidate batch.
+
+    Checkpoint-aware candidates cannot cross a process boundary because their
+    live ledger handles are process-local.  The threads used in that path are
+    orchestration only; the expensive multistarts still run in child
+    processes.  Keep at least two child lanes per concurrent candidate when
+    possible so those fits remain outside the orchestrator's GIL, and assign
+    every requested lane exactly once within a batch.
+    """
+
+    if total_worker_budget < 1 or task_count < 1:
+        raise ValueError("worker budget and task count must be positive")
+    concurrent_tasks = min(task_count, max(1, total_worker_budget // 2))
+    baseline, remainder = divmod(total_worker_budget, concurrent_tasks)
+    return tuple(baseline + int(index < remainder) for index in range(concurrent_tasks))
+
+
 def evaluate_candidate_grid(
     source_rows: pd.DataFrame,
     *,
@@ -311,7 +332,10 @@ def evaluate_candidate_grid(
         )
     )
 
-    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+    def evaluate(
+        candidate: ResolvedCandidateProfile,
+        candidate_max_workers: int | None = max_workers,
+    ) -> WalkForwardEvaluation:
         candidate_adapter = (
             _default_adapter_builder(profile, candidate)
             if adapter_factory_builder is None
@@ -341,7 +365,7 @@ def evaluate_candidate_grid(
 
             def compute() -> WalkForwardEvaluation:
                 kwargs: dict[str, Any] = {
-                    "max_workers": max_workers,
+                    "max_workers": candidate_max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
                 if pca_raw_feature_order is not None:
@@ -381,7 +405,7 @@ def evaluate_candidate_grid(
             profile,
             candidate,
             candidate_adapter,
-            max_workers=max_workers,
+            max_workers=candidate_max_workers,
             pca_raw_feature_order=pca_raw_feature_order,
             pca_variance_threshold=pca_variance_threshold,
         )
@@ -421,13 +445,29 @@ def evaluate_candidate_grid(
             evaluations_by_id[candidate.candidate_id] for candidate in scheduled_candidates
         )
     elif worker_limit == 1:
-        evaluations = tuple(evaluate(candidate) for candidate in scheduled_candidates)
+        evaluations = tuple(
+            evaluate(candidate, total_worker_budget) for candidate in scheduled_candidates
+        )
     else:
-        with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
-            futures = [
-                thread_executor.submit(evaluate, candidate) for candidate in scheduled_candidates
-            ]
-            evaluations = tuple(future.result() for future in futures)
+        child_limits = _threaded_child_worker_limits(
+            total_worker_budget,
+            len(scheduled_candidates),
+        )
+        batch_size = len(child_limits)
+        threaded_results: list[WalkForwardEvaluation] = []
+        with ThreadPoolExecutor(max_workers=batch_size) as thread_executor:
+            for offset in range(0, len(scheduled_candidates), batch_size):
+                batch = scheduled_candidates[offset : offset + batch_size]
+                futures = [
+                    thread_executor.submit(evaluate, candidate, child_limits[index])
+                    for index, candidate in enumerate(batch)
+                ]
+                # Finish one budget-complete batch before assigning those CPU
+                # lanes again.  This prevents a fast candidate from starting
+                # a second nested pool while a slower peer still owns its
+                # share of the same host budget.
+                threaded_results.extend(future.result() for future in futures)
+        evaluations = tuple(threaded_results)
     by_candidate_id = {item.candidate_id: item for item in evaluations}
     expected_ids = expected_candidate_ids()
     if set(by_candidate_id) != set(expected_ids) or len(by_candidate_id) != len(evaluations):
