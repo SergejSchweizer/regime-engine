@@ -42,6 +42,118 @@ def _lineage() -> SourceLineage:
     )
 
 
+def _production_clock_source(
+    *, complete_row_count: int, row_count: int = 1449
+) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]:
+    lineage = SourceLineage(
+        source_dataset="regime_loader",
+        source_build_id="production-clock-build",
+        data_sha256="9" * 64,
+        schema_version=2,
+        feature_version=1,
+        source_table="regime_loader",
+        synced_at_utc=START,
+        row_count=row_count,
+        min_timestamp=START,
+        max_timestamp=START + timedelta(days=row_count - 1),
+    )
+    catalog = FeatureCatalogSnapshot.from_entries(
+        lineage,
+        "timestamp_m1",
+        tuple(
+            FeatureCatalogEntry(name, ordinal)
+            for ordinal, name in enumerate(("feature_a", "feature_b", "feature_c"), start=1)
+        ),
+    )
+    snapshot = FeatureSnapshot(
+        lineage,
+        catalog.feature_names,
+        tuple(
+            FeatureRow(
+                START + timedelta(days=index),
+                (
+                    float(index + 1),
+                    float((index % 17) ** 2 + index / 1000),
+                    float((index % 31) + index / 100),
+                )
+                if index < complete_row_count
+                else (float(index + 1), float(index % 17), None),
+            )
+            for index in range(row_count)
+        ),
+    )
+    return catalog.with_materialization(snapshot), snapshot
+
+
+def test_source_clock_preflight_accepts_a_structurally_eligible_synthetic_source() -> None:
+    catalog, snapshot = _production_clock_source(complete_row_count=1449)
+
+    potentially_valid = global_v4._require_production_eligible_source_clock(
+        catalog,
+        snapshot,
+        _raw_profile(),
+    )
+
+    assert potentially_valid == (1, 2, 3)
+
+
+def test_source_clock_preflight_preserves_the_eighty_percent_outer_gate() -> None:
+    catalog, complete_snapshot = _production_clock_source(
+        complete_row_count=1575,
+        row_count=1575,
+    )
+    snapshot = FeatureSnapshot(
+        complete_snapshot.lineage,
+        complete_snapshot.feature_names,
+        tuple(
+            FeatureRow(
+                row.timestamp,
+                (row.values[0], row.values[1], None)
+                if 1260 <= index < 1290
+                else row.values,
+            )
+            for index, row in enumerate(complete_snapshot.rows)
+        ),
+    )
+    catalog = FeatureCatalogSnapshot.from_entries(
+        snapshot.lineage,
+        "timestamp_m1",
+        catalog.entries,
+    ).with_materialization(snapshot)
+
+    potentially_valid = global_v4._require_production_eligible_source_clock(
+        catalog,
+        snapshot,
+        _raw_profile(),
+    )
+
+    assert potentially_valid == (2, 3, 4, 5)
+
+
+def test_current_source_clock_preflight_fails_before_pca(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, snapshot = _production_clock_source(complete_row_count=400)
+
+    class Source:
+        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+            assert request == FeatureRequest.all_features()
+            return catalog, snapshot
+
+    def unexpected_pca(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("PCA must not run after an impossible source-clock preflight")
+
+    monkeypatch.setattr(global_v4, "fit_and_materialize_pca_source", unexpected_pca)
+
+    with pytest.raises(RuntimeError, match="cannot satisfy production eligibility"):
+        global_v4.evaluate_global_regime_v4_from_source(
+            Source(),
+            profile=_raw_profile(),
+            require_production_eligible_source_clock=True,
+        )
+
+
 def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None:
     lineage = _lineage()
     catalog = FeatureCatalogSnapshot.from_entries(
