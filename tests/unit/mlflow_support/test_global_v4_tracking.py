@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from mlflow.tracking import MlflowClient
 
 import market_regime_engine.mlflow_support.evaluation_tracking as module
+import market_regime_engine.mlflow_support.tracking as tracking_module
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
@@ -354,6 +356,78 @@ def test_candidate_tracking_artifact_worker_writes_immutable_evidence_file(
 
     assert (candidate_dir / "candidate_evidence.json").read_bytes() == b'{"candidate":1}\n'
     assert not tuple(candidate_dir.glob("*.png"))
+
+
+def test_plot_preparation_pool_covers_candidate_and_parent_tasks_in_canonical_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluations = (
+        SimpleNamespace(candidate_id="candidate-b"),
+        SimpleNamespace(candidate_id="candidate-a"),
+    )
+    worker_requests: list[tuple[int | None, int]] = []
+    pool_sizes: list[int] = []
+    submissions: list[tuple[str, str]] = []
+
+    class ImmediateFuture:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class RecordingExecutor:
+        def submit(self, function: Any, *args: object) -> ImmediateFuture:
+            if function is tracking_module._render_candidate_artifacts:
+                evaluation = args[0]
+                assert isinstance(evaluation, SimpleNamespace)
+                candidate_id = str(evaluation.candidate_id)
+                submissions.append(("candidate", candidate_id))
+                return ImmediateFuture((f"candidate:{candidate_id}",))
+            plot_type = str(args[0])
+            submissions.append(("parent", plot_type))
+            return ImmediateFuture(f"parent:{plot_type}")
+
+    def record_worker_count(requested: int | None, *, task_count: int) -> int:
+        worker_requests.append((requested, task_count))
+        return task_count
+
+    @contextmanager
+    def recording_pool(max_workers: int):
+        pool_sizes.append(max_workers)
+        yield RecordingExecutor()
+
+    monkeypatch.setattr(tracking_module, "cpu_worker_count", record_worker_count)
+    monkeypatch.setattr(tracking_module, "cpu_process_pool", recording_pool)
+
+    by_candidate, parent_entries = tracking_module._prepare_plot_entries(
+        evaluations,
+        SimpleNamespace(),
+        tmp_path,
+        "candidate-a",
+        None,
+    )
+
+    assert worker_requests == [(None, 5)]
+    assert pool_sizes == [5]
+    assert submissions == [
+        ("candidate", "candidate-b"),
+        ("candidate", "candidate-a"),
+        ("parent", "candidate_comparison"),
+        ("parent", "candidate_oos_gap_heatmap"),
+        ("parent", "candidate_oos_summary"),
+    ]
+    assert tuple(by_candidate) == ("candidate-b", "candidate-a")
+    assert by_candidate == {
+        "candidate-b": ("candidate:candidate-b",),
+        "candidate-a": ("candidate:candidate-a",),
+    }
+    assert parent_entries == (
+        "parent:candidate_comparison",
+        "parent:candidate_oos_gap_heatmap",
+        "parent:candidate_oos_summary",
+    )
 
 
 def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarchy(
