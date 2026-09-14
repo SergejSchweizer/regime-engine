@@ -135,7 +135,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 ## Current repository state
 
-As of 2026-09-13, the primary worktree is on `main` and aligned with
+As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
 update. GitHub has no open PRs. PRs #270–#350
 are merged except #277, #284 and #317, which are closed without merge. The
@@ -173,7 +173,7 @@ still required.
 | PR-228 | IMPLEMENTED | Closed |
 | PR-229 | IMPLEMENTED | Closed |
 | PR-230 | IMPLEMENTED | Closed |
-| PR-231 | IMPLEMENTATION MERGED | Code-level proof QA merged in #346 and #352; acceptance open: full hermetic proof execution, rerun, mutation and likelihood evidence |
+| PR-231 | IMPLEMENTATION MERGED | Code-level proof QA merged in #346 and #352; current full-proof execution reached MLflow/plot assembly but failed the fixed golden contract (`c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924` vs expected `d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65`); rerun, mutation and likelihood acceptance remain open |
 | PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347 and snapshot-identity binding in #354; acceptance open: full current-Xetra computation and external audit evidence |
 | PR-233 | IMPLEMENTED | Operational use remains gated by PR-232 |
 | PR-234 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
@@ -214,6 +214,7 @@ still required.
 | PR-270 | IMPLEMENTED | Closed; independent audit artifact handoff |
 | GitHub #352 | MERGED | Acceptance hardening: hermetic proof contracts, snapshot/multistart interruption matrices, stage/MLflow resume parity, and explicit CI `-n auto`; full/external evidence remains open where noted above |
 | GitHub #354 | MERGED | Acceptance hardening: concurrent lease safety, randomized DAG restart, two-worker multistart, bound audit identity, runtime zero-legacy contract, and parallel fold tracking; full/external evidence remains open where noted above |
+| GitHub #356 | IN PROGRESS | Proof harness now captures selection/prefix evidence through the production process path; full run exposed a golden-hash determinism gap and is not yet merged |
 | PR-329 | IMPLEMENTED | Closed; process-parallel Spearman pair kernel |
 | PR-330 | IMPLEMENTED | Closed; process-parallel hierarchy-cut silhouettes |
 | PR-333 | IMPLEMENTED | Closed; process-parallel global diagnostic plot families |
@@ -276,6 +277,20 @@ The full fast non-external suite after these changes is `684 passed` under
 `pytest -n auto tests -m "not slow and not external"`. The remaining full
 current-Xetra, production-eligibility, external MLflow, and production
 runtime audit evidence is intentionally still open.
+
+### Acceptance follow-up #356 — in progress
+
+The PR-231 full-proof harness was changed to use the production
+`selection_sink`/`prefix_evaluation_sink` callbacks instead of monkeypatching
+the selector. This keeps the proof on the process-backed, GIL-independent
+outer-fold path while retaining complete in-memory evidence capture. The
+focused process/plot/training tests pass (`82 passed`). A current full run at
+the 86-worker budget completed computation, independent math checks and local
+MLflow/plot assembly, then exposed a golden snapshot mismatch: actual
+`c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`, expected
+`d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65`.
+The hash must be reconciled with a deterministic rerun before PR-231 is
+accepted; it must not be replaced solely to make the test green.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
