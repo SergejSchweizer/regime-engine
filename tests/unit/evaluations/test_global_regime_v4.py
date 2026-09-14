@@ -460,6 +460,7 @@ def test_global_policy_input_and_outer_continuation_failures_are_explicit(
         catalog=catalog,
         profile=profile,
         outer_runner=lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("fit failed")),
+        max_workers=1,
     )
     assert result.valid_fold_count == 0
     assert all(
@@ -503,11 +504,6 @@ def test_pickleable_custom_outer_callbacks_use_process_workers(
     monkeypatch.setattr(global_v4, "cpu_process_pool", _InlineProcessPool)
     monkeypatch.setattr(global_v4, "_evaluate_outer_fold_process", fake_process_fold)
 
-    class _UnexpectedThreadPool:
-        def __init__(self, **_kwargs: object) -> None:
-            raise AssertionError("pickleable outer callbacks must not use a thread pool")
-
-    monkeypatch.setattr(global_v4, "ThreadPoolExecutor", _UnexpectedThreadPool)
     result = global_v4.evaluate_global_regime_v4(
         rows,
         catalog=catalog,
@@ -578,6 +574,7 @@ def test_outer_policy_passes_only_train_rows_to_each_selection(
             Callable[..., FrozenTeacherRefit],
             lambda train, test, **kwargs: _teacher_refit(tuple(test["timestamp_m1"])),
         ),
+        max_workers=1,
     )
 
     assert sorted(seen_lengths) == [1260, 1323, 1386]
@@ -600,7 +597,12 @@ def test_failed_outer_selection_does_not_reuse_a_previous_configuration(
         raise ValueError(f"synthetic selection failure {calls}")
 
     monkeypatch.setattr(global_v4, "select_v4_configuration", fail_selection)
-    result = global_v4.evaluate_global_regime_v4(rows, catalog=catalog, profile=profile)
+    result = global_v4.evaluate_global_regime_v4(
+        rows,
+        catalog=catalog,
+        profile=profile,
+        max_workers=1,
+    )
 
     assert calls == 3
     assert result.valid_fold_count == 0

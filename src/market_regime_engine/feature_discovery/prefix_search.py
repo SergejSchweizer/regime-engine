@@ -131,7 +131,7 @@ def _threaded_child_worker_limits(
     total_worker_budget: int,
     task_count: int,
 ) -> tuple[int, ...]:
-    """Partition child-process lanes for thread-orchestrated candidate work."""
+    """Partition child-process lanes for checkpoint orchestration."""
 
     if total_worker_budget < 1 or task_count < 1:
         raise ValueError("worker budget and task count must be positive")
@@ -269,6 +269,11 @@ def _evaluate_candidates(
             candidate.candidate_id: evaluate(candidate, total_worker_budget)
             for candidate in candidates
         }
+    if seed_checkpoint_factory is None or runner is not run_prefix_gaussian_candidate:
+        raise RuntimeError(
+            "parallel prefix-candidate evaluation requires a pickleable CPU runner; "
+            "set max_workers=1 for an explicitly serial custom runner"
+        )
     child_limits = _threaded_child_worker_limits(total_worker_budget, len(candidates))
     evaluated: list[WalkForwardEvaluation] = []
     with ThreadPoolExecutor(max_workers=len(child_limits)) as thread_executor:
@@ -633,10 +638,15 @@ def search_ranked_prefixes(
                     for task in scheduled_tasks
                 )
                 evaluated_prefixes = tuple(future.result() for future in futures)
-        else:
+        elif seed_checkpoint_factory is not None and runner is run_prefix_gaussian_candidate:
             with ThreadPoolExecutor(max_workers=prefix_worker_limit) as executor:
                 futures = tuple(executor.submit(_evaluate_prefix, task) for task in scheduled_tasks)
                 evaluated_prefixes = tuple(future.result() for future in futures)
+        else:
+            raise RuntimeError(
+                "parallel prefix search requires a pickleable CPU runner; "
+                "set max_workers=1 for an explicitly serial custom runner"
+            )
     prefix_results: list[PrefixEvaluation] = []
     for result in evaluated_prefixes:
         prefix_evaluation = result.evaluation

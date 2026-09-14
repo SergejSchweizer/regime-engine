@@ -275,7 +275,7 @@ def _threaded_child_worker_limits(
     total_worker_budget: int,
     task_count: int,
 ) -> tuple[int, ...]:
-    """Partition child-process lanes for a thread-orchestrated candidate batch.
+    """Partition child-process lanes for checkpoint orchestration.
 
     Checkpoint-aware candidates cannot cross a process boundary because their
     live ledger handles are process-local.  The threads used in that path are
@@ -448,7 +448,7 @@ def evaluate_candidate_grid(
         evaluations = tuple(
             evaluate(candidate, total_worker_budget) for candidate in scheduled_candidates
         )
-    else:
+    elif seed_checkpoint_factory is not None and runner is _default_runner:
         child_limits = _threaded_child_worker_limits(
             total_worker_budget,
             len(scheduled_candidates),
@@ -468,6 +468,11 @@ def evaluate_candidate_grid(
                 # share of the same host budget.
                 threaded_results.extend(future.result() for future in futures)
         evaluations = tuple(threaded_results)
+    else:
+        raise RuntimeError(
+            "parallel candidate-grid evaluation requires pickleable CPU callbacks; "
+            "set max_workers=1 for an explicitly serial custom runner or adapter builder"
+        )
     by_candidate_id = {item.candidate_id: item for item in evaluations}
     expected_ids = expected_candidate_ids()
     if set(by_candidate_id) != set(expected_ids) or len(by_candidate_id) != len(evaluations):

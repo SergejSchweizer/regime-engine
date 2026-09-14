@@ -6,7 +6,6 @@ import multiprocessing
 import pickle
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -1442,11 +1441,10 @@ def evaluate_global_regime_v4(
     elif outer_worker_limit == 1:
         outer_results = [evaluate_fold(fold) for fold in outer_plan.folds]
     else:
-        with ThreadPoolExecutor(max_workers=outer_worker_limit) as executor:
-            futures = [executor.submit(evaluate_fold, fold) for fold in outer_plan.folds]
-            # Result order is part of the evaluation contract, independent of
-            # completion order and scheduler timing.
-            outer_results = [cast(OuterFoldResult, future.result()) for future in futures]
+        raise RuntimeError(
+            "parallel outer-fold evaluation requires pickleable CPU callbacks and the "
+            "canonical selection path; set max_workers=1 for explicitly serial custom callbacks"
+        )
 
     valid_folds = tuple(fold for fold in outer_results if fold.valid)
     nmi_values = tuple(
