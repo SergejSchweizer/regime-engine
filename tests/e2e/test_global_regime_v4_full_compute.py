@@ -22,7 +22,6 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_samples
 
 import market_regime_engine.evaluations.global_regime_v4 as global_v4
-import market_regime_engine.feature_discovery.prefix_search as prefix_search
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.evaluation_runs.math_audit import build_math_expectations
 from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
@@ -631,23 +630,17 @@ def _evaluate_with_selection_capture(
     profile: object,
 ) -> tuple[AdaptiveEvaluationResult, dict[int, object]]:
     captured: dict[int, object] = {}
-    original_selection = global_v4.select_v4_configuration
 
-    def capture_selection(train_rows: pd.DataFrame, **kwargs: object) -> object:
-        selection = original_selection(train_rows, **kwargs)
-        captured[len(train_rows)] = selection
-        return selection
+    def capture_selection(fold_index: int, selection: object) -> None:
+        captured[1260 + (fold_index - 1) * 63] = selection
 
-    global_v4.select_v4_configuration = capture_selection
-    try:
-        result = global_v4.evaluate_global_regime_v4(
-            rows,
-            catalog=catalog,
-            profile=profile,
-            max_workers=None,
-        )
-    finally:
-        global_v4.select_v4_configuration = original_selection
+    result = global_v4.evaluate_global_regime_v4(
+        rows,
+        catalog=catalog,
+        profile=profile,
+        max_workers=None,
+        selection_sink=capture_selection,
+    )
     return result, captured
 
 
@@ -803,48 +796,33 @@ def _lineage(fixture: SyntheticGlobalV4) -> SourceLineage:
 
 def test_global_v4_full_compute_and_independent_math_proof(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = build_synthetic_global_v4()
     profile = load_profile("configs/profiles/xetra_v4.yaml")
     captured: dict[int, object] = {}
     captured_prefix_evaluations: dict[tuple[int, int], dict[str, object]] = {}
-    original_selection = global_v4.select_v4_configuration
-    original_prefix_evaluate_candidates = prefix_search._evaluate_candidates
 
-    def capture_selection(train_rows: pd.DataFrame, **kwargs: object) -> object:
-        selection = original_selection(train_rows, **kwargs)
-        captured[len(train_rows)] = selection
-        return selection
+    def capture_selection(fold_index: int, selection: object) -> None:
+        captured[1260 + (fold_index - 1) * 63] = selection
 
     def capture_prefix_evaluations(
-        source_rows,
-        plan,
-        shared_profile,
-        candidates,
-        runner,
-        max_workers,
-    ):
-        evaluations = original_prefix_evaluate_candidates(
-            source_rows,
-            plan,
-            shared_profile,
-            candidates,
-            runner,
-            max_workers,
+        fold_index: int,
+        prefix_length: int,
+        candidate_id: str,
+        evaluation: object,
+    ) -> None:
+        train_count = 1260 + (fold_index - 1) * 63
+        captured_prefix_evaluations.setdefault((train_count, prefix_length), {})[candidate_id] = (
+            evaluation
         )
-        captured_prefix_evaluations[(len(source_rows), len(candidates[0].feature_order))] = (
-            evaluations
-        )
-        return evaluations
 
-    monkeypatch.setattr(global_v4, "select_v4_configuration", capture_selection)
-    monkeypatch.setattr(prefix_search, "_evaluate_candidates", capture_prefix_evaluations)
     result = global_v4.evaluate_global_regime_v4(
         fixture.rows,
         catalog=fixture.catalog,
         profile=profile,
         max_workers=None,
+        selection_sink=capture_selection,
+        prefix_evaluation_sink=capture_prefix_evaluations,
     )
 
     assert len(result.outer_folds) >= 3
