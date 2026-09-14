@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import market_regime_engine.training.candidate_grid as candidate_grid_module
 from market_regime_engine.evaluation.selection import select_statistical_champion
 from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
@@ -33,6 +34,7 @@ from market_regime_engine.training.candidate_grid import (
     CandidateAggregate,
     CandidateGridEvaluation,
     _default_adapter_builder,
+    _threaded_child_worker_limits,
     aggregate_candidate,
     evaluate_candidate_grid,
 )
@@ -302,6 +304,65 @@ def test_grid_default_adapter_factory_and_profile_derived_model_families() -> No
         ),
     )()
     assert isinstance(gmm, HmmlearnGMMHMMAdapter)
+
+
+@pytest.mark.parametrize(
+    ("total_worker_budget", "task_count", "expected"),
+    (
+        (1, 12, (1,)),
+        (4, 12, (2, 2)),
+        (86, 12, (8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7)),
+    ),
+)
+def test_threaded_child_worker_limits_partition_the_full_budget(
+    total_worker_budget: int,
+    task_count: int,
+    expected: tuple[int, ...],
+) -> None:
+    limits = _threaded_child_worker_limits(total_worker_budget, task_count)
+
+    assert limits == expected
+    assert sum(limits) == total_worker_budget
+    assert len(limits) <= task_count
+    assert all(limit >= 1 for limit in limits)
+    if len(limits) > 1:
+        assert all(limit >= 2 for limit in limits)
+
+
+def test_threaded_candidate_grid_forwards_budget_complete_child_limits(monkeypatch) -> None:
+    base, profile, plan = base_evaluation()
+    worker_counts: list[int | None] = []
+
+    def fake_walk_forward(
+        rows,
+        *,
+        plan,
+        profile,
+        candidate,
+        adapter_factory,
+        max_workers,
+        **kwargs,
+    ):
+        del rows, plan, profile, adapter_factory, kwargs
+        worker_counts.append(max_workers)
+        return replace(base, candidate_id=candidate.candidate_id, state_count=candidate.state_count)
+
+    monkeypatch.setattr(candidate_grid_module, "run_walk_forward_candidate", fake_walk_forward)
+
+    evaluate_candidate_grid(
+        source_rows(),
+        plan=plan,
+        profile=profile,
+        resolved_profile=resolved_profile(),
+        # A local builder is deliberately not pickleable, exercising the
+        # thread orchestrator used by checkpoint-aware runs.
+        adapter_factory_builder=lambda _candidate: DeterministicAdapter,
+        max_workers=4,
+        pca_raw_feature_order=FEATURES,
+    )
+
+    assert len(worker_counts) == len(EXPECTED_CANDIDATE_IDS)
+    assert set(worker_counts) == {2}
 
 
 def test_grid_rejects_an_unexpected_extra_candidate() -> None:
