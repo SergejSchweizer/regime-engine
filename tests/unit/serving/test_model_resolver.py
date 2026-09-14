@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from market_regime_engine.mlflow_support.model_package import save_production_package
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
@@ -346,3 +347,59 @@ def test_resolver_validates_alias_identity_and_configuration() -> None:
             profiles=custom,
             package_loader=wrong_version_loader,
         ).resolve("xetra")
+
+
+def test_file_backed_v4_alias_sequence_a_to_b_to_a_uses_exact_packages(
+    tmp_path: Path,
+) -> None:
+    package_a = save_production_package(artifact(build="v4-build-a"), tmp_path / "v4-a")
+    package_b = save_production_package(artifact(build="v4-build-b"), tmp_path / "v4-b")
+
+    class FileBackedAliasRegistry(FakeRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self.alias_version = "v4-a"
+            self.package_paths = {
+                "v4-a": package_a,
+                "v4-b": package_b,
+            }
+
+        def get_model_package_uri(self, model_name: str, exact_version: str) -> str:
+            self.package_calls.append(exact_version)
+            return self.package_paths[exact_version].as_uri()
+
+    registry = FileBackedAliasRegistry()
+    clock = Clock()
+    resolver = ModelResolver(
+        registry,
+        alias_ttl_seconds=10.0,
+        package_loader=model_resolver._load_mlflow_package,
+        clock=clock,
+    )
+
+    with resolver.resolve("xetra") as first:
+        assert first.exact_version == "v4-a"
+        assert first.artifact.profile_config_version == 4
+        assert first.artifact.source_build_id == "v4-build-a"
+
+    registry.alias_version = "v4-b"
+    clock.value = 111.0
+    with resolver.resolve("xetra") as promoted:
+        assert promoted.exact_version == "v4-b"
+        assert promoted.artifact.profile_config_version == 4
+        assert promoted.artifact.source_build_id == "v4-build-b"
+
+    registry.alias_version = "v4-a"
+    clock.value = 122.0
+    with resolver.resolve("xetra") as rolled_back:
+        assert rolled_back.exact_version == "v4-a"
+        assert rolled_back.artifact.source_build_id == "v4-build-a"
+
+    with resolver.resolve("xetra", exact_version="v4-b") as explicit_old_version:
+        assert explicit_old_version.exact_version == "v4-b"
+        assert explicit_old_version.resolved_via_alias is None
+        assert explicit_old_version.artifact.source_build_id == "v4-build-b"
+
+    # Each exact model version is loaded once and then served from its own
+    # cache entry; the alias sequence never relabels one cached artifact.
+    assert registry.package_calls == ["v4-a", "v4-b"]

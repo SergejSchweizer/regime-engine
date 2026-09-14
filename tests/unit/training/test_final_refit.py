@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -21,12 +22,15 @@ from market_regime_engine.models.gaussian_hmm import (
     HmmlearnGaussianHMMAdapter,
     HmmlearnGMMHMMAdapter,
 )
+from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
 from market_regime_engine.profiles.config import PCAConfig
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.states.alignment import StateAlignment
+from market_regime_engine.states.alignment import StateAlignment, align_first_fold
+from market_regime_engine.training import final_refit as final_refit_module
+from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.final_refit import (
     _aligned_artifact,
     _default_adapter_builder,
@@ -213,6 +217,23 @@ def source_rows(row_count: int = 1323) -> pd.DataFrame:
     )
 
 
+def real_source_rows(row_count: int = 1324) -> pd.DataFrame:
+    """Generate a deterministic, well-separated two-state real-fit fixture."""
+
+    rng = np.random.default_rng(402)
+    hidden = np.where((np.arange(row_count) // 47) % 2 == 0, -1.0, 1.0)
+    noise = rng.normal(0.0, 0.18, size=(row_count, 2))
+    values = hidden[:, None] * np.array((1.0, 0.75)) + noise
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    return pd.DataFrame(
+        {
+            "timestamp_m1": tuple(start + timedelta(days=index) for index in range(row_count)),
+            "f0": values[:, 0],
+            "f1": values[:, 1],
+        }
+    )
+
+
 def lineage(rows: pd.DataFrame) -> SourceLineage:
     return SourceLineage(
         source_dataset="regime_loader.regime_features_daily",
@@ -261,7 +282,9 @@ def deployment_selection(
     rows: pd.DataFrame,
     evaluation,
     feature_order: tuple[str, ...] = FEATURES,
+    candidate_profile: ResolvedCandidateProfile | None = None,
 ) -> DeploymentSelection:
+    selected_candidate = candidate_profile or candidate()
     return DeploymentSelection(
         source_build_id="build-1",
         source_catalog_hash="f" * 64,
@@ -269,9 +292,9 @@ def deployment_selection(
         deployment_selection_cutoff=rows["timestamp_m1"].iloc[-1],
         configuration=FinalSelectedConfiguration(
             feature_order=feature_order,
-            candidate_id="gaussian_hmm_k2_full",
-            state_count=2,
-            model_family="gaussian_hmm",
+            candidate_id=selected_candidate.candidate_id,
+            state_count=selected_candidate.state_count,
+            model_family=selected_candidate.model_family,
             selected_prefix_length=len(feature_order),
             feature_discovery_hash="a" * 64,
             source_build_id="build-1",
@@ -455,3 +478,139 @@ def test_refit_matrix_enforces_cutoff_reach_order_finiteness_and_minimum() -> No
             feature_order=FEATURES,
             evaluation_cutoff=short["timestamp_m1"].iloc[-1],
         )
+
+
+def real_family_candidate(model_family: str) -> ResolvedCandidateProfile:
+    if model_family == "gaussian_hmm":
+        return candidate()
+    if model_family == "gmm_hmm":
+        return replace(
+            candidate(),
+            candidate_id="gmm_hmm_k2_m2_full",
+            model_family="gmm_hmm",
+            mixture_count=2,
+        )
+    if model_family == "student_t_hmm":
+        return replace(
+            candidate(),
+            candidate_id="student_t_hmm_k2_full",
+            model_family="student_t_hmm",
+        )
+    raise AssertionError(f"unsupported real-fit family: {model_family}")
+
+
+@pytest.fixture
+def real_final_refit_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, ProductionModelArtifact]:
+    """Fit every production family through the actual final-refit assembler.
+
+    The family adapter itself is real in every case.  The existing multistart
+    matrix is covered independently; this fixture narrows that matrix to one
+    deterministic seed so the three-family package/canonicalization proof stays
+    a fast local QA test rather than duplicating the expensive eight-seed lane.
+    """
+
+    def one_real_start(
+        train_rows: object,
+        *,
+        state_count: int,
+        adapter_factory: object,
+        **_: object,
+    ) -> SimpleNamespace:
+        fit = adapter_factory().fit(train_rows, state_count, 11)  # type: ignore[union-attr]
+        return SimpleNamespace(winner=fit)
+
+    monkeypatch.setattr(final_refit_module, "run_multistart", one_real_start)
+
+    rows = real_source_rows()
+    profile = load_profile(PROFILE_CONFIG)
+    assert profile.student_t_hmm is not None
+    profile = replace(
+        profile,
+        student_t_hmm=replace(profile.student_t_hmm, n_iter=40, tol=1e-3),
+    )
+    baseline_evaluation = winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
+    artifacts: dict[str, ProductionModelArtifact] = {}
+    for model_family in ("gaussian_hmm", "gmm_hmm", "student_t_hmm"):
+        selected = real_family_candidate(model_family)
+        evaluation = replace(baseline_evaluation, candidate_id=selected.candidate_id)
+        artifacts[model_family] = final_production_refit(
+            rows,
+            lineage=lineage(rows),
+            candidate=selected,
+            winning_evaluation=evaluation,
+            deployment_selection=deployment_selection(
+                rows,
+                evaluation,
+                candidate_profile=selected,
+            ),
+            profile=profile,
+            adapter_factory_builder=lambda item: adapter_factory(profile, item),
+        )
+    return artifacts
+
+
+@pytest.mark.parametrize(
+    "model_family",
+    ("gaussian_hmm", "gmm_hmm", "student_t_hmm"),
+)
+def test_real_final_refit_families_produce_gated_artifacts(
+    model_family: str,
+    real_final_refit_artifacts: dict[str, ProductionModelArtifact],
+) -> None:
+    result = real_final_refit_artifacts[model_family]
+
+    assert result.hmm.model_family == model_family
+    assert result.state_identity_scope == "model_version_local"
+    assert result.retained_observation_count == 1324
+    assert result.winning_seed in (11, 23, 37, 53, 71, 89, 107, 131)
+    assert sum(result.terminal_filtered_probabilities) == pytest.approx(1.0)
+    assert result.hmm.feature_order == result.scaler.feature_order == FEATURES
+
+
+@pytest.mark.parametrize(
+    "model_family",
+    ("gaussian_hmm", "gmm_hmm", "student_t_hmm"),
+)
+def test_real_refit_state_permutations_canonicalize_identically(
+    model_family: str,
+    real_final_refit_artifacts: dict[str, ProductionModelArtifact],
+) -> None:
+    original = real_final_refit_artifacts[model_family].hmm
+    permutation = (1, 0)
+
+    permuted = replace(
+        original,
+        start_probabilities=tuple(original.start_probabilities[index] for index in permutation),
+        transition_matrix=tuple(
+            tuple(original.transition_matrix[row][column] for column in permutation)
+            for row in permutation
+        ),
+        means=tuple(original.means[index] for index in permutation),
+        full_covariances=tuple(original.full_covariances[index] for index in permutation),
+        mixture_weights=(
+            None
+            if original.mixture_weights is None
+            else tuple(original.mixture_weights[index] for index in permutation)
+        ),
+        mixture_means=(
+            None
+            if original.mixture_means is None
+            else tuple(original.mixture_means[index] for index in permutation)
+        ),
+        mixture_full_covariances=(
+            None
+            if original.mixture_full_covariances is None
+            else tuple(original.mixture_full_covariances[index] for index in permutation)
+        ),
+        degrees_of_freedom=(
+            None
+            if original.degrees_of_freedom is None
+            else tuple(original.degrees_of_freedom[index] for index in permutation)
+        ),
+    )
+
+    canonical_original = _aligned_artifact(original, align_first_fold(original))
+    canonical_permuted = _aligned_artifact(permuted, align_first_fold(permuted))
+    assert canonical_permuted == canonical_original
