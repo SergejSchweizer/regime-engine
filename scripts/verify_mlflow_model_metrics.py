@@ -93,6 +93,7 @@ class AuditCounts:
     model_source_run_status_violation_count: int
     nonterminal_run_count: int
     deleted_logged_model_count: int
+    deleted_logged_model_inventory_unavailable_count: int
     registered_model_count: int
     registered_model_version_count: int
 
@@ -176,13 +177,19 @@ def _search_all_registered_model_versions(client: MlflowClient) -> tuple[Any, ..
         page_token = str(next_token)
 
 
-def _deleted_logged_model_ids(client: MlflowClient) -> tuple[str, ...]:
-    """Return deleted LoggedModel IDs where the backend exposes that inventory."""
+def _deleted_logged_model_ids(client: MlflowClient) -> tuple[str, ...] | None:
+    """Return deleted IDs, or ``None`` when the backend cannot list them.
+
+    The SQLAlchemy store exposes a private inventory helper, while MLflow's
+    HTTP RestStore has no equivalent list-deleted-LoggedModels operation.
+    ``None`` is therefore different from an empty inventory: the verifier must
+    fail closed instead of treating an unobservable namespace as clean.
+    """
 
     store = getattr(getattr(client, "_tracking_client", None), "store", None)
     reader = getattr(store, "_get_deleted_logged_models", None)
     if not callable(reader):
-        return ()
+        return None
     return tuple(sorted(str(model_id) for model_id in reader(older_than=0)))
 
 
@@ -290,7 +297,7 @@ def _namespace_inventory(
     experiment_id: str,
     runs: tuple[Any, ...],
     models: tuple[Any, ...],
-    deleted_model_ids: tuple[str, ...],
+    deleted_model_ids: tuple[str, ...] | None,
     registered_models: tuple[Any, ...],
     registered_versions: tuple[Any, ...],
 ) -> dict[str, object]:
@@ -298,14 +305,17 @@ def _namespace_inventory(
 
     status_counts = Counter(str(run.info.status) for run in runs)
     lifecycle_counts = Counter(str(run.info.lifecycle_stage) for run in runs)
+    deleted_inventory_available = deleted_model_ids is not None
+    deleted_ids = () if deleted_model_ids is None else deleted_model_ids
     return {
         "experiment_id": experiment_id,
         "run_count": len(runs),
         "run_status_counts": dict(sorted(status_counts.items())),
         "run_lifecycle_counts": dict(sorted(lifecycle_counts.items())),
         "logged_model_count": len(models),
-        "deleted_logged_model_count": len(deleted_model_ids),
-        "deleted_logged_model_ids": list(deleted_model_ids),
+        "deleted_logged_model_inventory_available": deleted_inventory_available,
+        "deleted_logged_model_count": len(deleted_ids),
+        "deleted_logged_model_ids": list(deleted_ids),
         "registered_model_count": len(registered_models),
         "registered_model_names": sorted(str(model.name) for model in registered_models),
         "registered_model_version_count": len(registered_versions),
@@ -314,7 +324,9 @@ def _namespace_inventory(
         ),
         # Registered production packages are intentionally inventoried but
         # are not part of the evaluation-namespace zero-survivor condition.
-        "historical_objects_zero": not runs and not models and not deleted_model_ids,
+        "historical_objects_zero": (
+            deleted_inventory_available and not runs and not models and not deleted_ids
+        ),
     }
 
 
@@ -789,7 +801,8 @@ def audit(
             model_source_run_status_violation_count if require_terminal_model_runs else 0
         ),
         nonterminal_run_count=nonterminal_run_count,
-        deleted_logged_model_count=len(deleted_model_ids),
+        deleted_logged_model_count=len(deleted_model_ids or ()),
+        deleted_logged_model_inventory_unavailable_count=int(deleted_model_ids is None),
         registered_model_count=len(registered_models),
         registered_model_version_count=len(registered_versions),
     )
