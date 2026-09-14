@@ -354,6 +354,18 @@ still required.
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
+| PR-420 | PLANNED | K-specific champion-slot contract; not started |
+| PR-421 | PLANNED | K-specific TRAIN-only feature selection; not started |
+| PR-422 | PLANNED | Fixed-K Gaussian/GMM/Student-t family comparison; not started |
+| PR-423 | PLANNED | Four-slot outer-policy validation; not started |
+| PR-424 | PLANNED | Full-history per-K deployment selection and refit; not started |
+| PR-425 | PLANNED | MLflow K-slot registry, immutable versions and alias promotion; not started |
+| PR-426 | PLANNED | Per-K Model Metrics and comparison plots; not started |
+| PR-427 | PLANNED | Independent mathematical QA for K-specific selection; not started |
+| PR-428 | PLANNED | MLflow registry/promotion QA; not started |
+| PR-429 | PLANNED | Hermetic four-slot end-to-end QA; not started |
+| PR-430 | PLANNED | External four-slot production acceptance QA; not started |
+| PR-431 | IN_PROGRESS | Dimension-independent Cross-K score and MLflow metric projection; implementation branch created |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -1586,6 +1598,606 @@ QA:
 - [ ] Full repository gate.
 
 ---
+
+## Wave E — Per-K champion portfolio with K-specific features
+
+This wave adds a separately versioned selection policy. It must not silently
+change the existing v4 contract, because v4 compares all 12 final candidates
+on one shared feature vector. The new policy produces up to four independent
+champion slots (`K=2`, `K=3`, `K=4`, `K=5`). Each slot may have its own
+selected feature tuple and its own winning model family.
+
+The comparison domains are deliberately separated:
+
+1. **Within one K and one feature tuple:** Gaussian, GMM-HMM and Student-t
+   candidates may be compared with same-vector predictive evidence and
+   same-vector information criteria.
+2. **Across different feature tuples within one K:** raw PLL, AIC and BIC
+   may not be compared. Replacement uses a versioned, dimension-independent
+   K-specific promotion score based on valid-fold rate, causal soft-regime
+   agreement to the frozen K-specific reference teacher, worst-fold agreement
+   and common-support coverage.
+
+MLflow keeps immutable model versions. “Replace the model” means moving the
+alias `champion-k2`, `champion-k3`, `champion-k4` or `champion-k5`; the prior
+version remains available for audit and rollback. The existing default
+`champion` alias is not changed by this wave.
+
+### PR-420 — Define the versioned K-champion contract and registry slots
+
+- **Branch:** `pr/PR-420-k-champion-contract`
+- **Depends on:** PR-210, PR-228, PR-230, PR-233, PR-235, PR-238
+- **Parallel group:** E0; blocks the remaining Wave E implementation PRs
+- **Allowed:** `EVALUATION.md`, `MLFLOW_MODEL_METRICS.md`,
+  `src/market_regime_engine/contracts/core.py`,
+  `src/market_regime_engine/evaluations/k_champion_contract.py`,
+  `src/market_regime_engine/mlflow_support/k_champion_contract.py`,
+  corresponding unit tests and contract documentation
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Define an explicit versioned policy identifier for the K-champion
+  portfolio; existing `global_regime_v4` behavior remains unchanged.
+- [ ] Define exactly four legal slot IDs: `k2`, `k3`, `k4` and `k5`.
+- [ ] Define one immutable selection record per slot containing state count,
+  model family, ordered feature tuple, feature-order hash, source snapshot
+  identity, profile/policy version, validation cutoff, deployment cutoff,
+  comparison-domain ID, promotion-score version and artifact hash.
+- [ ] Define the allowed model families as Gaussian HMM, GMM-HMM and Student-t
+  HMM, with state count equal to the slot K.
+- [ ] Define `champion-k2`, `champion-k3`, `champion-k4` and `champion-k5` as
+  the only automatic promotion aliases; preserve the existing `champion`
+  alias and its route semantics.
+- [ ] Define the within-K same-feature selection score as the existing causal
+  predictive ranking: valid-fold gates, mean OOS predictive log likelihood,
+  population dispersion, worst fold, BIC, AIC and deterministic tie breaks.
+- [ ] Define the across-feature-set K-slot promotion score without raw PLL,
+  AIC or BIC: valid-fold rate, mean causal soft-regime NMI to the frozen
+  K-specific reference teacher, worst-fold NMI, then common support; define
+  direction, tolerance and deterministic tie behavior.
+- [ ] Require compared promotion candidates to share source build, validation
+  window, profile/policy version, score version and reference-teacher identity;
+  otherwise fail closed.
+- [ ] Define model versions as immutable and replacement as an alias move only;
+  deletion of the previous champion is forbidden.
+- [ ] Define idempotency keys for `(slot, source snapshot, policy hash,
+  feature-order hash, candidate identity, artifact hash)`.
+- [ ] Define explicit no-champion and ineligible-slot states; an ineligible K
+  must never receive a champion alias.
+
+QA:
+
+- [ ] Independent serialization tests reject K values outside 2–5, malformed
+  feature orders, missing hashes, invalid comparison domains and alias/slot
+  mismatches.
+- [ ] Independent contract tests prove raw likelihood/AIC/BIC comparison across
+  different feature dimensions is rejected.
+- [ ] Canonical JSON hashing excludes MLflow run IDs, timestamps and temporary
+  paths but includes all selection/provenance fields.
+- [ ] Mutation tests prove changing K, feature order, source snapshot, policy
+  version or score version changes the identity hash.
+- [ ] Tests prove an ineligible slot cannot produce a promotion instruction and
+  the legacy `champion` alias remains untouched.
+
+### PR-421 — Implement K-specific TRAIN-only feature selection
+
+- **Branch:** `pr/PR-421-k-specific-feature-selection`
+- **Depends on:** PR-220, PR-221, PR-222, PR-223, PR-224, PR-225, PR-226, PR-420
+- **Parallel group:** E1; one process task per K where dependencies allow
+- **Allowed:** `src/market_regime_engine/evaluations/k_feature_selection.py`,
+  `src/market_regime_engine/evaluations/global_regime_v4.py`,
+  `src/market_regime_engine/evaluations/provisional_teacher.py`,
+  `src/market_regime_engine/evaluations/prefix_search.py`,
+  corresponding unit/integration tests
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Add one reusable selector that accepts exactly one requested K in 2–5
+  and returns one K-specific feature-selection result.
+- [ ] Run quality filtering, global discovery, clustering and prototype
+  construction only from the supplied Outer-TRAIN data.
+- [ ] Force the provisional Gaussian reference teacher to the requested K; do
+  not select a different teacher K inside this selector.
+- [ ] Use causal Inner-Fold filtered probabilities from that frozen K teacher
+  for feature scoring and prefix selection.
+- [ ] Evaluate exactly `L=2..min(M*,8)` and choose one `L*_K` using the causal
+  soft-regime-NMI contract.
+- [ ] Return the ordered K-specific feature tuple, discovery hash, teacher
+  identity, prefix evidence and comparison-domain identity.
+- [ ] Never read, score, fit on or branch on Outer-TEST observations.
+- [ ] Never compare raw PLL, AIC or BIC across K-specific feature dimensions.
+- [ ] Fail closed if the requested K has no valid teacher, no eligible prefix,
+  insufficient support or an invalid feature tuple.
+- [ ] Make repeated execution on the same pinned input byte-identical apart
+  from operational timing/run metadata.
+- [ ] Expose four independent K tasks that can be process-parallelized while
+  preserving canonical K/result ordering.
+
+QA:
+
+- [ ] Real-HMM synthetic fixture runs K=2,3,4,5 without mocked fitting and
+  records four independently hashed feature-selection results.
+- [ ] Fixture proves at least two K values can select different feature tuples
+  without changing the other K results.
+- [ ] Future-row mutation cannot change earlier Inner-Fold selections or hashes.
+- [ ] Outer-TEST spy proves no selector callback receives Outer-TEST rows,
+  targets or metrics.
+- [ ] Randomized semantic/display labels leave all four statistical results
+  unchanged.
+- [ ] Independent prefix/NMI oracle reproduces every `L*_K` decision and tie.
+- [ ] Process-parallel and serial executions produce identical canonical results.
+
+### PR-422 — Select the best model family within each fixed-K feature tuple
+
+- **Branch:** `pr/PR-422-fixed-k-family-selection`
+- **Depends on:** PR-220, PR-227, PR-421
+- **Parallel group:** E2; K=2,3,4,5 tasks are independent
+- **Allowed:** `src/market_regime_engine/evaluations/k_family_grid.py`,
+  `src/market_regime_engine/evaluations/final_v4_grid.py`,
+  `src/market_regime_engine/training/candidate_grid.py`, corresponding tests
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] For each K, evaluate exactly three candidates on the exact same
+  K-specific feature tuple: Gaussian HMM K, GMM-HMM K/M=2 and Student-t HMM K.
+- [ ] Reuse existing adapters, multistart, causal filter and ranking kernels;
+  no duplicate HMM implementation is allowed.
+- [ ] Use the same Inner-Fold plan, timestamps, support and initialization
+  policy for all three families within one K.
+- [ ] Select one family per K using same-vector predictive ranking followed by
+  same-vector dispersion, worst fold, BIC, AIC and deterministic ties.
+- [ ] Return exactly one selected family or an explicit ineligible result for
+  each K; never silently fall back to another K.
+- [ ] Preserve the K-specific feature tuple and all source/policy hashes.
+- [ ] Emit candidate-level evidence for all three families even when one is
+  invalid, including its precise invalid reason.
+- [ ] Keep all four K computations independent and assemble results in K order.
+
+QA:
+
+- [ ] Independent same-vector reference computes family ranking for Gaussian,
+  GMM-HMM and Student-t candidates at each K.
+- [ ] Tests reject a reordered, missing or extra family candidate.
+- [ ] Tests prove family selection cannot change the K-specific feature tuple.
+- [ ] Synthetic fixtures cover valid, invalid, tied and non-finite outcomes
+  for every K.
+- [ ] Candidate completion-order permutations produce identical winner and
+  evidence bytes.
+- [ ] A cross-K comparison attempt fails with a precise comparison-domain error.
+
+### PR-423 — Validate the four K slots through the outer walk-forward
+
+- **Branch:** `pr/PR-423-k-champion-outer-validation`
+- **Depends on:** PR-420, PR-421, PR-422, PR-228
+- **Parallel group:** E3; one independent outer-policy task per K
+- **Allowed:** `src/market_regime_engine/evaluations/k_champion_outer.py`,
+  `src/market_regime_engine/evaluations/global_regime_v4.py`,
+  `src/market_regime_engine/evaluation_statistics/*`, corresponding tests
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Run the complete K-specific selection procedure independently for each
+  K inside every Outer-TRAIN.
+- [ ] Freeze `L*_K`, feature tuple, family and K before the corresponding
+  Outer-TEST is opened.
+- [ ] Refit each selected K-slot model on complete Outer-TRAIN and evaluate it
+  exactly once on that fold's Outer-TEST.
+- [ ] Record per-slot/per-fold OOS predictions, soft-regime agreement, support,
+  validity, stability and all provenance hashes.
+- [ ] Apply eligibility independently per K: valid-fold rate >=0.80, at least
+  three valid folds and a valid latest complete fold.
+- [ ] Mark an ineligible K explicitly and prohibit later refit or alias
+  promotion for that slot.
+- [ ] Aggregate only dimension-independent per-K policy evidence across folds;
+  never pool adaptive-fold raw PLL/AIC/BIC.
+- [ ] Do not choose one K over another; all four slots remain independently
+  reportable.
+- [ ] Provide deterministic process-parallel execution with canonical outer-fold
+  and K ordering.
+
+QA:
+
+- [ ] Three-or-more-fold real-HMM fixture produces four independent slot
+  dossiers and verifies every Outer-TEST is accessed once per eligible slot.
+- [ ] Future-TEST mutation cannot change any pre-TEST selection, feature hash
+  or selected family.
+- [ ] Per-K valid-fold gates reject exactly the intended invalid-slot cases.
+- [ ] Independent aggregation oracle reproduces validity, soft-NMI support and
+  stability summaries without importing the production aggregator.
+- [ ] Parallel and serial outer execution produce identical slot/fold hashes.
+- [ ] Tests prove the system never copies the last Outer-Fold configuration
+  into another slot or into deployment selection.
+
+### PR-424 — Perform full-history deployment selection and one refit per K
+
+- **Branch:** `pr/PR-424-k-champion-deployment-refit`
+- **Depends on:** PR-233, PR-235, PR-423
+- **Parallel group:** E4; eligible K slots are independent
+- **Allowed:** `src/market_regime_engine/evaluations/k_deployment_selection.py`,
+  `src/market_regime_engine/training/final_refit.py`,
+  `src/market_regime_engine/mlflow_support/model_package.py`, corresponding tests
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Require completed four-slot outer validation and independently check
+  eligibility before starting deployment selection.
+- [ ] Rerun the exact K-specific TRAIN-only selection function for every
+  eligible K on all source rows through `source.max_timestamp`.
+- [ ] Never copy the last Outer-Fold feature tuple, family or model state.
+- [ ] Refit exactly one selected model per eligible K on complete deployment
+  data through the source cutoff.
+- [ ] Produce one immutable package per eligible slot containing selected
+  feature tuple, family, K, scaling, model parameters, state ordering and all
+  lineage hashes.
+- [ ] Produce no package for an ineligible K slot and record the reason.
+- [ ] Keep validation and deployment-selection cutoffs distinct and enforce
+  source/build/catalog identity.
+- [ ] Do not mutate MLflow registry aliases in this PR.
+- [ ] Assemble independent refits with deterministic ordering and bounded
+  process workers where the backend is pickle-safe.
+
+QA:
+
+- [ ] Full-history synthetic fixture proves exactly one final package per
+  eligible K and no package for an ineligible K.
+- [ ] Appending data changes deployment selection only when the TRAIN-only
+  evidence justifies that change.
+- [ ] Source cutoff, catalog, feature-order and policy-hash mutations fail
+  closed before fitting.
+- [ ] Package round-trip reproduces all selected models and feature tuples.
+- [ ] Spawned-process and serial refits produce identical model/evidence hashes
+  with native numerical threads capped at one.
+
+### PR-425 — Register K-slot models and promote better candidates by alias
+
+- **Branch:** `pr/PR-425-k-slot-mlflow-promotion`
+- **Depends on:** PR-420, PR-424, existing PR-237 and PR-238 registry/CAS contracts
+- **Parallel group:** E5; package preparation is per K, registry writes are
+  canonicalized and serialized per registry namespace
+- **Allowed:** `src/market_regime_engine/mlflow_support/registry.py`,
+  `src/market_regime_engine/mlflow_support/model_publishing.py`,
+  `src/market_regime_engine/commands/lifecycle.py`, corresponding tests and
+  registry documentation
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Register every eligible final package under `regime-xetra` with a
+  matching `champion-k2`/`champion-k3`/`champion-k4`/`champion-k5` alias.
+- [ ] Create a new immutable MLflow model version for a new artifact; never
+  overwrite model-version contents.
+- [ ] Compare a new candidate only with the incumbent in the same K slot and
+  only when source, policy, score version, validation window and reference
+  teacher identity are compatible.
+- [ ] Use the exact PR-420 promotion tuple; do not use raw PLL/AIC/BIC when
+  candidate feature dimensions differ.
+- [ ] Move a K alias only for a strictly better score or explicitly versioned
+  first promotion; deterministic ties leave the incumbent unchanged.
+- [ ] Implement compare-and-swap so concurrent promotions cannot overwrite a
+  newer incumbent.
+- [ ] Reject stale candidates whose expected incumbent version no longer
+  matches the registry.
+- [ ] Make repeated publication idempotent and prevent duplicate versions for
+  one idempotency key.
+- [ ] Preserve the previous alias target for rollback and never delete it as
+  part of promotion.
+- [ ] Leave the existing default `champion` alias unchanged.
+- [ ] Emit a machine-readable promotion decision with old/new versions, K,
+  score tuple, comparison-domain ID, reason and repository SHA.
+
+QA:
+
+- [ ] File-backed MLflow tests cover first promotion, better, worse, exact tie,
+  stale candidate, incompatible domain and failed CAS.
+- [ ] Concurrent promotion tests prove only one winner can move a K alias.
+- [ ] Idempotency tests prove retries do not create duplicate versions or alias
+  history entries.
+- [ ] Rollback tests restore one K slot without affecting the other slots or
+  the default `champion` alias.
+- [ ] Tests prove model-version artifacts are immutable after registration.
+- [ ] Registry inventory tests verify every alias target has matching K,
+  feature and provenance tags.
+
+### PR-426 — Emit per-K Model Metrics and comparison plots
+
+- **Branch:** `pr/PR-426-k-slot-model-metrics-plots`
+- **Depends on:** PR-422, PR-423, PR-424, existing PR-247–PR-260
+- **Parallel group:** E6; payload preparation is process-parallel, MLflow writes
+  remain canonicalized
+- **Allowed:** `src/market_regime_engine/mlflow_support/metric_catalog.py`,
+  `src/market_regime_engine/mlflow_support/evaluation_tracking.py`,
+  `src/market_regime_engine/mlflow_support/plot_data.py`,
+  `src/market_regime_engine/evaluations/plots.py`, corresponding tests and
+  `MLFLOW_MODEL_METRICS.md`
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Add slot metadata (`slot_id`, K, feature-order hash, policy version and
+  comparison-domain ID) to every K-specific candidate LoggedModel.
+- [ ] Emit candidate Model Metrics for Gaussian/GMM/Student-t at each K on
+  that K's shared feature tuple.
+- [ ] Emit one selected/final Model Metrics projection per eligible K and no
+  selected projection for an ineligible slot.
+- [ ] Preserve raw fold/seed histories and aggregates; no chart-only metric
+  may be invented from a summary value.
+- [ ] Generate separate compatible comparison plots for K=2, K=3, K=4 and
+  K=5, with the three families visible within each K.
+- [ ] Reject a single raw PLL/AIC/BIC plot combining different K-specific
+  feature dimensions.
+- [ ] Allow cross-K plots only for explicitly dimension-independent catalogued
+  metrics whose comparison domain permits it.
+- [ ] Include exact LoggedModel IDs, feature hashes, source hashes, metric
+  catalog version and canonical payload hash in every plot manifest.
+- [ ] Build plot data from Model Metrics/catalogued artifacts only; plotting
+  must not refit models or reread source data.
+- [ ] Make metric and plot payload preparation process-parallelizable while
+  keeping MLflow side effects ordered and idempotent.
+
+QA:
+
+- [ ] File-backed fixture contains all four K slots and all three families;
+  every supported per-K plot regenerates exactly from Model Metrics.
+- [ ] Tests reject mixed feature dimensions for raw likelihood/AIC/BIC plots.
+- [ ] Completion-order, LoggedModel-ID and process-count permutations produce
+  identical canonical metric/plot payload hashes.
+- [ ] Missing, duplicate, conflicting and unknown metric points fail closed.
+- [ ] Ineligible K slots produce explicit unavailable status rather than an
+  empty or fabricated plot.
+- [ ] Plot manifests prove no evaluation recomputation occurred.
+
+### PR-427 — Independent mathematical QA for K-specific selection
+
+- **Branch:** `pr/PR-427-k-specific-selection-math-qa`
+- **Depends on:** PR-421, PR-422, PR-423
+- **Parallel group:** Q1; independent of MLflow registry implementation
+- **Allowed:** `scripts/verify_k_champion_math.py`,
+  `tests/qa/test_k_champion_math.py`, `docs/qa/k_champion_math.md`
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Implement an independent reference for K-specific prefix selection,
+  soft-regime-NMI, support, valid-fold aggregation and same-vector family
+  ranking without importing production selection functions.
+- [ ] Verify K=2,3,4,5, every permitted prefix, all three families and all
+  deterministic tie rules.
+- [ ] Verify feature-order, state-label and completion-order invariance where
+  the contract claims invariance.
+- [ ] Verify raw PLL/AIC/BIC cross-dimension comparisons are rejected.
+- [ ] Verify exact provenance/hash cross-links for every K slot and fold.
+
+QA:
+
+- [ ] Hand-calculated small fixtures reproduce all reference formulas exactly.
+- [ ] Adversarial fixtures cover tied ranks, missingness, singleton clusters,
+  invalid support, non-finite values, tied scores and state permutations.
+- [ ] Mutation tests change one primitive input at a time and identify the
+  expected changed evidence/hash.
+- [ ] The production reference code is not imported by the independent oracle,
+  except for shared typed input contracts.
+- [ ] The QA report records commands, versions, seeds, hashes and exit codes.
+
+### PR-428 — MLflow registry, alias and replacement QA
+
+- **Branch:** `pr/PR-428-k-slot-mlflow-qa`
+- **Depends on:** PR-425
+- **Parallel group:** Q2; independent of the math oracle
+- **Allowed:** `tests/qa/test_k_slot_registry.py`,
+  `tests/integration/mlflow_support/test_k_slot_promotion.py`,
+  `docs/qa/k_slot_mlflow.md`
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Verify the four aliases map only to matching K values and never
+  cross-promote.
+- [ ] Verify each new artifact creates one immutable version and retries are
+  idempotent.
+- [ ] Verify better/worse/tied candidates, stale incumbents, incompatible
+  comparison domains, failed registration and failed CAS behavior.
+- [ ] Verify rollback restores one K slot without changing the other three or
+  the default `champion` alias.
+- [ ] Verify registered-version tags exactly match package provenance and
+  selection evidence.
+
+QA:
+
+- [ ] Run the full matrix of four slots × first/better/worse/tie/stale/CAS
+  outcomes against a disposable file-backed MLflow registry.
+- [ ] Run deterministic concurrent promotion races with at least two workers
+  per slot and prove one linearizable winner.
+- [ ] Kill/retry publication at each side-effect boundary and prove no alias
+  points to a missing or mismatched artifact.
+- [ ] Verify the external NAS path is not contacted by required CI tests.
+
+### PR-429 — Hermetic four-slot end-to-end QA
+
+- **Branch:** `pr/PR-429-k-champion-hermetic-e2e-qa`
+- **Depends on:** PR-421, PR-422, PR-423, PR-424, PR-425, PR-426, PR-427, PR-428
+- **Parallel group:** Q3; final local hermetic acceptance
+- **Allowed:** `tests/e2e/test_k_champion_portfolio.py`,
+  `tests/fixtures/k_champion/*`, `docs/qa/k_champion_e2e.md`
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Run real Gaussian, GMM-HMM and Student-t computations for K=2,3,4,5;
+  no HMM math or selection mocks are allowed.
+- [ ] Prove each K can carry its own feature tuple and still compares all
+  three families on one shared tuple within that K.
+- [ ] Execute multiple expanding Outer-Folds and prove one frozen selection,
+  one refit and one Outer-TEST evaluation per K and fold.
+- [ ] Prove exactly one final package, one selected LoggedModel and one
+  candidate alias target per eligible K.
+- [ ] Prove ineligible K slots produce no package, no selected model and no
+  champion alias.
+- [ ] Prove all Model Metrics and per-K plots are complete, deterministic and
+  sourced without recomputation.
+- [ ] Repeat the hermetic run in an independent process and compare canonical
+  evidence/artifact hashes.
+- [ ] Prove future-data mutation cannot alter earlier selections, promotion
+  scores or packages.
+
+QA:
+
+- [ ] Run the full fixture with native numerical thread pools capped at one
+  and record CPU topology, worker budget, wall time, exit code and hashes.
+- [ ] Compare process-parallel and serial results byte-for-byte after removing
+  operational IDs/timestamps.
+- [ ] Verify every K/family/fold/metric/plot count from an independent
+  expectation manifest.
+- [ ] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
+  is produced.
+- [ ] Verify the existing v4 single-champion path remains unchanged.
+
+### PR-430 — External four-slot production acceptance QA
+
+- **Branch:** `pr/PR-430-k-champion-external-acceptance`
+- **Depends on:** PR-232, PR-250, PR-253, PR-424, PR-425, PR-426, PR-429
+- **Parallel group:** Q4; manual/scheduled release acceptance only
+- **Allowed:** `scripts/verify_k_champion_external.py`,
+  `scripts/publish_hmm_model.py`, `scripts/verify_mlflow_model_metrics.py`,
+  `tests/external/test_k_champion_external.py`,
+  `docs/qa/k_champion_external.md`
+- **Status:** planned; not started
+
+Acceptance:
+
+- [ ] Require accepted current-source audit, complete Model Metrics evidence
+  and zero-legacy/runtime acceptance before any production alias mutation.
+- [ ] Capture one immutable current source snapshot and verify all four K-slot
+  packages use that exact source/build/catalog identity.
+- [ ] Verify the external MLflow namespace/inventory decision before writing;
+  do not delete historical objects implicitly.
+- [ ] Publish one candidate package per eligible K to external MLflow and
+  verify artifact, feature, K, family and lineage tags remotely.
+- [ ] Verify `champion-k2` through `champion-k5` point only to matching K
+  versions and the default `champion` alias is unchanged.
+- [ ] Execute better/worse/tie replacement and rollback only in an isolated,
+  explicitly authorized acceptance namespace or documented dry-run mode.
+- [ ] Verify serving resolves each K alias to the exact model version and
+  rejects missing, stale, cross-K and mismatched-provenance targets.
+- [ ] Persist remote model-version IDs, aliases, artifact hashes, source hashes,
+  promotion decisions, commands, timestamps and exit codes.
+- [ ] If any K fails production eligibility, leave that alias absent and keep
+  the failure evidence visible; never weaken the gate.
+
+QA:
+
+- [ ] Run only as an explicit external/manual/scheduled workflow; it is not a
+  required ordinary pull-request check.
+- [ ] Independent read-back verifies registry state, package hashes, alias
+  targets and Model Metrics provenance without trusting the publishing log.
+- [ ] Verify a second read-only process obtains identical remote state.
+- [ ] Verify failed publication leaves every existing alias unchanged.
+- [ ] Verify v4 legacy objects and unrelated MLflow experiments are outside the
+  mutation scope and are reported, not deleted.
+
+### PR-431 — Implement the dimension-independent Cross-K score
+
+- **Branch:** `pr/PR-431-cross-k-score`
+- **Depends on:** PR-420, PR-423, PR-426 and PR-427
+- **Parallel group:** E7; one score computation per K can run independently
+- **Allowed:** `src/market_regime_engine/evaluations/k_score.py`,
+  `src/market_regime_engine/mlflow_support/metric_catalog.py`,
+  `tests/unit/evaluation/test_k_score.py`
+- **Status:** in progress; implementation branch created
+
+Acceptance:
+
+- [ ] Define the immutable version `cross_k_score.v1` and legal K values
+  `2, 3, 4, 5`.
+- [ ] Accept K-specific feature-order hashes without comparing their raw
+  vector likelihoods; require identical source build, evaluation plan,
+  target metric, target horizon and Outer-TEST fold identities across K.
+- [ ] Use only one common scalar target forecast per Outer-TEST fold, such as
+  next-return predictive log score, plus one identical per-fold baseline.
+- [ ] Compute the bounded forecast component as
+  `0.5 + 0.5 * tanh(model_target_log_score - baseline_target_log_score)`.
+- [ ] Compute calibration as `1 - calibration_error`, with calibration error
+  constrained to `[0, 1]`.
+- [ ] Compute stability and support components in `[0, 1]` and calculate
+  robustness as `0.50 * valid_fold_rate + 0.25 * worst_forecast_score +
+  0.25 * mean_support_score`.
+- [ ] Calculate the total as `0.50 * forecast + 0.20 * calibration +
+  0.20 * stability + 0.10 * robustness - 0.01 * (K - 2)`.
+- [ ] Apply eligibility gates independently per K: valid-fold rate >=0.80,
+  at least three valid Outer-Folds and a valid latest complete fold.
+- [ ] Return explicit rejection reasons and an explicit no-winner state when
+  no K passes the gates; never fabricate a total score for an ineligible K.
+- [ ] Rank eligible K values deterministically by total score, forecast score,
+  worst-fold forecast score, calibration, stability, robustness and finally
+  lower K; use the fixed `1e-12` numeric tolerance.
+- [ ] Project every available K score component and eligibility flag to
+  registered MLflow Model Metrics keys `k_score_*_k2` through `k_score_*_k5`;
+  emit no total score for an ineligible K.
+- [ ] Make canonical JSON and SHA-256 evidence independent of run IDs,
+  timestamps and completion order; preserve each K's feature-order hash.
+- [ ] Keep this ranking diagnostic/global-comparison-only: it must not mutate
+  the existing `champion` alias or replace the independent `champion-k2` to
+  `champion-k5` aliases.
+
+QA:
+
+- [ ] Unit tests verify all formulas against hand-calculated fixtures,
+  including the bounded target-log-score transform and complexity penalty.
+- [ ] Tests verify different feature hashes are accepted while mismatched
+  source, plan, target, horizon, fold IDs or baselines fail closed.
+- [ ] Tests cover zero valid folds, below-80-percent rate, fewer than three
+  valid folds, invalid latest fold, non-finite values and partial invalid
+  evidence.
+- [ ] Tests cover every ranking tie-break and deterministic K ordering.
+- [ ] Tests prove ineligible K values cannot win and no-winner evidence is
+  explicit.
+- [ ] Metric-catalog tests verify every emitted Model Metric key is registered,
+  unique and finite, including ineligible-slot projections.
+- [ ] Canonical hash tests prove K/feature/evidence mutations change the hash
+  while input ordering and operational metadata do not.
+- [ ] Run serial and process-parallel candidate calculations and compare
+  canonical results byte-for-byte.
+
+### Wave E execution graph
+
+```mermaid
+flowchart TD
+    P420[420 K-champion contract] --> P421[421 K-specific feature selection]
+    P420 --> P425[425 MLflow K-slot promotion]
+    P421 --> P422[422 fixed-K family selection]
+    P422 --> P423[423 four-slot outer validation]
+    P423 --> P424[424 full-history K refit]
+    P424 --> P425
+    P422 --> P426[426 K-slot Model Metrics/plots]
+    P423 --> P426
+    P424 --> P426
+    P421 --> P427[427 independent math QA]
+    P422 --> P427
+    P423 --> P427
+    P425 --> P428[428 registry/promotion QA]
+    P424 --> P429[429 hermetic E2E QA]
+    P425 --> P429
+    P426 --> P429
+    P427 --> P429
+    P428 --> P429
+    P429 --> P430[430 external production QA]
+    P423 --> P431[431 Cross-K score]
+    P426 --> P431
+    P427 --> P431
+    P232 --> P430
+    P250 --> P430
+    P253 --> P430
+```
+
+Parallelization rule: run K=2,3,4,5 as independent process-safe tasks in
+PR-421, PR-422, PR-423 and PR-424. Prepare metric/plot payloads in parallel
+in PR-426, and run PR-427 and PR-428 in parallel after their implementation
+dependencies. Only deterministic MLflow side effects and alias moves are
+serialized per registry namespace.
 
 # 5. Parallel execution graph
 
