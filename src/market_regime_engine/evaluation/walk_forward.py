@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
@@ -24,6 +24,7 @@ from market_regime_engine.evaluation.diagnostics import (
     validate_train_occupancy,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.inference.predictive_likelihood import (
     continued_test_predictive_likelihood,
@@ -37,6 +38,7 @@ from market_regime_engine.preprocessing.two_stage import (
     fit_pca_hmm_scaler,
 )
 from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
 from market_regime_engine.states.alignment import (
     StateAlignment,
     align_first_fold,
@@ -82,6 +84,43 @@ class WalkForwardCandidate(Protocol):
 
     @property
     def original_feature_universe(self) -> tuple[str, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _SingleFoldTask:
+    """Pickle-safe payload for one independent fold-local computation."""
+
+    source_rows: pd.DataFrame
+    fold: WalkForwardFold
+    plan_hash: str
+    profile: ModelProfile
+    candidate: WalkForwardCandidate
+    adapter_factory: AdapterFactory
+    max_workers: int
+    pca_raw_feature_order: tuple[str, ...] | None
+    pca_variance_threshold: float
+
+
+def _evaluate_single_fold_process(task: _SingleFoldTask) -> WalkForwardFoldResult:
+    """Run one fold outside the caller's interpreter/GIL."""
+
+    one_fold_plan = WalkForwardPlan(
+        folds=(task.fold,),
+        evaluation_cutoff=task.fold.test_end,
+        plan_hash=task.plan_hash,
+    )
+    evaluation = run_walk_forward_candidate(
+        task.source_rows,
+        plan=one_fold_plan,
+        profile=task.profile,
+        candidate=task.candidate,
+        adapter_factory=task.adapter_factory,
+        max_workers=task.max_workers,
+        pca_raw_feature_order=task.pca_raw_feature_order,
+        pca_variance_threshold=task.pca_variance_threshold,
+        _fold_order_offset=task.fold.fold_index - 1,
+    )
+    return evaluation.folds[0]
 
 
 def _require_utc(value: datetime, field_name: str) -> datetime:
@@ -219,6 +258,7 @@ class WalkForwardEvaluation:
     evaluation_cutoff: datetime
     folds: tuple[WalkForwardFoldResult, ...]
     alignment_reference_scaler: StandardScalerArtifact | None = None
+    _fold_order_offset: int = 0
 
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version != 4:
@@ -238,7 +278,7 @@ class WalkForwardEvaluation:
         if not self.folds:
             raise ValueError("walk-forward evaluation requires at least one planned fold")
         if tuple(result.fold_index for result in self.folds) != tuple(
-            range(1, len(self.folds) + 1)
+            range(self._fold_order_offset + 1, self._fold_order_offset + len(self.folds) + 1)
         ):
             raise ValueError("walk-forward results must preserve complete planned fold order")
         _require_utc(self.evaluation_cutoff, "evaluation_cutoff")
@@ -504,6 +544,94 @@ def _invalid_fold_result(
     )
 
 
+def _fitted_order_values(
+    values: tuple[float, ...],
+    alignment: StateAlignment,
+) -> tuple[float, ...]:
+    """Undo a fold-local persistent-state permutation into fitted order."""
+
+    inverse = [0] * len(alignment.persistent_to_fitted)
+    for persistent_index, fitted_index in enumerate(alignment.persistent_to_fitted):
+        inverse[fitted_index] = persistent_index
+    return tuple(values[index] for index in inverse)
+
+
+def _fitted_order_probabilities(
+    values: tuple[tuple[float, ...], ...],
+    alignment: StateAlignment,
+) -> np.ndarray:
+    """Undo a fold-local persistent-state permutation for OOS probabilities."""
+
+    inverse = [0] * len(alignment.persistent_to_fitted)
+    for persistent_index, fitted_index in enumerate(alignment.persistent_to_fitted):
+        inverse[fitted_index] = persistent_index
+    result = np.asarray(values, dtype=np.float64)[:, inverse]
+    if not np.all(np.isfinite(result)):
+        raise ValueError("fold-local OOS probabilities must be finite")
+    return result
+
+
+def _reconcile_parallel_fold(
+    fold_result: WalkForwardFoldResult,
+    *,
+    reference_signatures: tuple[StateSignature, ...] | None,
+    reference_scaler: StandardScalerArtifact | None,
+) -> tuple[WalkForwardFoldResult, tuple[StateSignature, ...] | None, StandardScalerArtifact | None]:
+    """Reconcile one independent fold into the canonical sequential state space."""
+
+    if not fold_result.valid:
+        return fold_result, reference_signatures, reference_scaler
+    if fold_result.model_artifact is None or fold_result.scaler_artifact is None:
+        raise ValueError("valid parallel fold is missing model/scaler evidence")
+    local_alignment = fold_result.alignment
+    if local_alignment is None:
+        raise ValueError("valid parallel fold is missing local state alignment")
+    resolved_reference_scaler = reference_scaler or fold_result.scaler_artifact
+    if reference_signatures is None:
+        alignment = align_first_fold(
+            fold_result.model_artifact,
+            fold_result.scaler_artifact,
+            resolved_reference_scaler,
+        )
+    else:
+        alignment = align_to_reference(
+            fold_result.model_artifact,
+            reference_signatures,
+            fold_result.scaler_artifact,
+            resolved_reference_scaler,
+        )
+    if fold_result.train_hard_occupancy is None or fold_result.train_soft_occupancy is None:
+        raise ValueError("valid parallel fold is missing TRAIN occupancy evidence")
+    fitted_train_hard = _fitted_order_values(fold_result.train_hard_occupancy, local_alignment)
+    fitted_train_soft = _fitted_order_values(fold_result.train_soft_occupancy, local_alignment)
+    fitted_oos = _fitted_order_probabilities(
+        fold_result.oos_filtered_probabilities,
+        local_alignment,
+    )
+    aligned_train = _aligned_occupancy(
+        OccupancyDiagnostics(hard=fitted_train_hard, soft=fitted_train_soft),
+        alignment,
+    )
+    aligned_oos = _aligned_probabilities(fitted_oos, alignment)
+    aligned_oos_occupancy = _aligned_occupancy(occupancy(fitted_oos), alignment)
+    return (
+        replace(
+            fold_result,
+            alignment=alignment,
+            train_hard_occupancy=aligned_train.hard,
+            train_soft_occupancy=aligned_train.soft,
+            oos_hard_occupancy=aligned_oos_occupancy.hard,
+            oos_soft_occupancy=aligned_oos_occupancy.soft,
+            max_state_signature_drift=alignment.max_drift,
+            oos_filtered_probabilities=tuple(
+                tuple(float(value) for value in row) for row in aligned_oos
+            ),
+        ),
+        alignment.aligned_signatures,
+        resolved_reference_scaler,
+    )
+
+
 def run_walk_forward_candidate(
     source_rows: pd.DataFrame,
     *,
@@ -515,6 +643,7 @@ def run_walk_forward_candidate(
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
+    _fold_order_offset: int = 0,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection.
 
@@ -562,6 +691,66 @@ def run_walk_forward_candidate(
         first_train_source, _ = _fold_source_frames(source_rows, plan.folds[0])
         first_train_rows, _, _ = _complete_case(first_train_source, candidate.feature_order)
         reference_scaler = fit_standard_scaler(first_train_rows, candidate.feature_order)
+
+    # Fold-local scaling/PCA, HMM fitting, filtering and diagnostics are
+    # independent.  State alignment is the only ordered operation: reconcile
+    # completed fold payloads below in plan order so persistent state IDs and
+    # evidence hashes remain deterministic.  Checkpointed runs retain the
+    # existing serial path because their factory may own a non-pickleable
+    # durable ledger handle.
+    total_worker_budget = cpu_worker_count(max_workers)
+    fold_worker_limit = cpu_worker_count(max_workers, task_count=len(plan.folds))
+    use_parallel_folds = (
+        len(plan.folds) > 1
+        and fold_worker_limit > 1
+        and seed_checkpoint_factory is None
+        and is_pickleable(adapter_factory)
+        and is_pickleable(candidate)
+        and is_pickleable(profile)
+    )
+    if use_parallel_folds:
+        child_limits = nested_worker_limits(total_worker_budget, fold_worker_limit)
+        tasks = tuple(
+            _SingleFoldTask(
+                source_rows=source_rows,
+                fold=fold,
+                plan_hash=plan.plan_hash,
+                profile=profile,
+                candidate=candidate,
+                adapter_factory=adapter_factory,
+                max_workers=child_limits[index % fold_worker_limit],
+                pca_raw_feature_order=pca_raw_order,
+                pca_variance_threshold=pca_variance_threshold,
+            )
+            for index, fold in enumerate(plan.folds)
+        )
+        with cpu_process_pool(fold_worker_limit) as executor:
+            futures = tuple(executor.submit(_evaluate_single_fold_process, task) for task in tasks)
+            independent_results = tuple(future.result() for future in futures)
+        reconciled: list[WalkForwardFoldResult] = []
+        for fold_result in independent_results:
+            aligned, reference_signatures, reference_scaler = _reconcile_parallel_fold(
+                fold_result,
+                reference_signatures=reference_signatures,
+                reference_scaler=reference_scaler,
+            )
+            reconciled.append(aligned)
+        return WalkForwardEvaluation(
+            profile_id=profile.profile_id,
+            profile_config_version=profile.profile_config_version,
+            candidate_id=candidate.candidate_id,
+            state_count=candidate.state_count,
+            source_build_id=candidate.source_build_id,
+            feature_order=candidate.feature_order,
+            feature_selection_definition_hash=candidate.feature_selection_definition_hash,
+            feature_selection_execution_hash=candidate.feature_selection_execution_hash,
+            evaluation_plan_hash=plan.plan_hash,
+            evaluation_cutoff=plan.evaluation_cutoff,
+            folds=tuple(reconciled),
+            alignment_reference_scaler=reference_scaler,
+            _fold_order_offset=_fold_order_offset,
+        )
+
     for fold in plan.folds:
         train_model_count = 0
         test_model_count = 0
@@ -753,4 +942,5 @@ def run_walk_forward_candidate(
         evaluation_cutoff=plan.evaluation_cutoff,
         folds=tuple(results),
         alignment_reference_scaler=reference_scaler,
+        _fold_order_offset=_fold_order_offset,
     )
