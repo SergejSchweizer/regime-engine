@@ -63,7 +63,14 @@ Status date: 2026-09-14
   v4 has no PCA opt-in and raw plus generated PCA columns share one universe.
   PR-395 (GitHub #393) closes a serial completeness gap in ranked prefix
   search: explicit `max_workers=1` now evaluates every planned prefix instead
-  of only the first one.
+  of only the first one. PR-396 (GitHub #394) aligns the acceptance contract
+  with the user-directed one-shot full evaluator: the full run does not track
+  computation position or resume HMM/discovery/tracking work after
+  interruption. PR-397 (GitHub #395) records that the NAS HTTP MLflow
+  backend exposes zero visible LoggedModels while its deleted-LoggedModel
+  inventory is unavailable. PR-398 (GitHub #396) retires the remaining
+  full-run resumability language in the execution and MLflow contracts;
+  retry semantics remain limited to the dedicated metric-export harness.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -89,11 +96,11 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#393 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#396 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  #389, #390, #391, #392 and #393 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#393
+  #389, #390, #391, #392, #393, #394, #395 and #396 are also merged. No GitHub PRs are open and
+  no `pr/*` remote branches remain. The implementation branches for #303–#396
   have therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
@@ -301,6 +308,9 @@ still required.
 | PR-391 | IMPLEMENTATION MERGED | Removed GIL-bound non-pickleable callback fallbacks from global folds, provisional teacher, prefix search and candidate grids; parallel callbacks now require process-safe adapters and explicit serial mode remains available; merged in GitHub #389 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
 | PR-393 | IMPLEMENTATION MERGED | Removed stale `pca.enabled` opt-in wording from the canonical v4 documentation and added a profile contract assertion; merged in GitHub #391 after profile tests, local Hermetic hook and all gates; local and remote implementation branches deleted |
 | PR-395 | IMPLEMENTATION MERGED | Fixed the explicit serial ranked-prefix path to evaluate every planned prefix; added regression coverage, merged in GitHub #393 after focused tests, Ruff, MyPy, local Hermetic hook and all gates; local and remote implementation branches deleted |
+| PR-396 | IMPLEMENTATION MERGED | Aligned the acceptance contract with the user-directed non-resumable full evaluator; computation-position resume and full-run kill/restart parity are no longer required; merged in GitHub #394 after documentation checks and all gates; local and remote implementation branches deleted |
+| PR-397 | IMPLEMENTATION MERGED | Corrected NAS MLflow namespace wording to distinguish zero visible LoggedModels from unavailable deleted-LoggedModel inventory; merged in GitHub #395 after documentation checks and all gates; local and remote implementation branches deleted |
+| PR-398 | IMPLEMENTATION MERGED | Retired the remaining full-run resumability language from execution and MLflow contracts; metric-export retry remains the only retry scope; merged in GitHub #396 after documentation checks and all gates; local and remote implementation branches deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -370,14 +380,15 @@ was merged in #361 after the complete evidence sequence passed.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
-PRs **#270–#393** are merged except **#277, #284 and #317**, which are
+PRs **#270–#396** are merged except **#277, #284 and #317**, which are
 closed without merge and have no active implementation branch. There are no
 open GitHub PRs and no remote `pr/*` branches. The merged follow-ups include
 the PCA completion (#303–#313), local test parallelization (#312), tracking
 parallelization (#314, #324, #388), lineage/CPU/process safety (#315–#323,
 #329–#330, #393), independent-audit parallelization (#325–#326), audit
 contract hardening (#333–#387), backlog reconciliation (#390–#392), and the
-mandatory-PCA documentation correction (#391).
+  mandatory-PCA documentation correction (#391), acceptance-contract cleanup
+  (#392, #394 and #395), and one-shot execution-contract cleanup (#396).
 
 ---
 
