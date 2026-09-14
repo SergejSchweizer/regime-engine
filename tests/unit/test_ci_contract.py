@@ -46,3 +46,16 @@ def test_local_pre_commit_hook_runs_only_hermetic_integration_tests() -> None:
     )
     assert "pass_filenames: false" in hook
     assert "always_run: true" in hook
+
+
+def test_cpu_bootstrap_caps_all_supported_native_thread_pools() -> None:
+    bootstrap = (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+    export_script = (ROOT / "scripts" / "export_config_env.py").read_text(encoding="utf-8")
+    for variable in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        assert f'"{variable}"' in bootstrap
+        assert f'"{variable}": str(native_threads)' in export_script

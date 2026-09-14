@@ -93,6 +93,7 @@ def load_config(path: Path) -> dict[str, str]:
         "OMP_NUM_THREADS": str(native_threads),
         "OPENBLAS_NUM_THREADS": str(native_threads),
         "MKL_NUM_THREADS": str(native_threads),
+        "NUMEXPR_NUM_THREADS": str(native_threads),
     }
 
     environment = root.get("environment", {})

@@ -66,16 +66,26 @@ independent tasks are all respected. A deployment can set
 
 CPU-bound default evaluation work uses process pools, giving each worker an
 independent interpreter and GIL. Nested numerical lanes are set to one
-process-local lane, and `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and
-`MKL_NUM_THREADS` default to one in the cron wrappers to avoid native-library
-oversubscription. The runtime also exposes physical-core and NUMA topology for
-benchmarking, but does not pin workers to a NUMA node without measured benefit.
+process-local lane, and `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`,
+`MKL_NUM_THREADS`, and `NUMEXPR_NUM_THREADS` default to one in the cron and
+proof wrappers to avoid native-library oversubscription. The runtime also
+exposes physical-core and NUMA topology for benchmarking, but does not pin
+workers to a NUMA node without measured benefit.
 
 The non-statistical MLflow dossier/plot tail is independently bounded by
-`REGIME_TRACKING_WORKERS` (default 16) because it is request/file-I/O bound;
-set it explicitly when benchmarking a different MLflow service capacity. Set
+`REGIME_TRACKING_WORKERS` because its final MLflow calls are request/file-I/O
+bound. When unset, it inherits the same affinity/cgroup-aware CPU budget as
+the rest of the runtime and is capped by the number of fold tasks; set it
+explicitly when benchmarking a different MLflow service capacity. Set
 `REGIME_PERFORMANCE_REPORT_PATH` to write an opt-in JSON stage report beside
 the checkpoint state. Neither setting changes canonical statistical outputs.
+
+Each MLflow evaluation run also records runtime metadata as parameters:
+`regime_engine.runtime_started_at_utc`,
+`regime_engine.runtime_ended_at_utc`, and
+`regime_engine.runtime_seconds`. The full Xetra v4 parent run uses
+`regime_engine.runtime_scope=full_evaluation`; its outer-fold child runs use
+`tracking_run` for their individual tracking duration.
 
 Run the reproducible scheduler benchmark with:
 

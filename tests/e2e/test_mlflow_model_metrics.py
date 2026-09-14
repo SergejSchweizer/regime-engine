@@ -109,6 +109,7 @@ def test_model_metrics_verifier_checks_exact_expected_points(
                 }
             ]
         },
+        require_nonempty_model_set=True,
     )
     assert report["status"] == "verified"
     assert report["counts"]["missing_point_count"] == 0
@@ -116,6 +117,74 @@ def test_model_metrics_verifier_checks_exact_expected_points(
     assert report["model_count_by_scope"] == {"candidate": 1}
     assert report["models"][0]["metric_key_count"] == 3
     assert report["models"][0]["metric_point_count"] == len(points)
+    assert report["namespace"]["run_count"] == 1
+    assert report["namespace"]["historical_objects_zero"] is False
+
+
+def test_model_metrics_verifier_requires_nonempty_completed_model_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "empty").as_uri()
+    FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {"models": []},
+        require_nonempty_model_set=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["nonempty_model_set_violation_count"] == 1
+
+
+def test_model_metrics_verifier_reports_active_and_deleted_namespace_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "namespace").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    run_id = port.start_run(run_name="audit")
+    port.end_run(run_id)
+    deleted_run_id = port.start_run(run_name="deleted-audit")
+    port.end_run(deleted_run_id)
+    MlflowClient(tracking_uri=tracking_uri).delete_run(deleted_run_id)
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {"models": []},
+        require_clean_namespace=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["namespace"]["run_count"] == 2
+    assert report["namespace"]["run_status_counts"] == {"FINISHED": 2}
+    assert report["namespace"]["run_lifecycle_counts"] == {"active": 1, "deleted": 1}
+    assert report["counts"]["historical_namespace_violation_count"] == 1
+
+
+def test_model_metrics_verifier_accepts_empty_clean_namespace_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "clean").as_uri()
+    FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {"models": []},
+        require_clean_namespace=True,
+    )
+
+    assert report["status"] == "verified"
+    assert report["namespace"]["historical_objects_zero"] is True
+    assert report["counts"]["historical_namespace_violation_count"] == 0
 
 
 def test_model_metrics_verifier_proves_resumed_history_parity(

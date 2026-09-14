@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -127,11 +128,18 @@ def track_statistics_run(
     statistics: RunStatistics,
     parent_run_id: str | None = None,
     payload_emitter: PayloadEmitter | None = None,
+    runtime_started_at: datetime | None = None,
+    runtime_start_monotonic: float | None = None,
+    runtime_scope: str = "tracking_run",
 ) -> tuple[str, str]:
     """Create one MLflow run and finalize its immutable local statistics dossier."""
 
     if statistics.status is not Status.RUNNING:
         raise ValueError("statistics tracking requires an initial RUNNING dossier")
+    wall_started_at = runtime_started_at or datetime.now(UTC)
+    monotonic_started_at = (
+        time.perf_counter() if runtime_start_monotonic is None else runtime_start_monotonic
+    )
     run_id = port.start_run(run_name=run_name, parent_run_id=parent_run_id)
     started = replace(statistics, mlflow_run_id=run_id, parent_run_id=parent_run_id)
     directory: Path | None = None
@@ -140,13 +148,24 @@ def track_statistics_run(
         directory = writer.start(started)
         if payload_emitter is not None:
             payload_emitter(run_id, directory)
-        finalized = replace(started, status=Status.FINISHED, ended_at=datetime.now(UTC))
+        ended_at = datetime.now(UTC)
+        finalized = replace(started, status=Status.FINISHED, ended_at=ended_at)
         digest = writer.finalize(finalized)
         finalized_locally = True
         path = directory / "statistics.json"
         if sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError("finalized statistics hash mismatch")
         port.log_params(run_id, {"statistics_sha256": digest})
+        runtime_seconds = max(0.0, time.perf_counter() - monotonic_started_at)
+        port.log_params(
+            run_id,
+            {
+                "regime_engine.runtime_scope": runtime_scope,
+                "regime_engine.runtime_started_at_utc": wall_started_at.isoformat(),
+                "regime_engine.runtime_ended_at_utc": ended_at.isoformat(),
+                "regime_engine.runtime_seconds": f"{runtime_seconds:.6f}",
+            },
+        )
         port.log_artifact(run_id, str(path), "statistics")
         port.end_run(run_id)
         return run_id, digest
@@ -166,6 +185,18 @@ def track_statistics_run(
                         evidence=failed_evidence,
                     )
                 )
+        with suppress(BaseException):
+            ended_at = datetime.now(UTC)
+            runtime_seconds = max(0.0, time.perf_counter() - monotonic_started_at)
+            port.log_params(
+                run_id,
+                {
+                    "regime_engine.runtime_scope": runtime_scope,
+                    "regime_engine.runtime_started_at_utc": wall_started_at.isoformat(),
+                    "regime_engine.runtime_ended_at_utc": ended_at.isoformat(),
+                    "regime_engine.runtime_seconds": f"{runtime_seconds:.6f}",
+                },
+            )
         port.fail_run(run_id)
         raise
 
@@ -806,6 +837,8 @@ def track_global_v4_evaluation(
     result: AdaptiveEvaluationResult,
     selections: Mapping[int, V4ConfigurationSelection],
     metric_ledger_root: str | Path | None = None,
+    evaluation_started_at: datetime | None = None,
+    evaluation_start_monotonic: float | None = None,
 ) -> GlobalV4TrackingResult:
     """Track one v4 parent and one child dossier per outer fold."""
 
@@ -1049,6 +1082,9 @@ def track_global_v4_evaluation(
         run_name=GLOBAL_V4_EVALUATION_ID,
         statistics=_running_statistics(GLOBAL_V4_EVALUATION_ID, RunType.PARENT, evidence.evidence),
         payload_emitter=emit_parent,
+        runtime_started_at=evaluation_started_at,
+        runtime_start_monotonic=evaluation_start_monotonic,
+        runtime_scope=("full_evaluation" if evaluation_started_at is not None else "tracking_run"),
     )
     if plot_manifest_path is None:
         raise RuntimeError("global v4 plot manifest was not created")

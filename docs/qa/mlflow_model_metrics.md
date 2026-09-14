@@ -8,6 +8,25 @@ metric files rather than from MLflow's summary view; remote stores use the
 LoggedModel history returned by the tracking server. Model search is paged so
 the audit is not silently limited to the first 1,000 models.
 
+Run the namespace preflight before starting an evaluation. It includes active
+and deleted MLflow runs, so a green result is the required zero-survivor record
+for the historical evaluation namespace:
+
+```bash
+.venv/bin/python scripts/verify_mlflow_model_metrics.py \
+  --tracking-uri "http://10.10.1.3:5000" \
+  --experiment "regime-engine-evaluation" \
+  --require-clean-namespace \
+  --json-out mlflow-historical-namespace-proof.json
+```
+
+The preflight is read-only. Its report records the experiment ID, complete run
+status/lifecycle inventory (including deleted runs), LoggedModel count, and
+`historical_objects_zero` flag.
+Do not treat an empty post-run namespace as a successful completeness proof:
+the completed-evaluation invocation below uses `--require-nonempty` and an
+independently generated expectation.
+
 For resume acceptance, run the verifier after both an uninterrupted reference
 evaluation and a killed-and-resumed evaluation have finished:
 
@@ -16,6 +35,7 @@ evaluation and a killed-and-resumed evaluation have finished:
   --tracking-uri "$RESUMED_MLFLOW_URI" \
   --experiment "$RESUMED_EXPERIMENT" \
   --expectation expectation.json \
+  --require-nonempty \
   --baseline-tracking-uri "$REFERENCE_MLFLOW_URI" \
   --baseline-experiment "$REFERENCE_EXPERIMENT" \
   --json-out mlflow-model-metrics-proof.json
@@ -29,6 +49,13 @@ as well as identical `regime_engine.*` lineage tags. A successful report has
 whose missing, unexpected, duplicate, conflicting and lineage-mismatch counts
 are all zero. The `models` and `model_count_by_scope` fields are the durable
 per-LoggedModel evidence record.
+
+The expectation must be generated independently from the completed evaluation
+plan and pinned snapshot. It must enumerate every logical LoggedModel and every
+finite catalogued point; it must not be derived by rereading the same MLflow
+history being audited. The resumed run must be interrupted after tracking has
+started, restarted from its durable evaluation state, and compared only after
+both the resumed and uninterrupted namespaces are terminal.
 
 The focused repository tests exercise this verifier with MLflow's local
 FileStore and do not run an HMM evaluation. Production acceptance still
