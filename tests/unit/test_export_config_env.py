@@ -50,6 +50,7 @@ def test_exports_all_runtime_metadata_without_secret_values(tmp_path: Path) -> N
         in result.stdout
     )
     assert "export REGIME_CPU_WORKERS=86" in result.stdout
+    assert "export NUMEXPR_NUM_THREADS=1" in result.stdout
     assert "REGIME_REPLAY_MAX_ROWS=10000" in result.stdout
     assert "must-not-be-written" not in result.stdout
 
