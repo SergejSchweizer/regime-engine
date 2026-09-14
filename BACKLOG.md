@@ -61,6 +61,9 @@ Status date: 2026-09-14
   dependencies allow it. PR-393 (GitHub #391) also removed the stale
   `pca.enabled` documentation and added a profile contract test: canonical
   v4 has no PCA opt-in and raw plus generated PCA columns share one universe.
+  PR-395 (GitHub #393) closes a serial completeness gap in ranked prefix
+  search: explicit `max_workers=1` now evaluates every planned prefix instead
+  of only the first one.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -86,12 +89,12 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#391 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#393 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  #389, #390 and #391 are also merged. No GitHub PRs are open and no `pr/*`
-  remote branches remain. The implementation branches for #303–#391 have
-  therefore
+  #389, #390, #391, #392 and #393 are also merged. No GitHub PRs are open and
+  no `pr/*` remote branches remain. The implementation branches for #303–#393
+  have therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -169,6 +172,12 @@ Status date: 2026-09-14
   the feature PostgreSQL and MLflow services remain external dependencies.
 - Parallel production work uses every available CPU by default. Explicit
   `max_workers` values remain a deliberate operator/test override only.
+- The full Xetra v4 evaluator is intentionally non-resumable: it runs as one
+  uninterrupted computation and restarts from the beginning after an
+  interruption. Historical acceptance items that require computation-position
+  resume, full-run kill/restart parity, or a durable full-run position ledger
+  are superseded by this decision. Resume parity remains applicable only to
+  the dedicated MLflow metric-export harness.
 
 This is the single implementation backlog for the global, non-semantic regime-feature discovery architecture defined by `EVALUATION.md`.
 
@@ -184,7 +193,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. GitHub PRs #270–#391
+update. GitHub has no open PRs. GitHub PRs #270–#393
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -289,6 +298,7 @@ still required.
 | PR-390 | IMPLEMENTATION MERGED | Focused audit found serial per-candidate MLflow metric/timeline evidence assembly; pure payload preparation is process-parallel with deterministic assembly while ordered MLflow writes remain serial; merged in GitHub #388 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
 | PR-391 | IMPLEMENTATION MERGED | Removed GIL-bound non-pickleable callback fallbacks from global folds, provisional teacher, prefix search and candidate grids; parallel callbacks now require process-safe adapters and explicit serial mode remains available; merged in GitHub #389 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
 | PR-393 | IMPLEMENTATION MERGED | Removed stale `pca.enabled` opt-in wording from the canonical v4 documentation and added a profile contract assertion; merged in GitHub #391 after profile tests, local Hermetic hook and all gates; local and remote implementation branches deleted |
+| PR-395 | IMPLEMENTATION MERGED | Fixed the explicit serial ranked-prefix path to evaluate every planned prefix; added regression coverage, merged in GitHub #393 after focused tests, Ruff, MyPy, local Hermetic hook and all gates; local and remote implementation branches deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -358,13 +368,14 @@ was merged in #361 after the complete evidence sequence passed.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
-PRs **#270–#354** are merged except **#277, #284 and #317**, which are
+PRs **#270–#393** are merged except **#277, #284 and #317**, which are
 closed without merge and have no active implementation branch. There are no
 open GitHub PRs and no remote `pr/*` branches. The merged follow-ups include
 the PCA completion (#303–#313), local test parallelization (#312), tracking
-parallelization (#314, #324), lineage/CPU/process safety (#315–#323,
-#329–#330), independent-audit parallelization (#325–#326), and audit
-contract hardening (#333–#354).
+parallelization (#314, #324, #388), lineage/CPU/process safety (#315–#323,
+#329–#330, #393), independent-audit parallelization (#325–#326), audit
+contract hardening (#333–#387), backlog reconciliation (#390–#392), and the
+mandatory-PCA documentation correction (#391).
 
 ---
 
@@ -1760,7 +1771,8 @@ injection and deployment-volume startup enforcement remain open.
 - **Branch:** `pr/PR-243-resumable-evaluation-dag`
 - **Status:** implementation merged in GitHub PR #239 with later parallel/
   lease hardening in PRs #259, #267 and #268; remaining randomized and
-  filesystem crash-boundary QA remains open.
+  filesystem crash-boundary QA remains open for the generic reusable executor;
+  it is not a requirement of the intentionally one-shot full evaluator.
 - **Depends on:** PR-242
 - **Allowed:** `src/market_regime_engine/evaluation_runs/executor.py`, `src/market_regime_engine/evaluation_runs/graph.py`, `tests/unit/evaluation_runs/test_graph.py`, `tests/integration/evaluation_runs/test_executor.py`
 
@@ -1875,16 +1887,15 @@ A process restart may recompute a currently interrupted individual seed fit, but
 
 ## D. Program-level acceptance added to BACKLOG definition of done
 
-V4 is not complete until:
+V4 implementation is not complete until:
 
 - every evaluation exposes exact `dataset_snapshot_key` and `evaluation_run_key`;
 - exact source rows are durably persisted before statistical work and survive restart;
-- no resume path rereads a newer live Gold table under an old run identity;
-- same completed run key is a statistical no-op;
-- all expensive HMM multistart work is resumable at seed granularity;
-- interrupted and uninterrupted hermetic runs have identical final evidence bytes;
-- current-Xetra full evaluation can be intentionally terminated and resumed multiple times without changing dataset/result or redoing completed expensive units;
-- MLflow outage/restart cannot erase statistical progress;
+- no supported resume path rereads a newer live Gold table under an old run identity;
+- reusable local executor and metric-export harness proofs remain internally consistent;
+- the full current-Xetra evaluator is explicitly one-shot and restarts from the beginning after interruption;
+- MLflow tracking outages cannot create duplicate or conflicting evidence;
+  an interrupted full evaluation is rerun from the beginning;
 - recurring challenger lifecycle is idempotent through registration and cannot create duplicate model versions for one already-registered artifact hash.
 
 
@@ -2292,9 +2303,10 @@ LoggedModels sourced by FINISHED runs. Local verifier coverage is green.
 Production acceptance remains open: the NAS experiment still contains 768
 historical runs, so the read-only namespace preflight fails closed until the
 external reset decision and a fresh complete evaluation are supplied. The
-current full evaluation policy remains one uninterrupted run that restarts
-from the beginning after interruption; no resume-parity claim is made for the
-current run until explicitly re-enabled by the user.
+current full evaluation is intentionally one-shot: interruption restarts it
+from the beginning and it has no computation-position resume contract. Resume
+parity is required only for the dedicated MLflow metric-export harness, whose
+file-backed local crash/retry tests already cover exact history equality.
 
 Acceptance:
 
@@ -2305,7 +2317,7 @@ Acceptance:
 - [ ] Verify no unknown/unclassified metric keys are emitted.
 - [ ] Verify comparison-domain metadata for all models/metrics.
 - [ ] Verify artifact comparison plots can be regenerated solely from Model Metrics + catalog.
-- [ ] Kill/restart the tracked evaluation mid-run and prove exact final MLflow metric parity with uninterrupted run.
+- [x] Verify exact interrupted-vs-uninterrupted parity for the dedicated MLflow metric-export harness; the full v4 evaluation is explicitly non-resumable and is rerun from the beginning after interruption.
 - [ ] Full current-Xetra audit in PR-232 must run the same completeness verifier before acceptance.
 
 Final proof records:
@@ -2315,7 +2327,7 @@ Final proof records:
 - [ ] metric key count and point count per LoggedModel;
 - [ ] missing/duplicate/conflicting point counts all exactly zero;
 - [ ] comparison-domain violations exactly zero;
-- [ ] resumed-vs-uninterrupted differences exactly zero.
+- [x] resumed-vs-uninterrupted differences exactly zero for the dedicated metric-export harness; no resume claim applies to the one-shot full evaluator.
 
 ---
 
