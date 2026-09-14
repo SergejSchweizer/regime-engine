@@ -4,9 +4,9 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `pr/PR-375-backlog-acceptance-current-state`; this
-  documentation-only branch records the merged PR-374 state and the remaining
-  external acceptance blockers before it is merged and deleted.
+- **Active worktree:** `pr/PR-376-external-acceptance-evidence`; this
+  documentation-only branch records the latest read-only external checks and
+  the remaining acceptance blockers before it is merged and deleted.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -71,7 +71,7 @@ Status date: 2026-09-14
 - **Remote branch/PR state:** GitHub PRs #270–#352 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369 and #370 are also merged. No GitHub PRs are open and no `pr/*` remote
-  branches remain. The implementation branches for #303–#371 have therefore
+  branches remain. The implementation branches for #303–#374 have therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -84,8 +84,12 @@ Status date: 2026-09-14
   namespace preflight therefore fails closed because the 768 historical runs
   remain. No full evaluation is currently running: the earlier raw-only run
   was terminated before the mandatory-PCA changes and is not acceptance
-  evidence. A new full run must wait for the explicit external namespace
-  decision and current-source production-eligibility evidence.
+  evidence. The current outside-repository deployment secret also passes the
+  read-only PostgreSQL smoke test against `10.10.1.3:54321` as role
+  `regime-engine` in database `postgres`; the live source relation currently
+  contains 16,768 rows through 2026-09-04. A new full run must wait for the
+  explicit external namespace decision and current-source production-
+  eligibility evidence.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
