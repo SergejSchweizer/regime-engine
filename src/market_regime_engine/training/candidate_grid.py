@@ -289,9 +289,7 @@ def _threaded_child_worker_limits(
         raise ValueError("worker budget and task count must be positive")
     concurrent_tasks = min(task_count, max(1, total_worker_budget // 2))
     baseline, remainder = divmod(total_worker_budget, concurrent_tasks)
-    return tuple(
-        baseline + int(index < remainder) for index in range(concurrent_tasks)
-    )
+    return tuple(baseline + int(index < remainder) for index in range(concurrent_tasks))
 
 
 def evaluate_candidate_grid(
