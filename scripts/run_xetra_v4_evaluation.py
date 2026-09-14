@@ -44,7 +44,7 @@ from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
 from market_regime_engine.runtime.performance import PerformanceRecorder
 
-_CURRENT_AUDIT_SCHEMA_VERSION = 1
+_CURRENT_AUDIT_SCHEMA_VERSION = 2
 
 
 def _root() -> Path:
@@ -520,6 +520,12 @@ def _run(performance: PerformanceRecorder) -> None:
             )
         )
     )
+    raw_feature_names = tuple(
+        name for name in catalog.feature_names if not name.startswith("pca_pc_")
+    )
+    generated_pca_names = tuple(
+        name for name in catalog.feature_names if name.startswith("pca_pc_")
+    )
     audit_contract: dict[str, object] = {
         "schema_version": _CURRENT_AUDIT_SCHEMA_VERSION,
         "source_request": initial_source_request,
@@ -527,6 +533,16 @@ def _run(performance: PerformanceRecorder) -> None:
         "source_bounds": source_bounds,
         "search_bounds": selection_search_evidence,
         "identity_hashes": identity_hashes,
+        "pca": {
+            "enabled": profile.pca.enabled,
+            "variance_threshold": profile.pca.variance_threshold,
+            "component_count": profile.pca.component_count,
+            "raw_feature_names": list(raw_feature_names),
+            "generated_feature_names": list(generated_pca_names),
+            "raw_feature_names_sha256": _sha256_json(list(raw_feature_names)),
+            "generated_feature_names_sha256": _sha256_json(list(generated_pca_names)),
+            "universe_feature_names_sha256": _sha256_json(list(catalog.feature_names)),
+        },
         "valid_outer_fold_indices": list(valid_outer_fold_indices),
         "audit_outer_fold_indices": list(valid_audit_indices),
         "resource_evidence": {
@@ -667,8 +683,12 @@ def _run(performance: PerformanceRecorder) -> None:
                 "train_end": fold.train_end.isoformat(),
                 "test_start": fold.test_start.isoformat(),
                 "test_end": fold.test_end.isoformat(),
-                "train_source_observations": fold.train_source_observations,
-                "test_source_observations": fold.test_source_observations,
+                "train_source_observations": outer_plan.folds[
+                    fold.fold_index - 1
+                ].train_source_observations,
+                "test_source_observations": outer_plan.folds[
+                    fold.fold_index - 1
+                ].test_source_observations,
                 "outer_soft_nmi": fold.outer_teacher_final_soft_nmi,
                 "outer_oos_pll_per_observation": fold.oos_predictive_loglik_per_observation,
                 "valid": fold.valid,

@@ -6,9 +6,13 @@ from typing import Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
-from market_regime_engine.evaluation_runs.math_audit import build_math_expectations
+from market_regime_engine.evaluation_runs.math_audit import (
+    _likelihood_item,
+    build_math_expectations,
+)
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
 
 
 def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
@@ -139,3 +143,56 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
         item["outer_fold_index"]
         for item in cast(list[dict[str, object]], five_fold_expectations["fold_audits"])
     ] == [1, 3, 5]
+
+
+def test_math_audit_transforms_raw_rows_with_fold_local_pca_artifact() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    timestamps = tuple(start + timedelta(days=index) for index in range(120))
+    rows = pd.DataFrame(
+        {
+            "timestamp_m1": timestamps,
+            "f0": tuple(float(index) for index in range(120)),
+            "f1": tuple(float((index % 7) - 3) for index in range(120)),
+        }
+    )
+    pca_scaler = fit_pca_hmm_scaler(
+        timestamps[:90],
+        rows.loc[:89, ["f0", "f1"]].to_numpy(),
+        raw_feature_order=("f0", "f1"),
+        inner_fold_id="fold_001",
+        fit_start=timestamps[0],
+        fit_end=timestamps[89],
+        variance_threshold=0.5,
+        component_count=1,
+        model_feature_order=("f0", "pca_pc_001"),
+    )
+    artifact = GaussianHMMArtifact(
+        state_count=2,
+        feature_order=("f0", "pca_pc_001"),
+        start_probabilities=(0.5, 0.5),
+        transition_matrix=((0.8, 0.2), (0.2, 0.8)),
+        means=((-1.0, -1.0), (1.0, 1.0)),
+        full_covariances=(
+            ((1.0, 0.0), (0.0, 1.0)),
+            ((1.0, 0.0), (0.0, 1.0)),
+        ),
+    )
+    fold = SimpleNamespace(
+        fold_index=1,
+        valid=True,
+        model_artifact=artifact,
+        scaler_artifact=pca_scaler.hmm_scaler,
+        pca_scaler_artifact=pca_scaler,
+        train_log_likelihood=-3.0,
+        oos_predictive_log_likelihood=-2.0,
+    )
+
+    items = _likelihood_item(
+        rows,
+        ("f0", "pca_pc_001"),
+        SimpleNamespace(train_source_observations=90, test_source_observations=30),
+        fold,
+    )
+
+    assert all(item["feature_order"] == ["f0", "pca_pc_001"] for item in items)
+    assert all(len(cast(list[list[float]], item["observations"])[0]) == 2 for item in items)
