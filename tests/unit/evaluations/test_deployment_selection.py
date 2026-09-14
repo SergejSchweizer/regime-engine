@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -158,6 +159,89 @@ def test_deployment_selection_calls_shared_policy_through_source_maximum() -> No
     assert result.deployment_selection_cutoff == START + timedelta(days=6)
     assert result.configuration.state_identity_scope == "model_version_local"
     assert result.configuration.candidate_id == "gaussian_hmm_k2_full"
+    assert result.configuration.source_build_id == validation.source_build_id
+    assert result.configuration.catalog_hash == catalog.catalog_hash
+    assert result.configuration.feature_discovery_hash == result.discovery_hash
+    assert result.selection_hash
+
+
+def test_deployment_selection_never_copies_the_last_outer_fold() -> None:
+    rows = pd.DataFrame(
+        {
+            "timestamp_m1": [START + timedelta(days=index) for index in range(7)],
+            "f0": range(7),
+            "f1": range(7),
+            "f2": range(7),
+        }
+    )
+    catalog = _catalog(rows)
+    validation = _validation(catalog.catalog_hash)
+    last_outer_configuration = FinalSelectedConfiguration(
+        feature_order=("f0", "f1", "f2"),
+        candidate_id="gmm_hmm_k2_m2_full",
+        state_count=2,
+        model_family="gmm_hmm",
+        selected_prefix_length=3,
+        feature_discovery_hash="b" * 64,
+        source_build_id="build-1",
+        catalog_hash=catalog.catalog_hash,
+        selection_definition_hash="b" * 64,
+        selection_execution_hash="b" * 64,
+    )
+    validation = replace(
+        validation,
+        outer_folds=(
+            *validation.outer_folds[:-1],
+            replace(validation.outer_folds[-1], final_configuration=last_outer_configuration),
+        ),
+    )
+
+    result = select_deployment_configuration(
+        rows,
+        catalog=catalog,
+        profile=PROFILE,
+        validation=validation,
+        selector=lambda *_args, **_kwargs: _selector_result(catalog.catalog_hash),
+    )
+
+    assert result.configuration.candidate_id == "gaussian_hmm_k2_full"
+    assert result.configuration.feature_order == ("f0", "f1")
+    assert result.configuration.candidate_id != last_outer_configuration.candidate_id
+
+
+@pytest.mark.parametrize(
+    ("returned_source_build", "returned_catalog_hash", "message"),
+    (
+        ("other-build", HASH, "different source build"),
+        ("build-1", "d" * 64, "different source catalog"),
+    ),
+)
+def test_deployment_selection_rejects_selector_identity_drift(
+    returned_source_build: str,
+    returned_catalog_hash: str,
+    message: str,
+) -> None:
+    rows = pd.DataFrame(
+        {
+            "timestamp_m1": [START + timedelta(days=index) for index in range(7)],
+            "f0": range(7),
+            "f1": range(7),
+            "f2": range(7),
+        }
+    )
+    catalog = _catalog(rows)
+    validation = _validation(catalog.catalog_hash)
+    selected = _selector_result(returned_catalog_hash)
+    selected.source_build_id = returned_source_build
+
+    with pytest.raises(ValueError, match=message):
+        select_deployment_configuration(
+            rows,
+            catalog=catalog,
+            profile=PROFILE,
+            validation=validation,
+            selector=lambda *_args, **_kwargs: selected,
+        )
 
 
 def test_deployment_selection_rejects_validation_catalog_drift() -> None:
