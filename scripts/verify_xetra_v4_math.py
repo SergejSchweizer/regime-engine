@@ -31,7 +31,7 @@ _PROBABILITY_TOLERANCE = 1.0e-10
 _AUDIT_TOLERANCE = 1.0e-10
 _AUDIT_COLUMNS: dict[str, np.ndarray] | None = None
 _AUDIT_THREAD_LIMITER: object | None = None
-_CURRENT_AUDIT_CONTRACT_VERSION = 1
+_CURRENT_AUDIT_CONTRACT_VERSION = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _CURRENT_FINAL_CANDIDATE_IDS = (
@@ -1282,6 +1282,41 @@ def _validate_search_bounds_contract(value: object, fold_indices: tuple[int, ...
         raise SystemExit("search_bounds per-fold indices do not match valid outer folds")
 
 
+def _validate_pca_contract(value: object, feature_names: list[str]) -> None:
+    """Require the mandatory raw-plus-PCA v4 feature-universe identity."""
+
+    pca = _required_mapping(value, "audit_contract.pca")
+    if pca.get("enabled") is not True:
+        raise SystemExit("current Xetra audit requires PCA to be enabled")
+    if pca.get("variance_threshold") != 0.90:
+        raise SystemExit("current Xetra audit requires the pinned PCA variance threshold")
+    component_count = pca.get("component_count")
+    if component_count != 8:
+        raise SystemExit("current Xetra audit requires eight PCA components")
+    raw_names = pca.get("raw_feature_names")
+    generated_names = pca.get("generated_feature_names")
+    if (
+        not isinstance(raw_names, list)
+        or not raw_names
+        or any(not isinstance(name, str) or not name for name in raw_names)
+        or len(set(raw_names)) != len(raw_names)
+    ):
+        raise SystemExit("audit_contract.pca.raw_feature_names is invalid")
+    expected_generated = [f"pca_pc_{index:03d}" for index in range(1, component_count + 1)]
+    if generated_names != expected_generated:
+        raise SystemExit("audit_contract.pca.generated_feature_names are not the pinned universe")
+    expected_feature_names = [*raw_names, *expected_generated]
+    if feature_names != expected_feature_names:
+        raise SystemExit("audit_contract.pca feature universe does not match the snapshot")
+    for key, expected in (
+        ("raw_feature_names_sha256", _json_sha256(raw_names)),
+        ("generated_feature_names_sha256", _json_sha256(generated_names)),
+        ("universe_feature_names_sha256", _json_sha256(expected_feature_names)),
+    ):
+        if pca.get(key) != expected:
+            raise SystemExit(f"audit_contract.pca.{key} does not match the feature universe")
+
+
 def _validate_current_audit_contract(
     expected: object,
     columns: dict[str, np.ndarray],
@@ -1344,6 +1379,10 @@ def _validate_current_audit_contract(
         raise SystemExit("source_bounds.materialized_row_count does not match the snapshot")
     if raw_bounds["source_row_count"] < raw_bounds["materialized_row_count"]:
         raise SystemExit("source bounds contain more materialized rows than source rows")
+    _validate_pca_contract(
+        contract.get("pca"),
+        [name for name in columns if name != timestamp_column],
+    )
     if snapshot_sha256 is None:
         raise SystemExit("current Xetra audit requires a snapshot SHA-256")
 

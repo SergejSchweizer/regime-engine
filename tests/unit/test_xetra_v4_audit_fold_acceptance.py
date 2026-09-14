@@ -69,6 +69,7 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path, dict[str, float]]:
             "timestamp_m1": ["2026-01-01", "2026-01-02", "2026-01-03"],
             "feature_a": [0.0, 1.0, 2.0],
             "feature_b": [2.0, 1.0, 0.0],
+            **{f"pca_pc_{index:03d}": [0.0, 1.0, 2.0] for index in range(1, 9)},
         }
     )
     with snapshot_path.open("wb") as handle, ipc.new_file(handle, table.schema) as writer:
@@ -190,7 +191,7 @@ def _strict_current_contract(
         "dynamic_catalog": True,
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_request": request,
         "audit_source_request": request,
         "source_bounds": {
@@ -199,8 +200,14 @@ def _strict_current_contract(
             "source_row_count": 3,
             "source_min_timestamp": "2026-01-01",
             "source_max_timestamp": "2026-01-03",
-            "feature_count": 2,
-            "feature_names_sha256": module._json_sha256(["feature_a", "feature_b"]),
+            "feature_count": 10,
+            "feature_names_sha256": module._json_sha256(
+                [
+                    "feature_a",
+                    "feature_b",
+                    *[f"pca_pc_{index:03d}" for index in range(1, 9)],
+                ]
+            ),
             "materialized_row_count": 3,
             "materialized_min_timestamp": "2026-01-01",
             "materialized_max_timestamp": "2026-01-03",
@@ -221,6 +228,24 @@ def _strict_current_contract(
             "per_fold": per_fold,
         },
         "identity_hashes": identity,
+        "pca": {
+            "enabled": True,
+            "variance_threshold": 0.90,
+            "component_count": 8,
+            "raw_feature_names": ["feature_a", "feature_b"],
+            "generated_feature_names": [f"pca_pc_{index:03d}" for index in range(1, 9)],
+            "raw_feature_names_sha256": module._json_sha256(["feature_a", "feature_b"]),
+            "generated_feature_names_sha256": module._json_sha256(
+                [f"pca_pc_{index:03d}" for index in range(1, 9)]
+            ),
+            "universe_feature_names_sha256": module._json_sha256(
+                [
+                    "feature_a",
+                    "feature_b",
+                    *[f"pca_pc_{index:03d}" for index in range(1, 9)],
+                ]
+            ),
+        },
         "valid_outer_fold_indices": indices,
         "audit_outer_fold_indices": [indices[0], indices[len(indices) // 2], indices[-1]],
         "resource_evidence": {

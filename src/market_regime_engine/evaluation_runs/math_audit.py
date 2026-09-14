@@ -66,8 +66,14 @@ def _likelihood_item(
         plan_fold.train_source_observations : plan_fold.train_source_observations
         + plan_fold.test_source_observations
     ]
-    train_values = scaler.transform(_complete_rows(train_source, feature_order))
-    test_values = scaler.transform(_complete_rows(test_source, feature_order))
+    pca_scaler = getattr(fold, "pca_scaler_artifact", None)
+    if pca_scaler is None:
+        train_values = scaler.transform(_complete_rows(train_source, feature_order))
+        test_values = scaler.transform(_complete_rows(test_source, feature_order))
+    else:
+        raw_feature_order = tuple(pca_scaler.raw_feature_order)
+        train_values = pca_scaler.transform(_complete_rows(train_source, raw_feature_order))
+        test_values = pca_scaler.transform(_complete_rows(test_source, raw_feature_order))
     train_filter = causal_filter(train_values, model_artifact)
     continuation_start = tuple(
         float(value)
@@ -78,6 +84,7 @@ def _likelihood_item(
     )
     common: dict[str, object] = {
         "model_family": model_artifact.model_family,
+        "feature_order": list(feature_order),
         "start_probabilities": list(model_artifact.start_probabilities),
         "transition_matrix": [list(row) for row in model_artifact.transition_matrix],
         "means": [list(row) for row in model_artifact.means],
