@@ -39,8 +39,11 @@ Status date: 2026-09-14
   stages. Raw-only profiles are no longer valid v4 configuration. PR-374 now
   adds persisted final-vs-teacher OOS arrays and independently recomputes
   Outer-Fold soft NMI and shared support for every valid fold. No implementation
-  PR remains open; only external acceptance evidence under PR-232/PR-250 is
-  outstanding.
+  PR remains open; recent merged follow-ups #377–#381 removed stale PCA
+  opt-in paths, made coverage enforcement independent of cross-job artifacts,
+  sized plot pools from all submitted tasks, parallelized ranked prefix lengths
+  under one CPU budget, and added a pre-PCA source/model-clock preflight. Only
+  external acceptance evidence under PR-232/PR-250 is outstanding.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -252,8 +255,11 @@ still required.
 | PR-371 | IMPLEMENTATION MERGED | Current Xetra audit binds the mandatory raw-plus-eight-component PCA universe and independent likelihood reconstruction to fold-local PCA artifacts; local and CI gates passed in GitHub #370; branch deleted |
 | PR-373 | IMPLEMENTATION MERGED | Removed the remaining PCA opt-in flag and made canonical Xetra v4 source evaluation unconditionally materialize the fixed PCA universe; local and CI gates passed in GitHub #372; branch deleted |
 | PR-374 | IMPLEMENTATION MERGED | Persisted final-vs-teacher Outer-Fold OOS arrays and independently verify soft NMI/shared support for every valid fold; local and CI gates passed in GitHub #373; branch deleted |
-| PR-378 | IMPLEMENTED | Removed stale lifecycle and metadata opt-in semantics: PCA is always materialized in the v4 source capture and its audit/MLflow identity is explicitly mandatory; local acceptance tests passed |
-| PR-379 | IMPLEMENTED | Push/merge gates now enforce unit coverage inside the unit lane and no longer depend on cross-job GitHub artifact download; local CI-contract tests passed |
+| PR-378 | IMPLEMENTATION MERGED | Removed stale lifecycle and metadata opt-in semantics: PCA is always materialized in the v4 source capture and its audit/MLflow identity is explicitly mandatory; merged in GitHub #377 after all gates; branch deleted |
+| PR-379 | IMPLEMENTATION MERGED | Push/merge gates now enforce unit coverage inside the unit lane and no longer depend on cross-job GitHub artifact download; merged in GitHub #378 after all gates; branch deleted |
+| PR-380 | IMPLEMENTATION MERGED | Plot preparation sizes process workers for every submitted candidate and parent task; merged in GitHub #379 after all gates; branch deleted |
+| PR-381 | IMPLEMENTATION MERGED | Ranked prefix lengths use bounded process-parallel execution with deterministic result/sink ordering; merged in GitHub #381 after rebase and all gates; branch deleted |
+| PR-382 | IMPLEMENTATION MERGED | Full current-Xetra evaluation performs raw source/model-clock eligibility checks before PCA/HMM work; merged in GitHub #380 after rebase and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
