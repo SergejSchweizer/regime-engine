@@ -4,9 +4,8 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `pr/PR-390-parallel-tracking-evidence`; the bounded
-  tracking-evidence implementation is under focused verification before its
-  rebase/merge gate.
+- **Active worktree:** `main`; no implementation worktree or `pr/*` branch is
+  active after the latest merged follow-ups.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -54,9 +53,12 @@ Status date: 2026-09-14
   found one safe remaining gap: per-candidate metric/timeline evidence
   preparation in MLflow tracking was serial after plot rendering; PR-390 now
   prepares those pure payloads in bounded processes and retains canonical
-  MLflow writes. The global plot renderer, math-expectation dossier handoff,
-  and independent verifier primitives were audited and already use
-  process-parallel tasks where their dependencies allow it.
+  MLflow writes. PR-391 removes the remaining GIL-bound fallback callbacks:
+  parallel evaluation callbacks now require process-safe adapters, while
+  explicit serial mode remains available for extension fixtures. The global
+  plot renderer, math-expectation dossier handoff, and independent verifier
+  primitives were audited and already use process-parallel tasks where their
+  dependencies allow it.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -82,10 +84,11 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#352 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#389 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
-  #369 and #370 are also merged. No GitHub PRs are open and no `pr/*` remote
-  branches remain. The implementation branches for #303–#374 have therefore
+  #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
+  and #389 are also merged. No GitHub PRs are open and no `pr/*` remote
+  branches remain. The implementation branches for #303–#389 have therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -280,7 +283,8 @@ still required.
 | PR-384 | IMPLEMENTATION MERGED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures; merged in GitHub #383 after all gates; branch deleted |
 | PR-386 | IMPLEMENTATION MERGED | Tightened the external current-Xetra audit contract for schema v2, mandatory PCA/search bounds, complete audited-fold coverage and zero numerical audit errors; merged in GitHub #385 after rebase and all gates; branch deleted |
 | PR-387 | IMPLEMENTATION MERGED | Made MLflow deleted-LoggedModel inventory explicit and fail closed for HTTP RestStore backends without that visibility; merged in GitHub #386 after rebase and all gates; branch deleted |
-| PR-390 | IMPLEMENTATION IN PROGRESS | Focused audit found serial per-candidate MLflow metric/timeline evidence assembly; pure payload preparation is now process-parallel with deterministic assembly while ordered MLflow writes remain serial; focused tests/Ruff/MyPy pass on `pr/PR-390-parallel-tracking-evidence`, rebase/merge and branch deletion pending |
+| PR-390 | IMPLEMENTATION MERGED | Focused audit found serial per-candidate MLflow metric/timeline evidence assembly; pure payload preparation is process-parallel with deterministic assembly while ordered MLflow writes remain serial; merged in GitHub #388 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
+| PR-391 | IMPLEMENTATION MERGED | Removed GIL-bound non-pickleable callback fallbacks from global folds, provisional teacher, prefix search and candidate grids; parallel callbacks now require process-safe adapters and explicit serial mode remains available; merged in GitHub #389 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
