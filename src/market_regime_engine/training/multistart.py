@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import warnings
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
@@ -278,30 +278,11 @@ def run_multistart(
                     raise
             save_results_in_parent = True
         else:
-            # Custom adapters used by unit tests and extension callers may be
-            # closures and cannot be sent to process workers.
-            def evaluate_thread(seed: int) -> tuple[StartDiagnostic, FitResult | None]:
-                outcome = _evaluate_start(
-                    train_rows,
-                    state_count=state_count,
-                    adapter_factory=adapter_factory,
-                    seed=seed,
-                    retryable_technical_failure=checkpoint is not None,
-                )
-                if checkpoint is not None:
-                    from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
-
-                    checkpoint.save(seed, SeedFitOutcome(*outcome))
-                return outcome
-
-            with (
-                _reserve_cpu_slots(pending_worker_limit) as reserved_workers,
-                ThreadPoolExecutor(max_workers=reserved_workers) as thread_executor,
-            ):
-                futures = {
-                    seed: thread_executor.submit(evaluate_thread, seed) for seed in pending_seeds
-                }
-                pending_results = {seed: futures[seed].result() for seed in pending_seeds}
+            raise TypeError(
+                "CPU-bound multistart requires a pickleable adapter_factory when "
+                f"max_workers={pending_worker_limit}; provide a process-safe factory "
+                "or set max_workers=1 for serial execution"
+            )
 
         for seed, outcome in pending_results.items():
             evaluated_by_seed[seed] = outcome

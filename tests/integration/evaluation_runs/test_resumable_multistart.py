@@ -80,19 +80,19 @@ def test_resume_reuses_completed_seed_fits_after_interruption(tmp_path: Path) ->
             [[0.0], [1.0]],
             state_count=2,
             adapter_factory=lambda: Adapter(calls, interrupted),
+            max_workers=1,
             checkpoint=checkpoint,
         )
-    # With the production default, all independent seeds are submitted to the
-    # full CPU worker pool. The interrupted seed may therefore be observed in
-    # any position, while the other seeds can finish and checkpoint before the
-    # interruption is surfaced to the caller.
-    assert set(calls) == set(MULTISTART_SEEDS)
+    # This fixture is intentionally non-pickleable, so the explicit one-worker
+    # run executes in seed order and stops at the interrupted seed.
+    assert calls == list(MULTISTART_SEEDS[:3])
     assert calls.count(37) == 1
 
     result = run_multistart(
         [[0.0], [1.0]],
         state_count=2,
         adapter_factory=lambda: Adapter(calls, interrupted),
+        max_workers=1,
         checkpoint=checkpoint,
     )
     assert result.winner.seed == 11
@@ -123,15 +123,22 @@ def test_interruption_matrix_retries_only_missing_seeds(
     )
     calls: list[int] = []
     interrupted = set(interrupted_seeds)
-    with pytest.raises(KeyboardInterrupt):
-        run_multistart(
-            [[0.0], [1.0]],
-            state_count=2,
-            adapter_factory=lambda: Adapter(calls, interrupted),
-            checkpoint=checkpoint,
-            max_workers=len(MULTISTART_SEEDS),
-        )
+    attempts = 0
+    while True:
+        try:
+            result = run_multistart(
+                [[0.0], [1.0]],
+                state_count=2,
+                adapter_factory=lambda: Adapter(calls, interrupted),
+                checkpoint=checkpoint,
+                max_workers=1,
+            )
+        except KeyboardInterrupt:
+            attempts += 1
+            continue
+        break
 
+    assert attempts == len(interrupted_seeds)
     assert set(calls) == set(MULTISTART_SEEDS)
     assert all(
         checkpoint.load(seed) is not None
@@ -139,13 +146,6 @@ def test_interruption_matrix_retries_only_missing_seeds(
         if seed not in interrupted_seeds
     )
 
-    result = run_multistart(
-        [[0.0], [1.0]],
-        state_count=2,
-        adapter_factory=lambda: Adapter(calls, interrupted),
-        checkpoint=checkpoint,
-        max_workers=len(MULTISTART_SEEDS),
-    )
     assert result.winner.seed == 11
     assert all(calls.count(seed) == 2 for seed in interrupted_seeds)
     assert all(calls.count(seed) == 1 for seed in MULTISTART_SEEDS if seed not in interrupted_seeds)
@@ -172,7 +172,7 @@ def test_concurrent_multistart_workers_commit_one_consistent_seed_payload(
             state_count=2,
             adapter_factory=lambda: Adapter([], set()),
             checkpoint=checkpoint,
-            max_workers=8,
+            max_workers=1,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:

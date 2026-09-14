@@ -90,7 +90,9 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     outcomes[107] = RuntimeError("numerical failure")
     outcomes[131] = fit_result(131, 100.0, converged=False)
 
-    result = run_multistart([[0.0], [1.0]], state_count=2, adapter_factory=factory(outcomes))
+    result = run_multistart(
+        [[0.0], [1.0]], state_count=2, adapter_factory=factory(outcomes), max_workers=1
+    )
     assert result.valid_start_count == 6
     assert result.success_rate == 0.75
     assert result.winner.seed == 89
@@ -106,7 +108,9 @@ def test_numeric_tie_within_1e12_prefers_lower_seed() -> None:
     }
     outcomes[11] = fit_result(11, 10.0)
     outcomes[23] = fit_result(23, 10.0 + 0.5e-12)
-    result = run_multistart([[0.0]], state_count=2, adapter_factory=factory(outcomes))
+    result = run_multistart(
+        [[0.0]], state_count=2, adapter_factory=factory(outcomes), max_workers=1
+    )
     assert result.winner.seed == 11
 
 
@@ -116,7 +120,9 @@ def test_difference_above_tolerance_selects_higher_loglik() -> None:
     }
     outcomes[11] = fit_result(11, 10.0)
     outcomes[23] = fit_result(23, 10.0 + 2e-12)
-    result = run_multistart([[0.0]], state_count=2, adapter_factory=factory(outcomes))
+    result = run_multistart(
+        [[0.0]], state_count=2, adapter_factory=factory(outcomes), max_workers=1
+    )
     assert result.winner.seed == 23
 
 
@@ -128,7 +134,9 @@ def test_global_anchor_rejects_pairwise_likelihood_tolerance_chain() -> None:
     outcomes[23] = fit_result(23, 10.0 + 0.75e-12)
     outcomes[37] = fit_result(37, 10.0 + 1.5e-12)
 
-    result = run_multistart([[0.0]], state_count=2, adapter_factory=factory(outcomes))
+    result = run_multistart(
+        [[0.0]], state_count=2, adapter_factory=factory(outcomes), max_workers=1
+    )
 
     assert result.winner.seed == 23
 
@@ -145,7 +153,7 @@ def test_fewer_than_six_valid_starts_fails_with_failure_evidence() -> None:
     for seed in MULTISTART_SEEDS[:5]:
         outcomes[seed] = fit_result(seed, float(seed))
     with pytest.raises(ValueError, match="valid_starts=5/8") as exc_info:
-        run_multistart([[0.0]], state_count=3, adapter_factory=factory(outcomes))
+        run_multistart([[0.0]], state_count=3, adapter_factory=factory(outcomes), max_workers=1)
     assert "fail-89" in str(exc_info.value)
 
 
@@ -157,7 +165,7 @@ def test_invalid_result_paths_are_counted_as_failed_starts() -> None:
     outcomes[23] = replace(outcomes[23], train_log_likelihood=nan)  # type: ignore[arg-type]
     outcomes[37] = replace(outcomes[37], seed=999)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="valid_starts=5/8"):
-        run_multistart([[0.0]], state_count=4, adapter_factory=factory(outcomes))
+        run_multistart([[0.0]], state_count=4, adapter_factory=factory(outcomes), max_workers=1)
 
 
 def test_invalid_state_count_fails_before_adapter_use() -> None:
@@ -195,6 +203,34 @@ def test_pickleable_custom_adapter_factory_uses_process_workers(
     )
 
     assert worker_counts == [2]
+    assert result.winner.seed == 131
+
+
+def test_non_pickleable_adapter_factory_fails_before_thread_fallback() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+
+    with pytest.raises(
+        TypeError,
+        match="CPU-bound multistart requires a pickleable adapter_factory",
+    ):
+        run_multistart(
+            [[0.0], [1.0]],
+            state_count=2,
+            adapter_factory=lambda: FakeAdapter(outcomes),
+            max_workers=2,
+        )
+
+
+def test_non_pickleable_adapter_factory_can_run_serially() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+
+    result = run_multistart(
+        [[0.0], [1.0]],
+        state_count=2,
+        adapter_factory=lambda: FakeAdapter(outcomes),
+        max_workers=1,
+    )
+
     assert result.winner.seed == 131
 
 

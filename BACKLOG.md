@@ -260,6 +260,7 @@ still required.
 | PR-380 | IMPLEMENTATION MERGED | Plot preparation sizes process workers for every submitted candidate and parent task; merged in GitHub #379 after all gates; branch deleted |
 | PR-381 | IMPLEMENTATION MERGED | Ranked prefix lengths use bounded process-parallel execution with deterministic result/sink ordering; merged in GitHub #381 after rebase and all gates; branch deleted |
 | PR-382 | IMPLEMENTATION MERGED | Full current-Xetra evaluation performs raw source/model-clock eligibility checks before PCA/HMM work; merged in GitHub #380 after rebase and all gates; branch deleted |
+| PR-384 | IMPLEMENTED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
