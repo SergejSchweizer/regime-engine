@@ -450,6 +450,83 @@ def test_model_metrics_verifier_rejects_unknown_metric_key(
     assert report["counts"]["unknown_metric_key_count"] == 1
 
 
+def test_model_metrics_verifier_rejects_stale_metric_catalog_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "stale-catalog").as_uri()
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    run_id = port.start_run(run_name="audit")
+    model_name = "evaluation-a-fold-1-candidate-a"
+    tags = {**_standard_tags(), "regime_engine.metric_catalog_version": "0"}
+    model_id = port.create_logged_model(
+        name=model_name,
+        source_run_id=run_id,
+        model_type="candidate-a",
+        tags=tags,
+    )
+    point = MetricPoint("valid_fold_count", 1.0, 0, 100)
+    port.log_model_metric_points(model_id, (point,))
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": point.key,
+                            "value": point.value,
+                            "step": point.step,
+                            "timestamp_ms": point.timestamp_ms,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["metric_catalog_version_violation_count"] == 1
+
+
+def test_model_metrics_verifier_compares_float_values_exactly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_rate", -0.0, 0, 100),),
+    )
+
+    report = _verifier().audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": "valid_fold_rate",
+                            "value": 0.0,
+                            "step": 0,
+                            "timestamp_ms": 100,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["conflicting_point_count"] == 1
+
+
 def test_model_metrics_verifier_checks_domain_for_unexpected_metric_points(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -766,6 +843,37 @@ def test_strict_expectation_contract_is_content_addressed(
     )
     assert tampered["status"] == "failed"
     assert tampered["counts"]["expectation_contract_violation_count"] == 1
+
+
+def test_strict_expectation_contract_rejects_stale_metric_catalog_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_count", 1.0, 0, 100),),
+    )
+    module = _verifier()
+    expectation = _strict_expectation(
+        module,
+        model_name,
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+    )
+    expectation["models"][0]["required_tags"]["regime_engine.metric_catalog_version"] = "0"
+
+    report = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        expectation,
+        require_expectation_contract=True,
+    )
+
+    assert report["status"] == "failed"
+    assert any(
+        "unsupported metric catalog version" in violation
+        for violation in report["expectation_contract_violations"]
+    )
 
 
 def test_strict_terminal_contract_rejects_running_or_pending_model(
