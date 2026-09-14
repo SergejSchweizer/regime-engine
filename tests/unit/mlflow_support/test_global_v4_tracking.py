@@ -376,6 +376,10 @@ def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarc
     assert canonical_path.read_bytes() == evidence.canonical_json()
     assert sha256(canonical_path.read_bytes()).hexdigest() == evidence.evidence_hash
     assert port.params["run-1"]["global_v4_evidence_sha256"] == evidence.evidence_hash
+    assert port.params["run-1"]["regime_engine.runtime_scope"] == "tracking_run"
+    assert float(port.params["run-1"]["regime_engine.runtime_seconds"]) >= 0.0
+    assert port.params["run-2"]["regime_engine.runtime_scope"] == "tracking_run"
+    assert float(port.params["run-2"]["regime_engine.runtime_seconds"]) >= 0.0
     assert (
         sha256((parent_dir / "statistics.json").read_bytes()).hexdigest()
         == port.params["run-1"]["statistics_sha256"]
@@ -391,6 +395,28 @@ def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarc
     assert not tuple(tmp_path.rglob("*.svg"))
     assert port.failed == []
     assert port.finished == ["run-2", "run-1"]
+
+
+def test_global_v4_tracking_records_full_evaluation_runtime_metadata(
+    tmp_path: Path,
+) -> None:
+    port = RecordingPort()
+    started_at = datetime.now(UTC) - timedelta(seconds=2)
+    started_monotonic = module.time.perf_counter() - 2.0
+
+    module.track_global_v4_evaluation(
+        port,
+        StatisticsWriter(tmp_path),
+        evidence=_evidence(),
+        result=_result(),
+        selections={1: _selection()},
+        evaluation_started_at=started_at,
+        evaluation_start_monotonic=started_monotonic,
+    )
+
+    assert port.params["run-1"]["regime_engine.runtime_scope"] == "full_evaluation"
+    assert port.params["run-1"]["regime_engine.runtime_started_at_utc"] == started_at.isoformat()
+    assert float(port.params["run-1"]["regime_engine.runtime_seconds"]) >= 2.0
 
 
 def test_global_v4_plot_failure_fails_the_parent_run(

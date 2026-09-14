@@ -64,14 +64,14 @@ Status date: 2026-09-14
   `regime_loader.regime_features_daily`; the verified live lineage contract is
   schema version 4 / feature version 3. `xetra_loader` exists but denies
   `CONNECT` to that role. External MLflow health responds `OK` at
-  `http://10.10.1.3:5000`; no `regime-engine-evaluation` experiment or
-  `regime-xetra` model version exists there yet. The authorized live full run
-  uses the fresh CPU-optimized state root
-  `/home/dev_regime/regime-evaluation-checkpoints-v2` and run key
-  `be69fea9b851a7b53b8d44b6700d6ebefbdcfe5fa897ea44b8a0c75239eb838e`. The
-  run is now `COMPLETE` after a guarded repair converted its 246 stale pending
-  stage units to `DOMAIN_INVALID`; it has 9,581 complete and 246 domain-invalid
-  units, with zero valid folds and therefore no production-eligibility claim.
+  `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
+  experiment 3 with 768 historical runs, but no LoggedModels or registered
+  models. A read-only PR-250 namespace preflight therefore fails closed until
+  the historical namespace is explicitly cleaned and a fresh run is tracked.
+  The current authorized full run uses the fresh state root
+  `/home/dev_regime/regime-evaluation-checkpoints-v3`; it is still running
+  with 86 process workers and must not be treated as acceptance evidence until
+  it finishes and its current-source audit succeeds.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -87,18 +87,23 @@ Status date: 2026-09-14
   fallback. The process-backed grid/integration validation is green (`29
   passed`), with mypy and Ruff passing. Stage-invalid terminalization and
   ledger-repair tests pass. Test
-  BLAS/OpenMP pools are capped at one native thread per worker to prevent
-  xdist/native oversubscription. The
+  BLAS/OpenMP/NumExpr pools are capped at one native thread per worker to
+  prevent xdist/native oversubscription. MLflow parent and child evaluation
+  runs record `regime_engine.runtime_started_at_utc`,
+  `regime_engine.runtime_ended_at_utc`, and
+  `regime_engine.runtime_seconds`; the full Xetra parent is marked with
+  `regime_engine.runtime_scope=full_evaluation`. The
   zero-legacy audit scans 688 active files and passes, and the scoped MLflow
   cleanup tests pass (`5 passed`). NAS MLflow access is authorized and its
-  `/health` endpoint returns `200 OK`; the evaluation experiment and
-  `regime-xetra` registered model are currently absent. No production objects
-  have been deleted. The full non-external suite passes under `pytest -n auto`
+  `/health` endpoint returns `200 OK`; its historical evaluation namespace is
+  non-empty and has no LoggedModels or registered model versions. No
+  production objects have been deleted. The full non-external suite passes under `pytest -n auto`
   (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
-  MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
-  (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
-  must still complete the same long-running proof.
+  MLflow tracking and plot-manifest generation. The four local PR-231
+  subproofs are now accepted; the merge/push gate intentionally does not run
+  this long proof, and the local pre-commit hook remains the integration-test
+  entry point.
   Pytest now uses `pytest-xdist -n auto` by default, so test files are
   distributed across all available CPUs in local and CI runs. The latest
   stale full run reached 450 passed and 8 fixture failures caused by the live
@@ -145,7 +150,7 @@ Metrics completeness evidence remain open acceptance work.
 ## Git/PR status ledger — authoritative reconciliation
 
 This ledger was checked against `git status`, `origin/main` and GitHub on
-2026-09-13. It supersedes stale per-section status prose and historical
+2026-09-14. It supersedes stale per-section status prose and historical
 unchecked acceptance boxes below. **Implemented** means the code is on
 `main`; **acceptance open** means the remaining proof or external audit is
 still required.
@@ -192,7 +197,7 @@ still required.
 | PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-248 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; acceptance open: full Model Metrics completeness and external resume evidence |
+| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards are now implemented locally; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
 | PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |

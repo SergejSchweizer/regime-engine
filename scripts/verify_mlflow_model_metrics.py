@@ -12,6 +12,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
+from mlflow.entities import ViewType
 from mlflow.tracking import MlflowClient
 
 from market_regime_engine.mlflow_support.metric_catalog import metric_definition
@@ -66,6 +67,8 @@ class AuditCounts:
     unknown_metric_key_count: int
     tag_violation_count: int
     comparison_domain_violation_count: int
+    historical_namespace_violation_count: int
+    nonempty_model_set_violation_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,45 @@ def _search_all_logged_models(client: MlflowClient, experiment_id: str) -> tuple
         if not next_token:
             return tuple(models)
         page_token = str(next_token)
+
+
+def _search_all_runs(client: MlflowClient, experiment_id: str) -> tuple[Any, ...]:
+    """Read every active and deleted run in an experiment, including all pages."""
+
+    runs: list[Any] = []
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "max_results": 1000,
+            "run_view_type": ViewType.ALL,
+        }
+        if page_token is not None:
+            kwargs["page_token"] = page_token
+        page = client.search_runs([experiment_id], **kwargs)
+        runs.extend(page)
+        next_token = getattr(page, "token", None)
+        if not next_token:
+            return tuple(runs)
+        page_token = str(next_token)
+
+
+def _namespace_inventory(
+    experiment_id: str,
+    runs: tuple[Any, ...],
+    models: tuple[Any, ...],
+) -> dict[str, object]:
+    """Return read-only evidence about the complete MLflow namespace."""
+
+    status_counts = Counter(str(run.info.status) for run in runs)
+    lifecycle_counts = Counter(str(run.info.lifecycle_stage) for run in runs)
+    return {
+        "experiment_id": experiment_id,
+        "run_count": len(runs),
+        "run_status_counts": dict(sorted(status_counts.items())),
+        "run_lifecycle_counts": dict(sorted(lifecycle_counts.items())),
+        "logged_model_count": len(models),
+        "historical_objects_zero": not runs and not models,
+    }
 
 
 def _tags(model: Any) -> dict[str, str]:
@@ -336,6 +378,8 @@ def audit(
     *,
     baseline_tracking_uri: str | None = None,
     baseline_experiment_name: str | None = None,
+    require_clean_namespace: bool = False,
+    require_nonempty_model_set: bool = False,
 ) -> dict[str, object]:
     if (baseline_tracking_uri is None) != (baseline_experiment_name is None):
         raise ValueError(
@@ -346,6 +390,8 @@ def audit(
     if experiment is None:
         raise ValueError(f"MLflow experiment does not exist: {experiment_name}")
     actual_models = _search_all_logged_models(client, str(experiment.experiment_id))
+    actual_runs = _search_all_runs(client, str(experiment.experiment_id))
+    namespace = _namespace_inventory(str(experiment.experiment_id), actual_runs, actual_models)
     expected_entries = tuple(expectation.get("models", ()))
     if not all(isinstance(item, dict) for item in expected_entries):
         raise ValueError("expectation models must be objects")
@@ -381,7 +427,7 @@ def audit(
         if len(models) != 1:
             continue
         model = models[0]
-        tags = {str(key): str(value) for key, value in (model.tags or {}).items()}
+        tags = _tags(model)
         required_tag_keys = set(_REQUIRED_TAGS)
         expected_tags = expected.get("required_tags", {})
         if not isinstance(expected_tags, dict):
@@ -435,7 +481,7 @@ def audit(
     # a ledger must never hide a point that is absent, duplicated, or changed
     # in MLflow itself.
     for model, points in actual_model_points:
-        tags = {str(key): str(value) for key, value in (model.tags or {}).items()}
+        tags = _tags(model)
         keys = {point.key for point in points}
         unknown_keys += sum(metric_definition(key) is None for key in keys)
         for key in keys:
@@ -478,7 +524,7 @@ def audit(
             group_points[name] = tuple(
                 point for point in actual_points_by_name[name] if point.key == metric_key
             )
-            group_tags[name] = {str(key): str(value) for key, value in (model.tags or {}).items()}
+            group_tags[name] = _tags(model)
         if len(group_points) != len(normalized_model_names) or any(
             not points for points in group_points.values()
         ):
@@ -513,6 +559,12 @@ def audit(
         unknown_metric_key_count=unknown_keys,
         tag_violation_count=tag_violations,
         comparison_domain_violation_count=domain_violations,
+        historical_namespace_violation_count=int(
+            require_clean_namespace and not bool(namespace["historical_objects_zero"])
+        ),
+        nonempty_model_set_violation_count=int(
+            require_nonempty_model_set and (not expected_entries or not actual_models)
+        ),
     )
     model_summaries = tuple(
         {
@@ -530,6 +582,11 @@ def audit(
     report: dict[str, object] = {
         "tracking_uri": tracking_uri,
         "experiment_name": experiment_name,
+        "namespace": namespace,
+        "requirements": {
+            "require_clean_namespace": require_clean_namespace,
+            "require_nonempty_model_set": require_nonempty_model_set,
+        },
         "counts": asdict(counts),
         "model_count_by_scope": dict(
             sorted(Counter(str(item["scope"]) for item in model_summaries).items())
@@ -553,6 +610,8 @@ def audit(
                     "unknown_metric_key_count",
                     "tag_violation_count",
                     "comparison_domain_violation_count",
+                    "historical_namespace_violation_count",
+                    "nonempty_model_set_violation_count",
                 )
             )
             else "failed"
@@ -575,7 +634,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracking-uri", required=True)
     parser.add_argument("--experiment", required=True)
-    parser.add_argument("--expectation", type=Path, required=True)
+    parser.add_argument(
+        "--expectation",
+        type=Path,
+        help="JSON expectation; omit only for --require-clean-namespace preflight",
+    )
+    parser.add_argument(
+        "--require-clean-namespace",
+        action="store_true",
+        help="fail unless the experiment has zero active or deleted runs and LoggedModels",
+    )
+    parser.add_argument(
+        "--require-nonempty",
+        action="store_true",
+        help="fail unless both the expectation and MLflow contain LoggedModels",
+    )
     parser.add_argument(
         "--baseline-tracking-uri",
         help="uninterrupted MLflow URI for final resumed-vs-baseline parity evidence",
@@ -586,13 +659,19 @@ def main() -> None:
     )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-    expectation = json.loads(args.expectation.read_text(encoding="utf-8"))
+    if args.expectation is None and not args.require_clean_namespace:
+        parser.error("--expectation is required unless --require-clean-namespace is set")
+    expectation = (
+        {} if args.expectation is None else json.loads(args.expectation.read_text(encoding="utf-8"))
+    )
     report = audit(
         args.tracking_uri,
         args.experiment,
         expectation,
         baseline_tracking_uri=args.baseline_tracking_uri,
         baseline_experiment_name=args.baseline_experiment,
+        require_clean_namespace=args.require_clean_namespace,
+        require_nonempty_model_set=args.require_nonempty,
     )
     rendered = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.json_out is not None:

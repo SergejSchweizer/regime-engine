@@ -7,7 +7,8 @@ import json
 import os
 import platform
 import subprocess
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -287,6 +288,8 @@ def _require_full_audit_eligibility(
 
 
 def _run(performance: PerformanceRecorder) -> None:
+    evaluation_started_at = datetime.now(UTC)
+    evaluation_start_monotonic = time.perf_counter()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--snapshot-root",
@@ -619,6 +622,8 @@ def _run(performance: PerformanceRecorder) -> None:
             result=result,
             selections=selections,
             metric_ledger_root=checkpoint_root / "metric-export",
+            evaluation_started_at=evaluation_started_at,
+            evaluation_start_monotonic=evaluation_start_monotonic,
         )
     outer_plan = plan_walk_forward(
         tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
