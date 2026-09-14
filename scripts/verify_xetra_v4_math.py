@@ -14,6 +14,7 @@ import json
 import math
 import multiprocessing
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor
 from hashlib import sha256
 from math import fsum, log
@@ -30,6 +31,23 @@ _PROBABILITY_TOLERANCE = 1.0e-10
 _AUDIT_TOLERANCE = 1.0e-10
 _AUDIT_COLUMNS: dict[str, np.ndarray] | None = None
 _AUDIT_THREAD_LIMITER: object | None = None
+_CURRENT_AUDIT_CONTRACT_VERSION = 1
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_CURRENT_FINAL_CANDIDATE_IDS = (
+    "gaussian_hmm_k2_full",
+    "gaussian_hmm_k3_full",
+    "gaussian_hmm_k4_full",
+    "gaussian_hmm_k5_full",
+    "gmm_hmm_k2_m2_full",
+    "gmm_hmm_k3_m2_full",
+    "gmm_hmm_k4_m2_full",
+    "gmm_hmm_k5_m2_full",
+    "student_t_hmm_k2_full",
+    "student_t_hmm_k3_full",
+    "student_t_hmm_k4_full",
+    "student_t_hmm_k5_full",
+)
 
 
 def _initialize_audit_worker(columns: dict[str, np.ndarray]) -> None:
@@ -1144,18 +1162,263 @@ def _validate_source_identity(expected: object, snapshot_sha256: str | None) -> 
         raise SystemExit("source identity snapshot hash does not match the audit snapshot")
 
 
+def _json_sha256(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _contract_sha(value: object, name: str, *, git: bool = False) -> str:
+    if not isinstance(value, str) or not (_GIT_SHA_RE if git else _SHA256_RE).fullmatch(value):
+        raise SystemExit(f"audit contract identity {name} is not a lowercase digest")
+    return value
+
+
+def _required_mapping(value: object, name: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise SystemExit(f"{name} must be an object")
+    return value
+
+
+def _validate_source_request_contract(value: object, name: str) -> None:
+    request = _required_mapping(value, name)
+    expected = {
+        "mode": "schema_discovery",
+        "feature_names": [],
+        "start": None,
+        "end": None,
+        "all_source_rows": True,
+        "dynamic_catalog": True,
+    }
+    if request != expected:
+        raise SystemExit(f"{name} is not the complete unbounded schema-wide request")
+
+
+def _validate_search_bounds_contract(value: object, fold_indices: tuple[int, ...]) -> None:
+    search = _required_mapping(value, "audit_contract.search_bounds")
+    declared = _required_mapping(search.get("declared_bounds"), "search_bounds.declared_bounds")
+    discovery = _required_mapping(
+        declared.get("feature_discovery"), "search_bounds.feature_discovery"
+    )
+    required_discovery: dict[str, object] = {
+        "feature_universe_mode": "all_non_timestamp_m1_double_precision",
+        "excluded_source_column": "timestamp_m1",
+        "feature_ordering": "postgresql_ordinal_position",
+        "cluster_count_min": 2,
+        "cluster_count_max": 12,
+        "provisional_state_counts": [2, 3, 4, 5],
+        "minimum_prefix_length": 2,
+        "maximum_prefix_length": 8,
+        "prefix_state_counts": [2, 3, 4, 5],
+        "inner_train_source_observations": 756,
+        "inner_test_source_observations": 63,
+        "inner_step_source_observations": 63,
+        "inner_partial_final_test": False,
+        "outer_train_source_observations": 1260,
+        "outer_test_source_observations": 63,
+        "outer_step_source_observations": 63,
+        "outer_partial_final_test": False,
+        "minimum_outer_valid_fold_rate": 0.8,
+        "minimum_outer_valid_folds": 3,
+    }
+    for key, expected in required_discovery.items():
+        if discovery.get(key) != expected:
+            raise SystemExit(f"search_bounds.feature_discovery.{key} is not pinned")
+    walk = _required_mapping(declared.get("walk_forward"), "search_bounds.walk_forward")
+    expected_walk = {
+        "minimum_train_source_observations": 1260,
+        "test_source_observations": 63,
+        "step_source_observations": 63,
+        "allow_partial_final_test": False,
+        "minimum_model_train_observations": 504,
+        "minimum_model_test_observations": 42,
+    }
+    for key, expected in expected_walk.items():
+        if walk.get(key) != expected:
+            raise SystemExit(f"search_bounds.walk_forward.{key} is not pinned")
+    families = _required_mapping(
+        declared.get("candidate_families"), "search_bounds.candidate_families"
+    )
+    if families.get("gaussian_state_counts") != [2, 3, 4, 5]:
+        raise SystemExit("search_bounds Gaussian state bounds are incomplete")
+    if families.get("student_t_state_counts") != [2, 3, 4, 5]:
+        raise SystemExit("search_bounds Student-t state bounds are incomplete")
+    if families.get("gmm_state_mixture_pairs") != [[2, 2], [3, 2], [4, 2], [5, 2]]:
+        raise SystemExit("search_bounds GMM state/mixture bounds are incomplete")
+    if families.get("final_candidate_ids") != list(_CURRENT_FINAL_CANDIDATE_IDS):
+        raise SystemExit("search_bounds final candidate universe is incomplete")
+    seeds = families.get("gaussian_multistart_seeds")
+    if not isinstance(seeds, list) or len(seeds) != 8 or len(set(seeds)) != 8:
+        raise SystemExit("search_bounds Gaussian multistart seed bound is incomplete")
+
+    raw_folds = search.get("per_fold")
+    if not isinstance(raw_folds, list) or not raw_folds:
+        raise SystemExit("audit_contract.search_bounds.per_fold must be non-empty")
+    observed_indices: list[int] = []
+    for index, raw_fold in enumerate(raw_folds):
+        fold = _required_mapping(raw_fold, f"search_bounds.per_fold[{index}]")
+        fold_index = fold.get("outer_fold_index")
+        if isinstance(fold_index, bool) or not isinstance(fold_index, int):
+            raise SystemExit("search_bounds per-fold index is invalid")
+        observed_indices.append(fold_index)
+        eligible = fold.get("eligible_feature_count")
+        ranked = fold.get("ranked_feature_count")
+        if isinstance(eligible, bool) or not isinstance(eligible, int) or eligible < 3:
+            raise SystemExit("search_bounds eligible feature count is invalid")
+        if isinstance(ranked, bool) or not isinstance(ranked, int) or ranked < 2:
+            raise SystemExit("search_bounds ranked feature count is invalid")
+        expected_clusters = list(range(2, min(12, eligible - 1) + 1))
+        if fold.get("cluster_count_candidates") != expected_clusters:
+            raise SystemExit("search_bounds cluster candidate range is incomplete")
+        expected_prefixes = list(range(2, min(8, ranked) + 1))
+        if fold.get("prefix_length_candidates") != expected_prefixes:
+            raise SystemExit("search_bounds prefix candidate range is incomplete")
+        if fold.get("provisional_candidate_ids") != [
+            f"gaussian_hmm_k{state_count}_full" for state_count in (2, 3, 4, 5)
+        ]:
+            raise SystemExit("search_bounds provisional candidate range is incomplete")
+        if fold.get("final_candidate_ids") != list(_CURRENT_FINAL_CANDIDATE_IDS):
+            raise SystemExit("search_bounds per-fold final candidate range is incomplete")
+    if tuple(observed_indices) != fold_indices:
+        raise SystemExit("search_bounds per-fold indices do not match valid outer folds")
+
+
+def _validate_current_audit_contract(
+    expected: object,
+    columns: dict[str, np.ndarray],
+    dossiers: tuple[dict[str, object], ...],
+    snapshot_sha256: str | None,
+) -> None:
+    root = _required_mapping(expected, "math expectations")
+    if root.get("schema_version") != 3:
+        raise SystemExit("current Xetra audit requires math expectation schema version 3")
+    contract = _required_mapping(root.get("audit_contract"), "audit_contract")
+    if contract.get("schema_version") != _CURRENT_AUDIT_CONTRACT_VERSION:
+        raise SystemExit("audit_contract schema version is unsupported")
+    _validate_source_request_contract(
+        contract.get("source_request"), "audit_contract.source_request"
+    )
+    _validate_source_request_contract(
+        contract.get("audit_source_request"), "audit_contract.audit_source_request"
+    )
+
+    raw_bounds = _required_mapping(contract.get("source_bounds"), "audit_contract.source_bounds")
+    required_bounds = (
+        "source_dataset",
+        "source_table",
+        "source_row_count",
+        "source_min_timestamp",
+        "source_max_timestamp",
+        "feature_count",
+        "feature_names_sha256",
+        "materialized_row_count",
+        "materialized_min_timestamp",
+        "materialized_max_timestamp",
+        "skipped_incomplete_row_count",
+    )
+    for key in required_bounds:
+        if key not in raw_bounds:
+            raise SystemExit(f"audit_contract.source_bounds.{key} is required")
+    if not isinstance(raw_bounds["source_dataset"], str) or not raw_bounds["source_dataset"]:
+        raise SystemExit("source_bounds.source_dataset is invalid")
+    if not isinstance(raw_bounds["source_table"], str) or not raw_bounds["source_table"]:
+        raise SystemExit("source_bounds.source_table is invalid")
+    for key in (
+        "source_row_count",
+        "feature_count",
+        "materialized_row_count",
+        "skipped_incomplete_row_count",
+    ):
+        value = raw_bounds[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise SystemExit(f"source_bounds.{key} is invalid")
+    timestamp_column = "timestamp_m1"
+    if timestamp_column not in columns:
+        raise SystemExit("source snapshot is missing timestamp_m1")
+    feature_names = [name for name in columns if name != timestamp_column]
+    if raw_bounds["feature_count"] != len(feature_names):
+        raise SystemExit("source_bounds.feature_count does not match the snapshot")
+    _contract_sha(raw_bounds["feature_names_sha256"], "feature_names_sha256")
+    if raw_bounds["feature_names_sha256"] != _json_sha256(feature_names):
+        raise SystemExit("source feature-name identity does not match the snapshot")
+    if raw_bounds["materialized_row_count"] != len(columns[timestamp_column]):
+        raise SystemExit("source_bounds.materialized_row_count does not match the snapshot")
+    if raw_bounds["source_row_count"] < raw_bounds["materialized_row_count"]:
+        raise SystemExit("source bounds contain more materialized rows than source rows")
+    if snapshot_sha256 is None:
+        raise SystemExit("current Xetra audit requires a snapshot SHA-256")
+
+    identity = _required_mapping(contract.get("identity_hashes"), "audit_contract.identity_hashes")
+    for key in (
+        "source_build_id",
+        "source_data_sha256",
+        "source_catalog_hash",
+        "materialized_feature_data_sha256",
+        "dataset_snapshot_key",
+        "snapshot_sha256",
+        "profile_hash",
+        "outer_plan_hash",
+        "uv_lock_sha256",
+    ):
+        if key == "source_build_id":
+            value = identity.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise SystemExit("audit contract source_build_id is invalid")
+            continue
+        _contract_sha(identity.get(key), key)
+    _contract_sha(identity.get("repository_commit_sha"), "repository_commit_sha", git=True)
+    if identity["snapshot_sha256"] != snapshot_sha256:
+        raise SystemExit("audit contract snapshot hash does not match the audit snapshot")
+
+    raw_valid = root.get("valid_outer_fold_indices")
+    raw_contract_valid = contract.get("valid_outer_fold_indices")
+    if raw_valid != raw_contract_valid or not isinstance(raw_valid, list) or not raw_valid:
+        raise SystemExit("valid outer-fold indices are missing or inconsistent")
+    if any(isinstance(index, bool) or not isinstance(index, int) for index in raw_valid):
+        raise SystemExit("valid outer-fold indices must be integers")
+    valid_indices = tuple(raw_valid)
+    if tuple(sorted(set(valid_indices))) != valid_indices or len(valid_indices) < 3:
+        raise SystemExit("valid outer-fold indices must be sorted and contain at least three folds")
+    expected_audit_indices = list(
+        dict.fromkeys((valid_indices[0], valid_indices[len(valid_indices) // 2], valid_indices[-1]))
+    )
+    audit_indices = contract.get("audit_outer_fold_indices")
+    if audit_indices != expected_audit_indices:
+        raise SystemExit("audit outer-fold indices are not first/middle/last valid folds")
+    if root.get("audit_outer_fold_indices") != audit_indices:
+        raise SystemExit("top-level audit outer-fold indices are inconsistent")
+    if [item.get("outer_fold_index") for item in dossiers] != audit_indices:
+        raise SystemExit("math dossiers do not match the declared audit outer-fold indices")
+    _validate_search_bounds_contract(contract.get("search_bounds"), valid_indices)
+
+    resource = _required_mapping(
+        contract.get("resource_evidence"), "audit_contract.resource_evidence"
+    )
+    report_path = resource.get("performance_report_path")
+    if not isinstance(report_path, str) or not os.path.isabs(report_path):
+        raise SystemExit("resource evidence must declare an absolute performance report path")
+    available = resource.get("available_logical_cpus")
+    if isinstance(available, bool) or not isinstance(available, int) or available < 1:
+        raise SystemExit("resource evidence CPU capacity is invalid")
+    native = resource.get("native_thread_environment")
+    if not isinstance(native, dict):
+        raise SystemExit("resource evidence native thread environment is missing")
+
+
 def verify_expectations(
     columns: dict[str, np.ndarray],
     expected: object,
     *,
     max_workers: int | None = None,
     snapshot_sha256: str | None = None,
+    require_current_audit_contract: bool = False,
 ) -> dict[str, object]:
     """Verify all dossiers, using independent processes for CPU-heavy primitives."""
 
     _validate_source_identity(expected, snapshot_sha256)
     immutable_columns = _immutable_columns(columns)
     dossiers = _audit_dossiers(expected)
+    if require_current_audit_contract:
+        _validate_current_audit_contract(expected, immutable_columns, dossiers, snapshot_sha256)
     distance_tasks: list[tuple[int, tuple[str, ...], tuple[tuple[int, int], ...]]] = []
     feature_tasks: list[tuple[int, str, dict[str, object], str]] = []
     nmi_tasks: list[tuple[int, dict[str, object]]] = []
@@ -1426,6 +1689,7 @@ def verify_expectations(
         "soft_nmi_max_abs_error": maximum_nmi_error,
         "gaussian_likelihood_max_abs_error": maximum_likelihood_error,
         "status": "verified",
+        "audit_contract_verified": require_current_audit_contract,
     }
 
 
@@ -1444,6 +1708,11 @@ def main() -> None:
         default=None,
         help="maximum independent audit processes (default: all allowed CPUs)",
     )
+    parser.add_argument(
+        "--require-current-xetra-contract",
+        action="store_true",
+        help="require the strict unsampled current-Xetra evidence envelope",
+    )
     args = parser.parse_args()
     columns = _read_snapshot(args.snapshot)
     expected = json.loads(args.expectations.read_text(encoding="utf-8"))
@@ -1455,6 +1724,7 @@ def main() -> None:
                 expected,
                 max_workers=args.workers,
                 snapshot_sha256=snapshot_sha256,
+                require_current_audit_contract=args.require_current_xetra_contract,
             )
         )
     )

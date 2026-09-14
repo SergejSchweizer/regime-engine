@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from market_regime_engine.features.ports import FeatureRequest
 
 
 def _module():
@@ -99,3 +102,44 @@ def test_full_audit_requires_all_valid_fold_selections_and_policy_eligibility() 
     )
     with pytest.raises(RuntimeError, match="production-eligible"):
         module._require_full_audit_eligibility(ineligible, {1: object()})
+
+
+def test_current_audit_source_request_rejects_allowlists_and_time_bounds() -> None:
+    module = _module()
+    complete = FeatureRequest.all_features()
+    assert module._source_request_evidence(complete)["all_source_rows"] is True
+
+    with pytest.raises(RuntimeError, match="allowlist"):
+        module._source_request_evidence(FeatureRequest(("feature_a",), None, None, complete.mode))
+    with pytest.raises(RuntimeError, match="timestamp bounds"):
+        module._source_request_evidence(
+            FeatureRequest(
+                (),
+                datetime(2026, 1, 1, tzinfo=UTC),
+                None,
+                complete.mode,
+            )
+        )
+
+
+def test_current_audit_requires_durable_summary_and_resource_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    root = tmp_path / "checkout"
+    root.mkdir()
+    monkeypatch.delenv("REGIME_EVALUATION_SUMMARY_PATH", raising=False)
+    with pytest.raises(RuntimeError, match="REGIME_EVALUATION_SUMMARY_PATH"):
+        module._durable_evidence_path(root, "REGIME_EVALUATION_SUMMARY_PATH")
+
+    monkeypatch.setenv("REGIME_EVALUATION_SUMMARY_PATH", str(root / "summary.json"))
+    with pytest.raises(RuntimeError, match="outside the repository"):
+        module._durable_evidence_path(root, "REGIME_EVALUATION_SUMMARY_PATH")
+
+    external = tmp_path.parent / "xetra-audit-evidence"
+    monkeypatch.setenv("REGIME_EVALUATION_SUMMARY_PATH", str(external / "summary.json"))
+    assert (
+        module._durable_evidence_path(root, "REGIME_EVALUATION_SUMMARY_PATH")
+        == (external / "summary.json").resolve()
+    )
