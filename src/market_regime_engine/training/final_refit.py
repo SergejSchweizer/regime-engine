@@ -206,8 +206,8 @@ def final_production_refit(
         scaler = fit_standard_scaler(matrix, candidate.feature_order)
         scaled = scaler.transform(matrix)
     else:
-        if profile is None or not profile.pca.enabled:
-            raise ValueError("PCA final refit requires profile.pca.enabled=true")
+        if profile is None:
+            raise ValueError("PCA final refit requires the canonical Xetra v4 profile")
         pca_threshold = (
             profile.pca.variance_threshold
             if pca_variance_threshold is None

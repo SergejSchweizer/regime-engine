@@ -91,7 +91,7 @@ def test_pca_generated_snapshot_reaches_shared_v4_selector_with_full_catalog() -
 
     profile = replace(
         load_profile("configs/profiles/xetra_v4.yaml"),
-        pca=PCAConfig(enabled=True, variance_threshold=0.88),
+        pca=PCAConfig(variance_threshold=0.90),
     )
     sentinel = object()
     result = select_v4_configuration_with_pca(
@@ -110,7 +110,7 @@ def test_pca_generated_snapshot_reaches_shared_v4_selector_with_full_catalog() -
     assert worker_budget == 86
     assert source_build_id == generated.catalog.lineage.source_build_id
     assert raw_order == generated.raw_feature_names
-    assert threshold == 0.88
+    assert threshold == 0.90
 
 
 def test_pca_generated_snapshot_reaches_complete_global_policy() -> None:
@@ -128,14 +128,13 @@ def test_pca_generated_snapshot_reaches_complete_global_policy() -> None:
         pca_variance_threshold: float,
     ) -> AdaptiveEvaluationResult:
         calls.append((rows, catalog, max_workers, source_build_id))
-        assert profile.pca.enabled
         assert pca_raw_feature_order == generated.raw_feature_names
-        assert pca_variance_threshold == 0.88
+        assert pca_variance_threshold == 0.90
         return cast(AdaptiveEvaluationResult, sentinel)
 
     profile = replace(
         load_profile("configs/profiles/xetra_v4.yaml"),
-        pca=PCAConfig(enabled=True, variance_threshold=0.88),
+        pca=PCAConfig(variance_threshold=0.90),
     )
     sentinel = object()
     result = evaluate_global_regime_v4_with_pca(

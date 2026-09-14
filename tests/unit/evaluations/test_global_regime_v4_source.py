@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pickle
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -19,17 +18,13 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
-from market_regime_engine.profiles.config import PCAConfig
 from market_regime_engine.profiles.loader import load_profile
 
 START = datetime(2020, 1, 1, tzinfo=UTC)
 
 
 def _raw_profile():
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
-    return replace(
-        profile, pca=PCAConfig(enabled=False, variance_threshold=profile.pca.variance_threshold)
-    )
+    return load_profile("configs/profiles/xetra_v4.yaml")
 
 
 def _lineage() -> SourceLineage:
@@ -60,6 +55,7 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
         (
             FeatureRow(START, (1.0, None)),
             FeatureRow(START + timedelta(days=1), (2.0, 3.0)),
+            FeatureRow(START + timedelta(days=2), (4.0, 6.0)),
         ),
     )
     bound_catalog = catalog.with_materialization(snapshot)
@@ -90,11 +86,19 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
     assert source.request.mode.value == "schema_discovery"
     rows = captured["rows"]
     assert isinstance(rows, pd.DataFrame)
-    assert tuple(rows.columns) == ("timestamp_m1", "feature_a", "feature_b")
-    assert tuple(rows["feature_a"]) == (1.0, 2.0)
+    assert tuple(rows.columns) == (
+        "timestamp_m1",
+        "feature_a",
+        "feature_b",
+        "pca_pc_001",
+        "pca_pc_002",
+    )
+    assert tuple(rows["feature_a"]) == (1.0, 2.0, 4.0)
     assert pd.isna(rows["feature_b"].iloc[0])
     assert rows["feature_b"].iloc[1] == 3.0
-    assert captured["catalog"] == bound_catalog
+    generated_catalog = captured["catalog"]
+    assert generated_catalog.feature_names == tuple(rows.columns[1:])
+    assert generated_catalog.feature_names[:2] == bound_catalog.feature_names
 
 
 def test_v4_source_entrypoint_can_persist_only_the_input_snapshot(monkeypatch) -> None:
@@ -329,7 +333,9 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
     assert isinstance(result, Result)
     assert snapshot_store.finalized is not None
     assert run_store.opened is not None
-    expected_dataset_key = DatasetSnapshotIdentity.from_catalog(bound_catalog)
+    generated_catalog = captured["catalog"]
+    assert isinstance(generated_catalog, FeatureCatalogSnapshot)
+    expected_dataset_key = DatasetSnapshotIdentity.from_catalog(generated_catalog)
     assert run_store.opened.dataset_snapshot_key == expected_dataset_key.key
     assert captured["run_store"] is run_store
     assert captured["run_identity"] == run_store.opened

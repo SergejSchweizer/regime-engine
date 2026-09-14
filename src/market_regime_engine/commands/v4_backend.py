@@ -330,14 +330,10 @@ class V4LifecycleBackend:
             winning_evaluation=winning_evaluation,
             deployment_selection=deployment,
             profile=self.profile,
-            pca_raw_feature_order=(
-                tuple(name for name in catalog.feature_names if not name.startswith("pca_pc_"))
-                if self.profile.pca.enabled
-                else None
+            pca_raw_feature_order=tuple(
+                name for name in catalog.feature_names if not name.startswith("pca_pc_")
             ),
-            pca_variance_threshold=(
-                self.profile.pca.variance_threshold if self.profile.pca.enabled else None
-            ),
+            pca_variance_threshold=self.profile.pca.variance_threshold,
         )
         package = save_production_package(artifact, self._package_path)
         _atomic_pickle(self._selection_path, deployment)
