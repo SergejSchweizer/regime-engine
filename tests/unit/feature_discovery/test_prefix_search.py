@@ -102,6 +102,21 @@ def test_nested_prefixes_choose_by_teacher_nmi_not_cross_dimension_likelihood() 
     )
 
 
+def test_serial_prefix_search_evaluates_every_ranked_prefix() -> None:
+    rows = source_rows()
+    result = module.search_ranked_prefixes(
+        rows,
+        ranked_features=FEATURES,
+        teacher=teacher(rows),
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        runner=fake_runner,
+        max_workers=1,
+    )
+
+    assert tuple(item.prefix_length for item in result.evaluations) == (2, 3, 4)
+    assert all(len(item.candidate_evaluations) == 4 for item in result.evaluations)
+
+
 def test_non_pickleable_parallel_prefix_runner_fails_closed(monkeypatch) -> None:
     rows = source_rows()
     monkeypatch.setattr(
