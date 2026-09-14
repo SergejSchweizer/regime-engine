@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -101,6 +101,13 @@ class _SingleFoldTask:
     pca_variance_threshold: float
 
 
+@dataclass(frozen=True, slots=True)
+class _SingleFoldEvaluation:
+    """Private result envelope for one fold executed in a child process."""
+
+    folds: tuple[WalkForwardFoldResult, ...]
+
+
 def _evaluate_single_fold_process(task: _SingleFoldTask) -> WalkForwardFoldResult:
     """Run one fold outside the caller's interpreter/GIL."""
 
@@ -118,7 +125,7 @@ def _evaluate_single_fold_process(task: _SingleFoldTask) -> WalkForwardFoldResul
         max_workers=task.max_workers,
         pca_raw_feature_order=task.pca_raw_feature_order,
         pca_variance_threshold=task.pca_variance_threshold,
-        _fold_order_offset=task.fold.fold_index - 1,
+        _single_fold_execution=True,
     )
     return evaluation.folds[0]
 
@@ -258,7 +265,6 @@ class WalkForwardEvaluation:
     evaluation_cutoff: datetime
     folds: tuple[WalkForwardFoldResult, ...]
     alignment_reference_scaler: StandardScalerArtifact | None = None
-    _fold_order_offset: int = 0
 
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version != 4:
@@ -278,7 +284,7 @@ class WalkForwardEvaluation:
         if not self.folds:
             raise ValueError("walk-forward evaluation requires at least one planned fold")
         if tuple(result.fold_index for result in self.folds) != tuple(
-            range(self._fold_order_offset + 1, self._fold_order_offset + len(self.folds) + 1)
+            range(1, len(self.folds) + 1)
         ):
             raise ValueError("walk-forward results must preserve complete planned fold order")
         _require_utc(self.evaluation_cutoff, "evaluation_cutoff")
@@ -643,7 +649,7 @@ def run_walk_forward_candidate(
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
-    _fold_order_offset: int = 0,
+    _single_fold_execution: bool = False,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection.
 
@@ -735,7 +741,7 @@ def run_walk_forward_candidate(
                 reference_scaler=reference_scaler,
             )
             reconciled.append(aligned)
-        return WalkForwardEvaluation(
+        evaluation = WalkForwardEvaluation(
             profile_id=profile.profile_id,
             profile_config_version=profile.profile_config_version,
             candidate_id=candidate.candidate_id,
@@ -748,8 +754,10 @@ def run_walk_forward_candidate(
             evaluation_cutoff=plan.evaluation_cutoff,
             folds=tuple(reconciled),
             alignment_reference_scaler=reference_scaler,
-            _fold_order_offset=_fold_order_offset,
         )
+        if _single_fold_execution:
+            return cast(WalkForwardEvaluation, _SingleFoldEvaluation(folds=evaluation.folds))
+        return evaluation
 
     for fold in plan.folds:
         train_model_count = 0
@@ -929,6 +937,9 @@ def run_walk_forward_candidate(
                 )
             )
 
+    if _single_fold_execution:
+        return cast(WalkForwardEvaluation, _SingleFoldEvaluation(folds=tuple(results)))
+
     return WalkForwardEvaluation(
         profile_id=profile.profile_id,
         profile_config_version=profile.profile_config_version,
@@ -942,5 +953,4 @@ def run_walk_forward_candidate(
         evaluation_cutoff=plan.evaluation_cutoff,
         folds=tuple(results),
         alignment_reference_scaler=reference_scaler,
-        _fold_order_offset=_fold_order_offset,
     )
