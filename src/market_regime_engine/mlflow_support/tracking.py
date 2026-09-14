@@ -58,6 +58,16 @@ class EvaluationTrackingResult:
     parent_manifest_path: str
 
 
+@dataclass(frozen=True, slots=True)
+class _CandidateTrackingEvidence:
+    """Pure candidate evidence prepared before the ordered MLflow writes."""
+
+    candidate_points: tuple[MetricPoint, ...]
+    aggregate_points: tuple[MetricPoint, ...]
+    timeline_rows: tuple[dict[str, object], ...]
+    metric_rows: tuple[dict[str, object], ...]
+
+
 def _safe_logged_model_name(logical_name: str) -> str:
     """Encode logical keys into MLflow's restricted LoggedModel name alphabet."""
 
@@ -537,6 +547,49 @@ def _metric_rows(
     return rows
 
 
+def _prepare_candidate_tracking_evidence(
+    evaluation: WalkForwardEvaluation,
+    plan: WalkForwardPlan,
+) -> tuple[str, _CandidateTrackingEvidence]:
+    """Build one candidate's pure evidence payload in an independent process."""
+
+    return (
+        evaluation.candidate_id,
+        _CandidateTrackingEvidence(
+            candidate_points=_candidate_metric_points(evaluation, plan),
+            aggregate_points=_aggregate_metric_points(evaluation),
+            timeline_rows=tuple(_timeline_rows(evaluation, plan)),
+            metric_rows=tuple(_metric_rows(evaluation, plan)),
+        ),
+    )
+
+
+def _prepare_candidate_tracking_evidence_batch(
+    evaluations: tuple[WalkForwardEvaluation, ...],
+    plan: WalkForwardPlan,
+    max_workers: int | None,
+) -> dict[str, _CandidateTrackingEvidence]:
+    """Prepare independent candidate evidence with deterministic result order."""
+
+    worker_limit = cpu_worker_count(max_workers, task_count=len(evaluations))
+    if worker_limit == 1:
+        prepared = tuple(
+            _prepare_candidate_tracking_evidence(evaluation, plan) for evaluation in evaluations
+        )
+    else:
+        with cpu_process_pool(worker_limit) as executor:
+            futures = tuple(
+                executor.submit(_prepare_candidate_tracking_evidence, evaluation, plan)
+                for evaluation in evaluations
+            )
+            # Candidate order is part of the tracking contract; completion order is not.
+            prepared = tuple(future.result() for future in futures)
+    result = dict(prepared)
+    if tuple(result) != tuple(evaluation.candidate_id for evaluation in evaluations):
+        raise RuntimeError("candidate evidence workers returned incomplete or duplicate results")
+    return result
+
+
 def _write_parquet(rows: list[dict[str, object]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     table = pa.Table.from_pylist(rows)
@@ -781,8 +834,10 @@ def track_walk_forward_evaluations(
         statistical_selection_result,
         max_workers,
     )
+    candidate_evidence = _prepare_candidate_tracking_evidence_batch(ordered, plan, max_workers)
     candidate_run_ids: list[tuple[str, str]] = []
     for evaluation in ordered:
+        evidence = candidate_evidence[evaluation.candidate_id]
         candidate_run_id = port.start_run(
             run_name=evaluation.candidate_id,
             parent_run_id=parent_run_id,
@@ -808,16 +863,14 @@ def track_walk_forward_evaluations(
                 "minimum_multistart_success_rate": "0.75",
             },
         )
-        candidate_points = _candidate_metric_points(evaluation, plan)
-        aggregate_points = _aggregate_metric_points(evaluation)
-        port.log_metric_points(candidate_run_id, candidate_points)
-        port.log_metric_points(candidate_run_id, aggregate_points)
+        port.log_metric_points(candidate_run_id, evidence.candidate_points)
+        port.log_metric_points(candidate_run_id, evidence.aggregate_points)
 
         candidate_dir = root / evaluation.candidate_id
         timeline_path = candidate_dir / "fold_timeline.parquet"
         metrics_path = candidate_dir / "fold_metrics.parquet"
-        _write_parquet(_timeline_rows(evaluation, plan), timeline_path)
-        _write_parquet(_metric_rows(evaluation, plan), metrics_path)
+        _write_parquet(list(evidence.timeline_rows), timeline_path)
+        _write_parquet(list(evidence.metric_rows), metrics_path)
         port.log_artifact(candidate_run_id, str(timeline_path), "evaluation")
         port.log_artifact(candidate_run_id, str(metrics_path), "evaluation")
 

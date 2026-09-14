@@ -430,6 +430,60 @@ def test_plot_preparation_pool_covers_candidate_and_parent_tasks_in_canonical_or
     )
 
 
+def test_candidate_tracking_evidence_uses_bounded_process_tasks_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluations = (
+        SimpleNamespace(candidate_id="candidate-b"),
+        SimpleNamespace(candidate_id="candidate-a"),
+    )
+    worker_requests: list[tuple[int | None, int]] = []
+    submissions: list[str] = []
+
+    def fake_worker_count(requested: int | None, *, task_count: int) -> int:
+        worker_requests.append((requested, task_count))
+        return task_count
+
+    def fake_prepare(evaluation: Any, plan: Any) -> tuple[str, object]:
+        del plan
+        submissions.append(str(evaluation.candidate_id))
+        return str(evaluation.candidate_id), f"evidence:{evaluation.candidate_id}"
+
+    class ImmediateFuture:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class RecordingExecutor:
+        def submit(self, function: Any, *args: object) -> ImmediateFuture:
+            return ImmediateFuture(function(*args))
+
+    @contextmanager
+    def recording_pool(max_workers: int):
+        assert max_workers == 2
+        yield RecordingExecutor()
+
+    monkeypatch.setattr(tracking_module, "cpu_worker_count", fake_worker_count)
+    monkeypatch.setattr(tracking_module, "cpu_process_pool", recording_pool)
+    monkeypatch.setattr(tracking_module, "_prepare_candidate_tracking_evidence", fake_prepare)
+
+    prepared = tracking_module._prepare_candidate_tracking_evidence_batch(
+        evaluations,
+        SimpleNamespace(),
+        None,
+    )
+
+    assert worker_requests == [(None, 2)]
+    assert submissions == ["candidate-b", "candidate-a"]
+    assert tuple(prepared) == ("candidate-b", "candidate-a")
+    assert prepared == {
+        "candidate-b": "evidence:candidate-b",
+        "candidate-a": "evidence:candidate-a",
+    }
+
+
 def test_global_v4_tracking_preserves_canonical_evidence_and_parent_fold_hierarchy(
     tmp_path: Path,
 ) -> None:

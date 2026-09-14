@@ -4,7 +4,9 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `main`; no implementation worktree branches remain.
+- **Active worktree:** `pr/PR-390-parallel-tracking-evidence`; the bounded
+  tracking-evidence implementation is under focused verification before its
+  rebase/merge gate.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -48,7 +50,13 @@ Status date: 2026-09-14
   merged: the current-Xetra audit contract now checks complete PCA/search
   bounds, audited-fold coverage and numerical error limits. PR-387 closes the
   MLflow verifier's deleted-LoggedModel visibility gap by failing closed when
-  the HTTP backend cannot inventory deleted models.
+  the HTTP backend cannot inventory deleted models. The focused CPU audit then
+  found one safe remaining gap: per-candidate metric/timeline evidence
+  preparation in MLflow tracking was serial after plot rendering; PR-390 now
+  prepares those pure payloads in bounded processes and retains canonical
+  MLflow writes. The global plot renderer, math-expectation dossier handoff,
+  and independent verifier primitives were audited and already use
+  process-parallel tasks where their dependencies allow it.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -272,6 +280,7 @@ still required.
 | PR-384 | IMPLEMENTATION MERGED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures; merged in GitHub #383 after all gates; branch deleted |
 | PR-386 | IMPLEMENTATION MERGED | Tightened the external current-Xetra audit contract for schema v2, mandatory PCA/search bounds, complete audited-fold coverage and zero numerical audit errors; merged in GitHub #385 after rebase and all gates; branch deleted |
 | PR-387 | IMPLEMENTATION MERGED | Made MLflow deleted-LoggedModel inventory explicit and fail closed for HTTP RestStore backends without that visibility; merged in GitHub #386 after rebase and all gates; branch deleted |
+| PR-390 | IMPLEMENTATION IN PROGRESS | Focused audit found serial per-candidate MLflow metric/timeline evidence assembly; pure payload preparation is now process-parallel with deterministic assembly while ordered MLflow writes remain serial; focused tests/Ruff/MyPy pass on `pr/PR-390-parallel-tracking-evidence`, rebase/merge and branch deletion pending |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
