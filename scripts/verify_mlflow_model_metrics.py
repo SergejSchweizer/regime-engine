@@ -8,6 +8,7 @@ import json
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path
@@ -36,6 +37,11 @@ _EXPECTATION_PROVENANCE_FIELDS = {
     "generator",
     "source_artifact",
     "source_artifact_sha256",
+    "source_artifact_size_bytes",
+    "source_artifact_mtime_ns",
+    "source_observed_at_utc",
+    "evidence_created_at_utc",
+    "source_freshness_max_age_seconds",
     "evaluation_run_key",
     "evaluation_plan_hash",
     "dataset_snapshot_key",
@@ -93,6 +99,7 @@ class AuditCounts:
     historical_namespace_violation_count: int
     nonempty_model_set_violation_count: int
     expectation_contract_violation_count: int
+    expectation_freshness_violation_count: int
     nonready_model_count: int
     model_source_run_status_violation_count: int
     nonterminal_run_count: int
@@ -211,13 +218,20 @@ def _canonical_expectation_bytes(expectation: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def build_expectation_bundle(source: Mapping[str, Any]) -> dict[str, Any]:
+def build_expectation_bundle(
+    source: Mapping[str, Any],
+    *,
+    source_artifact_path: Path | None = None,
+    evidence_created_at_utc: datetime | None = None,
+) -> dict[str, Any]:
     """Build a hashed expectation from independent evidence, never from MLflow.
 
-    ``source`` must contain the model/point manifest and its provenance.  The
-    returned bundle is the only form accepted by the strict CLI audit.  The
-    evidence hash covers every field except the hash itself, making accidental
-    edits detectable without contacting the tracking server.
+    ``source`` must contain the model/point manifest and its provenance.  When
+    ``source_artifact_path`` is supplied, the bundle records the absolute path,
+    exact content hash, byte size and nanosecond mtime of that independent
+    artifact.  The returned bundle is the only form accepted by the strict CLI
+    audit.  The evidence hash covers every field except the hash itself,
+    making accidental edits detectable without contacting the tracking server.
     """
 
     bundle = dict(source)
@@ -227,6 +241,24 @@ def build_expectation_bundle(source: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("expectation provenance must be an object")
     normalized_provenance = dict(provenance)
     normalized_provenance.pop("evidence_sha256", None)
+    if source_artifact_path is not None:
+        artifact = source_artifact_path.expanduser().resolve(strict=True)
+        if not artifact.is_file():
+            raise ValueError("source artifact must be a regular file")
+        artifact_bytes = artifact.read_bytes()
+        artifact_stat = artifact.stat()
+        normalized_provenance.update(
+            {
+                "source_artifact": str(artifact),
+                "source_artifact_sha256": sha256(artifact_bytes).hexdigest(),
+                "source_artifact_size_bytes": artifact_stat.st_size,
+                "source_artifact_mtime_ns": artifact_stat.st_mtime_ns,
+            }
+        )
+    if evidence_created_at_utc is not None:
+        normalized_provenance["evidence_created_at_utc"] = _utc_timestamp(
+            evidence_created_at_utc, "evidence_created_at_utc"
+        ).isoformat()
     bundle["provenance"] = normalized_provenance
     bundle["provenance"]["evidence_sha256"] = sha256(
         _canonical_expectation_bytes(bundle)
@@ -255,6 +287,33 @@ def _expectation_contract_violations(expectation: Mapping[str, Any]) -> tuple[st
         or any(character not in "0123456789abcdef" for character in source_hash)
     ):
         violations.append("source_artifact_sha256 is not a lowercase SHA-256")
+    source_artifact = provenance.get("source_artifact")
+    if source_artifact and not Path(str(source_artifact)).is_absolute():
+        violations.append("source_artifact must be an absolute local path")
+    for field in ("source_artifact_size_bytes", "source_artifact_mtime_ns"):
+        value = provenance.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            violations.append(f"{field} must be a non-negative integer")
+    max_age = provenance.get("source_freshness_max_age_seconds")
+    if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age <= 0:
+        violations.append("source_freshness_max_age_seconds must be a positive integer")
+    for field in ("source_observed_at_utc", "evidence_created_at_utc"):
+        value = provenance.get(field)
+        try:
+            _utc_timestamp(value, field)
+        except ValueError as exc:
+            violations.append(str(exc))
+    if not any(
+        violation.endswith("source_observed_at_utc must be a valid UTC timestamp")
+        for violation in violations
+    ) and not any(
+        violation.endswith("evidence_created_at_utc must be a valid UTC timestamp")
+        for violation in violations
+    ):
+        observed = _utc_timestamp(provenance["source_observed_at_utc"], "source_observed_at_utc")
+        created = _utc_timestamp(provenance["evidence_created_at_utc"], "evidence_created_at_utc")
+        if observed > created:
+            violations.append("source_observed_at_utc is after evidence_created_at_utc")
     evidence_hash = provenance.get("evidence_sha256")
     if (
         not isinstance(evidence_hash, str)
@@ -300,6 +359,73 @@ def _expectation_contract_violations(expectation: Mapping[str, Any]) -> tuple[st
                 violations.append(f"model expectation {name!r} disagrees with provenance {field}")
     if len(names) != len(set(names)):
         violations.append("expectation contains duplicate model names")
+    return tuple(violations)
+
+
+def _utc_timestamp(value: object, field: str) -> datetime:
+    """Parse one strict timezone-aware UTC timestamp used by evidence contracts."""
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field} must be a valid UTC timestamp") from exc
+    else:
+        raise ValueError(f"{field} must be a valid UTC timestamp")
+    if parsed.tzinfo is None or parsed.utcoffset() != UTC.utcoffset(parsed):
+        raise ValueError(f"{field} must be a valid UTC timestamp")
+    return parsed
+
+
+def _local_evidence_violations(
+    expectation: Mapping[str, Any],
+    *,
+    now_utc: datetime | None = None,
+) -> tuple[str, ...]:
+    """Verify that strict provenance still points at fresh local evidence."""
+
+    provenance = expectation.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return ("expectation provenance is missing or not an object",)
+    violations: list[str] = []
+    artifact = Path(str(provenance.get("source_artifact", "")))
+    try:
+        resolved = artifact.expanduser().resolve(strict=True)
+        stat = resolved.stat()
+        if not resolved.is_file():
+            raise OSError("not a regular file")
+        actual_hash = sha256(resolved.read_bytes()).hexdigest()
+    except OSError, ValueError:
+        return (f"source artifact is not readable: {artifact}",)
+    if actual_hash != str(provenance.get("source_artifact_sha256", "")):
+        violations.append("source artifact content hash does not match provenance")
+    if stat.st_size != provenance.get("source_artifact_size_bytes"):
+        violations.append("source artifact size does not match provenance")
+    if stat.st_mtime_ns != provenance.get("source_artifact_mtime_ns"):
+        violations.append("source artifact mtime does not match provenance")
+    try:
+        observed = _utc_timestamp(
+            provenance.get("source_observed_at_utc"), "source_observed_at_utc"
+        )
+        created = _utc_timestamp(
+            provenance.get("evidence_created_at_utc"), "evidence_created_at_utc"
+        )
+    except ValueError as exc:
+        return (*violations, str(exc))
+    reference = _utc_timestamp((now_utc or datetime.now(UTC)).isoformat(), "verification_time_utc")
+    if created > reference + timedelta(minutes=5):
+        violations.append("evidence_created_at_utc is in the future")
+    artifact_mtime = datetime.fromtimestamp(stat.st_mtime_ns / 1_000_000_000, tz=UTC)
+    if artifact_mtime > created + timedelta(seconds=1):
+        violations.append("source artifact was modified after evidence creation")
+    age_seconds = (reference - observed).total_seconds()
+    max_age = provenance.get("source_freshness_max_age_seconds")
+    if age_seconds < 0:
+        violations.append("source_observed_at_utc is in the future")
+    elif isinstance(max_age, int) and age_seconds > max_age:
+        violations.append("source evidence is older than its declared freshness window")
     return tuple(violations)
 
 
@@ -594,6 +720,7 @@ def audit(
     require_nonempty_model_set: bool = False,
     require_expectation_contract: bool = False,
     require_terminal_model_runs: bool = False,
+    now_utc: datetime | None = None,
 ) -> dict[str, object]:
     if (baseline_tracking_uri is None) != (baseline_experiment_name is None):
         raise ValueError(
@@ -618,6 +745,11 @@ def audit(
     )
     expectation_contract_violations = (
         _expectation_contract_violations(expectation) if require_expectation_contract else ()
+    )
+    expectation_freshness_violations = (
+        _local_evidence_violations(expectation, now_utc=now_utc)
+        if require_expectation_contract
+        else ()
     )
     expected_entries = tuple(expectation.get("models", ()))
     if not all(isinstance(item, dict) for item in expected_entries):
@@ -818,6 +950,7 @@ def audit(
             require_nonempty_model_set and (not expected_entries or not actual_models)
         ),
         expectation_contract_violation_count=len(expectation_contract_violations),
+        expectation_freshness_violation_count=len(expectation_freshness_violations),
         nonready_model_count=nonready_model_count if require_terminal_model_runs else 0,
         model_source_run_status_violation_count=(
             model_source_run_status_violation_count if require_terminal_model_runs else 0
@@ -852,6 +985,7 @@ def audit(
             "require_terminal_model_runs": require_terminal_model_runs,
         },
         "expectation_contract_violations": list(expectation_contract_violations),
+        "expectation_freshness_violations": list(expectation_freshness_violations),
         "counts": asdict(counts),
         "model_count_by_scope": dict(
             sorted(Counter(str(item["scope"]) for item in model_summaries).items())
@@ -879,6 +1013,7 @@ def audit(
                     "historical_namespace_violation_count",
                     "nonempty_model_set_violation_count",
                     "expectation_contract_violation_count",
+                    "expectation_freshness_violation_count",
                     "nonready_model_count",
                     "model_source_run_status_violation_count",
                 )

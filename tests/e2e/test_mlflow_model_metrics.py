@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -775,14 +778,31 @@ def test_model_metrics_verifier_rejects_duplicate_comparison_group_model_names(
     assert report["counts"]["comparison_domain_violation_count"] == 1
 
 
-def _strict_expectation(module: Any, model_name: str, point: MetricPoint) -> dict[str, Any]:
+def _strict_expectation(
+    module: Any,
+    model_name: str,
+    point: MetricPoint,
+    tmp_path: Path,
+) -> dict[str, Any]:
     tags = _standard_tags()
+    artifact = tmp_path / "independent-evidence.json"
+    artifact.write_text('{"independent":true}\n', encoding="utf-8")
+    now = datetime.now(UTC).replace(microsecond=0)
+    observed = now - timedelta(minutes=5)
+    created = now - timedelta(minutes=1)
+    mtime_ns = int((created - timedelta(seconds=1)).timestamp() * 1_000_000_000)
+    os.utime(artifact, ns=(mtime_ns, mtime_ns))
     return module.build_expectation_bundle(
         {
             "provenance": {
                 "generator": "independent-test-evidence",
-                "source_artifact": "independent-evidence.json",
-                "source_artifact_sha256": "a" * 64,
+                "source_artifact": str(artifact),
+                "source_artifact_sha256": sha256(artifact.read_bytes()).hexdigest(),
+                "source_artifact_size_bytes": artifact.stat().st_size,
+                "source_artifact_mtime_ns": artifact.stat().st_mtime_ns,
+                "source_observed_at_utc": observed.isoformat(),
+                "evidence_created_at_utc": created.isoformat(),
+                "source_freshness_max_age_seconds": 3600,
                 "evaluation_run_key": tags["regime_engine.evaluation_run_key"],
                 "evaluation_plan_hash": tags["regime_engine.evaluation_plan_hash"],
                 "dataset_snapshot_key": tags["regime_engine.dataset_snapshot_key"],
@@ -807,6 +827,42 @@ def _strict_expectation(module: Any, model_name: str, point: MetricPoint) -> dic
     )
 
 
+def test_expectation_builder_derives_local_artifact_identity(tmp_path: Path) -> None:
+    module = _verifier()
+    artifact = tmp_path / "independent-source.json"
+    artifact.write_text('{"source":"independent"}\n', encoding="utf-8")
+    now = datetime.now(UTC).replace(microsecond=0)
+    created = now - timedelta(minutes=1)
+    observed = now - timedelta(minutes=2)
+    mtime_ns = int((created - timedelta(seconds=1)).timestamp() * 1_000_000_000)
+    os.utime(artifact, ns=(mtime_ns, mtime_ns))
+
+    bundle = module.build_expectation_bundle(
+        {
+            "provenance": {
+                "generator": "independent-test-evidence",
+                "source_observed_at_utc": observed.isoformat(),
+                "source_freshness_max_age_seconds": 3600,
+                "evaluation_run_key": "run",
+                "evaluation_plan_hash": "plan",
+                "dataset_snapshot_key": "dataset",
+                "feature_order_sha256": "features",
+                "feature_dimension": "2",
+            },
+            "models": [],
+        },
+        source_artifact_path=artifact,
+        evidence_created_at_utc=created,
+    )
+
+    provenance = bundle["provenance"]
+    assert provenance["source_artifact"] == str(artifact.resolve())
+    assert provenance["source_artifact_sha256"] == sha256(artifact.read_bytes()).hexdigest()
+    assert provenance["source_artifact_size_bytes"] == artifact.stat().st_size
+    assert provenance["source_artifact_mtime_ns"] == artifact.stat().st_mtime_ns
+    assert provenance["evidence_created_at_utc"] == created.isoformat()
+
+
 def test_strict_expectation_contract_is_content_addressed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -821,6 +877,7 @@ def test_strict_expectation_contract_is_content_addressed(
         module,
         model_name,
         MetricPoint("valid_fold_count", 1.0, 0, 100),
+        tmp_path,
     )
 
     report = module.audit(
@@ -845,6 +902,74 @@ def test_strict_expectation_contract_is_content_addressed(
     assert tampered["counts"]["expectation_contract_violation_count"] == 1
 
 
+def test_strict_expectation_contract_binds_the_independent_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_count", 1.0, 0, 100),),
+    )
+    module = _verifier()
+    expectation = _strict_expectation(
+        module,
+        model_name,
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+        tmp_path,
+    )
+    artifact = Path(expectation["provenance"]["source_artifact"])
+    artifact.write_text('{"independent":false}\n', encoding="utf-8")
+
+    report = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        expectation,
+        require_expectation_contract=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["expectation_freshness_violation_count"] >= 1
+    assert any(
+        "source artifact" in violation for violation in report["expectation_freshness_violations"]
+    )
+
+
+def test_strict_expectation_contract_rejects_stale_source_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracking_uri, model_name = _file_model(
+        tmp_path,
+        monkeypatch,
+        (MetricPoint("valid_fold_count", 1.0, 0, 100),),
+    )
+    module = _verifier()
+    expectation = _strict_expectation(
+        module,
+        model_name,
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+        tmp_path,
+    )
+    expectation["provenance"]["source_observed_at_utc"] = (
+        datetime.now(UTC) - timedelta(days=2)
+    ).isoformat()
+    expectation = module.build_expectation_bundle(expectation)
+
+    report = module.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        expectation,
+        require_expectation_contract=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["counts"]["expectation_freshness_violation_count"] == 1
+    assert report["expectation_freshness_violations"] == [
+        "source evidence is older than its declared freshness window"
+    ]
+
+
 def test_strict_expectation_contract_rejects_stale_metric_catalog_version(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -859,6 +984,7 @@ def test_strict_expectation_contract_rejects_stale_metric_catalog_version(
         module,
         model_name,
         MetricPoint("valid_fold_count", 1.0, 0, 100),
+        tmp_path,
     )
     expectation["models"][0]["required_tags"]["regime_engine.metric_catalog_version"] = "0"
 
@@ -893,6 +1019,7 @@ def test_strict_terminal_contract_rejects_running_or_pending_model(
             module,
             model_name,
             MetricPoint("valid_fold_count", 1.0, 0, 100),
+            tmp_path,
         ),
         require_expectation_contract=True,
         require_terminal_model_runs=True,
