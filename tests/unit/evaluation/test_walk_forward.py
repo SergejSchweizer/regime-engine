@@ -126,6 +126,24 @@ def test_valid_folds_use_train_only_scaler_continued_test_filter_and_alignment()
     assert min(first.train_soft_occupancy or ()) >= 0.05
 
 
+def test_independent_folds_use_process_workers_with_canonical_result_order() -> None:
+    rows = source_rows(1386)
+    serial = evaluate(rows)
+    profile = load_profile(PROFILE_CONFIG)
+    parallel = run_walk_forward_candidate(
+        rows,
+        plan=plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward),
+        profile=profile,
+        candidate=candidate(),
+        adapter_factory=DeterministicAdapter,
+        max_workers=2,
+    )
+
+    assert tuple(fold.fold_id for fold in parallel.folds) == ("fold_001", "fold_002")
+    assert parallel.folds == serial.folds
+    assert parallel.alignment_reference_scaler == serial.alignment_reference_scaler
+
+
 def test_walk_forward_evaluation_uses_the_v4_contract() -> None:
     result = evaluate(source_rows(1323))
     assert result.profile_config_version == 4
