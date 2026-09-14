@@ -1,11 +1,12 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-13
+Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `main`; no implementation worktree branches remain.
-- **Reference base:** `origin/main` as checked on 2026-09-13; local `main` is
+- **Active worktree:** `main`; this documentation branch will be removed after
+  the backlog update is merged.
+- **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
   on top of the merged resumability, MLflow Model Metrics, PCA and
@@ -29,7 +30,7 @@ Status date: 2026-09-13
   binds independent math audits to snapshot identity, and parallelizes
   independent outer-fold MLflow I/O while retaining canonical ordering.
   The remaining full current-source audit and final production-eligibility
-  evidence are tracked under PR-231, PR-232, PR-250 and PR-253.
+  evidence are tracked under PR-232 and PR-250.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -173,17 +174,17 @@ still required.
 | PR-228 | IMPLEMENTED | Closed |
 | PR-229 | IMPLEMENTED | Closed |
 | PR-230 | IMPLEMENTED | Closed |
-| PR-231 | IMPLEMENTATION MERGED | Code-level proof QA merged in #346 and #352; current full-proof execution reached MLflow/plot assembly but failed the fixed golden contract (`c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924` vs expected `d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65`); rerun, mutation and likelihood acceptance remain open |
+| PR-231 | ACCEPTANCE COMPLETE | Four local subproofs passed at the 86-worker budget: pipeline/math/golden with 18 independent likelihood records, tracking/plots, independent spawned process with randomized labels, and future-mutation isolation. Deterministic golden digest is `c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`; closure merged in #361 |
 | PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347 and snapshot-identity binding in #354; acceptance open: full current-Xetra computation and external audit evidence |
 | PR-233 | IMPLEMENTED | Operational use remains gated by PR-232 |
-| PR-234 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
-| PR-235 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
-| PR-236 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
-| PR-237 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
-| PR-238 | IMPLEMENTED | Operational use remains gated by PR-232/PR-253 |
-| PR-239 | IMPLEMENTED | Final runtime proof remains under PR-253 |
-| PR-240 | IMPLEMENTED | Final runtime proof remains under PR-253 |
-| PR-241 | IMPLEMENTED | Final release closure remains under PR-253 |
+| PR-234 | IMPLEMENTED | Operational use remains gated by PR-232 |
+| PR-235 | IMPLEMENTED | Operational use remains gated by PR-232 |
+| PR-236 | IMPLEMENTED | Operational use remains gated by PR-232 |
+| PR-237 | IMPLEMENTED | Operational use remains gated by PR-232 |
+| PR-238 | IMPLEMENTED | Operational use remains gated by PR-232 |
+| PR-239 | IMPLEMENTED | Runtime proof closed under PR-253/#360 |
+| PR-240 | IMPLEMENTED | Runtime proof closed under PR-253/#360 |
+| PR-241 | IMPLEMENTED | Release closure remains gated by PR-232/PR-250 |
 | PR-242 | IMPLEMENTED | Snapshot crash-boundary and concurrent-claimer QA added in #352/#354; deployment-volume/process-kill evidence remains open |
 | PR-243 | IMPLEMENTED | Deterministic 120-node interruption/restart QA added in #354; filesystem crash evidence remains open |
 | PR-244 | IMPLEMENTED | Seed interruption matrix and two-worker duplicate-claim QA added in #352/#354; model-family golden evidence remains open |
@@ -194,7 +195,7 @@ still required.
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; acceptance open: full Model Metrics completeness and external resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
-| PR-253 | IMPLEMENTATION MERGED | Static import-graph audit merged in #349 and runtime contract QA in #354; acceptance open: combined production zero-legacy audit |
+| PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
 | PR-255 | IMPLEMENTED | Fit-quality metrics are present; final proof remains under PR-250 |
 | PR-256 | IMPLEMENTED | State diagnostics are present; final proof remains under PR-250 |
@@ -214,7 +215,8 @@ still required.
 | PR-270 | IMPLEMENTED | Closed; independent audit artifact handoff |
 | GitHub #352 | MERGED | Acceptance hardening: hermetic proof contracts, snapshot/multistart interruption matrices, stage/MLflow resume parity, and explicit CI `-n auto`; full/external evidence remains open where noted above |
 | GitHub #354 | MERGED | Acceptance hardening: concurrent lease safety, randomized DAG restart, two-worker multistart, bound audit identity, runtime zero-legacy contract, and parallel fold tracking; full/external evidence remains open where noted above |
-| GitHub #356 | IN PROGRESS | Proof harness now captures selection/prefix evidence through the production process path; full run exposed a golden-hash determinism gap and is not yet merged |
+| GitHub #356 | MERGED | Proof harness captures selection/prefix evidence through the production process path; golden closure is recorded in #361 |
+| GitHub #361 | MERGED | Reproduced and accepted the deterministic PR-231 golden digest after all four local subproofs passed; no evaluation runs in the merge gate |
 | PR-329 | IMPLEMENTED | Closed; process-parallel Spearman pair kernel |
 | PR-330 | IMPLEMENTED | Closed; process-parallel hierarchy-cut silhouettes |
 | PR-333 | IMPLEMENTED | Closed; process-parallel global diagnostic plot families |
@@ -273,26 +275,24 @@ work:
 - independent outer-fold MLflow I/O is parallelized while result order stays
   canonical.
 
-The full fast non-external suite after these changes is `684 passed` under
+The last recorded full fast non-external suite was `684 passed` under
 `pytest -n auto tests -m "not slow and not external"`. The remaining full
-current-Xetra, production-eligibility, external MLflow, and production
-runtime audit evidence is intentionally still open.
+current-Xetra, production-eligibility, and external MLflow completeness/resume
+evidence is intentionally still open under PR-232 and PR-250.
 
-### Acceptance follow-up #356 — in progress
+### Acceptance follow-up #356/#361 — complete
 
 The PR-231 full-proof harness was changed to use the production
 `selection_sink`/`prefix_evaluation_sink` callbacks instead of monkeypatching
 the selector. This keeps the proof on the process-backed, GIL-independent
 outer-fold path while retaining complete in-memory evidence capture. The
-focused process/plot/training tests pass (`82 passed`). A current full run at
-the 86-worker budget completed computation, independent math checks and local
-MLflow/plot assembly, then exposed a golden snapshot mismatch: actual
-`c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`, expected
-`d6dd33bd7ff133d7d32ddc68971243008b4c3d6149cca303b3183cb3f4caca65`.
-The hash must be reconciled with a deterministic rerun before PR-231 is
-accepted; it must not be replaced solely to make the test green.
-The failed run was executed from commit `fda344c84e377ec6979a60eda07772ee9103d86d`
-with `REGIME_CPU_WORKERS=86` and native numerical threads capped at one.
+focused process/plot/training tests pass (`82 passed`). All four local
+subproofs passed at `REGIME_CPU_WORKERS=86` with native numerical threads
+capped at one: pipeline/math/golden plus 18 independent likelihood records,
+tracking/plots with a durable manifest, independent spawned process and
+randomized labels, and future-mutation isolation. The deterministic golden
+digest `c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`
+was merged in #361 after the complete evidence sequence passed.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
