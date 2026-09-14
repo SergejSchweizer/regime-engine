@@ -635,11 +635,14 @@ def _prepare_plot_entries(
 ) -> tuple[dict[str, tuple[PlotManifestEntry, ...]], tuple[PlotManifestEntry, ...]]:
     """Render independent plot work concurrently while preserving artifact order."""
 
-    worker_limit = cpu_worker_count(max_workers, task_count=len(evaluations))
     parent_plot_types = (
         "candidate_comparison",
         "candidate_oos_gap_heatmap",
         "candidate_oos_summary",
+    )
+    worker_limit = cpu_worker_count(
+        max_workers,
+        task_count=len(evaluations) + len(parent_plot_types),
     )
     if worker_limit == 1:
         candidate_entries = [
