@@ -4,8 +4,7 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `main`; this documentation branch will be removed after
-  the backlog update is merged.
+- **Active worktree:** `main`; no implementation worktree branches remain.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
