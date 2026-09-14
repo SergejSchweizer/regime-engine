@@ -4,9 +4,9 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `pr/PR-374-outer-nmi-independent-proof`; this focused
-  implementation branch closes the remaining independent Outer-NMI audit gap
-  before it is merged and deleted.
+- **Active worktree:** `pr/PR-375-backlog-acceptance-current-state`; this
+  documentation-only branch records the merged PR-374 state and the remaining
+  external acceptance blockers before it is merged and deleted.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -33,13 +33,16 @@ Status date: 2026-09-14
   The remaining full current-source audit and final production-eligibility
   evidence are tracked under PR-232 and PR-250. Planning PR-369 (bounded
   checkpoint candidate lanes), PR-370 (strict MLflow completeness contract),
-  and PR-371 (PCA-bound independent math audit) are now merged. PR-373 is
-  also merged: it removes `PCAConfig.enabled`, pins canonical Xetra v4 PCA to
+  and PR-371 (PCA-bound independent math audit) are now merged. PR-373 and
+  PR-374 are also merged: PR-373
+  removes `PCAConfig.enabled`, pins canonical Xetra v4 PCA to
   the raw-plus-eight-component universe, and makes source evaluation
   materialize PCA unconditionally before all shared discovery and selection
   stages. Raw-only profiles are no longer valid v4 configuration. PR-374 now
   adds persisted final-vs-teacher OOS arrays and independently recomputes
-  Outer-Fold soft NMI and shared support for every valid fold.
+  Outer-Fold soft NMI and shared support for every valid fold. No implementation
+  PR remains open; only external acceptance evidence under PR-232/PR-250 is
+  outstanding.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -246,7 +249,7 @@ still required.
 | PR-370 | IMPLEMENTATION MERGED | Strict MLflow expectation/provenance/hash, terminal-run, missing-domain-metric, deleted-LoggedModel and registry inventory checks; local and CI gates passed in GitHub #369; branch deleted |
 | PR-371 | IMPLEMENTATION MERGED | Current Xetra audit binds the mandatory raw-plus-eight-component PCA universe and independent likelihood reconstruction to fold-local PCA artifacts; local and CI gates passed in GitHub #370; branch deleted |
 | PR-373 | IMPLEMENTATION MERGED | Removed the remaining PCA opt-in flag and made canonical Xetra v4 source evaluation unconditionally materialize the fixed PCA universe; local and CI gates passed in GitHub #372; branch deleted |
-| PR-374 | IMPLEMENTATION IN PROGRESS | Persist final-vs-teacher Outer-Fold OOS arrays and independently verify soft NMI/shared support for every valid fold; focused tests and Ruff pass locally |
+| PR-374 | IMPLEMENTATION MERGED | Persisted final-vs-teacher Outer-Fold OOS arrays and independently verify soft NMI/shared support for every valid fold; local and CI gates passed in GitHub #373; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
