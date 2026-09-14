@@ -92,12 +92,14 @@ Status date: 2026-09-14
   Planning PR-406 (GitHub #408) adds spawned process-kill and filesystem
   crash-boundary acceptance for the configured state root, plus interruption
   golden parity for Gaussian, GMM-HMM and Student-t multistart artifacts.
-  PR-414 is the current hermetic external-acceptance-contract follow-up: it
-  binds strict MLflow expectations to the actual independent artifact and its
-  freshness window, cross-binds Xetra source identity copies, and documents
-  that local proof cannot substitute for the external clean-namespace and
-  current-source full-run evidence. No NAS/MLflow write or full evaluation was
-  run for this follow-up.
+  PR-413 (GitHub #412) is merged: its hermetic deployment/lifecycle/package
+  acceptance tests bind source identity and cutoffs, reject last-outer-fold
+  reuse, preserve aliases on failed transitions, and enforce v4 documentation
+  and package-schema contracts. PR-414 (GitHub #413) is also merged: strict
+  MLflow expectations are bound to the actual independent artifact and its
+  freshness window, Xetra source identities are cross-bound, and the local-vs-
+  external proof boundary is explicit. Both passed local and GitHub gates;
+  neither ran a full evaluation or NAS/MLflow write.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -123,11 +125,11 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#408 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#413 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  #389, #390, #391, #392, #393, #394, #395, #396, #398 and #399 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#408
+  #389, #390, #391, #392, #393, #394, #395, #396, #398, #399, #412 and #413 are also merged. No GitHub PRs are open and
+  no `pr/*` remote branches remain. The implementation branches for #303–#413
   have therefore been reconciled into `main` or explicitly superseded. The
   latest merged follow-ups are #401 (fold process parallelization), #402 (v4
   lifecycle acceptance), #403 (MLflow acceptance QA) and #404 (fold-order
@@ -233,7 +235,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. GitHub PRs #270–#408
+update. GitHub has no open PRs. GitHub PRs #270–#413
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -288,7 +290,7 @@ still required.
 | PR-247 | IMPLEMENTED | Reflection/catalog completeness QA merged in GitHub #403; full external completeness evidence remains under PR-250 |
 | PR-248 | IMPLEMENTED | File-backed completeness/order-independence QA merged in GitHub #403; full external completeness evidence remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards, exact metric-catalog/IEEE-754 evidence checks and PR-414 artifact hash/size/mtime/freshness checks are implemented locally; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/full-run evidence |
+| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards, exact metric-catalog/IEEE-754 evidence checks and PR-414 artifact hash/size/mtime/freshness checks are merged in GitHub #413; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/full-run evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
 | PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
@@ -350,7 +352,8 @@ still required.
 | PR-404 | IMPLEMENTED | Private child-fold result envelope preserves the public numeric evaluation schema and strict top-level fold-order contract; merged in GitHub #404 after rebase and all gates; branch deleted |
 | PR-408 | IMPLEMENTED | Positive all-nine-family Model Metrics plot-data matrix and order-independent canonical hashes; merged in GitHub #406 after local Hermetic hook and all gates; branch deleted |
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
-| PR-414 | IN PROGRESS | `pr/PR-414-external-acceptance-contract`: local strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and local-vs-external proof boundary; focused hermetic tests pass, no full evaluation or external service mutation |
+| PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
+| PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
