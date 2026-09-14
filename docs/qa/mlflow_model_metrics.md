@@ -35,13 +35,15 @@ Do not treat an empty post-run namespace as a successful completeness proof:
 the completed-evaluation invocation below uses `--require-nonempty` and an
 independently generated expectation.
 
-For resume acceptance, run the verifier after both an uninterrupted reference
-evaluation and a killed-and-resumed evaluation have finished:
+For metric-export resume acceptance, run the verifier after an uninterrupted
+reference export and a killed-and-retried export have finished. This parity
+contract applies to the dedicated durable metric-export harness, not to the
+full Xetra v4 evaluator:
 
 ```bash
 .venv/bin/python scripts/verify_mlflow_model_metrics.py \
-  --tracking-uri "$RESUMED_MLFLOW_URI" \
-  --experiment "$RESUMED_EXPERIMENT" \
+  --tracking-uri "$RETRIED_MLFLOW_URI" \
+  --experiment "$RETRIED_EXPERIMENT" \
   --expectation expectation.json \
   --require-nonempty \
   --baseline-tracking-uri "$REFERENCE_MLFLOW_URI" \
@@ -49,7 +51,7 @@ evaluation and a killed-and-resumed evaluation have finished:
   --json-out mlflow-model-metrics-proof.json
 ```
 
-The resumed and reference namespaces are matched by logical LoggedModel name;
+The retried and reference namespaces are matched by logical LoggedModel name;
 operational MLflow model/run IDs are intentionally ignored. The parity proof
 requires identical metric key, step, exact floating-point value and timestamp,
 as well as identical `regime_engine.*` lineage tags. A successful report has
@@ -76,21 +78,24 @@ audited LoggedModel to be `READY` and sourced by a `FINISHED` run:
 
 ```bash
 .venv/bin/python scripts/verify_mlflow_model_metrics.py \
-  --tracking-uri "$RESUMED_MLFLOW_URI" \
-  --experiment "$RESUMED_EXPERIMENT" \
+  --tracking-uri "$RETRIED_MLFLOW_URI" \
+  --experiment "$RETRIED_EXPERIMENT" \
   --expectation expectation.json \
   --require-expectation-contract \
   --require-terminal-model-runs \
   --require-nonempty
 ```
 
-The resumed run must be interrupted after tracking has
-started, restarted from its durable evaluation state, and compared only after
-both the resumed and uninterrupted namespaces are terminal.
+The metric-export harness may be interrupted after tracking has started and
+retries from its durable export state. The full Xetra v4 evaluation is
+intentionally non-resumable: if it is interrupted, rerun the complete cron
+command from the beginning. It must not claim computation-position resume
+parity.
 
 The focused repository tests exercise this verifier with MLflow's local
 FileStore and do not run an HMM evaluation. Production acceptance still
-requires the operator to supply a clean historical namespace, independently
-capture the uninterrupted and interrupted/resumed external MLflow runs, and
-run the command against the authorized NAS MLflow service. Those external
-execution records cannot be produced by the fast local test suite.
+requires the operator to supply a clean historical namespace, execute one
+complete uninterrupted full evaluation, independently capture its MLflow
+evidence, and run the command against the authorized NAS MLflow service.
+Those external execution records cannot be produced by the fast local test
+suite.
