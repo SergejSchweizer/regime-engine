@@ -1581,6 +1581,15 @@ def _validate_current_audit_contract(
         raise SystemExit("current Xetra audit cannot accept skipped source rows")
     if raw_bounds["source_row_count"] != raw_bounds["materialized_row_count"]:
         raise SystemExit("current Xetra audit requires all source rows")
+    snapshot_timestamps = columns[timestamp_column]
+    for declared_name, actual in (
+        ("source_min_timestamp", snapshot_timestamps[0]),
+        ("materialized_min_timestamp", snapshot_timestamps[0]),
+        ("source_max_timestamp", snapshot_timestamps[-1]),
+        ("materialized_max_timestamp", snapshot_timestamps[-1]),
+    ):
+        if str(raw_bounds[declared_name]) != _timestamp_key(actual):
+            raise SystemExit(f"source_bounds.{declared_name} does not match the snapshot")
     _validate_pca_contract(
         contract.get("pca"),
         [name for name in columns if name != timestamp_column],
@@ -1609,6 +1618,23 @@ def _validate_current_audit_contract(
     _contract_sha(identity.get("repository_commit_sha"), "repository_commit_sha", git=True)
     if identity["snapshot_sha256"] != snapshot_sha256:
         raise SystemExit("audit contract snapshot hash does not match the audit snapshot")
+
+    # The same source identity is intentionally emitted in the general math
+    # expectations and in the current-audit envelope.  Require both copies to
+    # agree so a stale expectation cannot be paired with a newer contract while
+    # still carrying a valid Arrow-file hash.
+    source_identity = root.get("source_identity")
+    if not isinstance(source_identity, dict):
+        raise SystemExit("current Xetra audit requires source_identity")
+    for key in (
+        "source_build_id",
+        "source_data_sha256",
+        "source_catalog_hash",
+        "dataset_snapshot_key",
+        "snapshot_sha256",
+    ):
+        if source_identity.get(key) != identity.get(key):
+            raise SystemExit(f"source identity {key} disagrees with the audit contract")
 
     raw_valid = root.get("valid_outer_fold_indices")
     raw_contract_valid = contract.get("valid_outer_fold_indices")

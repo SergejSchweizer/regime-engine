@@ -23,7 +23,7 @@ def main() -> None:
     source = json.loads(args.source.read_text(encoding="utf-8"))
     if not isinstance(source, dict):
         parser.error("source evidence must be a JSON object")
-    bundle = build_expectation_bundle(source)
+    bundle = build_expectation_bundle(source, source_artifact_path=args.source)
     rendered = json.dumps(bundle, sort_keys=True, indent=2) + "\n"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(rendered, encoding="utf-8")

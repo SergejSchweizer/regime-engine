@@ -58,7 +58,11 @@ The math-audit report must state the audited first, middle and last valid
 outer-fold indices. It independently checks distance, silhouette,
 state-information/eta scores, valid-prefix soft NMI, and selected TRAIN/OOS
 Gaussian, GMM-HMM, or Student-t likelihoods. Any numerical discrepancy or
-source identity change fails the command.
+source identity change fails the command. The strict verifier requires the
+source identity in the general math expectations to agree with the identity
+inside the current-audit envelope, and it checks all source/materialized
+timestamp bounds against the immutable Arrow snapshot. This prevents a stale
+expectation from being paired with a different audit envelope.
 
 The current contract version is `audit_contract.schema_version=2` inside the
 expectation bundle (`schema_version=3`). The completed report must have
@@ -73,6 +77,13 @@ Record the command transcript, exit code, wall-clock duration, peak memory,
 the summary JSON, the math-audit report, and the final evidence SHA-256 in the
 release evidence directory. Do not copy passwords or populated deployment
 configuration into that directory.
+
+The local Arrow/JSON verifier is a hermetic identity and mathematical proof
+only. It cannot prove that PostgreSQL was current when the snapshot was taken,
+that the NAS MLflow historical namespace was empty, or that the complete
+current-source evaluation was actually tracked. Those claims require the
+opt-in external command and its read-only namespace/full-run evidence below;
+they must not be inferred from local tests.
 
 ## Resume and rerun policy
 

@@ -310,6 +310,21 @@ def _strict_current_contract(
     }
 
 
+def _bind_source_identity(expectations: dict[str, object], contract: dict[str, object]) -> None:
+    identity = contract["identity_hashes"]
+    assert isinstance(identity, dict)
+    expectations["source_identity"] = {
+        key: identity[key]
+        for key in (
+            "source_build_id",
+            "source_data_sha256",
+            "source_catalog_hash",
+            "dataset_snapshot_key",
+            "snapshot_sha256",
+        )
+    }
+
+
 def test_strict_current_contract_requires_bounds_identity_folds_and_resources(
     tmp_path: Path,
 ) -> None:
@@ -325,6 +340,7 @@ def test_strict_current_contract_requires_bounds_identity_folds_and_resources(
             "audit_outer_fold_indices": [1, 2, 3],
         }
     )
+    _bind_source_identity(expectations, contract)
     columns = module._read_snapshot(snapshot_path)
     report = module.verify_expectations(
         columns,
@@ -382,6 +398,7 @@ def test_strict_current_contract_rejects_incomplete_math_dossiers(
             "audit_outer_fold_indices": [1, 2, 3],
         }
     )
+    _bind_source_identity(expectations, contract)
     expectations["fold_audits"][0][field] = []
     columns = module._read_snapshot(snapshot_path)
     with pytest.raises(SystemExit, match=message):
@@ -407,9 +424,37 @@ def test_strict_current_contract_rejects_source_row_loss(tmp_path: Path) -> None
             "audit_outer_fold_indices": [1, 2, 3],
         }
     )
+    _bind_source_identity(expectations, contract)
     expectations["audit_contract"]["source_bounds"]["source_row_count"] = 4
     columns = module._read_snapshot(snapshot_path)
     with pytest.raises(SystemExit, match="all source rows"):
+        module.verify_expectations(
+            columns,
+            expectations,
+            max_workers=1,
+            snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+            require_current_audit_contract=True,
+        )
+
+
+def test_strict_current_contract_rejects_split_source_identity(tmp_path: Path) -> None:
+    module = _verifier()
+    snapshot_path, expectations_path, _expected = _bundle(tmp_path)
+    expectations = json.loads(expectations_path.read_text(encoding="utf-8"))
+    contract = _strict_current_contract(module, snapshot_path)
+    expectations.update(
+        {
+            "schema_version": 3,
+            "audit_contract": contract,
+            "valid_outer_fold_indices": [1, 2, 3],
+            "audit_outer_fold_indices": [1, 2, 3],
+        }
+    )
+    _bind_source_identity(expectations, contract)
+    expectations["source_identity"]["source_catalog_hash"] = "9" * 64
+    columns = module._read_snapshot(snapshot_path)
+
+    with pytest.raises(SystemExit, match="source identity source_catalog_hash"):
         module.verify_expectations(
             columns,
             expectations,

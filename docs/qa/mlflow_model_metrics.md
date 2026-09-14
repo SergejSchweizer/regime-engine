@@ -74,7 +74,12 @@ independent evidence manifest before running the verifier:
 
 The strict verifier checks schema version, provenance, source-artifact hash,
 lineage tags, the current metric-catalog version and the canonical expectation
-hash. It also requires every
+hash. The builder records the absolute source-artifact path, exact SHA-256,
+byte size and nanosecond mtime. A strict verification re-reads that local
+artifact and also requires `source_observed_at_utc`,
+`evidence_created_at_utc` and a positive `source_freshness_max_age_seconds`.
+Changed, missing, future or stale independent evidence fails closed. It also
+requires every
 audited LoggedModel to be `READY` and sourced by a `FINISHED` run:
 
 ```bash
@@ -99,4 +104,6 @@ requires the operator to supply a clean historical namespace, execute one
 complete uninterrupted full evaluation, independently capture its MLflow
 evidence, and run the command against the authorized NAS MLflow service.
 Those external execution records cannot be produced by the fast local test
-suite.
+suite. A green local FileStore result proves only the verifier and evidence
+contract; it is not a zero-survivor namespace proof and does not prove that a
+fresh current-source full evaluation has populated the NAS experiment.
