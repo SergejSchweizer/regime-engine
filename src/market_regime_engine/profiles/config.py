@@ -219,16 +219,19 @@ class EvaluationGates:
 
 @dataclass(frozen=True, slots=True)
 class PCAConfig:
-    """Explicit opt-in contract for fold-local PCA augmentation."""
+    """Mandatory fold-local PCA augmentation in the v4 feature universe."""
 
     enabled: bool
     variance_threshold: float
+    component_count: int = 8
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("PCA enabled must be a boolean")
         if not 0.0 < self.variance_threshold <= 1.0:
             raise ValueError("PCA variance_threshold must be in (0,1]")
+        if self.component_count < 1:
+            raise ValueError("PCA component_count must be positive")
 
 
 @dataclass(frozen=True, slots=True)

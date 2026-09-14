@@ -1,14 +1,15 @@
 # PCA feature-generator rollout
 
-PCA is an explicit opt-in of the Xetra v4 profile. The checked-in profile
-keeps `pca.enabled: false` so a raw-feature evaluation cannot silently change
-its statistical universe. Enabling it changes the profile hash and requires a
-`PCAGeneratedFeatureSet` from the complete raw catalog:
+PCA is a mandatory part of the canonical Xetra v4 profile. The checked-in
+profile sets `pca.enabled: true`; a raw-feature-only evaluation is not
+acceptance evidence for canonical v4. The fixed component count and variance
+threshold are part of the profile hash:
 
 ```yaml
 pca:
   enabled: true
   variance_threshold: 0.90
+  component_count: 8
 ```
 
 The rollout contract is:
@@ -25,9 +26,14 @@ The rollout contract is:
    The resulting `PCATwoStageScalerArtifact` is stored in the production
    package and validated against the HMM/scaler feature order.
 
-The process-backed candidate, fold, and multistart schedulers retain the
-same CPU budget when PCA is enabled. Results are reassembled in canonical
-order, so worker completion order cannot change statistical hashes.
+The process-backed candidate, fold, and multistart schedulers retain the same
+CPU budget on the mandatory PCA path. PCA is fitted on each outer/inner TRAIN
+clock only, while the generated columns remain in the fixed catalog universe.
+Results are reassembled in canonical order, so worker completion order cannot
+change statistical hashes.
+
+Raw-only data remains useful for explicitly named unit fixtures and matched
+diagnostic comparisons, but it is not a canonical Xetra v4 deployment input.
 
 The rollout proof is intentionally local and synthetic. Run the focused
 checks without contacting PostgreSQL or MLflow:

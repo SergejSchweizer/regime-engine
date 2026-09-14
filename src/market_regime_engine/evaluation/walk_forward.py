@@ -30,6 +30,7 @@ from market_regime_engine.inference.predictive_likelihood import (
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import GaussianHMMAdapter
+from market_regime_engine.preprocessing.pca_policy import validate_pca_source_universe
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
 from market_regime_engine.preprocessing.two_stage import (
     PCATwoStageScalerArtifact,
@@ -78,6 +79,9 @@ class WalkForwardCandidate(Protocol):
 
     @property
     def feature_selection_execution_hash(self) -> str: ...
+
+    @property
+    def original_feature_universe(self) -> tuple[str, ...]: ...
 
 
 def _require_utc(value: datetime, field_name: str) -> datetime:
@@ -327,6 +331,7 @@ def _validate_candidate_contract(
 def _validate_pca_raw_feature_order(
     raw_feature_order: tuple[str, ...] | None,
     candidate_feature_order: tuple[str, ...],
+    original_feature_universe: tuple[str, ...],
 ) -> tuple[str, ...] | None:
     if raw_feature_order is None:
         return None
@@ -338,6 +343,7 @@ def _validate_pca_raw_feature_order(
         raise ValueError("PCA raw feature order must be non-empty and duplicate-free")
     if any(name.startswith("pca_pc_") for name in raw_feature_order):
         raise ValueError("PCA raw feature order cannot contain generated PCA feature names")
+    validate_pca_source_universe(raw_feature_order, original_feature_universe)
     if any(
         name not in raw_feature_order and not name.startswith("pca_pc_")
         for name in candidate_feature_order
@@ -538,6 +544,7 @@ def run_walk_forward_candidate(
     pca_raw_order = _validate_pca_raw_feature_order(
         pca_raw_feature_order,
         candidate.feature_order,
+        candidate.original_feature_universe,
     )
     if plan.evaluation_cutoff is None or not plan.folds:
         raise ValueError("walk-forward plan must contain at least one complete fold")
@@ -593,6 +600,7 @@ def run_walk_forward_candidate(
                     fit_start=fold.train_start,
                     fit_end=fold.train_end,
                     variance_threshold=pca_variance_threshold,
+                    component_count=profile.pca.component_count,
                     model_feature_order=candidate.feature_order,
                 )
                 if pca_scaler.model_feature_order != candidate.feature_order:

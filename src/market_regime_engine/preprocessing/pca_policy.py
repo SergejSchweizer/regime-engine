@@ -33,6 +33,19 @@ def _feature_order(feature_order: tuple[str, ...]) -> None:
         raise ValueError("PCA source feature_order must be non-empty and duplicate-free")
 
 
+def validate_pca_source_universe(
+    raw_feature_order: tuple[str, ...],
+    feature_universe: tuple[str, ...],
+) -> None:
+    """Require PCA to use every non-generated feature in the fixed universe."""
+
+    _feature_order(raw_feature_order)
+    _feature_order(feature_universe)
+    raw_universe = tuple(name for name in feature_universe if not name.startswith("pca_pc_"))
+    if raw_feature_order != raw_universe:
+        raise ValueError("PCA raw feature order must equal the complete raw feature universe")
+
+
 @dataclass(frozen=True, slots=True)
 class PCAFitClock:
     """The immutable inner-training time interval used by one PCA fit."""
@@ -158,6 +171,7 @@ def fit_pca_inner_train(
     fit_start: datetime,
     fit_end: datetime,
     variance_threshold: float = 0.90,
+    component_count: int | None = None,
 ) -> PCAFitResult:
     """Fit PCA on complete rows in one frozen Inner-TRAIN interval only.
 
@@ -195,6 +209,7 @@ def fit_pca_inner_train(
         selected_rows,
         feature_order,
         variance_threshold=variance_threshold,
+        component_count=component_count,
     )
     return PCAFitResult(
         clock=clock,
@@ -210,4 +225,5 @@ __all__ = [
     "PCAFitClock",
     "PCAFitResult",
     "fit_pca_inner_train",
+    "validate_pca_source_universe",
 ]

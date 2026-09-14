@@ -31,8 +31,9 @@ def test_v4_uses_a_dedicated_explicit_discovery_contract() -> None:
     profile = load_profile(PROFILE)
     assert profile.profile_id == "xetra"
     assert profile.profile_config_version == 4
-    assert profile.pca.enabled is False
+    assert profile.pca.enabled is True
     assert profile.pca.variance_threshold == 0.90
+    assert profile.pca.component_count == 8
     assert profile.feature_discovery is not None
     assert profile.feature_discovery.final_candidate_ids == FINAL_CANDIDATE_IDS
     assert profile.feature_discovery.maximum_prefix_length == 8

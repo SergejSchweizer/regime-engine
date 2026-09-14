@@ -32,7 +32,12 @@ def _validate_snapshot(
     artifact: ProductionModelArtifact,
     snapshot: FeatureSnapshot,
 ) -> None:
-    if snapshot.feature_names != artifact.feature_order:
+    expected_features = (
+        artifact.pca_scaler.raw_feature_order
+        if artifact.pca_scaler is not None
+        else artifact.feature_order
+    )
+    if snapshot.feature_names != expected_features:
         raise ValueError("serving source feature order differs from production artifact")
     if snapshot.lineage.schema_version != artifact.source_schema_version:
         raise ValueError("serving source schema version is incompatible with production artifact")
@@ -79,7 +84,11 @@ def fixed_model_replay(
         if len(complete_values) != len(row.values):
             raise ValueError("resolved-model snapshot cannot contain incomplete feature rows")
         matrix = np.asarray([complete_values], dtype=np.float64)
-        scaled = artifact.scaler.transform(matrix)
+        scaled = (
+            artifact.pca_scaler.transform(matrix)
+            if artifact.pca_scaler is not None
+            else artifact.scaler.transform(matrix)
+        )
         filtered = causal_filter(
             scaled,
             artifact.hmm,
