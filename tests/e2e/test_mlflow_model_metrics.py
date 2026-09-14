@@ -187,6 +187,30 @@ def test_model_metrics_verifier_accepts_empty_clean_namespace_preflight(
     assert report["counts"]["historical_namespace_violation_count"] == 0
 
 
+def test_model_metrics_verifier_fails_closed_when_deleted_model_inventory_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    tracking_uri = (tmp_path / "unobservable-deleted-models").as_uri()
+    FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-audit")
+    verifier = _verifier()
+    monkeypatch.setattr(verifier, "_deleted_logged_model_ids", lambda _client: None)
+
+    report = verifier.audit(
+        tracking_uri,
+        "regime-engine-audit",
+        {"models": []},
+        require_clean_namespace=True,
+    )
+
+    assert report["status"] == "failed"
+    assert report["namespace"]["deleted_logged_model_inventory_available"] is False
+    assert report["namespace"]["historical_objects_zero"] is False
+    assert report["counts"]["deleted_logged_model_inventory_unavailable_count"] == 1
+    assert report["counts"]["historical_namespace_violation_count"] == 1
+
+
 def test_model_metrics_verifier_proves_resumed_history_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

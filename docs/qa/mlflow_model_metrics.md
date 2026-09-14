@@ -25,6 +25,12 @@ status/lifecycle inventory (including deleted runs), LoggedModel count, deleted
 LoggedModel IDs, and the complete registered-model/version inventory. The
 `historical_objects_zero` flag covers evaluation runs and LoggedModels; registry
 objects are reported but are intentionally not treated as evaluation survivors.
+The verifier fails closed when the tracking backend cannot enumerate deleted
+LoggedModels. In particular, MLflow's HTTP `RestStore` does not expose the
+backend's deleted-LoggedModel inventory helper; it reports
+`deleted_logged_model_inventory_available=false` and cannot produce a clean
+namespace proof until the backend provides that inventory or the audit runs
+against a backend with equivalent visibility.
 Do not treat an empty post-run namespace as a successful completeness proof:
 the completed-evaluation invocation below uses `--require-nonempty` and an
 independently generated expectation.
