@@ -75,6 +75,17 @@ Status date: 2026-09-14
   dossiers, missing source rows, and feature/model identity mismatches. The
   PR-250 follow-up in GitHub #399 now binds strict evidence to the current
   metric-catalog version and compares metric values by exact IEEE-754 bits.
+  The latest local acceptance follow-ups are merged: planning PR-403
+  (GitHub #401) parallelizes independent fold-local scaling/PCA/HMM/filter
+  work in process workers with deterministic state reconciliation; planning
+  PR-402 (GitHub #402) adds v4 refit, state-canonicalization, alias and
+  promotion/rollback acceptance fixtures; planning PR-401 (GitHub #403)
+  adds FileStore cleanup, complete provisional/prefix/final LoggedModel
+  projection and exhaustive metric-catalog acceptance fixtures; planning
+  PR-404 (GitHub #404) keeps the private child-fold result envelope out of
+  the public numeric evaluation schema. All four passed local Hermetic
+  integration tests and the GitHub policy/lint/type/unit/merge gates. No full
+  evaluation or external MLflow mutation was run.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -100,13 +111,15 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#399 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#404 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
   #389, #390, #391, #392, #393, #394, #395, #396, #398 and #399 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#399
-  have therefore
-  been reconciled into `main` or explicitly superseded.
+  no `pr/*` remote branches remain. The implementation branches for #303–#404
+  have therefore been reconciled into `main` or explicitly superseded. The
+  latest merged follow-ups are #401 (fold process parallelization), #402 (v4
+  lifecycle acceptance), #403 (MLflow acceptance QA) and #404 (fold-order
+  internal contract).
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
   `regime_loader.regime_features_daily`; the verified live lineage contract is
@@ -317,6 +330,10 @@ still required.
 | PR-398 | IMPLEMENTATION MERGED | Retired the remaining full-run resumability language from execution and MLflow contracts; metric-export retry remains the only retry scope; merged in GitHub #396 after documentation checks and all gates; local and remote implementation branches deleted |
 | GitHub #398 | MERGED | Strict current-Xetra math-audit verifier rejects partial dossiers, skipped source rows and feature/model identity mismatches; merged after rebase, Ruff, MyPy, unit and policy gates; local and remote implementation branches deleted |
 | GitHub #399 | MERGED | Strict MLflow Model Metrics verifier requires the current metric-catalog version and exact IEEE-754 metric-value identity; merged after rebase, Ruff, MyPy, unit and policy gates; local and remote implementation branches deleted |
+| PR-401 | IMPLEMENTED | MLflow FileStore cleanup, complete provisional/prefix/final LoggedModel projection, order-independence and exhaustive metric-catalog acceptance fixtures; merged in GitHub #403 after rebase and all gates; branch deleted |
+| PR-402 | IMPLEMENTED | Gaussian/GMM-HMM/Student-t refit, state canonicalization, package round-trip, v4-A → v4-B → v4-A alias, promotion/rollback and failed-CAS acceptance fixtures; merged in GitHub #402 after rebase and all gates; branch deleted |
+| PR-403 | IMPLEMENTED | Independent fold-local process parallelization for scaling/PCA/HMM/filter/diagnostics with deterministic canonical state reconciliation; merged in GitHub #401 after CI repair and all gates; branch deleted |
+| PR-404 | IMPLEMENTED | Private child-fold result envelope preserves the public numeric evaluation schema and strict top-level fold-order contract; merged in GitHub #404 after rebase and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
