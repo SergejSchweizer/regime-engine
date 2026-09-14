@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mlflow.tracking import MlflowClient
 
+from market_regime_engine.mlflow_support.plots import render_model_metric_comparison
 from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 
@@ -111,6 +113,137 @@ def test_model_metrics_verifier_checks_exact_expected_points(
     assert report["status"] == "verified"
     assert report["counts"]["missing_point_count"] == 0
     assert report["counts"]["metric_point_count"] == len(points)
+    assert report["model_count_by_scope"] == {"candidate": 1}
+    assert report["models"][0]["metric_key_count"] == 3
+    assert report["models"][0]["metric_point_count"] == len(points)
+
+
+def test_model_metrics_verifier_proves_resumed_history_parity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    points = (
+        MetricPoint("valid_fold_count", 1.0, 0, 100),
+        MetricPoint("oos_predictive_loglik_per_obs", -1.25, 1, 100),
+    )
+    baseline_uri, model_name = _file_model(
+        tmp_path / "baseline",
+        monkeypatch,
+        points,
+    )
+    resumed_uri, _ = _file_model(
+        tmp_path / "resumed",
+        monkeypatch,
+        points,
+    )
+
+    report = _verifier().audit(
+        resumed_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": point.key,
+                            "value": point.value,
+                            "step": point.step,
+                            "timestamp_ms": point.timestamp_ms,
+                        }
+                        for point in points
+                    ],
+                }
+            ]
+        },
+        baseline_tracking_uri=baseline_uri,
+        baseline_experiment_name="regime-engine-audit",
+    )
+
+    assert report["status"] == "verified"
+    parity = report["resume_parity"]
+    assert parity["status"] == "verified"
+    assert parity["missing_point_count"] == 0
+    assert parity["unexpected_point_count"] == 0
+    assert parity["conflicting_point_count"] == 0
+    assert parity["lineage_tag_mismatch_count"] == 0
+
+
+def test_model_metrics_verifier_rejects_resumed_history_difference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_point = MetricPoint("valid_fold_count", 1.0, 0, 100)
+    resumed_point = MetricPoint("valid_fold_count", 2.0, 0, 100)
+    baseline_uri, model_name = _file_model(
+        tmp_path / "baseline",
+        monkeypatch,
+        (baseline_point,),
+    )
+    resumed_uri, _ = _file_model(
+        tmp_path / "resumed",
+        monkeypatch,
+        (resumed_point,),
+    )
+
+    report = _verifier().audit(
+        resumed_uri,
+        "regime-engine-audit",
+        {
+            "models": [
+                {
+                    "name": model_name,
+                    "points": [
+                        {
+                            "key": resumed_point.key,
+                            "value": resumed_point.value,
+                            "step": resumed_point.step,
+                            "timestamp_ms": resumed_point.timestamp_ms,
+                        }
+                    ],
+                }
+            ]
+        },
+        baseline_tracking_uri=baseline_uri,
+        baseline_experiment_name="regime-engine-audit",
+    )
+
+    assert report["status"] == "failed"
+    parity = report["resume_parity"]
+    assert parity["status"] == "failed"
+    assert parity["missing_point_count"] == 1
+    assert parity["unexpected_point_count"] == 1
+    assert parity["conflicting_point_count"] == 1
+
+
+def test_model_metrics_can_regenerate_comparison_plot_from_histories_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    point = MetricPoint("oos_predictive_loglik_per_obs", -1.25, 1, 100)
+    tracking_uri, model_name = _file_model(tmp_path, monkeypatch, (point,))
+    client = MlflowClient(tracking_uri=tracking_uri)
+    experiment = client.get_experiment_by_name("regime-engine-audit")
+    assert experiment is not None
+    model = client.search_logged_models([experiment.experiment_id])[0]
+    model_points = {
+        model_name: tuple(
+            MetricPoint(item.key, item.value, item.step, item.timestamp)
+            for item in model.metrics or ()
+        )
+    }
+
+    manifest = render_model_metric_comparison(
+        point.key,
+        model_points,
+        {model_name: _standard_tags()},
+        tmp_path / "plots",
+    )
+
+    assert manifest.plot_type == "model_metric_comparison"
+    assert manifest.source_metric_keys == (point.key,)
+    assert len(manifest.source_artifact_hash) == 64
+    assert Path(manifest.png_path).is_file()
 
 
 @pytest.mark.parametrize(

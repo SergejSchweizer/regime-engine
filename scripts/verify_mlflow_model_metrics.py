@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from math import isfinite
 from pathlib import Path
@@ -65,6 +66,183 @@ class AuditCounts:
     unknown_metric_key_count: int
     tag_violation_count: int
     comparison_domain_violation_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedModel:
+    """One LoggedModel and its complete available Model Metrics history."""
+
+    model: Any
+    points: tuple[MetricPoint, ...]
+
+
+def _search_all_logged_models(client: MlflowClient, experiment_id: str) -> tuple[Any, ...]:
+    """Read every LoggedModel, including pages beyond MLflow's default limit."""
+
+    models: list[Any] = []
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"max_results": 1000}
+        if page_token is not None:
+            kwargs["page_token"] = page_token
+        page = client.search_logged_models([experiment_id], **kwargs)
+        models.extend(page)
+        next_token = getattr(page, "token", None)
+        if not next_token:
+            return tuple(models)
+        page_token = str(next_token)
+
+
+def _tags(model: Any) -> dict[str, str]:
+    raw_tags = getattr(model, "tags", None) or {}
+    if isinstance(raw_tags, Mapping):
+        return {str(key): str(value) for key, value in raw_tags.items()}
+    return {str(item.key): str(item.value) for item in raw_tags}
+
+
+def _load_experiment(
+    tracking_uri: str,
+    experiment_name: str,
+) -> tuple[_LoadedModel, ...]:
+    client = MlflowClient(tracking_uri=tracking_uri)
+    experiment = client.get_experiment_by_name(experiment_name)
+    if experiment is None:
+        raise ValueError(f"MLflow experiment does not exist: {experiment_name}")
+    loaded = tuple(
+        _LoadedModel(model, _model_metric_points(client, model))
+        for model in _search_all_logged_models(client, str(experiment.experiment_id))
+    )
+    return loaded
+
+
+def _point_identity(point: MetricPoint) -> tuple[str, int, str, int]:
+    """Return a byte-stable identity for cross-run history comparison."""
+
+    return point.key, point.step, point.value.hex(), point.timestamp_ms
+
+
+def _model_name_index(
+    loaded: tuple[_LoadedModel, ...],
+) -> dict[str, list[_LoadedModel]]:
+    by_name: dict[str, list[_LoadedModel]] = {}
+    for item in loaded:
+        by_name.setdefault(str(item.model.name), []).append(item)
+    return by_name
+
+
+def compare_metric_histories(
+    tracking_uri: str,
+    experiment_name: str,
+    baseline_tracking_uri: str,
+    baseline_experiment_name: str,
+) -> dict[str, object]:
+    """Compare final resumed and uninterrupted Model Metrics histories.
+
+    Model IDs and MLflow run IDs are intentionally excluded: a restarted
+    evaluation may receive new operational IDs while retaining the same
+    logical LoggedModel names.  Metric key, step, exact IEEE-754 value and
+    timestamp must nevertheless match, and ``regime_engine.*`` lineage tags
+    must remain identical.
+    """
+
+    resumed = _load_experiment(tracking_uri, experiment_name)
+    baseline = _load_experiment(baseline_tracking_uri, baseline_experiment_name)
+    resumed_by_name = _model_name_index(resumed)
+    baseline_by_name = _model_name_index(baseline)
+    missing_models = set(baseline_by_name) - set(resumed_by_name)
+    unexpected_models = set(resumed_by_name) - set(baseline_by_name)
+    duplicate_model_count = sum(
+        len(items) - 1
+        for by_name in (resumed_by_name, baseline_by_name)
+        for items in by_name.values()
+        if len(items) > 1
+    )
+    missing_points = unexpected_points = conflicting_points = duplicate_points = 0
+    tag_mismatches = 0
+    per_model: list[dict[str, object]] = []
+
+    for name in sorted(set(resumed_by_name) & set(baseline_by_name)):
+        resumed_items = resumed_by_name[name]
+        baseline_items = baseline_by_name[name]
+        if len(resumed_items) != 1 or len(baseline_items) != 1:
+            continue
+        resumed_item = resumed_items[0]
+        baseline_item = baseline_items[0]
+        resumed_points = tuple(_point_identity(point) for point in resumed_item.points)
+        baseline_points = tuple(_point_identity(point) for point in baseline_item.points)
+        resumed_counter = Counter(resumed_points)
+        baseline_counter = Counter(baseline_points)
+        missing_points += sum((baseline_counter - resumed_counter).values())
+        unexpected_points += sum((resumed_counter - baseline_counter).values())
+        duplicate_points += sum(max(count - 1, 0) for count in resumed_counter.values())
+        duplicate_points += sum(max(count - 1, 0) for count in baseline_counter.values())
+        resumed_by_key_step = {(point[0], point[1]) for point in resumed_points}
+        baseline_by_key_step = {(point[0], point[1]) for point in baseline_points}
+        model_conflicting_points = sum(
+            1
+            for identity in resumed_by_key_step & baseline_by_key_step
+            if {point for point in resumed_points if point[:2] == identity}
+            != {point for point in baseline_points if point[:2] == identity}
+        )
+        conflicting_points += model_conflicting_points
+        resumed_tags = {
+            key: value
+            for key, value in _tags(resumed_item.model).items()
+            if key.startswith("regime_engine.")
+        }
+        baseline_tags = {
+            key: value
+            for key, value in _tags(baseline_item.model).items()
+            if key.startswith("regime_engine.")
+        }
+        tag_mismatches += int(resumed_tags != baseline_tags)
+        per_model.append(
+            {
+                "name": name,
+                "baseline_metric_point_count": len(baseline_points),
+                "resumed_metric_point_count": len(resumed_points),
+                "missing_point_count": sum((baseline_counter - resumed_counter).values()),
+                "unexpected_point_count": sum((resumed_counter - baseline_counter).values()),
+                "conflicting_point_count": model_conflicting_points,
+                "lineage_tag_mismatch": resumed_tags != baseline_tags,
+            }
+        )
+
+    result: dict[str, object] = {
+        "baseline_tracking_uri": baseline_tracking_uri,
+        "baseline_experiment_name": baseline_experiment_name,
+        "resumed_tracking_uri": tracking_uri,
+        "resumed_experiment_name": experiment_name,
+        "baseline_model_count": len(baseline),
+        "resumed_model_count": len(resumed),
+        "missing_model_count": len(missing_models),
+        "unexpected_model_count": len(unexpected_models),
+        "duplicate_model_count": duplicate_model_count,
+        "missing_point_count": missing_points,
+        "unexpected_point_count": unexpected_points,
+        "duplicate_point_count": duplicate_points,
+        "conflicting_point_count": conflicting_points,
+        "lineage_tag_mismatch_count": tag_mismatches,
+        "models": per_model,
+    }
+    result["status"] = (
+        "verified"
+        if not any(
+            result[field]
+            for field in (
+                "missing_model_count",
+                "unexpected_model_count",
+                "duplicate_model_count",
+                "missing_point_count",
+                "unexpected_point_count",
+                "duplicate_point_count",
+                "conflicting_point_count",
+                "lineage_tag_mismatch_count",
+            )
+        )
+        else "failed"
+    )
+    return result
 
 
 def _point_tuple(point: Any) -> tuple[str, int, float, int]:
@@ -156,13 +334,18 @@ def audit(
     experiment_name: str,
     expectation: dict[str, Any],
     *,
-    ledger_root: str | Path | None = None,
+    baseline_tracking_uri: str | None = None,
+    baseline_experiment_name: str | None = None,
 ) -> dict[str, object]:
+    if (baseline_tracking_uri is None) != (baseline_experiment_name is None):
+        raise ValueError(
+            "baseline_tracking_uri and baseline_experiment_name must be supplied together"
+        )
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(experiment_name)
     if experiment is None:
         raise ValueError(f"MLflow experiment does not exist: {experiment_name}")
-    actual_models = tuple(client.search_logged_models([experiment.experiment_id]))
+    actual_models = _search_all_logged_models(client, str(experiment.experiment_id))
     expected_entries = tuple(expectation.get("models", ()))
     if not all(isinstance(item, dict) for item in expected_entries):
         raise ValueError("expectation models must be objects")
@@ -331,10 +514,27 @@ def audit(
         tag_violation_count=tag_violations,
         comparison_domain_violation_count=domain_violations,
     )
+    model_summaries = tuple(
+        {
+            "model_id": str(model.model_id),
+            "name": str(model.name),
+            "scope": _tags(model).get("regime_engine.scope", "<missing>"),
+            "metric_key_count": len({point.key for point in points}),
+            "metric_point_count": len(points),
+        }
+        for model, points in sorted(
+            actual_model_points,
+            key=lambda item: (str(item[0].name), str(item[0].model_id)),
+        )
+    )
     report: dict[str, object] = {
         "tracking_uri": tracking_uri,
         "experiment_name": experiment_name,
         "counts": asdict(counts),
+        "model_count_by_scope": dict(
+            sorted(Counter(str(item["scope"]) for item in model_summaries).items())
+        ),
+        "models": model_summaries,
         "status": (
             "verified"
             if not any(
@@ -358,6 +558,16 @@ def audit(
             else "failed"
         ),
     }
+    if baseline_tracking_uri is not None and baseline_experiment_name is not None:
+        resume_parity = compare_metric_histories(
+            tracking_uri,
+            experiment_name,
+            baseline_tracking_uri,
+            baseline_experiment_name,
+        )
+        report["resume_parity"] = resume_parity
+        if resume_parity["status"] != "verified":
+            report["status"] = "failed"
     return report
 
 
@@ -366,7 +576,14 @@ def main() -> None:
     parser.add_argument("--tracking-uri", required=True)
     parser.add_argument("--experiment", required=True)
     parser.add_argument("--expectation", type=Path, required=True)
-    parser.add_argument("--ledger-root", type=Path)
+    parser.add_argument(
+        "--baseline-tracking-uri",
+        help="uninterrupted MLflow URI for final resumed-vs-baseline parity evidence",
+    )
+    parser.add_argument(
+        "--baseline-experiment",
+        help="uninterrupted MLflow experiment for final resumed-vs-baseline parity evidence",
+    )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
     expectation = json.loads(args.expectation.read_text(encoding="utf-8"))
@@ -374,7 +591,8 @@ def main() -> None:
         args.tracking_uri,
         args.experiment,
         expectation,
-        ledger_root=args.ledger_root,
+        baseline_tracking_uri=args.baseline_tracking_uri,
+        baseline_experiment_name=args.baseline_experiment,
     )
     rendered = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.json_out is not None:
