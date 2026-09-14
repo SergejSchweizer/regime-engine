@@ -19,7 +19,7 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
-from market_regime_engine.preprocessing.pca_policy import PCAFitResult
+from market_regime_engine.preprocessing.pca_policy import PCAFitResult, fit_pca_inner_train
 
 ArrayF64 = npt.NDArray[np.float64]
 _GENERATED_SCHEMA = "regime_engine"
@@ -126,7 +126,13 @@ def materialize_pca_generated_features(
     timestamps: Sequence[datetime],
     source_rows: npt.ArrayLike,
 ) -> PCAGeneratedFeatureSet:
-    """Append PCA components to complete raw rows without imputing missing data."""
+    """Append PCA components while preserving the complete source clock.
+
+    PCA is fit on complete TRAIN rows, but generated columns are materialized
+    for every source timestamp.  Incomplete rows retain their raw values and
+    receive null PCA values; they are therefore handled by the same coverage
+    and complete-case rules as every other feature.
+    """
 
     if fit.feature_order != raw_catalog.feature_names:
         raise ValueError("PCA fit feature order must equal the raw catalog feature order")
@@ -142,30 +148,34 @@ def materialize_pca_generated_features(
     if complete_rows.shape[0] == 0:
         raise ValueError("PCA generated materialization has no complete raw rows")
     generated = fit.transform(complete_rows)
-    combined = np.column_stack((complete_rows, generated))
     generated_names = fit.artifact.generated_feature_names
     combined_names = raw_catalog.feature_names + generated_names
-    selected_timestamps = tuple(
-        timestamp
-        for timestamp, is_complete in zip(timestamp_values, complete, strict=True)
-        if is_complete
+    generated_by_row = np.full(
+        (len(timestamp_values), len(generated_names)), np.nan, dtype=np.float64
     )
+    generated_by_row[complete] = generated
     lineage = _derived_lineage(
         raw_catalog,
         fit,
-        row_count=len(selected_timestamps),
-        min_timestamp=selected_timestamps[0],
-        max_timestamp=selected_timestamps[-1],
+        row_count=len(timestamp_values),
+        min_timestamp=timestamp_values[0],
+        max_timestamp=timestamp_values[-1],
     )
     rows = tuple(
-        FeatureRow(timestamp, tuple(float(value) for value in values))
-        for timestamp, values in zip(selected_timestamps, combined, strict=True)
+        FeatureRow(
+            timestamp,
+            tuple(None if not np.isfinite(value) else float(value) for value in raw_values)
+            + tuple(None if np.isnan(value) else float(value) for value in pca_values),
+        )
+        for timestamp, raw_values, pca_values in zip(
+            timestamp_values, matrix, generated_by_row, strict=True
+        )
     )
     snapshot = FeatureSnapshot(
         lineage=lineage,
         feature_names=combined_names,
         rows=rows,
-        skipped_incomplete_row_count=int(len(timestamp_values) - len(selected_timestamps)),
+        skipped_incomplete_row_count=int(len(timestamp_values) - len(complete_rows)),
     )
     next_ordinal = max(entry.canonical_ordinal for entry in raw_catalog.entries)
     generated_entries = tuple(
@@ -193,4 +203,42 @@ def materialize_pca_generated_features(
     )
 
 
-__all__ = ["PCAGeneratedFeatureSet", "materialize_pca_generated_features"]
+def fit_and_materialize_pca_source(
+    raw_catalog: FeatureCatalogSnapshot,
+    raw_snapshot: FeatureSnapshot,
+    *,
+    variance_threshold: float = 0.90,
+    component_count: int = 8,
+) -> PCAGeneratedFeatureSet:
+    """Create the fixed raw-plus-PCA source universe for one snapshot.
+
+    The snapshot fit is only a transport representation.  Outer-fold
+    discovery refits PCA on each TRAIN interval; this fit supplies stable
+    component names and the source/catalog lineage used by the evidence
+    contract.
+    """
+
+    if raw_snapshot.feature_names != raw_catalog.feature_names:
+        raise ValueError("PCA source snapshot columns must match the raw catalog")
+    if not raw_snapshot.rows:
+        raise ValueError("PCA source snapshot cannot be empty")
+    timestamps = tuple(row.timestamp for row in raw_snapshot.rows)
+    matrix = np.asarray([row.values for row in raw_snapshot.rows], dtype=np.float64)
+    fit = fit_pca_inner_train(
+        timestamps,
+        matrix,
+        feature_order=raw_catalog.feature_names,
+        inner_fold_id="source_snapshot",
+        fit_start=timestamps[0],
+        fit_end=timestamps[-1],
+        variance_threshold=variance_threshold,
+        component_count=component_count,
+    )
+    return materialize_pca_generated_features(raw_catalog, fit, timestamps, matrix)
+
+
+__all__ = [
+    "PCAGeneratedFeatureSet",
+    "fit_and_materialize_pca_source",
+    "materialize_pca_generated_features",
+]

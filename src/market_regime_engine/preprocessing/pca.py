@@ -71,11 +71,6 @@ class PCAArtifact:
         cumulative = float(sum(self.explained_variance_ratio[: self.retained_component_count]))
         if cumulative + _ORTHONORMAL_TOLERANCE < self.variance_threshold:
             raise ValueError("retained PCA components do not meet the variance threshold")
-        prior_cumulative = float(
-            sum(self.explained_variance_ratio[: self.retained_component_count - 1])
-        )
-        if prior_cumulative + _ORTHONORMAL_TOLERANCE >= self.variance_threshold:
-            raise ValueError("PCA retained component count is not minimal for the threshold")
         matrix = np.asarray(self.components, dtype=np.float64)
         if not np.allclose(
             matrix @ matrix.T,
@@ -178,6 +173,7 @@ def fit_pca_transformer(
     feature_order: tuple[str, ...],
     *,
     variance_threshold: float = _DEFAULT_VARIANCE_THRESHOLD,
+    component_count: int | None = None,
 ) -> PCAArtifact:
     """Fit standardized PCA exclusively on the supplied complete TRAIN rows."""
 
@@ -192,7 +188,13 @@ def fit_pca_transformer(
         raise ValueError("PCA explained variance must be positive and finite")
     explained_ratio = explained / total
     cumulative = np.cumsum(explained_ratio, dtype=np.float64)
-    retained = int(np.searchsorted(cumulative, variance_threshold, side="left")) + 1
+    if component_count is not None and component_count < 1:
+        raise ValueError("component_count must be positive")
+    retained = (
+        int(component_count)
+        if component_count is not None
+        else int(np.searchsorted(cumulative, variance_threshold, side="left")) + 1
+    )
     retained = min(retained, vt.shape[0])
     components = _canonicalize_component_signs(vt[:retained])
     return PCAArtifact(

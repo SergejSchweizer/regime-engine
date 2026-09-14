@@ -124,6 +124,7 @@ def fit_pca_hmm_scaler(
     fit_start: datetime,
     fit_end: datetime,
     variance_threshold: float = 0.90,
+    component_count: int | None = None,
     model_feature_order: tuple[str, ...] | None = None,
 ) -> PCATwoStageScalerArtifact:
     """Fit PCA on frozen Inner-TRAIN, then fit HMM scaling on PCA-augmented TRAIN."""
@@ -139,6 +140,7 @@ def fit_pca_hmm_scaler(
         fit_start=fit_start,
         fit_end=fit_end,
         variance_threshold=variance_threshold,
+        component_count=component_count,
     )
     by_timestamp = {timestamp: index for index, timestamp in enumerate(timestamps)}
     selected_indices = tuple(by_timestamp[timestamp] for timestamp in pca_fit.selected_timestamps)

@@ -19,6 +19,7 @@ from market_regime_engine.feature_discovery.contracts import DeploymentSelection
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
+from market_regime_engine.preprocessing.pca_policy import validate_pca_source_universe
 from market_regime_engine.preprocessing.scaling import fit_standard_scaler
 from market_regime_engine.preprocessing.two_stage import (
     PCATwoStageScalerArtifact,
@@ -190,6 +191,11 @@ def final_production_refit(
     raw_feature_order = (
         candidate.feature_order if pca_raw_feature_order is None else pca_raw_feature_order
     )
+    if pca_raw_feature_order is not None:
+        validate_pca_source_universe(
+            pca_raw_feature_order,
+            candidate.original_feature_universe,
+        )
     matrix, retained_timestamps, skipped = _refit_matrix(
         source_rows,
         feature_order=raw_feature_order,
@@ -215,6 +221,7 @@ def final_production_refit(
             fit_start=retained_timestamps[0],
             fit_end=retained_timestamps[-1],
             variance_threshold=pca_threshold,
+            component_count=profile.pca.component_count,
             model_feature_order=candidate.feature_order,
         )
         if pca_scaler.model_feature_order != candidate.feature_order:

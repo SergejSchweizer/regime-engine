@@ -13,6 +13,7 @@ from itertools import pairwise
 from statistics import fmean, pstdev
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.evaluation.walk_forward import (
@@ -88,6 +89,12 @@ from market_regime_engine.features.ports import (
     FeatureSnapshot,
     SchemaWideFeatureSource,
 )
+from market_regime_engine.preprocessing.pca_features import (
+    PCAGeneratedFeatureSet,
+    fit_and_materialize_pca_source,
+    materialize_pca_generated_features,
+)
+from market_regime_engine.preprocessing.pca_policy import fit_pca_inner_train
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
@@ -131,6 +138,79 @@ class _OuterProcessContext:
 
 
 _OUTER_PROCESS_CONTEXT: _OuterProcessContext | None = None
+
+
+def _raw_feature_order(catalog: FeatureCatalogSnapshot) -> tuple[str, ...]:
+    return tuple(name for name in catalog.feature_names if not name.startswith("pca_pc_"))
+
+
+def _raw_catalog(catalog: FeatureCatalogSnapshot) -> FeatureCatalogSnapshot:
+    raw_names = set(_raw_feature_order(catalog))
+    return FeatureCatalogSnapshot.from_entries(
+        catalog.lineage,
+        catalog.timestamp_column,
+        tuple(entry for entry in catalog.entries if entry.feature_name in raw_names),
+    )
+
+
+def _pca_frame(generated: PCAGeneratedFeatureSet) -> pd.DataFrame:
+    snapshot = generated.snapshot
+    return pd.DataFrame(
+        {
+            _TIMESTAMP_COLUMN: tuple(row.timestamp for row in snapshot.rows),
+            **{
+                name: tuple(row.values[index] for row in snapshot.rows)
+                for index, name in enumerate(snapshot.feature_names)
+            },
+        }
+    )
+
+
+def _outer_train_with_local_pca(
+    train_rows: pd.DataFrame,
+    *,
+    catalog: FeatureCatalogSnapshot,
+    profile: ModelProfile,
+    fold: WalkForwardFold,
+    raw_order: tuple[str, ...],
+) -> pd.DataFrame:
+    """Refit PCA on exactly one outer TRAIN interval for discovery."""
+
+    raw_catalog = _raw_catalog(catalog)
+    timestamps = tuple(_utc(value, "source timestamp") for value in train_rows[_TIMESTAMP_COLUMN])
+    matrix = train_rows.loc[:, list(raw_order)].to_numpy(dtype=np.float64, copy=True)
+    fit = fit_pca_inner_train(
+        timestamps,
+        matrix,
+        feature_order=raw_order,
+        inner_fold_id=fold.fold_id,
+        fit_start=fold.train_start,
+        fit_end=fold.train_end,
+        variance_threshold=profile.pca.variance_threshold,
+        component_count=profile.pca.component_count,
+    )
+    generated = materialize_pca_generated_features(raw_catalog, fit, timestamps, matrix)
+    return _pca_frame(generated).loc[:, [_TIMESTAMP_COLUMN, *catalog.feature_names]]
+
+
+def _selection_train_rows(
+    source_rows: pd.DataFrame,
+    fold: WalkForwardFold,
+    *,
+    catalog: FeatureCatalogSnapshot,
+    profile: ModelProfile,
+    pca_raw_feature_order: tuple[str, ...] | None,
+) -> pd.DataFrame:
+    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+    if pca_raw_feature_order is None:
+        return train_rows
+    return _outer_train_with_local_pca(
+        train_rows,
+        catalog=catalog,
+        profile=profile,
+        fold=fold,
+        raw_order=pca_raw_feature_order,
+    )
 
 
 def _initialize_outer_process_context(context: _OuterProcessContext | None = None) -> None:
@@ -451,8 +531,6 @@ def select_v4_configuration(
 
     build_id = catalog.lineage.source_build_id if source_build_id is None else source_build_id
     snapshot = _validate_train_inputs(train_rows, catalog, profile, build_id)
-    if profile.pca.enabled and pca_raw_feature_order is None:
-        raise ValueError("enabled PCA profile requires pca_raw_feature_order")
     pca_threshold = (
         profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
     )
@@ -785,7 +863,13 @@ def _evaluate_outer_fold(
 ) -> OuterFoldResult:
     """Evaluate one outer fold; callers may persist this atomic result."""
 
-    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+    train_rows = _selection_train_rows(
+        source_rows,
+        fold,
+        catalog=catalog,
+        profile=profile,
+        pca_raw_feature_order=pca_raw_feature_order,
+    )
     test_rows = source_rows.iloc[
         fold.train_source_observations : fold.train_source_observations
         + fold.test_source_observations
@@ -932,8 +1016,8 @@ def evaluate_global_regime_v4(
         raise ValueError("run_store and run_identity must be supplied together")
     if not isinstance(source_rows, pd.DataFrame):
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
-    if profile.pca.enabled and pca_raw_feature_order is None:
-        raise ValueError("enabled PCA profile requires pca_raw_feature_order")
+    if _TIMESTAMP_COLUMN not in source_rows.columns:
+        raise ValueError(f"source rows must contain {_TIMESTAMP_COLUMN}")
     pca_threshold = (
         profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
     )
@@ -955,8 +1039,6 @@ def evaluate_global_regime_v4(
     build_id = catalog.lineage.source_build_id if source_build_id is None else source_build_id
     if build_id != catalog.lineage.source_build_id:
         raise ValueError("global v4 source build differs from catalog lineage")
-    if _TIMESTAMP_COLUMN not in source_rows.columns:
-        raise ValueError(f"source rows must contain {_TIMESTAMP_COLUMN}")
     timestamps = tuple(_utc(value, "source timestamp") for value in source_rows[_TIMESTAMP_COLUMN])
     if any(current <= previous for previous, current in pairwise(timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
@@ -1022,7 +1104,13 @@ def evaluate_global_regime_v4(
                     cached.failure_reason or "cached outer fold is domain-invalid",
                 )
             if selection_sink is not None and cached.valid:
-                train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                train_rows = _selection_train_rows(
+                    source_rows,
+                    fold,
+                    catalog=catalog,
+                    profile=profile,
+                    pca_raw_feature_order=pca_raw_feature_order,
+                )
                 selection = select_v4_configuration(
                     train_rows,
                     catalog=catalog,
@@ -1104,7 +1192,13 @@ def evaluate_global_regime_v4(
             if not process_with_selection:
                 fold_result = cast(OuterFoldResult, future.result())
                 if selection_sink is not None and fold_result.valid:
-                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                    train_rows = _selection_train_rows(
+                        source_rows,
+                        fold,
+                        catalog=catalog,
+                        profile=profile,
+                        pca_raw_feature_order=pca_raw_feature_order,
+                    )
                     selection = select_v4_configuration(
                         train_rows,
                         catalog=catalog,
@@ -1133,7 +1227,13 @@ def evaluate_global_regime_v4(
                     # A completed outer-fold unit predates the in-worker
                     # capture path. Replay only that cached fold so a restart
                     # remains able to rebuild its tracking evidence.
-                    train_rows = source_rows.iloc[: fold.train_source_observations].copy()
+                    train_rows = _selection_train_rows(
+                        source_rows,
+                        fold,
+                        catalog=catalog,
+                        profile=profile,
+                        pca_raw_feature_order=pca_raw_feature_order,
+                    )
                     selection = select_v4_configuration(
                         train_rows,
                         catalog=catalog,
@@ -1327,6 +1427,19 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source catalog and snapshot materialization digests differ")
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
+    pca_raw_order: tuple[str, ...] | None = None
+    if profile.pca.enabled:
+        raw_order = _raw_feature_order(catalog)
+        raw_catalog = _raw_catalog(catalog)
+        generated = fit_and_materialize_pca_source(
+            raw_catalog,
+            snapshot,
+            variance_threshold=profile.pca.variance_threshold,
+            component_count=profile.pca.component_count,
+        )
+        catalog = generated.catalog
+        snapshot = generated.snapshot
+        pca_raw_order = raw_order
     run_identity: EvaluationRunIdentity | None = None
     if snapshot_store is not None:
         dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)
@@ -1381,8 +1494,8 @@ def evaluate_global_regime_v4_from_source(
         run_identity=run_identity,
         selection_sink=selection_sink,
         prefix_evaluation_sink=prefix_evaluation_sink,
-        pca_raw_feature_order=pca_raw_feature_order,
-        pca_variance_threshold=pca_variance_threshold,
+        pca_raw_feature_order=pca_raw_order,
+        pca_variance_threshold=profile.pca.variance_threshold,
     )
 
 

@@ -4,8 +4,9 @@ registered_model: regime-xetra
 production_alias: champion
 challenger_alias: challenger
 pca:
-  enabled: false
+  enabled: true
   variance_threshold: 0.90
+  component_count: 8
 feature_discovery:
   evaluation_id: global_regime_v4
   policy_id: xetra_global_regime_v4

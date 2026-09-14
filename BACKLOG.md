@@ -2410,70 +2410,82 @@ QA:
 
 The following PCA PRs are backlog planning IDs. They are intentionally
 separate from the existing non-PCA PR-255–PR-260 metric-family entries above.
-The implementation is now complete on `main` through GitHub PRs #303–#313;
-the status ledger above is authoritative. The planning acceptance text below
-is retained for traceability and is not an open implementation queue.
-No PCA implementation, configuration, source adapter or PCA-specific test was
-found in the current codebase. That earlier conclusion is superseded: all
-eight PCA planning items are implemented on `main` and mapped in the status
-ledger above.
+The implementation is complete on `main` through GitHub PRs #303–#313; the
+status ledger above is authoritative. The original opt-in wording below is
+superseded by the mandatory-PCA acceptance contract and remains only for
+planning traceability.
+
+For canonical Xetra v4, PCA is mandatory: the fixed raw-plus-PCA catalog is
+used by discovery, scoring, walk-forward evaluation, final refit, packaging
+and serving. Raw-only runs are not acceptance evidence for canonical v4.
 
 ### PCA PR-255 — Define deterministic PCA artifact and TRAIN-only transformer
 
 - **Branch:** `pr/PR-255-pca-train-only-transformer`
 - **Depends on:** PR-241, PR-254
-- **Status:** open; no PCA transformer or immutable PCA artifact is implemented.
-- **Open work:** TRAIN-only standardization/PCA fitting, deterministic component
-  signs and retained-`k` selection at cumulative explained variance >= 90%.
+- **Status:** implementation present; mandatory-universe integration in
+  `pr/PR-366-pca-features-required` pending merge.
+- **Acceptance:** TRAIN-only standardization/PCA fitting, deterministic signs,
+  fixed component count and variance-threshold lineage.
 
 ### PCA PR-256 — Define the PCA source-universe policy and frozen fit clock
 
 - **Branch:** `pr/PR-256-pca-source-universe-clock`
 - **Depends on:** PCA PR-255
-- **Status:** open; PCA source selection and frozen inner-TRAIN fit scope are
-  not implemented.
+- **Status:** implementation present; fixed-universe integration pending in
+  `pr/PR-366-pca-features-required`.
+- **Acceptance:** complete raw source universe and frozen TRAIN fit clock.
 
 ### PCA PR-257 — Materialize PCA components as first-class generated features
 
 - **Branch:** `pr/PR-257-pca-generated-feature-universe`
 - **Depends on:** PCA PR-256
-- **Status:** open; `pca_pc_001 ... pca_pc_k` generation, provenance and catalog
-  integration are not implemented.
+- **Status:** implementation present; source-clock preservation and mandatory
+  integration pending in `pr/PR-366-pca-features-required`.
+- **Acceptance:** `pca_pc_001 ... pca_pc_k` are catalogued beside raw features,
+  with nulls on incomplete rows rather than dropped timestamps.
 
 ### PCA PR-258 — Integrate PCA into v4 discovery and feature selection
 
 - **Branch:** `pr/PR-258-pca-v4-discovery-selection`
 - **Depends on:** PCA PR-257, PR-223, PR-224, PR-226, PR-227
-- **Status:** open; raw and generated PCA features are not combined in the v4
-  distance, clustering, scoring or selection pipeline.
+- **Status:** implementation present; canonical outer-fold wiring pending in
+  `pr/PR-366-pca-features-required`.
+- **Acceptance:** raw and generated PCA features enter quality, distance,
+  clustering, scoring, prefix and final-grid selection.
 
 ### PCA PR-259 — Carry frozen PCA through walk-forward and HMM scaling
 
 - **Branch:** `pr/PR-259-pca-walk-forward-scaling`
 - **Depends on:** PCA PR-258, PR-228
-- **Status:** open; fold-local PCA artifacts and the two-stage PCA/HMM scaling
-  contract are not implemented.
+- **Status:** implementation present; fixed component-count propagation pending
+  in `pr/PR-366-pca-features-required`.
+- **Acceptance:** fold-local PCA and two-stage PCA/HMM scaling are TRAIN-only.
 
 ### PCA PR-260 — Package PCA lineage for refit, registry and serving
 
 - **Branch:** `pr/PR-260-pca-production-artifact-serving`
 - **Depends on:** PCA PR-259, PR-234, PR-235, PR-236
-- **Status:** open; production package, latest/replay serving and PCA lineage
-  validation do not support PCA features.
+- **Status:** implementation present; production-path verification pending in
+  `pr/PR-366-pca-features-required`.
+- **Acceptance:** refit, package, latest and replay request raw features and
+  apply the stored PCA transform before HMM scaling.
 
 ### PCA PR-261 — Add MLflow PCA diagnostics and raw-only vs raw+PCA OOS comparison
 
 - **Branch:** `pr/PR-261-pca-mlflow-oos-evaluation`
 - **Depends on:** PCA PR-259, PCA PR-260, PR-230
-- **Status:** open; PCA loading/EVR metrics, plots and matched OOS comparison
-  are not tracked.
+- **Status:** existing diagnostics present; mandatory-path acceptance pending in
+  `pr/PR-366-pca-features-required`.
+- **Acceptance:** PCA loading/EVR metrics, plots and matched OOS comparison.
 
 ### PCA PR-262 — End-to-end PCA rollout, configuration and documentation closure
 
 - **Branch:** `pr/PR-262-pca-feature-generator-e2e-docs`
 - **Depends on:** PCA PR-261
-- **Status:** open; PCA configuration, E2E proof and documentation closure are
-  not implemented.
+- **Status:** implementation present in `pr/PR-366-pca-features-required`;
+  focused tests pass; merge and final audit remain.
+- **Acceptance:** mandatory profile configuration, local E2E proof and docs.
 
 GitHub PR #243 only added this PCA backlog planning wave and was closed as a
 documentation-only change; it did not implement any of the PCA PRs above.

@@ -155,7 +155,11 @@ class LatestHandler:
             )
             snapshot = self._source.read(
                 FeatureRequest(
-                    feature_names=artifact.feature_order,
+                    feature_names=(
+                        artifact.pca_scaler.raw_feature_order
+                        if artifact.pca_scaler is not None
+                        else artifact.feature_order
+                    ),
                     start=start,
                     end=invocation.as_of,
                     mode=SourceMode.RESOLVED_MODEL,

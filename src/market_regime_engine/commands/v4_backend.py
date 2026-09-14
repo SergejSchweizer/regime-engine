@@ -51,6 +51,7 @@ from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
 from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 from market_regime_engine.predictions.store import PredictionStore
+from market_regime_engine.preprocessing.pca_features import fit_and_materialize_pca_source
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.training.adapter_factory import adapter_factory
@@ -181,8 +182,18 @@ class V4LifecycleBackend:
         recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
-        _atomic_pickle(self._source_path, (recording.catalog, recording.snapshot))
-        return recording.catalog, recording.snapshot
+        catalog, snapshot = recording.catalog, recording.snapshot
+        pca_config = getattr(self.profile, "pca", None)
+        if pca_config is not None and pca_config.enabled:
+            generated = fit_and_materialize_pca_source(
+                catalog,
+                snapshot,
+                variance_threshold=pca_config.variance_threshold,
+                component_count=pca_config.component_count,
+            )
+            catalog, snapshot = generated.catalog, generated.snapshot
+        _atomic_pickle(self._source_path, (catalog, snapshot))
+        return catalog, snapshot
 
     def _saved_source(self) -> tuple[Any, FeatureSnapshot]:
         if self._source_path.is_file():
@@ -236,13 +247,13 @@ class V4LifecycleBackend:
         recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
-        catalog, snapshot = recording.catalog, recording.snapshot
+        catalog, snapshot = self._capture_source()
         _atomic_pickle(self._source_path, (catalog, snapshot))
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
         selections: dict[int, V4ConfigurationSelection] = {}
         result = evaluate_global_regime_v4_from_source(
-            recording,
+            self.source,
             profile=self.profile,
             snapshot_store=ArrowDatasetSnapshotStore(self.state_root / "snapshots"),
             repository_commit_sha=_commit(self.root),
@@ -319,6 +330,14 @@ class V4LifecycleBackend:
             winning_evaluation=winning_evaluation,
             deployment_selection=deployment,
             profile=self.profile,
+            pca_raw_feature_order=(
+                tuple(name for name in catalog.feature_names if not name.startswith("pca_pc_"))
+                if self.profile.pca.enabled
+                else None
+            ),
+            pca_variance_threshold=(
+                self.profile.pca.variance_threshold if self.profile.pca.enabled else None
+            ),
         )
         package = save_production_package(artifact, self._package_path)
         _atomic_pickle(self._selection_path, deployment)

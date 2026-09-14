@@ -3,6 +3,7 @@
 from market_regime_engine.preprocessing.pca import PCAArtifact, fit_pca_transformer
 from market_regime_engine.preprocessing.pca_features import (
     PCAGeneratedFeatureSet,
+    fit_and_materialize_pca_source,
     materialize_pca_generated_features,
 )
 from market_regime_engine.preprocessing.pca_policy import (
@@ -10,6 +11,7 @@ from market_regime_engine.preprocessing.pca_policy import (
     PCAFitClock,
     PCAFitResult,
     fit_pca_inner_train,
+    validate_pca_source_universe,
 )
 from market_regime_engine.preprocessing.scaling import (
     StandardScalerArtifact,
@@ -28,9 +30,11 @@ __all__ = [
     "PCAGeneratedFeatureSet",
     "PCATwoStageScalerArtifact",
     "StandardScalerArtifact",
+    "fit_and_materialize_pca_source",
     "fit_pca_hmm_scaler",
     "fit_pca_inner_train",
     "fit_pca_transformer",
     "fit_standard_scaler",
     "materialize_pca_generated_features",
+    "validate_pca_source_universe",
 ]

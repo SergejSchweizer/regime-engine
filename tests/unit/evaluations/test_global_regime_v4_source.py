@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -18,9 +19,17 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
+from market_regime_engine.profiles.config import PCAConfig
 from market_regime_engine.profiles.loader import load_profile
 
 START = datetime(2020, 1, 1, tzinfo=UTC)
+
+
+def _raw_profile():
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    return replace(
+        profile, pca=PCAConfig(enabled=False, variance_threshold=profile.pca.variance_threshold)
+    )
 
 
 def _lineage() -> SourceLineage:
@@ -64,7 +73,7 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
             return bound_catalog, snapshot
 
     source = Source()
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    profile = _raw_profile()
     captured: dict[str, object] = {}
 
     def fake_evaluate(rows: pd.DataFrame, **kwargs):
@@ -101,7 +110,7 @@ def test_v4_source_entrypoint_can_persist_only_the_input_snapshot(monkeypatch) -
         (FeatureRow(START, (1.0, 2.0)), FeatureRow(START + timedelta(days=1), (2.0, 3.0))),
     )
     bound_catalog = catalog.with_materialization(snapshot)
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    profile = _raw_profile()
 
     class Source:
         def read_schema_wide_with_catalog(self, request: FeatureRequest):
@@ -147,7 +156,7 @@ def test_v4_source_entrypoint_fails_closed_for_invalid_snapshot_contracts() -> N
         "timestamp_m1",
         (FeatureCatalogEntry("feature_a", 1), FeatureCatalogEntry("feature_b", 2)),
     )
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    profile = _raw_profile()
     invalid_profile = SimpleNamespace(profile_id="xetra", profile_config_version=99)
 
     class Source:
@@ -232,7 +241,7 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
         ),
     )
     bound_catalog = catalog.with_materialization(snapshot)
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    profile = _raw_profile()
 
     class Source:
         def read_schema_wide_with_catalog(self, request: FeatureRequest):
@@ -339,7 +348,7 @@ def test_v4_source_entrypoint_returns_a_completed_durable_run(monkeypatch) -> No
         (FeatureRow(START, (1.0, 2.0)), FeatureRow(START + timedelta(days=1), (2.0, 3.0))),
     )
     bound_catalog = catalog.with_materialization(snapshot)
-    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    profile = _raw_profile()
 
     class Source:
         def read_schema_wide_with_catalog(self, request: FeatureRequest):

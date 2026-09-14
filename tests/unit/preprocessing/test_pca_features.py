@@ -71,7 +71,9 @@ def test_pca_components_are_first_class_catalogued_features_with_provenance() ->
     )
     assert generated.generated_feature_names == fit.artifact.generated_feature_names
     assert generated.skipped_incomplete_row_count == 1
-    assert generated.snapshot.row_count == len(rows) - 1
+    assert generated.snapshot.row_count == len(rows)
+    assert generated.snapshot.rows[12].values[1] is None
+    assert generated.snapshot.rows[12].values[-1] is None
     assert all(
         entry.schema_name == "regime_engine"
         and entry.relation_name == "pca_generated_features"
@@ -90,7 +92,11 @@ def test_generated_values_match_frozen_transform_and_mismatch_fails_closed() -> 
     complete = np.all(np.isfinite(rows), axis=1)
     expected = fit.transform(rows[complete])
     actual = np.asarray(
-        [row.values[-fit.artifact.retained_component_count :] for row in generated.snapshot.rows]
+        [
+            row.values[-fit.artifact.retained_component_count :]
+            for row, is_complete in zip(generated.snapshot.rows, complete, strict=True)
+            if is_complete
+        ]
     )
     assert np.array_equal(actual, expected)
 
