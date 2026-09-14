@@ -13,6 +13,7 @@ from market_regime_engine.mlflow_support.model_package import (
     PACKAGE_DATA_FILE,
     load_production_package,
     production_artifact_from_json,
+    production_artifact_from_payload,
     production_artifact_json,
     save_production_package,
 )
@@ -219,6 +220,21 @@ def test_json_loader_rejects_root_shape_fields_and_schema() -> None:
     raw["pca_scaler"] = []
     with pytest.raises(ValueError, match="PCA scaler payload"):
         production_artifact_from_json(json.dumps(raw))
+
+
+def test_old_package_schema_is_rejected_before_nested_payload_decoding() -> None:
+    payload: dict[str, object] = {
+        "schema_version": "RegimeEngineProductionModel.v3",
+        "hmm": object(),
+        "opaque_legacy_payload": object(),
+    }
+
+    with pytest.raises(ValueError, match="unsupported production package schema"):
+        production_artifact_from_json(json.dumps({"schema_version": payload["schema_version"]}))
+    with pytest.raises(ValueError, match="unsupported production package schema"):
+        # The direct mapping path models a caller that already parsed an old
+        # package whose nested fields are not compatible with the v4 schema.
+        production_artifact_from_payload(payload)
 
 
 def test_package_loader_rejects_missing_or_incompatible_mlmodel(tmp_path: Path) -> None:

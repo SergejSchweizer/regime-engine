@@ -425,6 +425,10 @@ class ModelProfile:
             value = getattr(self, field_name)
             if not value or value.strip() != value:
                 raise ValueError(f"{field_name} must be a non-empty trimmed string")
+        if self.profile_id != "xetra":
+            raise ValueError("only the Xetra public profile is supported")
+        if self.registered_model != "regime-xetra":
+            raise ValueError("Xetra profiles must use the regime-xetra registered model")
         if self.profile_config_version != 4:
             raise ValueError("only Xetra profile configuration version 4 is supported")
         if self.production_alias != "champion" or self.challenger_alias != "challenger":

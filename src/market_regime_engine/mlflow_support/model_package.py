@@ -131,6 +131,13 @@ def production_artifact_json(artifact: ProductionModelArtifact) -> str:
 
 
 def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModelArtifact:
+    if not isinstance(payload, dict):
+        raise ValueError("production package root must be a mapping")
+    # Check the envelope before looking at any nested payload.  An old package
+    # must fail closed on its version marker, without attempting to interpret
+    # fields whose schema is no longer supported.
+    if payload.get("schema_version") != PACKAGE_SCHEMA_VERSION:
+        raise ValueError("unsupported production package schema version")
     expected = {
         "candidate_id",
         "data_time_semantics",
@@ -164,13 +171,34 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     }
     if set(payload) != expected:
         raise ValueError("unknown or missing production package fields")
-    if payload["schema_version"] != PACKAGE_SCHEMA_VERSION:
-        raise ValueError("unsupported production package schema version")
-
     scaler_payload = payload["scaler"]
     hmm_payload = payload["hmm"]
     if not isinstance(scaler_payload, dict) or not isinstance(hmm_payload, dict):
         raise ValueError("production scaler/HMM payloads must be mappings")
+    expected_scaler = {"feature_order", "means_hex", "variances_hex", "scales_hex"}
+    if set(scaler_payload) != expected_scaler:
+        raise ValueError("unknown or missing production scaler fields")
+    expected_hmm = {
+        "covariance_type",
+        "feature_order",
+        "full_covariances_hex",
+        "means_hex",
+        "model_family",
+        "start_probabilities_hex",
+        "state_count",
+        "transition_matrix_hex",
+    }
+    family = hmm_payload.get("model_family")
+    if family == "gmm_hmm":
+        expected_hmm |= {
+            "mixture_weights_hex",
+            "mixture_means_hex",
+            "mixture_full_covariances_hex",
+        }
+    elif family == "student_t_hmm":
+        expected_hmm.add("degrees_of_freedom_hex")
+    if set(hmm_payload) != expected_hmm:
+        raise ValueError("unknown or missing production HMM fields")
     pca_payload = payload["pca_scaler"]
     if pca_payload is None:
         pca_scaler = None
@@ -319,7 +347,14 @@ def load_production_package(package_directory: str | Path) -> ProductionModelArt
     if not data_path.is_file() or not mlmodel_path.is_file():
         raise ValueError("production package requires MLmodel and production_model.json")
     metadata = json.loads(mlmodel_path.read_text(encoding="utf-8"))
-    flavor = metadata.get("flavors", {}).get("regime_engine", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("MLmodel root must be a mapping")
+    flavors = metadata.get("flavors")
+    if not isinstance(flavors, dict):
+        raise ValueError("MLmodel flavors must be a mapping")
+    flavor = flavors.get("regime_engine")
+    if not isinstance(flavor, dict):
+        raise ValueError("MLmodel must contain the regime_engine flavor")
     if flavor.get("data") != PACKAGE_DATA_FILE:
         raise ValueError("MLmodel does not reference the canonical production data file")
     if flavor.get("schema_version") != PACKAGE_SCHEMA_VERSION:

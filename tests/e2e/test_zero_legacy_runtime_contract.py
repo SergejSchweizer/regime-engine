@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).parents[2]
 VERIFIER = ROOT / "scripts" / "verify_zero_legacy.py"
+
+
+def _module() -> object:
+    spec = importlib.util.spec_from_file_location("verify_zero_legacy_runtime", VERIFIER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load zero-legacy verifier")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_verifier(
@@ -185,3 +197,141 @@ def test_verifier_rejects_forbidden_path_component_in_temporary_source(tmp_path:
         violation["kind"] == "path" and removed_directory in violation["detail"]
         for violation in report["violations"]
     )
+
+
+def test_runtime_audit_proves_v4_only_fail_closed_boundaries() -> None:
+    module = _module()
+
+    report = module._runtime_audit(ROOT)  # type: ignore[attr-defined]
+
+    assert report["status"] == "verified"
+    assert report["violations"] == []
+    checks = report["checks"]
+    assert isinstance(checks, dict)
+    assert checks["cli_commands"] == [
+        "evaluate",
+        "final-refit",
+        "publish-oos",
+        "register",
+        "status",
+    ]
+    assert checks["public_profiles"] == ["xetra"]
+    assert checks["old_package_rejection"] == "verified"
+
+
+class _ExternalMlflowFixture:
+    def __init__(self) -> None:
+        self.experiment = SimpleNamespace(experiment_id="evaluation")
+        self.runs = [
+            SimpleNamespace(
+                info=SimpleNamespace(run_id="parent", tags={}),
+                data=SimpleNamespace(
+                    params={
+                        "profile_id": "xetra",
+                        "profile_config_version": "4",
+                        "evaluation_id": "global_regime_v4",
+                    },
+                    tags={},
+                ),
+            ),
+            SimpleNamespace(
+                info=SimpleNamespace(
+                    run_id="fold-001",
+                    tags={"mlflow.parentRunId": "parent"},
+                ),
+                data=SimpleNamespace(
+                    params={"evaluation_id": "global_regime_v4"},
+                    tags={},
+                ),
+            ),
+        ]
+        self.models = [
+            SimpleNamespace(
+                model_id="logged-v4",
+                tags={
+                    "regime_engine.profile_id": "xetra",
+                    "regime_engine.profile_config_version": "4",
+                },
+            )
+        ]
+        self.versions = [
+            SimpleNamespace(
+                version="7",
+                tags={
+                    "regime_engine.package_schema": "RegimeEngineProductionModel.v4",
+                    "regime_engine.profile_id": "xetra",
+                    "regime_engine.profile_config_version": "4",
+                },
+            )
+        ]
+        self.registered = SimpleNamespace(aliases={"champion": "7"})
+
+    def get_experiment_by_name(self, name: str) -> object:
+        assert name == "regime-engine-evaluation"
+        return self.experiment
+
+    def search_runs(self, **kwargs: object) -> list[object]:
+        assert kwargs["experiment_ids"] == ["evaluation"]
+        return self.runs
+
+    def search_logged_models(self, **kwargs: object) -> list[object]:
+        assert kwargs["experiment_ids"] == ["evaluation"]
+        return self.models
+
+    def search_model_versions(self, **kwargs: object) -> list[object]:
+        assert kwargs["filter_string"] == "name='regime-xetra'"
+        return self.versions
+
+    def get_registered_model(self, name: str) -> object:
+        assert name == "regime-xetra"
+        return self.registered
+
+
+def test_external_mlflow_audit_is_read_only_and_accepts_v4_fixture() -> None:
+    module = _module()
+
+    report = module.audit_external_mlflow(  # type: ignore[attr-defined]
+        _ExternalMlflowFixture(), tracking_uri="http://mlflow.test"
+    )
+
+    assert report["status"] == "verified"
+    assert report["violations"] == []
+    assert report["evaluation"]["legacy_run_ids"] == []
+    assert report["registry"]["legacy_version_ids"] == []
+    assert report["registry"]["legacy_aliases"] == []
+
+
+def test_external_mlflow_audit_rejects_legacy_runs_models_versions_and_aliases() -> None:
+    module = _module()
+    client = _ExternalMlflowFixture()
+    client.runs.append(
+        SimpleNamespace(
+            info=SimpleNamespace(run_id="legacy-run", tags={}),
+            data=SimpleNamespace(
+                params={"profile_id": "xetra", "profile_config_version": "2"}, tags={}
+            ),
+        )
+    )
+    client.models.append(
+        SimpleNamespace(
+            model_id="logged-legacy",
+            tags={"regime_engine.profile_id": "xetra", "regime_engine.profile_config_version": "2"},
+        )
+    )
+    client.versions.append(
+        SimpleNamespace(
+            version="8",
+            tags={"regime_engine.package_schema": "RegimeEngineProductionModel.v3"},
+        )
+    )
+    client.registered.aliases["retired"] = "8"
+
+    report = module.audit_external_mlflow(  # type: ignore[attr-defined]
+        client, tracking_uri="http://mlflow.test"
+    )
+
+    assert report["status"] == "failed"
+    assert report["evaluation"]["legacy_run_ids"] == ["legacy-run"]
+    assert report["evaluation"]["legacy_logged_model_ids"] == ["logged-legacy"]
+    assert report["registry"]["legacy_version_ids"] == ["8"]
+    assert report["registry"]["legacy_aliases"] == ["retired->8"]
