@@ -95,12 +95,27 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path, dict[str, float]]:
         }
         for fold_index, family in zip((1, 2, 3), families, strict=True)
     ]
+    outer_fold_agreements = [
+        {
+            "outer_fold_index": fold_index,
+            "valid": True,
+            "result_hash": f"{fold_index:064x}",
+            "candidate_timestamps": ["2026-01-01", "2026-01-02"],
+            "candidate_probabilities": [[1.0, 0.0], [0.0, 1.0]],
+            "teacher_timestamps": ["2026-01-01", "2026-01-02"],
+            "teacher_probabilities": [[1.0, 0.0], [0.0, 1.0]],
+            "soft_regime_nmi": 1.0,
+            "shared_timestamp_count": 2,
+        }
+        for fold_index in (1, 2, 3)
+    ]
     expectations_path = tmp_path / "xetra-folds.json"
     expectations_path.write_text(
         json.dumps(
             {
                 "audit_outer_fold_indices": [1, 2, 3],
                 "fold_audits": dossiers,
+                "outer_fold_agreements": outer_fold_agreements,
             }
         ),
         encoding="utf-8",
@@ -248,6 +263,7 @@ def _strict_current_contract(
         },
         "valid_outer_fold_indices": indices,
         "audit_outer_fold_indices": [indices[0], indices[len(indices) // 2], indices[-1]],
+        "outer_fold_result_hashes": [f"{index:064x}" for index in indices],
         "resource_evidence": {
             "performance_report_path": "/tmp/current-xetra-performance.json",
             "available_logical_cpus": 4,
@@ -281,6 +297,17 @@ def test_strict_current_contract_requires_bounds_identity_folds_and_resources(
     )
     assert report["status"] == "verified"
     assert report["audit_contract_verified"] is True
+
+    broken_agreement = json.loads(json.dumps(expectations))
+    broken_agreement["outer_fold_agreements"][0]["shared_timestamp_count"] = 1
+    with pytest.raises(SystemExit, match="shared_timestamp_count"):
+        module.verify_expectations(
+            columns,
+            broken_agreement,
+            max_workers=1,
+            snapshot_sha256=contract["identity_hashes"]["snapshot_sha256"],
+            require_current_audit_contract=True,
+        )
 
     broken = json.loads(json.dumps(expectations))
     del broken["audit_contract"]["source_request"]

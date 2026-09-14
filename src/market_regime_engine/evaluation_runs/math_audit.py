@@ -185,6 +185,43 @@ def _prefix_nmi_items(
     return items
 
 
+def _outer_agreement_item(outer_fold: OuterFoldResult) -> dict[str, object]:
+    """Serialize final-vs-teacher arrays for independent outer-fold NMI."""
+
+    if not outer_fold.valid:
+        raise ValueError("outer agreement audit requires a valid outer fold")
+    if not outer_fold.teacher_oos_timestamps:
+        raise ValueError("outer agreement audit is missing persisted teacher OOS timestamps")
+    if outer_fold.outer_teacher_final_soft_nmi is None:
+        raise ValueError("outer agreement audit is missing the expected soft NMI")
+    return {
+        "outer_fold_index": outer_fold.fold_index,
+        "candidate_timestamps": list(outer_fold.oos_timestamps),
+        "candidate_probabilities": [list(row) for row in outer_fold.oos_filtered_probabilities],
+        "teacher_timestamps": list(outer_fold.teacher_oos_timestamps),
+        "teacher_probabilities": [
+            list(row) for row in outer_fold.teacher_oos_filtered_probabilities
+        ],
+        "soft_regime_nmi": outer_fold.outer_teacher_final_soft_nmi,
+        "shared_timestamp_count": outer_fold.outer_shared_timestamp_count,
+    }
+
+
+def _outer_fold_summary(outer_fold: OuterFoldResult) -> dict[str, object]:
+    """Serialize every outer-fold agreement and evidence identity."""
+
+    summary: dict[str, object] = {
+        "outer_fold_index": outer_fold.fold_index,
+        "valid": outer_fold.valid,
+        "result_hash": outer_fold.result_hash,
+        "outer_teacher_final_soft_nmi": outer_fold.outer_teacher_final_soft_nmi,
+        "outer_shared_timestamp_count": outer_fold.outer_shared_timestamp_count,
+    }
+    if outer_fold.valid:
+        summary.update(_outer_agreement_item(outer_fold))
+    return summary
+
+
 def _fold_math_expectations(
     source_rows: pd.DataFrame,
     outer_fold: OuterFoldResult,
@@ -262,6 +299,7 @@ def _fold_math_expectations(
         "likelihoods": likelihoods,
         "outer_fold_index": outer_fold_index,
         "final_candidate_id": selection.final_candidate.candidate_id,
+        "outer_agreement": _outer_agreement_item(outer_fold),
     }
 
 
@@ -324,6 +362,10 @@ def build_math_expectations(
         "schema_version": 2,
         "audit_outer_fold_indices": [cast(int, item["outer_fold_index"]) for item in fold_audits],
         "fold_audits": list(fold_audits),
+        "outer_fold_agreements": [
+            _outer_fold_summary(outer_fold)
+            for outer_fold in sorted(result.outer_folds, key=lambda item: item.fold_index)
+        ],
     }
     if source_identity is not None:
         payload["source_identity"] = dict(source_identity)

@@ -546,6 +546,10 @@ def _run(performance: PerformanceRecorder) -> None:
         },
         "valid_outer_fold_indices": list(valid_outer_fold_indices),
         "audit_outer_fold_indices": list(valid_audit_indices),
+        "outer_fold_result_hashes": [
+            fold.result_hash
+            for fold in sorted(result.outer_folds, key=lambda item: item.fold_index)
+        ],
         "resource_evidence": {
             "performance_report_path": str(performance_report_path),
             "available_logical_cpus": available_cpu_count(),
