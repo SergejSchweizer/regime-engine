@@ -89,22 +89,12 @@ jobs:
             .venv/bin/coverage combine --append --data-file=.coverage.unit .coverage.unit.*
           fi
           test -f .coverage.unit
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-unit
-          path: .coverage.unit
-          include-hidden-files: true
-          overwrite: true
-          if-no-files-found: error
+          .venv/bin/coverage report --data-file=.coverage.unit --fail-under=80
   merge-gate:
     if: always()
     needs: [lint, type, unit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.14.7"
       - name: Fail if any required lane failed
         env:
           LINT: ${{ needs.lint.result }}
@@ -114,13 +104,3 @@ jobs:
           test "${LINT}" = success
           test "${TYPE}" = success
           test "${UNIT}" = success
-      - name: Create coverage environment
-        run: |
-          uv venv --python 3.14.7 .venv
-          uv pip install --python .venv/bin/python coverage==7.15.4
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-unit
-          path: .
-      - name: Enforce unit coverage >= 80%
-        run: .venv/bin/coverage report --data-file=.coverage.unit --fail-under=80
