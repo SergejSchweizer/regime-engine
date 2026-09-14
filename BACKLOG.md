@@ -89,6 +89,9 @@ Status date: 2026-09-14
   Planning PR-408 (GitHub #406) adds a positive all-nine-plot Model Metrics
   matrix: every plot family is available from catalogued metrics and its
   canonical payload/source hash is independent of metric completion order.
+  Planning PR-406 (GitHub #408) adds spawned process-kill and filesystem
+  crash-boundary acceptance for the configured state root, plus interruption
+  golden parity for Gaussian, GMM-HMM and Student-t multistart artifacts.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -114,15 +117,16 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#406 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#408 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
   #389, #390, #391, #392, #393, #394, #395, #396, #398 and #399 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#404
+  no `pr/*` remote branches remain. The implementation branches for #303–#408
   have therefore been reconciled into `main` or explicitly superseded. The
   latest merged follow-ups are #401 (fold process parallelization), #402 (v4
   lifecycle acceptance), #403 (MLflow acceptance QA) and #404 (fold-order
-  internal contract) and #406 (nine-plot acceptance matrix). No GitHub PRs
+  internal contract), #406 (nine-plot acceptance matrix) and #408 (crash/
+  multistart acceptance). No GitHub PRs
   are open and no `pr/*` remote branches remain.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -270,9 +274,9 @@ still required.
 | PR-239 | IMPLEMENTED | Runtime proof closed under PR-253/#360 |
 | PR-240 | IMPLEMENTED | Runtime proof closed under PR-253/#360 |
 | PR-241 | IMPLEMENTED | Release closure remains gated by PR-232/PR-250 |
-| PR-242 | IMPLEMENTED | Snapshot crash-boundary and concurrent-claimer QA added in #352/#354; deployment-volume/process-kill evidence remains open |
-| PR-243 | IMPLEMENTED | Deterministic 120-node interruption/restart QA added in #354; filesystem crash evidence remains open |
-| PR-244 | IMPLEMENTED | Seed interruption matrix and two-worker duplicate-claim QA added in #352/#354; model-family golden evidence remains open |
+| PR-242 | LOCAL ACCEPTANCE HARDENING MERGED | Spawned process-kill/restart and configured state-root evidence merged in GitHub #408; actual external NAS/container-volume execution remains unrun |
+| PR-243 | ACCEPTANCE COMPLETE | Spawned filesystem crash-boundary proof merged in GitHub #408; no external service is required |
+| PR-244 | ACCEPTANCE COMPLETE | Gaussian/GMM-HMM/Student-t interruption matrix and uninterrupted golden parity merged in GitHub #408; no external service is required |
 | PR-245 | IMPLEMENTED | Closed; CPU/process-parallel evaluation foundation |
 | PR-246 | IMPLEMENTED | External execution evidence remains under PR-250 |
 | PR-247 | IMPLEMENTED | Reflection/catalog completeness QA merged in GitHub #403; full external completeness evidence remains under PR-250 |
@@ -294,7 +298,7 @@ still required.
 | PR-264 | IMPLEMENTED | Closed; nested/global CPU budget propagation |
 | PR-265 | IMPLEMENTED | Closed; process-parallel diagnostic rendering |
 | PR-266 | IMPLEMENTED | Closed; independent likelihood parity proof |
-| PR-267 | IMPLEMENTATION MERGED | Crash/lease/process QA merged in #350; CI-contract acceptance closed by #352 with explicit `-n auto` unit gates |
+| PR-267 | ACCEPTANCE COMPLETE | Crash/lease/process QA merged in #350/#352 and extended by #408; explicit `-n auto` gates remain green |
 | PR-268 | IMPLEMENTED | Closed; process-parallel tracking preparation |
 | PR-269 | IMPLEMENTED | Closed; runtime performance telemetry |
 | PR-270 | IMPLEMENTED | Closed; independent audit artifact handoff |
@@ -339,6 +343,7 @@ still required.
 | PR-403 | IMPLEMENTED | Independent fold-local process parallelization for scaling/PCA/HMM/filter/diagnostics with deterministic canonical state reconciliation; merged in GitHub #401 after CI repair and all gates; branch deleted |
 | PR-404 | IMPLEMENTED | Private child-fold result envelope preserves the public numeric evaluation schema and strict top-level fold-order contract; merged in GitHub #404 after rebase and all gates; branch deleted |
 | PR-408 | IMPLEMENTED | Positive all-nine-family Model Metrics plot-data matrix and order-independent canonical hashes; merged in GitHub #406 after local Hermetic hook and all gates; branch deleted |
+| PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -1799,13 +1804,16 @@ and script tests pass.
 - [ ] `DOMAIN_INVALID` remains terminal across repeated invocations.
 - [ ] SQLite transaction/crash test leaves no false `COMPLETE` unit.
 
-Implementation evidence update (2026-09-11): snapshot manifests now persist the
-canonical dataset identity and complete feature catalog, and the SQLite ledger
-can reload an immutable `EvaluationRunIdentity` by run key. Snapshot restart
-tests prove catalog/identity round-trip, corruption failure and exact Arrow
-payload preservation. Explicit source-free CLI resume is now available via
-`scripts/run_xetra_v4_evaluation.py --run-key <sha256>`. Process-kill fault
-injection and deployment-volume startup enforcement remain open.
+Implementation evidence update (2026-09-14): snapshot manifests now persist
+the canonical dataset identity and complete feature catalog, and the SQLite
+ledger can reload an immutable `EvaluationRunIdentity` by run key. Snapshot
+restart tests prove catalog/identity round-trip, corruption failure and exact
+Arrow payload preservation. Explicit source-free CLI resume is now available
+via `scripts/run_xetra_v4_evaluation.py --run-key <sha256>`. GitHub #408 adds
+spawned process-kill recovery through the configured absolute state root and
+proves that a filesystem artifact written before ledger completion cannot
+become false terminal evidence. Actual NAS/container-volume execution remains
+external and was not run.
 
 ---
 
@@ -1846,14 +1854,15 @@ Provide one generic executor that reconstructs the expected deterministic work g
 - [ ] Executor restart with changed repository/profile/plan/dataset identity refuses old run and creates/requires a distinct run key.
 - [ ] Concurrency stress test with two executors produces one consistent ledger.
 
-Implementation evidence update (2026-09-11): the executor now waits behind a
+Implementation evidence update (2026-09-14): the executor now waits behind a
 live work-unit lease and reuses the committed terminal payload, so concurrent
 duplicate invocations cannot run the same callback or create conflicting root
-evidence. The focused executor/store suite is green (`14 passed` across
-`tests/unit/evaluation_runs` and `tests/integration/evaluation_runs/test_executor.py`),
-including a spawned two-process duplicate invocation and deterministic
-120-unit interruption/restart coverage. Randomized interruption and
-filesystem/crash-boundary proof remain open.
+evidence. The focused executor/store suite is green, including a spawned
+two-process duplicate invocation and deterministic 120-unit interruption/
+restart coverage. GitHub #408 adds a spawned filesystem-boundary kill after
+artifact fsync but before ledger completion; restart proves no false terminal
+payload and byte-identical root evidence. No MLflow dependency or external
+filesystem is involved in this proof.
 
 ---
 
@@ -1887,18 +1896,17 @@ Avoid losing completed expensive HMM fits when interruption occurs inside an eig
 - [ ] Existing Gaussian/GMM/Student-t multistart golden evidence remains unchanged.
 - [ ] Independent fit/filter likelihood parity remains green for reused and newly computed seed artifacts.
 
-Implementation evidence update (2026-09-11): process-backed multistart now
+Implementation evidence update (2026-09-14): process-backed multistart now
 persists each completed seed as futures finish, including successful futures
 observed before an infrastructure interruption; seed order remains canonical
 for winner selection. The production walk-forward path now receives a durable
 candidate/fold seed-checkpoint factory from the resumable v4 stage ledger and
 forwards it through provisional teacher, prefix search and final-grid
 evaluation. Concurrent duplicate seed writers now wait behind live leases and
-reuse one canonical terminal payload. Focused multistart/resume tests pass
-(`10 passed`), the walk-forward checkpoint handoff test passes, and the three
-real-compute candidate-stage smoke tests pass (`3 passed`). The full
-process-backed interruption matrix and filesystem/crash-boundary proof remain
-open.
+reuse one canonical terminal payload. GitHub #408 extends the interruption
+matrix to Gaussian, GMM-HMM and Student-t artifacts and asserts exact
+uninterrupted golden-result equality for seed positions 1, 3 and 6 at both
+checkpoint boundaries. No full evaluation or external service was run.
 
 ---
 
