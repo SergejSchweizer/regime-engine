@@ -111,3 +111,22 @@ def test_feature_discovery_config_is_frozen_and_rejects_non_contract_values() ->
         discovery.maximum_prefix_length = 7  # type: ignore[misc]
     with pytest.raises(ValueError, match="feature_regime_score"):
         replace(discovery, feature_regime_score="eta_squared")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("profile_id", "other", "public profile"),
+        ("registered_model", "other-model", "registered model"),
+    ),
+)
+def test_v4_profile_identity_cannot_be_relabelled(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    raw = _raw()
+    raw[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        load_profile_mapping(raw)

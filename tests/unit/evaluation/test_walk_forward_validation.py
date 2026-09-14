@@ -209,16 +209,8 @@ def test_alignment_probability_validation_rejects_nonfinite_result() -> None:
 def test_runner_rejects_wrong_profile_and_empty_plan_before_fitting() -> None:
     rows = source_rows()
     profile = load_profile(PROFILE_CONFIG)
-    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
-    wrong_profile = replace(profile, profile_id="other")
-    with pytest.raises(ValueError, match="Xetra v4"):
-        run_walk_forward_candidate(
-            rows,
-            plan=plan,
-            profile=wrong_profile,
-            candidate=candidate(),
-            adapter_factory=lambda: object(),  # type: ignore[arg-type,return-value]
-        )
+    with pytest.raises(ValueError, match="only the Xetra public profile is supported"):
+        replace(profile, profile_id="other")
     with pytest.raises(ValueError, match="at least one complete fold"):
         run_walk_forward_candidate(
             rows,
