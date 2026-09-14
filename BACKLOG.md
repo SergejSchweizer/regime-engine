@@ -176,7 +176,7 @@ Status date: 2026-09-14
   LoggedModels, deleted-LoggedModel inventory unavailable, and zero registered
   versions. No
   production objects have been deleted. The full non-external suite passes under `pytest -n auto`
-  (`742 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
+  (`757 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
   MLflow tracking and plot-manifest generation. The four local PR-231
   subproofs are now accepted; the merge/push gate intentionally does not run
@@ -392,7 +392,7 @@ work:
 - independent outer-fold MLflow I/O is parallelized while result order stays
   canonical.
 
-The last recorded full fast non-external suite was `684 passed` under
+The latest full fast non-external suite is `757 passed` under
 `pytest -n auto tests -m "not slow and not external"`. The remaining full
 current-Xetra, production-eligibility, and external MLflow completeness/resume
 evidence is intentionally still open under PR-232 and PR-250.
