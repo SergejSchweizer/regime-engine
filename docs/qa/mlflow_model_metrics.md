@@ -73,7 +73,8 @@ independent evidence manifest before running the verifier:
 ```
 
 The strict verifier checks schema version, provenance, source-artifact hash,
-lineage tags and the canonical expectation hash. It also requires every
+lineage tags, the current metric-catalog version and the canonical expectation
+hash. It also requires every
 audited LoggedModel to be `READY` and sourced by a `FINISHED` run:
 
 ```bash

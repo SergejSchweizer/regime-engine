@@ -16,7 +16,10 @@ from typing import Any, cast
 from mlflow.entities import ViewType
 from mlflow.tracking import MlflowClient
 
-from market_regime_engine.mlflow_support.metric_catalog import metric_definition
+from market_regime_engine.mlflow_support.metric_catalog import (
+    METRIC_CATALOG_VERSION,
+    metric_definition,
+)
 from market_regime_engine.mlflow_support.ports import MetricPoint
 
 _REQUIRED_TAGS = {
@@ -85,6 +88,7 @@ class AuditCounts:
     conflicting_point_count: int
     unknown_metric_key_count: int
     tag_violation_count: int
+    metric_catalog_version_violation_count: int
     comparison_domain_violation_count: int
     historical_namespace_violation_count: int
     nonempty_model_set_violation_count: int
@@ -285,6 +289,12 @@ def _expectation_contract_violations(expectation: Mapping[str, Any]) -> tuple[st
             value = expected_tags.get(key)
             if value is None or not str(value).strip():
                 violations.append(f"model expectation {name!r} has empty tag {key}")
+        if str(expected_tags.get("regime_engine.metric_catalog_version", "")) != str(
+            METRIC_CATALOG_VERSION
+        ):
+            violations.append(
+                f"model expectation {name!r} has an unsupported metric catalog version"
+            )
         for field, tag_key in _PROVENANCE_TAG_FIELDS.items():
             if str(expected_tags.get(tag_key, "")) != str(provenance.get(field, "")):
                 violations.append(f"model expectation {name!r} disagrees with provenance {field}")
@@ -507,6 +517,13 @@ def _point_tuple(point: Any) -> tuple[str, int, float, int]:
     return key, step, value, timestamp_ms
 
 
+def _exact_point_tuple(point: Any) -> tuple[str, int, str, int]:
+    """Return a hashable point identity that preserves IEEE-754 value bits."""
+
+    key, step, value, timestamp_ms = _point_tuple(point)
+    return key, step, value.hex(), timestamp_ms
+
+
 def _metric_points(points: Any) -> tuple[MetricPoint, ...]:
     return tuple(
         MetricPoint(key, value, step, timestamp)
@@ -645,6 +662,10 @@ def audit(
     duplicate_models = {name for name, models in actual_by_name.items() if len(models) != 1}
     missing_points = duplicate_points = duplicate_expected_points = conflicting_points = 0
     unknown_keys = tag_violations = domain_violations = 0
+    metric_catalog_version_violations = sum(
+        _tags(model).get("regime_engine.metric_catalog_version") != str(METRIC_CATALOG_VERSION)
+        for model in actual_models
+    )
     metric_point_count = sum(len(points) for _model, points in actual_model_points)
     unexpected_metric_key_count = 0
     unexpected_point_count = 0
@@ -671,13 +692,13 @@ def audit(
         raw_expected_points = expected.get("points", ())
         if not isinstance(raw_expected_points, (list, tuple)):
             raise ValueError(f"points for LoggedModel {name!r} must be a list")
-        expected_tuples = tuple(_point_tuple(item) for item in raw_expected_points)
-        actual_tuples = tuple(_point_tuple(item) for item in actual_points_by_name[name])
+        expected_tuples = tuple(_exact_point_tuple(item) for item in raw_expected_points)
+        actual_tuples = tuple(_exact_point_tuple(item) for item in actual_points_by_name[name])
 
-        expected_by_identity: defaultdict[tuple[str, int], list[tuple[str, int, float, int]]] = (
+        expected_by_identity: defaultdict[tuple[str, int], list[tuple[str, int, str, int]]] = (
             defaultdict(list)
         )
-        actual_by_identity: defaultdict[tuple[str, int], list[tuple[str, int, float, int]]] = (
+        actual_by_identity: defaultdict[tuple[str, int], list[tuple[str, int, str, int]]] = (
             defaultdict(list)
         )
         for point in expected_tuples:
@@ -788,6 +809,7 @@ def audit(
         conflicting_point_count=conflicting_points,
         unknown_metric_key_count=unknown_keys,
         tag_violation_count=tag_violations,
+        metric_catalog_version_violation_count=metric_catalog_version_violations,
         comparison_domain_violation_count=domain_violations,
         historical_namespace_violation_count=int(
             require_clean_namespace and not bool(namespace["historical_objects_zero"])
@@ -852,6 +874,7 @@ def audit(
                     "unexpected_metric_key_count",
                     "unknown_metric_key_count",
                     "tag_violation_count",
+                    "metric_catalog_version_violation_count",
                     "comparison_domain_violation_count",
                     "historical_namespace_violation_count",
                     "nonempty_model_set_violation_count",
