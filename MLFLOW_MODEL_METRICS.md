@@ -4,7 +4,11 @@ Status date: 2026-09-09
 
 This document is the authoritative MLflow tracking contract for all `regime-engine` evaluation workflows.
 
-The statistical contract remains in `EVALUATION.md`; dataset pinning, idempotency and resume semantics remain in `EVALUATION_EXECUTION.md`. This document defines what is written to MLflow, how candidate models are compared, how metrics remain plot-ready, and how the historical evaluation namespace is reset before the new v4 evidence stream starts.
+The statistical contract remains in `EVALUATION.md`; one-shot source/evidence
+execution semantics remain in `EVALUATION_EXECUTION.md`. This document defines
+what is written to MLflow, how candidate models are compared, how metrics
+remain plot-ready, and how the historical evaluation namespace is reset before
+the new v4 evidence stream starts.
 
 ---
 
@@ -15,7 +19,10 @@ The statistical contract remains in `EVALUATION.md`; dataset pinning, idempotenc
 3. **Track every numerically meaningful metric already produced by the evaluation pipeline.** New numerical diagnostics must be added to the central metric catalog before they can be emitted.
 4. **Preserve raw/fold/seed histories as well as aggregates.** Aggregates never replace the primitive metric history from which they were calculated.
 5. **Metric semantics are versioned and comparable only inside their declared comparison domain.** Incomparable likelihoods must never be presented as comparable simply because they share a UI tab.
-6. **Metric emission is dataset-pinned, idempotent and resumable.** A restart must not duplicate or change existing metric history.
+6. **Metric emission is dataset-pinned, idempotent and retry-safe.** A metric-
+   export retry must not duplicate or change existing metric history. The full
+   statistical evaluator itself remains one-shot and is rerun from the
+   beginning after interruption.
 7. **Old evaluation results are removed before the new v4 tracking contract becomes active.** The new MLflow namespace starts clean.
 
 ---
@@ -332,9 +339,11 @@ and reject model sets whose declared comparison domains are incompatible.
 
 ---
 
-## 9. Idempotent/resumable MLflow projection
+## 9. Idempotent/retry-safe MLflow projection
 
-MLflow is a projection of the durable evaluation ledger defined in `EVALUATION_EXECUTION.md`; it is not the source of truth for resume decisions.
+MLflow is a projection of completed one-shot evidence; it is not the source of
+full-run computation progress. Only the dedicated metric-export harness may
+reconcile missing metric batches.
 
 For every LoggedModel metric batch persist an export identity:
 
@@ -348,13 +357,13 @@ model_metric_batch_key = SHA256(
 )
 ```
 
-On resume:
+On metric-batch retry:
 
 - if the batch is marked durably exported and MLflow contains exact matching points, skip it;
 - if the durable ledger says committed but MLflow is missing points, replay exactly those points;
 - if MLflow already contains the same key/step with a different value, fail closed;
 - if a crash occurred during a partial batch, query/reconcile exact key/step/value triples and append only missing points;
-- duplicate metric histories caused solely by restart are forbidden.
+- duplicate metric histories caused solely by export retry are forbidden.
 
 Operational timestamps must not change the mathematical metric identity. Metric history order is determined by canonical step, not arrival time.
 
@@ -387,11 +396,11 @@ The tracking implementation is accepted only if all of the following pass:
 - reflection/schema test fails for an unclassified newly-added numeric field;
 - model-metric keys/steps/values exactly match independent evaluation evidence;
 - comparison-domain test blocks cross-dimension likelihood comparison;
-- restart after every metric-batch boundary produces the same final MLflow metric histories as uninterrupted execution;
-- forced partial-batch crash followed by resume creates no duplicate or conflicting points;
+- retry after every metric-batch boundary produces the same final MLflow metric histories as uninterrupted export;
+- forced partial-batch crash followed by retry creates no duplicate or conflicting points;
 - adding a new plot over an existing metric requires no evaluation recomputation;
 - historical-reset command proves the targeted old evaluation namespace is empty after cleanup and is idempotent on second execution;
-- full hermetic and current-Xetra audits include model-metric completeness/hash evidence.
+- full hermetic and current-Xetra audits include model-metric completeness/hash evidence; the current-Xetra evaluator remains one-shot.
 
 ---
 
