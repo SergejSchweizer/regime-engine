@@ -955,6 +955,12 @@ def test_global_v4_full_compute_and_independent_math_proof(
 
     golden_snapshot = _golden_snapshot(fixture, result, captured, evidence)
     golden_hash = content_hash(golden_snapshot)
+    snapshot_output = os.environ.get("PR231_GOLDEN_SNAPSHOT_OUTPUT")
+    if snapshot_output:
+        snapshot_path = Path(snapshot_output).resolve()
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_bytes(canonical_json(golden_snapshot))
+        print(f"PR-231 golden snapshot: {snapshot_path} ({golden_hash})")
     _assert_complete_golden_snapshot(golden_snapshot, fixture, result, captured, evidence)
     assert golden_hash == PR231_GOLDEN_SNAPSHOT_HASH
 

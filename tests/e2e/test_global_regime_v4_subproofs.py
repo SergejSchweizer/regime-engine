@@ -194,6 +194,12 @@ def test_global_v4_subproof_pipeline_math() -> None:
         assert score.eta_squared == pytest.approx(expected_eta, abs=1.0e-10)
 
     golden = _golden_snapshot(state.fixture, state.result, state.selections, state.evidence)
+    snapshot_output = os.environ.get("PR231_GOLDEN_SNAPSHOT_OUTPUT")
+    if snapshot_output:
+        snapshot_path = Path(snapshot_output).resolve()
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_bytes(canonical_json(golden))
+        print(f"PR-231 golden snapshot: {snapshot_path} ({content_hash(golden)})")
     assert content_hash(golden) == PR231_GOLDEN_SNAPSHOT_HASH
     selected_likelihood_count = _assert_selected_likelihood_parity(
         state.fixture,
