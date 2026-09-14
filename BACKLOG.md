@@ -102,12 +102,13 @@ Status date: 2026-09-14
   schema version 4 / feature version 3. `xetra_loader` exists but denies
   `CONNECT` to that role. External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
-  experiment 3 with 768 historical runs, but no LoggedModels, registered
-  models, registered versions, or deleted LoggedModels. The PR-370 read-only
+  experiment 3 with 768 historical runs, zero visible LoggedModels, zero
+  registered models/versions, and deleted-LoggedModel inventory unavailable.
+  The PR-370 read-only
   namespace preflight therefore fails closed because the 768 historical runs
   remain. The verifier also records deleted-LoggedModel inventory as
-  unavailable when using the HTTP RestStore, rather than claiming zero deleted
-  models. No full evaluation is currently running: the earlier raw-only run
+  unavailable when using the HTTP RestStore, rather than claiming a zero
+  deleted-model count. No full evaluation is currently running: the earlier raw-only run
   was terminated before the mandatory-PCA changes and is not acceptance
   evidence. The current outside-repository deployment secret also passes the
   read-only PostgreSQL smoke test against `10.10.1.3:54321` as role
@@ -139,8 +140,9 @@ Status date: 2026-09-14
   zero-legacy audit scans 688 active files and passes, and the scoped MLflow
   cleanup tests pass (`5 passed`). NAS MLflow access is authorized and its
   `/health` endpoint returns `200 OK`; the PR-370 preflight confirms the
-  historical evaluation namespace is non-empty with 768 runs, zero
-  LoggedModels, zero deleted LoggedModels, and zero registered versions. No
+  historical evaluation namespace is non-empty with 768 runs, zero visible
+  LoggedModels, deleted-LoggedModel inventory unavailable, and zero registered
+  versions. No
   production objects have been deleted. The full non-external suite passes under `pytest -n auto`
   (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
