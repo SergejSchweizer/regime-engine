@@ -86,6 +86,9 @@ Status date: 2026-09-14
   the public numeric evaluation schema. All four passed local Hermetic
   integration tests and the GitHub policy/lint/type/unit/merge gates. No full
   evaluation or external MLflow mutation was run.
+  Planning PR-408 (GitHub #406) adds a positive all-nine-plot Model Metrics
+  matrix: every plot family is available from catalogued metrics and its
+  canonical payload/source hash is independent of metric completion order.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -111,7 +114,7 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#404 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#406 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
   #389, #390, #391, #392, #393, #394, #395, #396, #398 and #399 are also merged. No GitHub PRs are open and
@@ -119,7 +122,8 @@ Status date: 2026-09-14
   have therefore been reconciled into `main` or explicitly superseded. The
   latest merged follow-ups are #401 (fold process parallelization), #402 (v4
   lifecycle acceptance), #403 (MLflow acceptance QA) and #404 (fold-order
-  internal contract).
+  internal contract) and #406 (nine-plot acceptance matrix). No GitHub PRs
+  are open and no `pr/*` remote branches remain.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
   `regime_loader.regime_features_daily`; the verified live lineage contract is
@@ -168,7 +172,7 @@ Status date: 2026-09-14
   LoggedModels, deleted-LoggedModel inventory unavailable, and zero registered
   versions. No
   production objects have been deleted. The full non-external suite passes under `pytest -n auto`
-  (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
+  (`742 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
   MLflow tracking and plot-manifest generation. The four local PR-231
   subproofs are now accepted; the merge/push gate intentionally does not run
@@ -219,7 +223,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. GitHub PRs #270–#393
+update. GitHub has no open PRs. GitHub PRs #270–#406
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -271,8 +275,8 @@ still required.
 | PR-244 | IMPLEMENTED | Seed interruption matrix and two-worker duplicate-claim QA added in #352/#354; model-family golden evidence remains open |
 | PR-245 | IMPLEMENTED | Closed; CPU/process-parallel evaluation foundation |
 | PR-246 | IMPLEMENTED | External execution evidence remains under PR-250 |
-| PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-248 | IMPLEMENTED | Completeness proof remains under PR-250 |
+| PR-247 | IMPLEMENTED | Reflection/catalog completeness QA merged in GitHub #403; full external completeness evidence remains under PR-250 |
+| PR-248 | IMPLEMENTED | File-backed completeness/order-independence QA merged in GitHub #403; full external completeness evidence remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards and exact metric-catalog/IEEE-754 evidence checks are implemented locally, with the latter merged in GitHub #399; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
@@ -283,7 +287,7 @@ still required.
 | PR-257 | IMPLEMENTED | Predictive metrics are present; final proof remains under PR-250 |
 | PR-258 | IMPLEMENTED | Labeled-state metrics are present; final proof remains under PR-250 |
 | PR-259 | IMPLEMENTED | Backtest metrics are present; final proof remains under PR-250 |
-| PR-260 | IMPLEMENTED | Plot integration is present; final proof remains under PR-250 |
+| PR-260 | IMPLEMENTED | Positive all-nine-family plot-data matrix and completion-order determinism merged in GitHub #406; stock-MLflow HTTP smoke and full external proof remain under PR-250 |
 | PR-261 | IMPLEMENTED | Closed; default outer evaluation uses process workers |
 | PR-262 | IMPLEMENTED | Closed; push-gate coverage contract aligned |
 | PR-263 | IMPLEMENTED | Closed; fine-grained stage resume |
@@ -334,6 +338,7 @@ still required.
 | PR-402 | IMPLEMENTED | Gaussian/GMM-HMM/Student-t refit, state canonicalization, package round-trip, v4-A → v4-B → v4-A alias, promotion/rollback and failed-CAS acceptance fixtures; merged in GitHub #402 after rebase and all gates; branch deleted |
 | PR-403 | IMPLEMENTED | Independent fold-local process parallelization for scaling/PCA/HMM/filter/diagnostics with deterministic canonical state reconciliation; merged in GitHub #401 after CI repair and all gates; branch deleted |
 | PR-404 | IMPLEMENTED | Private child-fold result envelope preserves the public numeric evaluation schema and strict top-level fold-order contract; merged in GitHub #404 after rebase and all gates; branch deleted |
+| PR-408 | IMPLEMENTED | Positive all-nine-family Model Metrics plot-data matrix and order-independent canonical hashes; merged in GitHub #406 after local Hermetic hook and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -2519,8 +2524,10 @@ QA:
 ## PR-260 — Nine-plot metric-family integration matrix
 
 - **Branch:** `pr/PR-260-mlflow-nine-plot-integration`
-- **Status:** implementation merged in GitHub PR #257; remaining complete
-  nine-plot matrix and HTTP-smoke QA items remain open.
+- **Status:** implementation merged in GitHub PR #257; the positive complete
+  nine-plot matrix and completion-order/hash QA is merged in GitHub #406.
+  The standard MLflow 3.15.1 HTTP-smoke check and the full external
+  completeness proof remain open under PR-250.
 - **Depends on:** PR-249, PR-255, PR-256, PR-257, PR-258, PR-259
 - **Parallel group:** C; starts after all metric-family PRs
 - **Allowed:** `src/market_regime_engine/mlflow_support/metric_catalog.py`, `src/market_regime_engine/mlflow_support/model_metrics.py`, `src/market_regime_engine/mlflow_support/plot_data.py`, `src/market_regime_engine/evaluations/plots.py`, `tests/unit/mlflow_support/*`, `tests/integration/mlflow_support/*`, `docs/qa/mlflow_model_metrics.md`
