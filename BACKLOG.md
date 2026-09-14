@@ -100,9 +100,10 @@ Status date: 2026-09-14
   production objects have been deleted. The full non-external suite passes under `pytest -n auto`
   (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
-  MLflow tracking and plot-manifest generation: `1 passed in 974.60s`
-  (`0:16:14`), with 14 tracked plot artifacts. The remote integration gate
-  must still complete the same long-running proof.
+  MLflow tracking and plot-manifest generation. The four local PR-231
+  subproofs are now accepted; the merge/push gate intentionally does not run
+  this long proof, and the local pre-commit hook remains the integration-test
+  entry point.
   Pytest now uses `pytest-xdist -n auto` by default, so test files are
   distributed across all available CPUs in local and CI runs. The latest
   stale full run reached 450 passed and 8 fixture failures caused by the live
@@ -149,7 +150,7 @@ Metrics completeness evidence remain open acceptance work.
 ## Git/PR status ledger — authoritative reconciliation
 
 This ledger was checked against `git status`, `origin/main` and GitHub on
-2026-09-13. It supersedes stale per-section status prose and historical
+2026-09-14. It supersedes stale per-section status prose and historical
 unchecked acceptance boxes below. **Implemented** means the code is on
 `main`; **acceptance open** means the remaining proof or external audit is
 still required.
@@ -196,7 +197,7 @@ still required.
 | PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-248 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; acceptance open: full Model Metrics completeness and external resume evidence |
+| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards are now implemented locally; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
 | PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
