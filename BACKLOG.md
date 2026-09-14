@@ -58,7 +58,9 @@ Status date: 2026-09-14
   explicit serial mode remains available for extension fixtures. The global
   plot renderer, math-expectation dossier handoff, and independent verifier
   primitives were audited and already use process-parallel tasks where their
-  dependencies allow it.
+  dependencies allow it. PR-393 (GitHub #391) also removed the stale
+  `pca.enabled` documentation and added a profile contract test: canonical
+  v4 has no PCA opt-in and raw plus generated PCA columns share one universe.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -84,11 +86,12 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#389 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#391 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  and #389 are also merged. No GitHub PRs are open and no `pr/*` remote
-  branches remain. The implementation branches for #303–#389 have therefore
+  #389, #390 and #391 are also merged. No GitHub PRs are open and no `pr/*`
+  remote branches remain. The implementation branches for #303–#391 have
+  therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
@@ -181,7 +184,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. PRs #270–#350
+update. GitHub has no open PRs. GitHub PRs #270–#391
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -285,6 +288,7 @@ still required.
 | PR-387 | IMPLEMENTATION MERGED | Made MLflow deleted-LoggedModel inventory explicit and fail closed for HTTP RestStore backends without that visibility; merged in GitHub #386 after rebase and all gates; branch deleted |
 | PR-390 | IMPLEMENTATION MERGED | Focused audit found serial per-candidate MLflow metric/timeline evidence assembly; pure payload preparation is process-parallel with deterministic assembly while ordered MLflow writes remain serial; merged in GitHub #388 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
 | PR-391 | IMPLEMENTATION MERGED | Removed GIL-bound non-pickleable callback fallbacks from global folds, provisional teacher, prefix search and candidate grids; parallel callbacks now require process-safe adapters and explicit serial mode remains available; merged in GitHub #389 after focused tests, Ruff, MyPy, rebase and Merge Gate; local and remote implementation branches deleted |
+| PR-393 | IMPLEMENTATION MERGED | Removed stale `pca.enabled` opt-in wording from the canonical v4 documentation and added a profile contract assertion; merged in GitHub #391 after profile tests, local Hermetic hook and all gates; local and remote implementation branches deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
