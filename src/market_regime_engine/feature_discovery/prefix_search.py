@@ -74,6 +74,35 @@ class _PrefixProcessTask:
     runner: PrefixCandidateRunner
 
 
+@dataclass(frozen=True, slots=True)
+class _PrefixSearchTask:
+    """Immutable input for evaluating one ranked prefix."""
+
+    prefix_length: int
+    source_rows: pd.DataFrame
+    plan: WalkForwardPlan
+    profile: ModelProfile
+    teacher: ProvisionalTeacherReference
+    feature_order: tuple[str, ...]
+    original_feature_universe: tuple[str, ...]
+    source_build_id: str
+    feature_selection_definition_hash: str
+    feature_selection_execution_hash: str
+    runner: PrefixCandidateRunner
+    max_workers: int
+    seed_checkpoint_factory: Callable[[str, str, int], HMMSeedCheckpoint] | None
+    pca_raw_feature_order: tuple[str, ...] | None
+    pca_variance_threshold: float
+
+
+@dataclass(frozen=True, slots=True)
+class _EvaluatedPrefix:
+    """Prefix result plus the raw selected candidate needed by the sink."""
+
+    evaluation: PrefixEvaluation
+    selected_candidate: WalkForwardEvaluation | None
+
+
 def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluation:
     """Run one prefix candidate in a separate interpreter."""
 
@@ -98,6 +127,19 @@ def _evaluate_prefix_in_process(task: _PrefixProcessTask) -> WalkForwardEvaluati
     )
 
 
+def _threaded_child_worker_limits(
+    total_worker_budget: int,
+    task_count: int,
+) -> tuple[int, ...]:
+    """Partition child-process lanes for thread-orchestrated candidate work."""
+
+    if total_worker_budget < 1 or task_count < 1:
+        raise ValueError("worker budget and task count must be positive")
+    concurrent_tasks = min(task_count, max(1, total_worker_budget // 2))
+    baseline, remainder = divmod(total_worker_budget, concurrent_tasks)
+    return tuple(baseline + int(index < remainder) for index in range(concurrent_tasks))
+
+
 def _evaluate_candidates(
     source_rows: pd.DataFrame,
     plan: WalkForwardPlan,
@@ -114,7 +156,10 @@ def _evaluate_candidates(
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
     total_worker_budget = cpu_worker_count(max_workers)
 
-    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+    def evaluate(
+        candidate: ResolvedCandidateProfile,
+        candidate_max_workers: int,
+    ) -> WalkForwardEvaluation:
         if seed_checkpoint_factory is not None and runner is run_prefix_gaussian_candidate:
             seed_checkpoint = seed_checkpoint_factory(
                 candidate.candidate_id,
@@ -142,7 +187,7 @@ def _evaluate_candidates(
 
             def compute() -> WalkForwardEvaluation:
                 kwargs: dict[str, Any] = {
-                    "max_workers": max_workers,
+                    "max_workers": candidate_max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
                 if pca_raw_feature_order is not None:
@@ -187,7 +232,7 @@ def _evaluate_candidates(
             profile,
             candidate,
             cast(AdapterFactory, adapter_factory(profile, candidate)),
-            max_workers=max_workers,
+            max_workers=candidate_max_workers,
             pca_raw_feature_order=pca_raw_feature_order,
             pca_variance_threshold=pca_variance_threshold,
         )
@@ -220,13 +265,127 @@ def _evaluate_candidates(
             }
             return {candidate_id: futures[candidate_id].result() for candidate_id in futures}
     if worker_limit == 1:
-        return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
-    with ThreadPoolExecutor(max_workers=worker_limit) as thread_executor:
-        futures = {
-            candidate.candidate_id: thread_executor.submit(evaluate, candidate)
+        return {
+            candidate.candidate_id: evaluate(candidate, total_worker_budget)
             for candidate in candidates
         }
-        return {candidate_id: future.result() for candidate_id, future in futures.items()}
+    child_limits = _threaded_child_worker_limits(total_worker_budget, len(candidates))
+    evaluated: list[WalkForwardEvaluation] = []
+    with ThreadPoolExecutor(max_workers=len(child_limits)) as thread_executor:
+        for offset in range(0, len(candidates), len(child_limits)):
+            batch = candidates[offset : offset + len(child_limits)]
+            batch_futures = [
+                thread_executor.submit(evaluate, candidate, child_limits[index])
+                for index, candidate in enumerate(batch)
+            ]
+            evaluated.extend(future.result() for future in batch_futures)
+    return {evaluation.candidate_id: evaluation for evaluation in evaluated}
+
+
+def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
+    """Evaluate one prefix without invoking parent-owned sink side effects."""
+
+    try:
+        candidates = _prefix_candidates(
+            task.feature_order,
+            original_feature_universe=task.original_feature_universe,
+            source_build_id=task.source_build_id,
+            feature_selection_definition_hash=task.feature_selection_definition_hash,
+            feature_selection_execution_hash=task.feature_selection_execution_hash,
+        )
+        preflight = build_model_clock_preflight(
+            task.source_rows,
+            task.feature_order,
+            task.plan,
+            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+            minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
+            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+        )
+        require_model_clock_eligible(preflight, "prefix")
+        evaluations_by_id = _evaluate_candidates(
+            task.source_rows,
+            task.plan,
+            task.profile,
+            candidates,
+            task.runner,
+            task.max_workers,
+            seed_checkpoint_factory=task.seed_checkpoint_factory,
+            pca_raw_feature_order=task.pca_raw_feature_order,
+            pca_variance_threshold=task.pca_variance_threshold,
+        )
+        raw_evaluations = tuple(
+            evaluations_by_id[candidate.candidate_id] for candidate in candidates
+        )
+        aggregates = tuple(aggregate_candidate(evaluation) for evaluation in raw_evaluations)
+        candidate_summaries = tuple(
+            CandidateEvaluation(
+                candidate_id=aggregate.candidate_id,
+                feature_order=task.feature_order,
+                source_build_id=task.source_build_id,
+                plan_hash=task.plan.plan_hash,
+                valid_fold_count=aggregate.valid_fold_count,
+                total_fold_count=aggregate.planned_fold_count,
+                oos_predictive_loglik_mean=aggregate.oos_predictive_loglik_mean,
+                oos_predictive_loglik_std=aggregate.oos_predictive_loglik_std,
+                oos_predictive_loglik_worst=aggregate.oos_predictive_loglik_worst_fold,
+                mean_bic=aggregate.bic_mean,
+                mean_aic=aggregate.aic_mean,
+                valid=aggregate.valid_fold_count > 0,
+                invalid_reason=(
+                    None if aggregate.valid_fold_count > 0 else "candidate has no valid folds"
+                ),
+            )
+            for aggregate in aggregates
+        )
+        selection = rank_same_feature_candidates(raw_evaluations, aggregates)
+        selected_candidate = next(
+            evaluation
+            for evaluation in raw_evaluations
+            if evaluation.candidate_id == selection.champion_candidate_id
+        )
+        candidate_times, candidate_probabilities = _evaluation_support(selected_candidate)
+        agreement = compute_soft_regime_nmi(
+            candidate_times,
+            candidate_probabilities,
+            task.teacher.timestamps,
+            task.teacher.filtered_probabilities,
+        )
+        teacher_coverage = agreement.shared_timestamp_count / len(task.teacher.timestamps)
+        if teacher_coverage < MIN_TEACHER_SHARED_SUPPORT:
+            return _EvaluatedPrefix(
+                _invalid_prefix(
+                    task.prefix_length,
+                    task.feature_order,
+                    "shared teacher support "
+                    f"{teacher_coverage:.6f} below {MIN_TEACHER_SHARED_SUPPORT:.2f}",
+                    candidate_evaluations=candidate_summaries,
+                    shared_timestamp_count=agreement.shared_timestamp_count,
+                ),
+                None,
+            )
+        return _EvaluatedPrefix(
+            PrefixEvaluation(
+                prefix_length=task.prefix_length,
+                feature_order=task.feature_order,
+                candidate_id=selection.champion_candidate_id,
+                shared_timestamp_count=agreement.shared_timestamp_count,
+                shared_teacher_coverage=teacher_coverage,
+                soft_regime_nmi=agreement.soft_regime_nmi,
+                candidate_evaluations=candidate_summaries,
+            ),
+            selected_candidate,
+        )
+    except (ValueError, TypeError) as exc:
+        return _EvaluatedPrefix(
+            _invalid_prefix(task.prefix_length, task.feature_order, str(exc)),
+            None,
+        )
+
+
+def _evaluate_prefix_in_search_process(task: _PrefixSearchTask) -> _EvaluatedPrefix:
+    """Evaluate one complete prefix in a separate interpreter."""
+
+    return _evaluate_prefix(task)
 
 
 def _utc(value: object, field_name: str) -> datetime:
@@ -430,118 +589,71 @@ def search_ranked_prefixes(
     if any(current <= previous for previous, current in pairwise(source_timestamps)):
         raise ValueError("source timestamps must be strictly increasing and unique")
     upper_bound = min(final_prefix_upper_bound(len(ranked_features)), MAX_PREFIX_LENGTH)
+    prefix_lengths = tuple(range(MIN_PREFIX_LENGTH, upper_bound + 1))
+    total_worker_budget = cpu_worker_count(max_workers)
+    prefix_worker_limit = cpu_worker_count(max_workers, task_count=len(prefix_lengths))
+    prefix_tasks = tuple(
+        _PrefixSearchTask(
+            prefix_length,
+            source_rows,
+            inner_plan,
+            profile,
+            teacher,
+            ranked_features[:prefix_length],
+            universe,
+            build_id,
+            definition_hash,
+            execution_hash,
+            runner,
+            total_worker_budget,
+            seed_checkpoint_factory,
+            pca_raw_feature_order,
+            pca_variance_threshold,
+        )
+        for prefix_length in prefix_lengths
+    )
+    evaluated_prefixes: tuple[_EvaluatedPrefix, ...]
+    if prefix_worker_limit == 1:
+        evaluated_prefixes = (_evaluate_prefix(prefix_tasks[0]),)
+    else:
+        nested_limits = nested_worker_limits(total_worker_budget, prefix_worker_limit)
+        scheduled_tasks = tuple(
+            replace(task, max_workers=nested_limits[index % prefix_worker_limit])
+            for index, task in enumerate(prefix_tasks)
+        )
+        use_processes = (
+            seed_checkpoint_factory is None
+            and is_pickleable(runner)
+            and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
+        )
+        if use_processes:
+            with cpu_process_pool(prefix_worker_limit) as executor:
+                futures = tuple(
+                    executor.submit(_evaluate_prefix_in_search_process, task)
+                    for task in scheduled_tasks
+                )
+                evaluated_prefixes = tuple(future.result() for future in futures)
+        else:
+            with ThreadPoolExecutor(max_workers=prefix_worker_limit) as executor:
+                futures = tuple(executor.submit(_evaluate_prefix, task) for task in scheduled_tasks)
+                evaluated_prefixes = tuple(future.result() for future in futures)
     prefix_results: list[PrefixEvaluation] = []
-    for prefix_length in range(MIN_PREFIX_LENGTH, upper_bound + 1):
-        feature_order = ranked_features[:prefix_length]
-        try:
-            candidates = _prefix_candidates(
-                feature_order,
-                original_feature_universe=universe,
-                source_build_id=build_id,
-                feature_selection_definition_hash=definition_hash,
-                feature_selection_execution_hash=execution_hash,
-            )
-            preflight = build_model_clock_preflight(
-                source_rows,
-                feature_order,
-                inner_plan,
-                minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
-                minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
-                minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
-            )
-            require_model_clock_eligible(preflight, "prefix")
-            if seed_checkpoint_factory is None:
-                evaluations_by_id = _evaluate_candidates(
-                    source_rows,
-                    inner_plan,
-                    profile,
-                    candidates,
-                    runner,
-                    max_workers,
-                    pca_raw_feature_order=pca_raw_feature_order,
-                    pca_variance_threshold=pca_variance_threshold,
-                )
-            else:
-                evaluations_by_id = _evaluate_candidates(
-                    source_rows,
-                    inner_plan,
-                    profile,
-                    candidates,
-                    runner,
-                    max_workers,
-                    seed_checkpoint_factory,
-                    pca_raw_feature_order,
-                    pca_variance_threshold,
-                )
-            raw_evaluations = tuple(
-                evaluations_by_id[candidate.candidate_id] for candidate in candidates
-            )
-            aggregates = tuple(aggregate_candidate(evaluation) for evaluation in raw_evaluations)
-            candidate_summaries = tuple(
-                CandidateEvaluation(
-                    candidate_id=aggregate.candidate_id,
-                    feature_order=feature_order,
-                    source_build_id=build_id,
-                    plan_hash=inner_plan.plan_hash,
-                    valid_fold_count=aggregate.valid_fold_count,
-                    total_fold_count=aggregate.planned_fold_count,
-                    oos_predictive_loglik_mean=aggregate.oos_predictive_loglik_mean,
-                    oos_predictive_loglik_std=aggregate.oos_predictive_loglik_std,
-                    oos_predictive_loglik_worst=aggregate.oos_predictive_loglik_worst_fold,
-                    mean_bic=aggregate.bic_mean,
-                    mean_aic=aggregate.aic_mean,
-                    valid=aggregate.valid_fold_count > 0,
-                    invalid_reason=(
-                        None if aggregate.valid_fold_count > 0 else "candidate has no valid folds"
-                    ),
-                )
-                for aggregate in aggregates
-            )
-            selection = rank_same_feature_candidates(raw_evaluations, aggregates)
-            selected_candidate = next(
-                evaluation
-                for evaluation in raw_evaluations
-                if evaluation.candidate_id == selection.champion_candidate_id
-            )
-            candidate_times, candidate_probabilities = _evaluation_support(selected_candidate)
-            agreement = compute_soft_regime_nmi(
-                candidate_times,
-                candidate_probabilities,
-                teacher.timestamps,
-                teacher.filtered_probabilities,
-            )
-            teacher_coverage = agreement.shared_timestamp_count / len(teacher.timestamps)
-            if teacher_coverage < MIN_TEACHER_SHARED_SUPPORT:
-                prefix_results.append(
-                    _invalid_prefix(
-                        prefix_length,
-                        feature_order,
-                        "shared teacher support "
-                        f"{teacher_coverage:.6f} below {MIN_TEACHER_SHARED_SUPPORT:.2f}",
-                        candidate_evaluations=candidate_summaries,
-                        shared_timestamp_count=agreement.shared_timestamp_count,
-                    )
-                )
-                continue
-            if evaluation_sink is not None:
+    for result in evaluated_prefixes:
+        prefix_evaluation = result.evaluation
+        if evaluation_sink is not None and result.selected_candidate is not None:
+            try:
                 evaluation_sink(
-                    prefix_length,
-                    selection.champion_candidate_id,
-                    selected_candidate,
+                    prefix_evaluation.prefix_length,
+                    prefix_evaluation.candidate_id,
+                    result.selected_candidate,
                 )
-            prefix_results.append(
-                PrefixEvaluation(
-                    prefix_length=prefix_length,
-                    feature_order=feature_order,
-                    candidate_id=selection.champion_candidate_id,
-                    shared_timestamp_count=agreement.shared_timestamp_count,
-                    shared_teacher_coverage=teacher_coverage,
-                    soft_regime_nmi=agreement.soft_regime_nmi,
-                    candidate_evaluations=candidate_summaries,
+            except (ValueError, TypeError) as exc:
+                prefix_evaluation = _invalid_prefix(
+                    prefix_evaluation.prefix_length,
+                    prefix_evaluation.feature_order,
+                    str(exc),
                 )
-            )
-        except (ValueError, TypeError) as exc:
-            prefix_results.append(_invalid_prefix(prefix_length, feature_order, str(exc)))
+        prefix_results.append(prefix_evaluation)
     prefix_evaluations = tuple(prefix_results)
     selected = _rank_prefixes(prefix_evaluations)
     return PrefixSearchResult(
