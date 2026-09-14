@@ -65,6 +65,9 @@ expectation bundle (`schema_version=3`). The completed report must have
 `status=verified`, `audit_contract_verified=true`, exactly the declared
 first/middle/last audited folds, one outer-agreement record for every valid
 fold, and zero (within `1e-10`) for every reported maximum absolute error.
+The strict verifier also rejects any audited dossier that omits an eligible
+feature score, bounded silhouette count, valid-prefix NMI, selected-model
+TRAIN/OOS likelihood pair, or source row from the captured snapshot.
 
 Record the command transcript, exit code, wall-clock duration, peak memory,
 the summary JSON, the math-audit report, and the final evidence SHA-256 in the

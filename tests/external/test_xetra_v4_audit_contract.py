@@ -93,6 +93,18 @@ def test_current_xetra_full_audit_is_opt_in_and_records_complete_evidence() -> N
     assert expectations["schema_version"] == 3
     assert expectations["audit_contract"] == contract
     assert expectations["valid_outer_fold_indices"] == summary["valid_outer_fold_indices"]
+    declared_by_fold = {item["outer_fold_index"]: item for item in per_fold}
+    for dossier in expectations["fold_audits"]:
+        declared = declared_by_fold[dossier["outer_fold_index"]]
+        assert dossier["feature_order"] == declared["eligible_feature_names"]
+        assert [item["feature"] for item in dossier["feature_scores"]] == dossier["feature_order"]
+        assert [item["cluster_count"] for item in dossier["silhouette_clusters"]] == declared[
+            "cluster_count_candidates"
+        ]
+        assert [item["prefix_length"] for item in dossier["prefix_nmi"]] == declared[
+            "prefix_length_candidates"
+        ]
+        assert {item["scope"] for item in dossier["likelihoods"]} == {"TRAIN", "OOS"}
 
     report = json.loads(Path(summary["math_audit_report"]).read_text(encoding="utf-8"))
     assert report["status"] == "verified"

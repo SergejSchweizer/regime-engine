@@ -1350,9 +1350,17 @@ def _validate_search_bounds_contract(value: object, fold_indices: tuple[int, ...
             raise SystemExit("search_bounds per-fold index is invalid")
         observed_indices.append(fold_index)
         eligible = fold.get("eligible_feature_count")
+        eligible_names = fold.get("eligible_feature_names")
         ranked = fold.get("ranked_feature_count")
         if isinstance(eligible, bool) or not isinstance(eligible, int) or eligible < 3:
             raise SystemExit("search_bounds eligible feature count is invalid")
+        if (
+            not isinstance(eligible_names, list)
+            or len(eligible_names) != eligible
+            or any(not isinstance(name, str) or not name for name in eligible_names)
+            or len(set(eligible_names)) != len(eligible_names)
+        ):
+            raise SystemExit("search_bounds eligible feature names are invalid")
         if isinstance(ranked, bool) or not isinstance(ranked, int) or ranked < 2:
             raise SystemExit("search_bounds ranked feature count is invalid")
         expected_clusters = list(range(2, min(12, eligible - 1) + 1))
@@ -1369,6 +1377,109 @@ def _validate_search_bounds_contract(value: object, fold_indices: tuple[int, ...
             raise SystemExit("search_bounds per-fold final candidate range is incomplete")
     if tuple(observed_indices) != fold_indices:
         raise SystemExit("search_bounds per-fold indices do not match valid outer folds")
+
+
+def _validate_current_dossier_coverage(
+    contract: dict[str, object], dossiers: tuple[dict[str, object], ...]
+) -> None:
+    """Require each audited dossier to carry the complete bounded evidence."""
+
+    search = _required_mapping(contract.get("search_bounds"), "audit_contract.search_bounds")
+    raw_per_fold = search.get("per_fold")
+    if not isinstance(raw_per_fold, list):
+        raise SystemExit("audit_contract.search_bounds.per_fold must be a list")
+    per_fold: dict[int, dict[str, object]] = {}
+    for raw_fold in raw_per_fold:
+        fold = _required_mapping(raw_fold, "search_bounds.per_fold item")
+        fold_index = fold.get("outer_fold_index")
+        if isinstance(fold_index, bool) or not isinstance(fold_index, int):
+            raise SystemExit("search_bounds per-fold index is invalid")
+        per_fold[fold_index] = fold
+
+    for dossier_index, dossier in enumerate(dossiers):
+        context = f"fold_audits[{dossier_index}]"
+        fold_index = dossier.get("outer_fold_index")
+        if isinstance(fold_index, bool) or not isinstance(fold_index, int):
+            raise SystemExit(f"{context}.outer_fold_index is invalid")
+        declared = per_fold.get(fold_index)
+        if declared is None:
+            raise SystemExit(f"{context} has no declared search envelope")
+
+        feature_order = _required_list(dossier, "feature_order", context)
+        eligible_names = _required_list(declared, "eligible_feature_names", context)
+        if feature_order != eligible_names:
+            raise SystemExit(
+                f"{context}.feature_order does not cover the declared eligible universe"
+            )
+
+        raw_scores = dossier.get("feature_scores")
+        if not isinstance(raw_scores, list):
+            raise SystemExit(f"{context}.feature_scores are required")
+        score_names = [
+            _required_string(item, "feature", f"{context}.feature_scores[{index}]")
+            for index, item in enumerate(raw_scores)
+            if isinstance(item, dict)
+        ]
+        if len(score_names) != len(raw_scores) or score_names != feature_order:
+            raise SystemExit(f"{context}.feature_scores do not cover every eligible feature")
+
+        raw_silhouettes = dossier.get("silhouette_clusters")
+        if not isinstance(raw_silhouettes, list):
+            raise SystemExit(f"{context}.silhouette_clusters are required")
+        expected_cluster_counts = declared.get("cluster_count_candidates")
+        observed_cluster_counts = [
+            item.get("cluster_count") for item in raw_silhouettes if isinstance(item, dict)
+        ]
+        if (
+            len(observed_cluster_counts) != len(raw_silhouettes)
+            or observed_cluster_counts != expected_cluster_counts
+        ):
+            raise SystemExit(f"{context}.silhouette_clusters do not cover every cluster count")
+
+        raw_nmi = dossier.get("prefix_nmi")
+        if not isinstance(raw_nmi, list):
+            raise SystemExit(f"{context}.prefix_nmi is required")
+        expected_prefix_lengths = declared.get("prefix_length_candidates")
+        observed_prefix_lengths: list[object] = []
+        for item_index, raw_item in enumerate(raw_nmi):
+            item_context = f"{context}.prefix_nmi[{item_index}]"
+            item = _required_mapping(raw_item, item_context)
+            if item.get("outer_fold_index") != fold_index:
+                raise SystemExit(f"{item_context}.outer_fold_index is inconsistent")
+            prefix_length = item.get("prefix_length")
+            if isinstance(prefix_length, bool) or not isinstance(prefix_length, int):
+                raise SystemExit(f"{item_context}.prefix_length is invalid")
+            _required_string(item, "candidate_id", item_context)
+            observed_prefix_lengths.append(prefix_length)
+        if observed_prefix_lengths != expected_prefix_lengths:
+            raise SystemExit(f"{context}.prefix_nmi does not cover every valid prefix")
+
+        final_features = _required_list(dossier, "final_feature_order", context)
+        if (
+            not final_features
+            or any(not isinstance(name, str) or not name for name in final_features)
+            or len(set(final_features)) != len(final_features)
+            or any(name not in feature_order for name in final_features)
+        ):
+            raise SystemExit(f"{context}.final_feature_order is invalid")
+        raw_likelihoods = dossier.get("likelihoods", dossier.get("gaussian_likelihoods"))
+        if not isinstance(raw_likelihoods, list) or not raw_likelihoods:
+            raise SystemExit(f"{context}.likelihoods are required")
+        scopes: set[str] = set()
+        for item_index, raw_item in enumerate(raw_likelihoods):
+            item_context = f"{context}.likelihoods[{item_index}]"
+            item = _required_mapping(raw_item, item_context)
+            if item.get("feature_order") != final_features:
+                raise SystemExit(f"{item_context}.feature_order is not the selected model universe")
+            item_fold = item.get("fold_index")
+            if isinstance(item_fold, bool) or not isinstance(item_fold, int) or item_fold < 1:
+                raise SystemExit(f"{item_context}.fold_index is invalid")
+            scope = item.get("scope")
+            if scope not in {"TRAIN", "OOS"}:
+                raise SystemExit(f"{item_context}.scope is invalid")
+            scopes.add(cast(str, scope))
+        if scopes != {"TRAIN", "OOS"}:
+            raise SystemExit(f"{context}.likelihoods must include TRAIN and OOS evidence")
 
 
 def _validate_pca_contract(value: object, feature_names: list[str]) -> None:
@@ -1466,8 +1577,10 @@ def _validate_current_audit_contract(
         raise SystemExit("source feature-name identity does not match the snapshot")
     if raw_bounds["materialized_row_count"] != len(columns[timestamp_column]):
         raise SystemExit("source_bounds.materialized_row_count does not match the snapshot")
-    if raw_bounds["source_row_count"] < raw_bounds["materialized_row_count"]:
-        raise SystemExit("source bounds contain more materialized rows than source rows")
+    if raw_bounds["skipped_incomplete_row_count"] != 0:
+        raise SystemExit("current Xetra audit cannot accept skipped source rows")
+    if raw_bounds["source_row_count"] != raw_bounds["materialized_row_count"]:
+        raise SystemExit("current Xetra audit requires all source rows")
     _validate_pca_contract(
         contract.get("pca"),
         [name for name in columns if name != timestamp_column],
@@ -1517,6 +1630,7 @@ def _validate_current_audit_contract(
     if [item.get("outer_fold_index") for item in dossiers] != audit_indices:
         raise SystemExit("math dossiers do not match the declared audit outer-fold indices")
     _validate_search_bounds_contract(contract.get("search_bounds"), valid_indices)
+    _validate_current_dossier_coverage(contract, dossiers)
     raw_hashes = contract.get("outer_fold_result_hashes")
     if not isinstance(raw_hashes, list) or len(raw_hashes) != len(valid_indices):
         raise SystemExit("audit_contract.outer_fold_result_hashes is incomplete")
