@@ -29,7 +29,9 @@ Status date: 2026-09-14
   binds independent math audits to snapshot identity, and parallelizes
   independent outer-fold MLflow I/O while retaining canonical ordering.
   The remaining full current-source audit and final production-eligibility
-  evidence are tracked under PR-232 and PR-250.
+  evidence are tracked under PR-232 and PR-250. Planning PR-369 (bounded
+  checkpoint candidate lanes), PR-370 (strict MLflow completeness contract),
+  and PR-371 (PCA-bound independent math audit) are now merged.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -56,22 +58,23 @@ Status date: 2026-09-14
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
 - **Remote branch/PR state:** GitHub PRs #270–#352 are merged except #277,
-  #284 and #317, which are closed without merge; no GitHub PRs are open and no
-  `pr/*` remote branches remain. The implementation branches for #303–#350
-  have therefore been reconciled into `main` or explicitly superseded.
+  #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
+  #369 and #370 are also merged. No GitHub PRs are open and no `pr/*` remote
+  branches remain. The implementation branches for #303–#371 have therefore
+  been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
   `regime-engine` read-only credential for database `postgres` and exposes
   `regime_loader.regime_features_daily`; the verified live lineage contract is
   schema version 4 / feature version 3. `xetra_loader` exists but denies
   `CONNECT` to that role. External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
-  experiment 3 with 768 historical runs, but no LoggedModels or registered
-  models. A read-only PR-250 namespace preflight therefore fails closed until
-  the historical namespace is explicitly cleaned and a fresh run is tracked.
-  The current authorized full run uses the fresh state root
-  `/home/dev_regime/regime-evaluation-checkpoints-v3`; it is still running
-  with 86 process workers and must not be treated as acceptance evidence until
-  it finishes and its current-source audit succeeds.
+  experiment 3 with 768 historical runs, but no LoggedModels, registered
+  models, registered versions, or deleted LoggedModels. The PR-370 read-only
+  namespace preflight therefore fails closed because the 768 historical runs
+  remain. No full evaluation is currently running: the earlier raw-only run
+  was terminated before the mandatory-PCA changes and is not acceptance
+  evidence. A new full run must wait for the explicit external namespace
+  decision and current-source production-eligibility evidence.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -95,8 +98,9 @@ Status date: 2026-09-14
   `regime_engine.runtime_scope=full_evaluation`. The
   zero-legacy audit scans 688 active files and passes, and the scoped MLflow
   cleanup tests pass (`5 passed`). NAS MLflow access is authorized and its
-  `/health` endpoint returns `200 OK`; its historical evaluation namespace is
-  non-empty and has no LoggedModels or registered model versions. No
+  `/health` endpoint returns `200 OK`; the PR-370 preflight confirms the
+  historical evaluation namespace is non-empty with 768 runs, zero
+  LoggedModels, zero deleted LoggedModels, and zero registered versions. No
   production objects have been deleted. The full non-external suite passes under `pytest -n auto`
   (`684 passed` for the `not slow and not external` selector). The corrected hermetic full-computation proof
   passed locally with real HMM fitting, independent mathematical checks,
@@ -105,11 +109,10 @@ Status date: 2026-09-14
   this long proof, and the local pre-commit hook remains the integration-test
   entry point.
   Pytest now uses `pytest-xdist -n auto` by default, so test files are
-  distributed across all available CPUs in local and CI runs. The latest
-  stale full run reached 450 passed and 8 fixture failures caused by the live
-  lineage-version change before it was interrupted; those fixtures now pass
-  in a focused rerun. The corrected full proof above is the required fresh
-  real-computation run. `mypy` now passes all 125 source files; Ruff and the
+  distributed across all available CPUs in local and CI runs. No full
+  evaluation is active after the pre-PCA run was terminated. The corrected
+  hermetic proof above remains the local real-computation evidence; a fresh
+  current-source proof is still open under PR-232/PR-250. `mypy` now passes all 125 source files; Ruff and the
   focused MLflow/export/audit checks pass. The latest zero-legacy audit scans
   688 files with no violations.
   The repository description is now set on GitHub to the scientific v4/MLflow
@@ -231,6 +234,9 @@ still required.
 | PR-339 | IMPLEMENTED | Closed; MLflow metric-ledger remote-authority audit |
 | PR-342 | IMPLEMENTED | Closed; durable snapshot integrity and terminal-payload hash audit |
 | PR-343 | IMPLEMENTED | Closed; retry checkpointed multistart technical failures |
+| PR-369 | IMPLEMENTATION MERGED | Checkpoint-aware candidate lanes partition the complete CPU budget; local and CI gates passed in GitHub #368; branch deleted |
+| PR-370 | IMPLEMENTATION MERGED | Strict MLflow expectation/provenance/hash, terminal-run, missing-domain-metric, deleted-LoggedModel and registry inventory checks; local and CI gates passed in GitHub #369; branch deleted |
+| PR-371 | IMPLEMENTATION MERGED | Current Xetra audit binds the mandatory raw-plus-eight-component PCA universe and independent likelihood reconstruction to fold-local PCA artifacts; local and CI gates passed in GitHub #370; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -1155,6 +1161,10 @@ and finished all parent/outer-fold runs successfully.
 
 ### PR-231 — Hermetic full-computation and independent mathematical proof
 
+The authoritative status ledger above supersedes the historical checklist
+below: PR-231 acceptance is complete under GitHub #361. The unchecked boxes
+are retained only as the original planning decomposition.
+
 - **Branch:** `pr/PR-231-global-v4-hermetic-e2e-proof`
 - **Depends on:** PR-230
 - **Allowed:** `tests/e2e/test_global_regime_v4_full_compute.py`, `tests/fixtures/global_regime_v4/*`
@@ -1196,6 +1206,13 @@ TRAIN/OOS likelihood parity remain open acceptance work.
   acceptance evidence remain open.
 - **Depends on:** PR-231
 - **Allowed:** `scripts/run_xetra_v4_full_evaluation.py`, `scripts/verify_xetra_v4_math.py`, `docs/qa/xetra_v4_full_compute.md`, `tests/external/test_xetra_v4_audit_contract.py`
+
+Implementation update through PR-371: the current audit contract now binds
+the mandatory raw-plus-eight-component PCA universe and its hashes, and the
+independent likelihood audit transforms raw rows with each fold's PCA/HMM
+artifact. The stale outer source-observation summary fields were corrected.
+The remaining unchecked items are external full-source execution and its
+machine-readable evidence; no current-source run has been accepted yet.
 
 Acceptance:
 
@@ -2209,6 +2226,18 @@ QA:
 - **Branch:** `pr/PR-250-model-metrics-full-audit`
 - **Depends on:** PR-246, PR-249, PR-231, PR-260
 - **Allowed:** `tests/e2e/*mlflow*`, `scripts/verify_mlflow_model_metrics.py`, `docs/qa/mlflow_model_metrics.md`
+
+Implementation update through PR-370: strict expectation bundles now carry a
+schema, independent provenance, source-artifact hash and canonical content
+hash; the verifier inventories deleted LoggedModels and registered model
+versions, rejects empty comparison-domain members, and can require READY
+LoggedModels sourced by FINISHED runs. Local verifier coverage is green.
+Production acceptance remains open: the NAS experiment still contains 768
+historical runs, so the read-only namespace preflight fails closed until the
+external reset decision and a fresh complete evaluation are supplied. The
+current full evaluation policy remains one uninterrupted run that restarts
+from the beginning after interruption; no resume-parity claim is made for the
+current run until explicitly re-enabled by the user.
 
 Acceptance:
 
