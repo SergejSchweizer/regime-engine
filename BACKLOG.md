@@ -70,7 +70,11 @@ Status date: 2026-09-14
   backend exposes zero visible LoggedModels while its deleted-LoggedModel
   inventory is unavailable. PR-398 (GitHub #396) retires the remaining
   full-run resumability language in the execution and MLflow contracts;
-  retry semantics remain limited to the dedicated metric-export harness.
+  retry semantics remain limited to the dedicated metric-export harness. The
+  PR-232 follow-up in GitHub #398 now rejects partial independent math
+  dossiers, missing source rows, and feature/model identity mismatches. The
+  PR-250 follow-up in GitHub #399 now binds strict evidence to the current
+  metric-catalog version and compares metric values by exact IEEE-754 bits.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -96,11 +100,11 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#396 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#399 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  #389, #390, #391, #392, #393, #394, #395 and #396 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#396
+  #389, #390, #391, #392, #393, #394, #395, #396, #398 and #399 are also merged. No GitHub PRs are open and
+  no `pr/*` remote branches remain. The implementation branches for #303–#399
   have therefore
   been reconciled into `main` or explicitly superseded.
 - **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
@@ -239,7 +243,7 @@ still required.
 | PR-229 | IMPLEMENTED | Closed |
 | PR-230 | IMPLEMENTED | Closed |
 | PR-231 | ACCEPTANCE COMPLETE | Four local subproofs passed at the 86-worker budget: pipeline/math/golden with 18 independent likelihood records, tracking/plots, independent spawned process with randomized labels, and future-mutation isolation. Deterministic golden digest is `c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`; closure merged in #361 |
-| PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347 and snapshot-identity binding in #354; acceptance open: full current-Xetra computation and external audit evidence |
+| PR-232 | IMPLEMENTATION MERGED | Independent audit hardening merged in #347 and snapshot-identity binding in #354; strict complete-dossier checks merged in GitHub #398; acceptance open only for the full current-Xetra computation and external audit evidence |
 | PR-233 | IMPLEMENTED | Operational use remains gated by PR-232 |
 | PR-234 | IMPLEMENTED | Operational use remains gated by PR-232 |
 | PR-235 | IMPLEMENTED | Operational use remains gated by PR-232 |
@@ -257,7 +261,7 @@ still required.
 | PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-248 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards are now implemented locally; PR-387/#386 now fails closed when HTTP MLflow cannot inventory deleted LoggedModels; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
+| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards and exact metric-catalog/IEEE-754 evidence checks are implemented locally, with the latter merged in GitHub #399; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
 | PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
@@ -311,6 +315,8 @@ still required.
 | PR-396 | IMPLEMENTATION MERGED | Aligned the acceptance contract with the user-directed non-resumable full evaluator; computation-position resume and full-run kill/restart parity are no longer required; merged in GitHub #394 after documentation checks and all gates; local and remote implementation branches deleted |
 | PR-397 | IMPLEMENTATION MERGED | Corrected NAS MLflow namespace wording to distinguish zero visible LoggedModels from unavailable deleted-LoggedModel inventory; merged in GitHub #395 after documentation checks and all gates; local and remote implementation branches deleted |
 | PR-398 | IMPLEMENTATION MERGED | Retired the remaining full-run resumability language from execution and MLflow contracts; metric-export retry remains the only retry scope; merged in GitHub #396 after documentation checks and all gates; local and remote implementation branches deleted |
+| GitHub #398 | MERGED | Strict current-Xetra math-audit verifier rejects partial dossiers, skipped source rows and feature/model identity mismatches; merged after rebase, Ruff, MyPy, unit and policy gates; local and remote implementation branches deleted |
+| GitHub #399 | MERGED | Strict MLflow Model Metrics verifier requires the current metric-catalog version and exact IEEE-754 metric-value identity; merged after rebase, Ruff, MyPy, unit and policy gates; local and remote implementation branches deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -380,7 +386,7 @@ was merged in #361 after the complete evidence sequence passed.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 
-PRs **#270–#396** are merged except **#277, #284 and #317**, which are
+PRs **#270–#399** are merged except **#277, #284 and #317**, which are
 closed without merge and have no active implementation branch. There are no
 open GitHub PRs and no remote `pr/*` branches. The merged follow-ups include
 the PCA completion (#303–#313), local test parallelization (#312), tracking
@@ -388,7 +394,9 @@ parallelization (#314, #324, #388), lineage/CPU/process safety (#315–#323,
 #329–#330, #393), independent-audit parallelization (#325–#326), audit
 contract hardening (#333–#387), backlog reconciliation (#390–#392), and the
   mandatory-PCA documentation correction (#391), acceptance-contract cleanup
-  (#392, #394 and #395), and one-shot execution-contract cleanup (#396).
+  (#392, #394 and #395), one-shot execution-contract cleanup (#396), strict
+  current-Xetra dossier validation (#398), and exact MLflow metric evidence
+  validation (#399).
 
 ---
 
