@@ -44,7 +44,11 @@ Status date: 2026-09-14
   sized plot pools from all submitted tasks, parallelized ranked prefix lengths
   under one CPU budget, and added a pre-PCA source/model-clock preflight. Only
   external acceptance evidence under PR-232/PR-250 is outstanding. The latest
-  process-only multistart hardening is merged in GitHub #383.
+  process-only multistart hardening is merged in GitHub #383. PR-386 is also
+  merged: the current-Xetra audit contract now checks complete PCA/search
+  bounds, audited-fold coverage and numerical error limits. PR-387 closes the
+  MLflow verifier's deleted-LoggedModel visibility gap by failing closed when
+  the HTTP backend cannot inventory deleted models.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -84,7 +88,9 @@ Status date: 2026-09-14
   experiment 3 with 768 historical runs, but no LoggedModels, registered
   models, registered versions, or deleted LoggedModels. The PR-370 read-only
   namespace preflight therefore fails closed because the 768 historical runs
-  remain. No full evaluation is currently running: the earlier raw-only run
+  remain. The verifier also records deleted-LoggedModel inventory as
+  unavailable when using the HTTP RestStore, rather than claiming zero deleted
+  models. No full evaluation is currently running: the earlier raw-only run
   was terminated before the mandatory-PCA changes and is not acceptance
   evidence. The current outside-repository deployment secret also passes the
   read-only PostgreSQL smoke test against `10.10.1.3:54321` as role
@@ -132,7 +138,9 @@ Status date: 2026-09-14
   current-source proof is still open under PR-232/PR-250. `mypy` now passes all 125 source files; Ruff and the
   focused MLflow/export/audit checks pass. The latest zero-legacy audit scans
   688 files with no violations.
-  The repository description is now set on GitHub to the scientific v4/MLflow
+  The current-Xetra contract follow-up passed 19 focused tests plus the local
+  Hermetic hook, and the MLflow deleted-model visibility follow-up passed 21
+  MLflow E2E tests plus the local Hermetic hook. The repository description is now set on GitHub to the scientific v4/MLflow
   description requested by the user.
 
 ## User-directed superseding decisions
@@ -217,7 +225,7 @@ still required.
 | PR-247 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-248 | IMPLEMENTED | Completeness proof remains under PR-250 |
 | PR-249 | IMPLEMENTED | Completeness proof remains under PR-250 |
-| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards are now implemented locally; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
+| PR-250 | IMPLEMENTATION MERGED | Completeness verifier merged in #348 and resume-parity QA in #352; namespace preflight/non-empty guards are now implemented locally; PR-387/#386 now fails closed when HTTP MLflow cannot inventory deleted LoggedModels; acceptance open and externally blocked by the 768-run historical NAS namespace plus missing fresh completeness/resume evidence |
 | PR-252 | IMPLEMENTED | Cleanup is conditional/no-op when inventory is empty |
 | PR-253 | ACCEPTANCE COMPLETE | Static import-graph audit merged in #349, runtime contract QA in #354, and combined local plus NAS-MLflow zero-legacy audits verified after #360 |
 | PR-254 | IMPLEMENTED | Stage-ledger acceptance QA added in #352; full current-source audit remains open under PR-232 |
@@ -262,6 +270,8 @@ still required.
 | PR-381 | IMPLEMENTATION MERGED | Ranked prefix lengths use bounded process-parallel execution with deterministic result/sink ordering; merged in GitHub #381 after rebase and all gates; branch deleted |
 | PR-382 | IMPLEMENTATION MERGED | Full current-Xetra evaluation performs raw source/model-clock eligibility checks before PCA/HMM work; merged in GitHub #380 after rebase and all gates; branch deleted |
 | PR-384 | IMPLEMENTATION MERGED | Removed the GIL-bound non-pickleable multistart thread fallback; multi-worker CPU runs now require a process-safe adapter factory, while explicit `max_workers=1` remains available for serial extension fixtures; merged in GitHub #383 after all gates; branch deleted |
+| PR-386 | IMPLEMENTATION MERGED | Tightened the external current-Xetra audit contract for schema v2, mandatory PCA/search bounds, complete audited-fold coverage and zero numerical audit errors; merged in GitHub #385 after rebase and all gates; branch deleted |
+| PR-387 | IMPLEMENTATION MERGED | Made MLflow deleted-LoggedModel inventory explicit and fail closed for HTTP RestStore backends without that visibility; merged in GitHub #386 after rebase and all gates; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
