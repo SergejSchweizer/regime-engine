@@ -219,19 +219,23 @@ class EvaluationGates:
 
 @dataclass(frozen=True, slots=True)
 class PCAConfig:
-    """Mandatory fold-local PCA augmentation in the v4 feature universe."""
+    """Mandatory fold-local PCA augmentation in the v4 feature universe.
 
-    enabled: bool
+    PCA is part of the canonical v4 feature contract.  There is deliberately
+    no ``enabled`` switch: a profile cannot silently fall back to a raw-only
+    universe.
+    """
+
     variance_threshold: float
     component_count: int = 8
 
     def __post_init__(self) -> None:
-        if type(self.enabled) is not bool:
-            raise ValueError("PCA enabled must be a boolean")
         if not 0.0 < self.variance_threshold <= 1.0:
             raise ValueError("PCA variance_threshold must be in (0,1]")
-        if self.component_count < 1:
-            raise ValueError("PCA component_count must be positive")
+        if self.variance_threshold != 0.90:
+            raise ValueError("Xetra v4 PCA variance_threshold is pinned to 0.90")
+        if self.component_count != 8:
+            raise ValueError("Xetra v4 PCA component_count is pinned to 8")
 
 
 @dataclass(frozen=True, slots=True)

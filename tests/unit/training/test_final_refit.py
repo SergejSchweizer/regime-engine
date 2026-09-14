@@ -243,7 +243,7 @@ def winning_evaluation(rows: pd.DataFrame):
 def pca_winning_evaluation(rows: pd.DataFrame):
     profile = replace(
         load_profile(PROFILE_CONFIG),
-        pca=PCAConfig(enabled=True, variance_threshold=0.90),
+        pca=PCAConfig(variance_threshold=0.90),
     )
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     return run_walk_forward_candidate(
@@ -318,7 +318,7 @@ def test_final_refit_reconstructs_and_persists_fold_independent_pca() -> None:
     evaluation = pca_winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
     profile = replace(
         load_profile(PROFILE_CONFIG),
-        pca=PCAConfig(enabled=True, variance_threshold=0.90),
+        pca=PCAConfig(variance_threshold=0.90),
     )
     result = final_production_refit(
         rows,

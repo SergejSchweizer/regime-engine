@@ -534,7 +534,8 @@ def _run(performance: PerformanceRecorder) -> None:
         "search_bounds": selection_search_evidence,
         "identity_hashes": identity_hashes,
         "pca": {
-            "enabled": profile.pca.enabled,
+            # PCA is mandatory in the canonical Xetra v4 profile.
+            "enabled": True,
             "variance_threshold": profile.pca.variance_threshold,
             "component_count": profile.pca.component_count,
             "raw_feature_names": list(raw_feature_names),

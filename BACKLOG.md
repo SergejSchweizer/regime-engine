@@ -4,7 +4,9 @@ Status date: 2026-09-14
 
 ## Current execution state
 
-- **Active worktree:** `main`; no implementation worktree branches remain.
+- **Active worktree:** `pr/PR-373-mandatory-pca-universe`; this focused
+  implementation branch removes the remaining PCA opt-in surface before it is
+  merged and deleted.
 - **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
   aligned with the remote reference branch before this backlog update.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -31,7 +33,11 @@ Status date: 2026-09-14
   The remaining full current-source audit and final production-eligibility
   evidence are tracked under PR-232 and PR-250. Planning PR-369 (bounded
   checkpoint candidate lanes), PR-370 (strict MLflow completeness contract),
-  and PR-371 (PCA-bound independent math audit) are now merged.
+  and PR-371 (PCA-bound independent math audit) are now merged. PR-373 now
+  removes `PCAConfig.enabled`, pins canonical Xetra v4 PCA to the raw-plus-
+  eight-component universe, and makes source evaluation materialize PCA
+  unconditionally before all shared discovery and selection stages. Raw-only
+  profiles are no longer valid v4 configuration.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -237,6 +243,7 @@ still required.
 | PR-369 | IMPLEMENTATION MERGED | Checkpoint-aware candidate lanes partition the complete CPU budget; local and CI gates passed in GitHub #368; branch deleted |
 | PR-370 | IMPLEMENTATION MERGED | Strict MLflow expectation/provenance/hash, terminal-run, missing-domain-metric, deleted-LoggedModel and registry inventory checks; local and CI gates passed in GitHub #369; branch deleted |
 | PR-371 | IMPLEMENTATION MERGED | Current Xetra audit binds the mandatory raw-plus-eight-component PCA universe and independent likelihood reconstruction to fold-local PCA artifacts; local and CI gates passed in GitHub #370; branch deleted |
+| PR-373 | IMPLEMENTATION IN PROGRESS | Remove the remaining PCA opt-in flag and make canonical Xetra v4 source evaluation unconditionally materialize the fixed PCA universe; focused tests, Ruff and MyPy pass locally |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |

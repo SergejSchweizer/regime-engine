@@ -1427,19 +1427,19 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source catalog and snapshot materialization digests differ")
     if not snapshot.rows:
         raise ValueError("dynamic source snapshot contains no rows")
-    pca_raw_order: tuple[str, ...] | None = None
-    if profile.pca.enabled:
-        raw_order = _raw_feature_order(catalog)
-        raw_catalog = _raw_catalog(catalog)
-        generated = fit_and_materialize_pca_source(
-            raw_catalog,
-            snapshot,
-            variance_threshold=profile.pca.variance_threshold,
-            component_count=profile.pca.component_count,
-        )
-        catalog = generated.catalog
-        snapshot = generated.snapshot
-        pca_raw_order = raw_order
+    # PCA is mandatory for canonical Xetra v4.  Materialize it before any
+    # quality, distance, scoring, clustering, or model-selection stage so the
+    # generated components share the same feature-universe path as raw fields.
+    pca_raw_order = _raw_feature_order(catalog)
+    raw_catalog = _raw_catalog(catalog)
+    generated = fit_and_materialize_pca_source(
+        raw_catalog,
+        snapshot,
+        variance_threshold=profile.pca.variance_threshold,
+        component_count=profile.pca.component_count,
+    )
+    catalog = generated.catalog
+    snapshot = generated.snapshot
     run_identity: EvaluationRunIdentity | None = None
     if snapshot_store is not None:
         dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)

@@ -48,8 +48,6 @@ def select_v4_configuration_with_pca(
 
     if not isinstance(generated, PCAGeneratedFeatureSet):
         raise TypeError("PCA v4 selection requires a generated feature set")
-    if not profile.pca.enabled:
-        raise ValueError("PCA v4 selection requires profile.pca.enabled=true")
     return selector(
         _as_v4_frame(generated),
         catalog=generated.catalog,
@@ -72,8 +70,6 @@ def evaluate_global_regime_v4_with_pca(
 
     if not isinstance(generated, PCAGeneratedFeatureSet):
         raise TypeError("PCA v4 evaluation requires a generated feature set")
-    if not profile.pca.enabled:
-        raise ValueError("PCA v4 evaluation requires profile.pca.enabled=true")
     return evaluator(
         _as_v4_frame(generated),
         catalog=generated.catalog,
