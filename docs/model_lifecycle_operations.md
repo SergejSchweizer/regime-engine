@@ -22,6 +22,21 @@ interrupted, the next cycle recomputes it from the beginning.
 
 Registration creates/updates the `challenger` lifecycle state through the backend; it does **not** move `champion`. If the source build observed by `evaluate` differs from the build observed by `status`, the cycle fails rather than silently evaluating a different vintage.
 
+The source identity is pinned for the complete changed-source cycle. The
+deployment-selection record is bound to the same `source_build_id`, catalog
+hash, discovery hash, selection-definition hash, selection-execution hash and
+the separate validation/deployment cutoffs. Final refit, OOS publication and
+registration consume the immutable saved source snapshot and evaluation; they
+must not refresh a live source or silently substitute another source build.
+Any source-identity mismatch, incomplete package, or OOS/artifact mismatch
+fails closed before registration, so neither `challenger` nor `champion` is
+mutated.
+
+The production package envelope is `RegimeEngineProductionModel.v4`. Its
+loader rejects unknown, missing, or cross-version fields before decoding model
+payloads. The package stores model-version-local state identity; a `state_0`
+in one registered version has no implied identity in another version.
+
 ## Promotion and rollback
 
 Production promotion and rollback are explicit operator decisions. `ModelLifecycleOperations.promote()` and `.rollback()` mutate only the `champion` alias and use registry compare-and-swap with both an expected current version and a non-empty reason. A failed CAS returns false and must be treated as a concurrent-state conflict; callers must re-read registry state before retrying. No economic metric, uncalibrated drift score, feature-selection stability diagnostic, or scheduled cycle automatically promotes a challenger.

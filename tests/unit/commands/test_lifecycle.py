@@ -204,13 +204,44 @@ def test_model_cycle_rejects_profile_and_source_build_race() -> None:
 
     backend = FakeBackend()
     backend.evaluation = EvaluationOutcome("eval", "other-source", "gaussian_hmm_k2_full")
-    operations = ModelLifecycleOperations(backend, FakeRegistry())  # type: ignore[arg-type]
+    registry = FakeRegistry()
+    operations = ModelLifecycleOperations(backend, registry)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="cycle-pinned"):
         operations.run_model_cycle()
     assert backend.events == [
         ("status", "xetra"),
         ("evaluate", "xetra", "source-2"),
     ]
+    assert registry.calls == []
+
+
+@pytest.mark.parametrize("failed_stage", ("final_refit", "publish_oos"))
+def test_cycle_failure_before_registration_cannot_mutate_aliases(failed_stage: str) -> None:
+    backend = FakeBackend()
+
+    if failed_stage == "final_refit":
+
+        def fail_refit(profile_id: str, evaluation_id: str) -> FinalRefitOutcome:
+            del profile_id, evaluation_id
+            raise RuntimeError("final refit failed")
+
+        backend.final_refit = fail_refit  # type: ignore[method-assign]
+    else:
+
+        def fail_publish(profile_id: str, evaluation_id: str) -> OOSPublicationOutcome:
+            del profile_id, evaluation_id
+            raise RuntimeError("OOS publication failed")
+
+        backend.publish_oos = fail_publish  # type: ignore[method-assign]
+
+    registry = FakeRegistry()
+    operations = ModelLifecycleOperations(backend, registry)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="failed"):
+        operations.run_model_cycle()
+
+    assert not any(event[0] == "register" for event in backend.events)
+    assert registry.calls == []
 
 
 def test_promote_and_rollback_use_champion_alias_cas_with_reason() -> None:

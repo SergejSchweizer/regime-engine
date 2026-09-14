@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -220,6 +222,33 @@ def test_json_loader_rejects_root_shape_fields_and_schema() -> None:
     raw["pca_scaler"] = []
     with pytest.raises(ValueError, match="PCA scaler payload"):
         production_artifact_from_json(json.dumps(raw))
+
+
+def test_json_loader_rejects_nested_schema_drift_and_cross_family_fields() -> None:
+    mutations: tuple[tuple[str, Callable[[dict[str, Any]], Any]], ...] = (
+        ("missing HMM field", lambda raw: raw["hmm"].pop("means_hex")),
+        ("unknown HMM field", lambda raw: raw["hmm"].update({"unexpected": True})),
+        ("missing scaler field", lambda raw: raw["scaler"].pop("scales_hex")),
+        ("unknown scaler field", lambda raw: raw["scaler"].update({"unexpected": True})),
+        (
+            "Gaussian with Student-t field",
+            lambda raw: raw["hmm"].update({"degrees_of_freedom_hex": [(4.0).hex()]}),
+        ),
+        (
+            "Student-t without degrees of freedom",
+            lambda raw: raw["hmm"].update({"model_family": "student_t_hmm"}),
+        ),
+        (
+            "GMM without mixture payload",
+            lambda raw: raw["hmm"].update({"model_family": "gmm_hmm"}),
+        ),
+    )
+
+    for _description, mutate in mutations:
+        raw = json.loads(production_artifact_json(artifact()))
+        mutate(raw)
+        with pytest.raises(ValueError, match="unknown or missing"):
+            production_artifact_from_json(json.dumps(raw))
 
 
 def test_old_package_schema_is_rejected_before_nested_payload_decoding() -> None:
