@@ -1375,8 +1375,8 @@ def _validate_pca_contract(value: object, feature_names: list[str]) -> None:
     """Require the mandatory raw-plus-PCA v4 feature-universe identity."""
 
     pca = _required_mapping(value, "audit_contract.pca")
-    if pca.get("enabled") is not True:
-        raise SystemExit("current Xetra audit requires PCA to be enabled")
+    if pca.get("mandatory") is not True:
+        raise SystemExit("current Xetra audit requires PCA in the feature universe")
     if pca.get("variance_threshold") != 0.90:
         raise SystemExit("current Xetra audit requires the pinned PCA variance threshold")
     component_count = pca.get("component_count")

@@ -381,7 +381,7 @@ def _candidate_model_tags(
     )
     pca_tags = (
         {
-            "regime_engine.pca_enabled": "true",
+            "regime_engine.pca_mandatory": "true",
             "regime_engine.pca_fit_hashes_sha256": sha256(
                 json.dumps(pca_fit_hashes, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
             ).hexdigest(),

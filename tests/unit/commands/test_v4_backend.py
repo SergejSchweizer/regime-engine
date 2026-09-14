@@ -47,7 +47,9 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
     backend = object.__new__(module.V4LifecycleBackend)
     backend.root = Path(__file__).parents[3]
     backend.state_root = tmp_path / "lifecycle"
-    backend.profile = object()
+    backend.profile = SimpleNamespace(
+        pca=SimpleNamespace(variance_threshold=0.90, component_count=8),
+    )
     backend.mlflow_settings = SimpleNamespace(tracking_uri="file:///tmp/mlflow")
     catalog = SimpleNamespace(lineage=SimpleNamespace(source_build_id="build-1"))
     snapshot = SimpleNamespace()
@@ -69,12 +71,21 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
     )
     captured: dict[str, object] = {}
 
+    pca_calls: list[dict[str, object]] = []
+
+    def fake_materialize(source_catalog, source_snapshot, **kwargs):
+        pca_calls.append(kwargs)
+        assert source_catalog is catalog
+        assert source_snapshot is snapshot
+        return SimpleNamespace(catalog=catalog, snapshot=snapshot)
+
     def fake_evaluate(source, **kwargs):
         captured["source"] = source
         captured.update(kwargs)
         return result
 
     monkeypatch.setattr(module, "evaluate_global_regime_v4_from_source", fake_evaluate)
+    monkeypatch.setattr(module, "fit_and_materialize_pca_source", fake_materialize)
     monkeypatch.setattr(module, "build_global_v4_evidence", lambda *args, **kwargs: object())
     monkeypatch.setattr(module, "track_global_v4_evaluation", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "FileMlflowTrackingPort", lambda *args, **kwargs: object())
@@ -86,4 +97,5 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
     assert outcome.statistical_champion_candidate_id == "gaussian_hmm_k2_full"
     assert "run_store" not in captured
     assert isinstance(captured["snapshot_store"], module.ArrowDatasetSnapshotStore)
+    assert pca_calls == [{"variance_threshold": 0.90, "component_count": 8}]
     assert not (backend.state_root / "evaluation-runs").exists()

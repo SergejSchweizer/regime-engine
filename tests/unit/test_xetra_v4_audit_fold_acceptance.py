@@ -244,7 +244,7 @@ def _strict_current_contract(
         },
         "identity_hashes": identity,
         "pca": {
-            "enabled": True,
+            "mandatory": True,
             "variance_threshold": 0.90,
             "component_count": 8,
             "raw_feature_names": ["feature_a", "feature_b"],
