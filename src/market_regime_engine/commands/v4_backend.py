@@ -183,15 +183,17 @@ class V4LifecycleBackend:
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = recording.catalog, recording.snapshot
-        pca_config = getattr(self.profile, "pca", None)
-        if pca_config is not None and pca_config.enabled:
-            generated = fit_and_materialize_pca_source(
-                catalog,
-                snapshot,
-                variance_threshold=pca_config.variance_threshold,
-                component_count=pca_config.component_count,
-            )
-            catalog, snapshot = generated.catalog, generated.snapshot
+        # PCA is part of the canonical v4 feature universe, not a profile
+        # option.  Materialize it on every lifecycle source capture so this
+        # backend cannot silently create a raw-only source snapshot.
+        pca_config = self.profile.pca
+        generated = fit_and_materialize_pca_source(
+            catalog,
+            snapshot,
+            variance_threshold=pca_config.variance_threshold,
+            component_count=pca_config.component_count,
+        )
+        catalog, snapshot = generated.catalog, generated.snapshot
         _atomic_pickle(self._source_path, (catalog, snapshot))
         return catalog, snapshot
 
