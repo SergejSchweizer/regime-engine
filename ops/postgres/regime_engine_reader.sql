@@ -26,13 +26,13 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO "macro-loader"', :'target_db')
 
 REVOKE ALL ON SCHEMA public FROM "macro-loader";
 REVOKE ALL ON SCHEMA macro_loader FROM "macro-loader";
-REVOKE ALL ON SCHEMA regime_loader_sync FROM "macro-loader";
+REVOKE ALL ON SCHEMA macro_loader_sync FROM "macro-loader";
 GRANT USAGE ON SCHEMA macro_loader TO "macro-loader";
-GRANT USAGE ON SCHEMA regime_loader_sync TO "macro-loader";
+GRANT USAGE ON SCHEMA macro_loader_sync TO "macro-loader";
 
 REVOKE ALL ON ALL TABLES IN SCHEMA macro_loader FROM "macro-loader";
-REVOKE ALL ON ALL TABLES IN SCHEMA regime_loader_sync FROM "macro-loader";
+REVOKE ALL ON ALL TABLES IN SCHEMA macro_loader_sync FROM "macro-loader";
 GRANT SELECT ON TABLE macro_loader.macro_features_daily TO "macro-loader";
-GRANT SELECT ON TABLE regime_loader_sync.gold_sync_state TO "macro-loader";
+GRANT SELECT ON TABLE macro_loader_sync.gold_sync_state TO "macro-loader";
 
 -- Deliberately no CREATE, TEMP, ownership, sequence, function, writer, or mutation grants.

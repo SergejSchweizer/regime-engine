@@ -21,6 +21,8 @@ from pathlib import Path
 
 LEGAL_K = (2, 3, 4, 5)
 MODEL_FAMILIES = ("gaussian_hmm", "gmm_hmm", "student_t_hmm")
+MIN_PREFIX_LENGTH = 2
+MAX_PREFIX_LENGTH = 8
 VALID_FOLD_RATE_GATE = 0.80
 MIN_VALID_FOLD_COUNT = 3
 PREFIX_NMI_TIE_TOLERANCE = 1.0e-12
@@ -125,7 +127,7 @@ def independent_soft_regime_nmi(
                 mutual_information += value * log(value / denominator)
     left_entropy = -fsum(value * log(value) for value in left_marginal if value > 0.0)
     right_entropy = -fsum(value * log(value) for value in right_marginal if value > 0.0)
-    if left_entropy + right_entropy <= 0.0:
+    if left_entropy <= 0.0 or right_entropy <= 0.0:
         raise ValueError("soft-NMI requires non-degenerate marginal entropy")
     result = 2.0 * mutual_information / (left_entropy + right_entropy)
     if not isfinite(result) or not 0.0 <= result <= 1.0 + 1.0e-10:
@@ -149,7 +151,29 @@ def independent_support(
     return count, count / len(right)
 
 
-def independent_prefix_selection(prefixes: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
+def permitted_prefix_lengths(ranked_feature_count: int) -> tuple[int, ...]:
+    """Return every nested prefix length permitted by the v4 contract.
+
+    This is intentionally duplicated as a small mathematical contract rather
+    than importing the production prefix-search module.  The upper bound is
+    the smaller of the ranked feature count and the fixed v4 cap.
+    """
+
+    if (
+        isinstance(ranked_feature_count, bool)
+        or not isinstance(ranked_feature_count, int)
+        or ranked_feature_count < MIN_PREFIX_LENGTH
+    ):
+        raise ValueError("ranked_feature_count must be at least two")
+    upper_bound = min(ranked_feature_count, MAX_PREFIX_LENGTH)
+    return tuple(range(MIN_PREFIX_LENGTH, upper_bound + 1))
+
+
+def independent_prefix_selection(
+    prefixes: Sequence[Mapping[str, object]],
+    *,
+    ranked_feature_count: int | None = None,
+) -> Mapping[str, object]:
     """Select a K-specific prefix using NMI, support, then smaller prefix."""
 
     if not prefixes:
@@ -164,8 +188,12 @@ def independent_prefix_selection(prefixes: Sequence[Mapping[str, object]]) -> Ma
         if isinstance(k, bool) or not isinstance(k, int) or k not in LEGAL_K:
             raise ValueError("prefix state_count must be K=2,3,4 or 5")
         length = raw.get("prefix_length")
-        if isinstance(length, bool) or not isinstance(length, int) or length < 1:
-            raise ValueError("prefix_length must be a positive integer")
+        if (
+            isinstance(length, bool)
+            or not isinstance(length, int)
+            or not MIN_PREFIX_LENGTH <= length <= MAX_PREFIX_LENGTH
+        ):
+            raise ValueError("prefix_length must be in the permitted range 2..8")
         k_values.add(k)
         lengths.add(length)
         valid = raw.get("valid")
@@ -185,6 +213,12 @@ def independent_prefix_selection(prefixes: Sequence[Mapping[str, object]]) -> Ma
         raise ValueError("prefix selection must not compare different K values")
     if len(lengths) != len(normalized):
         raise ValueError("prefix lengths must be unique")
+    if ranked_feature_count is None:
+        expected_lengths = tuple(range(MIN_PREFIX_LENGTH, max(lengths) + 1))
+    else:
+        expected_lengths = permitted_prefix_lengths(ranked_feature_count)
+    if tuple(sorted(lengths)) != expected_lengths:
+        raise ValueError("prefix candidates must cover every permitted prefix length")
     eligible = tuple(item for item in normalized if item["valid"] is True)
     if not eligible:
         raise ValueError("no eligible K-specific prefix")
@@ -268,6 +302,8 @@ def independent_same_vector_family_ranking(
 
     if len(candidates) != len(MODEL_FAMILIES):
         raise ValueError("same-vector family ranking requires exactly three candidates")
+    if any(not isinstance(item, Mapping) for item in candidates):
+        raise ValueError("same-vector family candidates must be mappings")
     normalized = tuple(dict(item) for item in candidates)
     families = tuple(_text(item.get("model_family"), "model_family") for item in normalized)
     if set(families) != set(MODEL_FAMILIES):
@@ -276,17 +312,32 @@ def independent_same_vector_family_ranking(
     if len(set(ids)) != len(ids):
         raise ValueError("candidate IDs must be unique")
     k_values = {item.get("state_count") for item in normalized}
-    if len(k_values) != 1 or next(iter(k_values)) not in LEGAL_K:
+    if (
+        len(k_values) != 1
+        or isinstance(next(iter(k_values)), bool)
+        or not isinstance(next(iter(k_values)), int)
+        or next(iter(k_values)) not in LEGAL_K
+    ):
         raise ValueError("same-vector family candidates must share legal K")
     lineage = tuple(
         (
             _sha256(item.get("feature_order_hash"), "feature_order_hash"),
             _text(item.get("source_build_id"), "source_build_id"),
             _sha256(item.get("evaluation_plan_hash"), "evaluation_plan_hash"),
-            tuple(item.get("fold_ids", ())),
+            tuple(item.get("fold_ids", ()))
+            if isinstance(item.get("fold_ids", ()), Sequence)
+            and not isinstance(item.get("fold_ids", ()), (str, bytes))
+            else (),
         )
         for item in normalized
     )
+    if any(
+        not fold_ids
+        or len(set(fold_ids)) != len(fold_ids)
+        or any(not isinstance(fold_id, str) or not fold_id for fold_id in fold_ids)
+        for _, _, _, fold_ids in lineage
+    ):
+        raise ValueError("same-vector family candidates require unique fold IDs")
     if len(set(lineage)) != 1:
         raise ValueError("same-vector family candidates must share exact provenance")
     accepted: list[Mapping[str, object]] = []
@@ -299,10 +350,18 @@ def independent_same_vector_family_ranking(
         metrics = ("oos_mean", "oos_std", "oos_worst", "bic_mean", "aic_mean")
         if rate < VALID_FOLD_RATE_GATE:
             rejected[candidate_id] = "valid-fold rate below 0.80"
-        elif any(not isfinite(_finite(item.get(field), field)) for field in metrics):
-            rejected[candidate_id] = "missing or nonfinite ranking metric"
+        elif count < MIN_VALID_FOLD_COUNT:
+            rejected[candidate_id] = "fewer than three valid folds"
         else:
-            accepted.append(item)
+            try:
+                metric_values = tuple(_finite(item.get(field), field) for field in metrics)
+            except ValueError:
+                rejected[candidate_id] = "missing or nonfinite ranking metric"
+            else:
+                if any(not isfinite(value) for value in metric_values):
+                    rejected[candidate_id] = "missing or nonfinite ranking metric"
+                else:
+                    accepted.append(item)
     if not accepted:
         raise ValueError("no same-vector family candidate passes hard gates")
     groups: tuple[tuple[Mapping[str, object], ...], ...] = (tuple(accepted),)
@@ -334,21 +393,48 @@ def independent_same_vector_family_ranking(
 def reject_cross_dimension_metric_comparison(
     metric_key: str,
     feature_order_hashes: Sequence[str],
+    *,
+    state_counts: Sequence[int] | None = None,
 ) -> None:
     """Reject raw vector likelihood/criterion comparisons across K dimensions."""
 
-    _text(metric_key, "metric_key")
+    metric = _text(metric_key, "metric_key").lower()
     hashes = tuple(_sha256(value, "feature_order_hash") for value in feature_order_hashes)
-    if len(set(hashes)) > 1 and any(
-        token in metric_key for token in ("loglik", "aic", "bic", "hqc")
-    ):
+    if not hashes:
+        raise ValueError("feature_order_hashes must not be empty")
+    if state_counts is not None:
+        normalized_k = tuple(state_counts)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value not in LEGAL_K
+            for value in normalized_k
+        ):
+            raise ValueError("state_counts must contain only K=2,3,4 or 5")
+        if len(normalized_k) != len(hashes):
+            raise ValueError("state_counts and feature_order_hashes must align")
+    else:
+        normalized_k = ()
+    raw_metric = any(token in metric for token in ("loglik", "pll", "aic", "bic", "hqc"))
+    different_dimensions = len(set(hashes)) > 1 or len(set(normalized_k)) > 1
+    if raw_metric and different_dimensions:
         raise ValueError(f"{metric_key} cannot be compared across K-specific feature vectors")
 
 
 def verify_k_slot_provenance(slots: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
     """Verify exact slot/fold lineage links and canonical slot identities."""
 
-    if tuple(sorted(int(item.get("state_count", -1)) for item in slots)) != LEGAL_K:
+    if not slots or any(not isinstance(item, Mapping) for item in slots):
+        raise ValueError("provenance dossier requires mapping slots")
+    if (
+        tuple(
+            sorted(
+                item.get("state_count")
+                for item in slots
+                if isinstance(item.get("state_count"), int)
+                and not isinstance(item.get("state_count"), bool)
+            )
+        )
+        != LEGAL_K
+    ):
         raise ValueError("provenance dossier must contain exactly K=2,3,4,5")
     identities: list[dict[str, object]] = []
     seen_slots: set[str] = set()
@@ -385,6 +471,8 @@ def verify_k_slot_provenance(slots: Sequence[Mapping[str, object]]) -> Mapping[s
             if fold_id in fold_ids:
                 raise ValueError("fold IDs must be unique per K slot")
             fold_ids.add(fold_id)
+        if not fold_ids:
+            raise ValueError("every K slot must contain at least one fold ID")
         identities.append(
             {
                 "slot_id": slot_id,
@@ -399,7 +487,11 @@ def verify_k_slot_provenance(slots: Sequence[Mapping[str, object]]) -> Mapping[s
     return {"slots": tuple(sorted(identities, key=lambda item: int(item["state_count"])))}
 
 
-def audit_dossier(dossier: Mapping[str, object]) -> dict[str, object]:
+def audit_dossier(
+    dossier: Mapping[str, object],
+    *,
+    command: Sequence[str] = (),
+) -> dict[str, object]:
     """Run the independent checks represented by a JSON dossier."""
 
     if not isinstance(dossier, Mapping):
@@ -411,7 +503,10 @@ def audit_dossier(dossier: Mapping[str, object]) -> dict[str, object]:
     return {
         "status": "verified",
         "oracle": "verify_k_champion_math.py",
+        "oracle_version": "k_champion_math.v1",
         "python_version": platform.python_version(),
+        "command": tuple(command),
+        "exit_code": 0,
         "seed": dossier.get("seed"),
         "input_canonical_sha256": canonical_hash(dossier),
         "provenance": provenance,
@@ -424,7 +519,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     dossier = json.loads(args.dossier.read_text(encoding="utf-8"))
-    report = audit_dossier(dossier)
+    command = tuple(sys.argv) if argv is None else (Path(__file__).name, *tuple(map(str, argv)))
+    report = audit_dossier(dossier, command=command)
     encoded = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.report is None:
         sys.stdout.write(encoded)

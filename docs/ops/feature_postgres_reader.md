@@ -15,8 +15,8 @@ Required bootstrap environment:
 Run `ops/postgres/bootstrap_reader.sh`. It passes the database name and password to `psql` variables and lets PostgreSQL quote them with `format('%I', ...)` / `format('%L', ...)`; shell text is never spliced into SQL identifiers or literals.
 
 The role receives only database `CONNECT`, schema `USAGE` on `macro_loader` and
-`regime_loader_sync`, and `SELECT` on `macro_loader.macro_features_daily` plus
-`regime_loader_sync.gold_sync_state`. Its default transaction mode is
+`macro_loader_sync`, and `SELECT` on `macro_loader.macro_features_daily` plus
+`macro_loader_sync.gold_sync_state`. Its default transaction mode is
 read-only. The verification script also checks that the feature relation is
 owned by `macro-loader-owner`; it uses only PostgreSQL privilege catalogs and
 never attempts a destructive write.

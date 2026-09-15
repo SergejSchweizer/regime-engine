@@ -22,7 +22,7 @@ from market_regime_engine.features.ports import (
 
 _DATASET_ID = "macro_features_daily"
 _FEATURE_TABLE = sql.Identifier("macro_loader", "macro_features_daily")
-_SYNC_TABLE = sql.Identifier("regime_loader_sync", "gold_sync_state")
+_SYNC_TABLE = sql.Identifier("macro_loader_sync", "gold_sync_state")
 _FEATURE_SCHEMA = "macro_loader"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RELATION_KINDS = {

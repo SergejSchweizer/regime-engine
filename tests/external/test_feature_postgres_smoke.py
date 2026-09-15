@@ -53,18 +53,23 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
                 "SELECT "
                 "has_database_privilege(current_user, current_database(), 'CONNECT'), "
                 "has_schema_privilege(current_user, 'macro_loader', 'USAGE'), "
-                "has_schema_privilege(current_user, 'regime_loader_sync', 'USAGE'), "
+                "has_schema_privilege(current_user, 'macro_loader_sync', 'USAGE'), "
                 "has_table_privilege(current_user, "
                 "'macro_loader.macro_features_daily', 'SELECT'), "
                 "has_table_privilege(current_user, "
-                "'regime_loader_sync.gold_sync_state', 'SELECT'), "
+                "'macro_loader_sync.gold_sync_state', 'SELECT'), "
                 "has_schema_privilege(current_user, 'macro_loader', 'CREATE'), "
-                "has_schema_privilege(current_user, 'regime_loader_sync', 'CREATE'), "
+                "has_schema_privilege(current_user, 'macro_loader_sync', 'CREATE'), "
                 "has_table_privilege(current_user, "
                 "'macro_loader.macro_features_daily', "
                 "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
-                ", pg_get_userbyid('macro_loader.macro_features_daily'::regclass::oid) "
-                "= 'macro-loader-owner'"
+                ", EXISTS ("
+                "SELECT 1 FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_roles r ON r.oid = c.relowner "
+                "WHERE n.nspname = 'macro_loader' "
+                "AND c.relname = 'macro_features_daily' "
+                "AND r.rolname = 'macro-loader-owner')"
             )
             privileges = cursor.fetchone()
             assert privileges is not None
@@ -75,7 +80,7 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
             cursor.execute(
                 "SELECT source_build_id, data_sha256, schema_version, feature_version, "
                 "row_count, min_timestamp, max_timestamp, synced_at_utc "
-                "FROM regime_loader_sync.gold_sync_state "
+                "FROM macro_loader_sync.gold_sync_state "
                 "WHERE dataset_id = %s",
                 ("macro_features_daily",),
             )

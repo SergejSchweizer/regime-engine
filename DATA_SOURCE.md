@@ -34,11 +34,11 @@ database:          mandatory runtime value; no default
 dataset_id:        macro_features_daily
 feature schema:    macro_loader
 lineage table:     macro_loader.macro_features_daily
-sync-state table:  regime_loader_sync.gold_sync_state
+sync-state table:  macro_loader_sync.gold_sync_state
 temporal key:      timestamp_m1 TIMESTAMPTZ(6)
 ```
 
-The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstream but is not required by the MVP engine read contract. The sync-state schema remains a separate lineage/control namespace; only the serving consumer identity changed to `macro_loader.macro_features_daily`.
+The current row-digest table `macro_loader_sync.gold_row_hashes` exists upstream but is not required by the MVP engine read contract. The sync-state schema remains a separate lineage/control namespace.
 
 Feature columns are nullable `DOUBLE PRECISION`. SQL NULL is permitted by the upstream source; NaN/infinity is invalid.
 
@@ -82,10 +82,10 @@ SQL role identifier is quoted as:
 Required grants only:
 
 - database `CONNECT` on the explicitly supplied serving database;
-- schema `USAGE` on `macro_loader` and `regime_loader_sync`;
+- schema `USAGE` on `macro_loader` and `macro_loader_sync`;
 - `SELECT` on every current feature relation in `macro_loader` (and the
   corresponding default privileges for future feature relations);
-- `SELECT` on `regime_loader_sync.gold_sync_state`.
+- `SELECT` on `macro_loader_sync.gold_sync_state`.
 
 No writer/admin/ownership/CREATE privileges are required. The engine must never reuse the `macro-loader` writer credential.
 
@@ -112,7 +112,7 @@ No password or credential-bearing DSN may be committed, logged, embedded in MLfl
 
 ## Source lineage
 
-For `dataset_id=macro_features_daily`, read from `regime_loader_sync.gold_sync_state` and preserve at least:
+For `dataset_id=macro_features_daily`, read from `macro_loader_sync.gold_sync_state` and preserve at least:
 
 ```text
 source_build_id
@@ -135,7 +135,7 @@ Required semantics:
 
 ```text
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
-  read regime_loader_sync.gold_sync_state
+  read macro_loader_sync.gold_sync_state
   enumerate and read every relation in the configured feature schema
   validate lineage/source bounds
 COMMIT;

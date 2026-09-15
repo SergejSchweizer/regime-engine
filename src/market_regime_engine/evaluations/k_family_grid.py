@@ -247,16 +247,30 @@ def evaluate_k_family_grid(
             }
         evaluations = tuple(by_id[candidate.candidate_id] for candidate in candidates)
     elif worker_limit == 1:
-        evaluations = tuple(
-            active_runner(
-                source_rows,
-                plan,
-                profile,
-                candidate,
-                cast(AdapterFactory, adapter_factory(profile, candidate)),
+        if active_runner is _default_runner:
+            evaluations = tuple(
+                _default_runner(
+                    source_rows,
+                    plan,
+                    profile,
+                    candidate,
+                    cast(AdapterFactory, adapter_factory(profile, candidate)),
+                    pca_raw_feature_order=pca_order,
+                    pca_variance_threshold=pca_variance_threshold,
+                )
+                for candidate in candidates
             )
-            for candidate in candidates
-        )
+        else:
+            evaluations = tuple(
+                active_runner(
+                    source_rows,
+                    plan,
+                    profile,
+                    candidate,
+                    cast(AdapterFactory, adapter_factory(profile, candidate)),
+                )
+                for candidate in candidates
+            )
     else:
         raise RuntimeError("parallel K-family evaluation requires the process-safe default runner")
     aggregates = tuple(aggregate_candidate(evaluation) for evaluation in evaluations)
