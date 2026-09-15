@@ -389,7 +389,7 @@ still required.
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
-| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; the full artifact projection matrix remains |
+| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422; local positive/ineligible projection QA on `pr/PR-439-k-plot-projection-qa`) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
@@ -461,6 +461,19 @@ tracking/plots with a durable manifest, independent spawned process and
 randomized labels, and future-mutation isolation. The deterministic golden
 digest `c59724bee059dc140c495710e6438abfe5582f4663784240358691eeacee5924`
 was merged in #361 after the complete evidence sequence passed.
+
+### Acceptance follow-up #439 — open
+
+The local K-slot projection QA now covers the positive Cross-K path for an
+explicitly dimension-independent metric (`valid_fold_rate`) in addition to
+rejecting cross-K likelihoods. It verifies that rendered manifests retain
+the exact LoggedModel IDs, feature hashes, source hashes, catalog version and
+canonical payload hash, and that an ineligible portfolio writes only an
+unavailable manifest without a PNG. The hermetic four-slot E2E test passes
+with `4 passed in 162.68s`; the corrected ineligible-slot assertion proves
+that `champion-k5` is absent while the other three aliases remain. This is on
+local branch `pr/PR-439-k-plot-projection-qa`; the full artifact projection
+matrix and external production acceptance remain open.
 
 ### GitHub follow-up PRs not assigned a separate backlog item
 

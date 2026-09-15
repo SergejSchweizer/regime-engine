@@ -271,7 +271,12 @@ def test_ineligible_slot_has_no_selected_model_package_or_alias(
                 new_version=registered.exact_version,
                 reason="eligible-only acceptance",
             )
-    assert all(alias.endswith("-k5") is False for _name, alias in registry_client.aliases)
+    assert set(registry_client.aliases) == {
+        ("regime-xetra", "champion-k2"),
+        ("regime-xetra", "champion-k3"),
+        ("regime-xetra", "champion-k4"),
+    }
+    assert ("regime-xetra", "champion-k5") not in registry_client.aliases
 
 
 def test_future_rows_do_not_change_completed_outer_evidence(portfolio: HermeticPortfolio) -> None:
