@@ -3,10 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 
+import numpy as np
 import pytest
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 
+from market_regime_engine.evaluations.k_champion_contract import (
+    KChampionSelection,
+    feature_order_hash,
+)
 from market_regime_engine.mlflow_support.model_package import save_production_package
 from market_regime_engine.mlflow_support.registry import (
     AliasMutationAudit,
@@ -15,13 +20,14 @@ from market_regime_engine.mlflow_support.registry import (
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing import fit_pca_hmm_scaler
 
 
 @dataclass
 class Version:
     version: str
     source: str
+    tags: dict[str, str] | None = None
 
 
 class FakeRegistryClient:
@@ -52,8 +58,8 @@ class FakeRegistryClient:
         description: str | None = None,
         tags: dict[str, str] | None = None,
     ) -> Version:
-        del description, tags
-        version = Version(str(self.next_version), source)
+        del description
+        version = Version(str(self.next_version), source, dict(tags or {}))
         self.next_version += 1
         self.versions[(name, version.version)] = version
         return version
@@ -98,6 +104,18 @@ class MismatchedTargetClient(FakeRegistryClient):
 
 def artifact() -> ProductionModelArtifact:
     features = ("f0", "f1")
+    pca_start = datetime(2026, 1, 1, tzinfo=UTC)
+    pca_timestamps = tuple(pca_start + timedelta(days=index) for index in range(120))
+    index = np.arange(120, dtype=np.float64)
+    pca_scaler = fit_pca_hmm_scaler(
+        pca_timestamps,
+        np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0))),
+        raw_feature_order=features,
+        inner_fold_id="fold_001",
+        fit_start=pca_start,
+        fit_end=pca_timestamps[-1],
+        model_feature_order=features,
+    )
     return ProductionModelArtifact(
         profile_id="xetra",
         profile_config_version=4,
@@ -118,12 +136,7 @@ def artifact() -> ProductionModelArtifact:
         source_catalog_hash="f" * 64,
         state_identity_scope="model_version_local",
         feature_order=features,
-        scaler=StandardScalerArtifact(
-            feature_order=features,
-            means=(0.0, 0.0),
-            variances=(1.0, 1.5),
-            scales=(1.0, 1.5**0.5),
-        ),
+        scaler=pca_scaler.hmm_scaler,
         hmm=GaussianHMMArtifact(
             state_count=2,
             feature_order=features,
@@ -141,6 +154,7 @@ def artifact() -> ProductionModelArtifact:
         terminal_filtered_probabilities=(0.45, 0.55),
         retained_observation_count=1500,
         skipped_incomplete_observation_count=2,
+        pca_scaler=pca_scaler,
     )
 
 
@@ -326,4 +340,52 @@ def test_registry_propagates_unexpected_backend_failures(tmp_path) -> None:
             expected_current_version=None,
             new_version="1",
             reason="valid reason",
+        )
+
+
+def test_k_slot_registration_and_alias_cas_preserve_legacy_champion() -> None:
+    client = FakeRegistryClient()
+    registry = MlflowModelRegistry(client)
+    order = ("f0", "f1")
+    selection = KChampionSelection(
+        slot_id="k2",
+        state_count=2,
+        model_family="gaussian_hmm",
+        candidate_identity="gaussian_hmm_k2_full",
+        feature_order=order,
+        feature_order_hash=feature_order_hash(order),
+        source_snapshot_id="snapshot-1",
+        profile_id="xetra",
+        profile_config_version=4,
+        policy_id="k_champion_portfolio",
+        policy_version="k_champion_portfolio.v1",
+        validation_cutoff=datetime(2026, 8, 20, tzinfo=UTC),
+        deployment_cutoff=datetime(2026, 8, 21, tzinfo=UTC),
+        comparison_domain_id="k_slot_promotion.v1",
+        promotion_score_version="k_slot_promotion.v1",
+        reference_teacher_id="teacher-2",
+        artifact_hash="a" * 64,
+    )
+    registered = registry.register_k_slot_package(
+        selection,
+        package_source_uri="runs:/k-run/package",
+        artifact_hash="a" * 64,
+    )
+    assert registered.slot_id == "k2"
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias="champion-k2",
+        expected_current_version=None,
+        new_version=registered.exact_version,
+        reason="first K-slot promotion",
+    )
+    assert client.aliases[("regime-xetra", "champion-k2")] == registered.exact_version
+    assert ("regime-xetra", "champion") not in client.aliases
+    with pytest.raises(ValueError, match="matching K=3"):
+        registry.compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias="champion-k3",
+            expected_current_version=None,
+            new_version=registered.exact_version,
+            reason="cross-slot attempt",
         )

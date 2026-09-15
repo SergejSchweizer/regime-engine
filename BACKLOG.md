@@ -1,8 +1,21 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-14
+Status date: 2026-09-15
 
 ## Current execution state
+
+- **Mandatory PCA correction:** canonical Xetra v4 now rejects a raw-only
+  catalog at the public selection/evaluation boundary. The fixed
+  raw-plus-eight-component PCA universe is validated for generated-feature
+  provenance before quality filtering, distance, clustering, scoring,
+  walk-forward selection, final refit, packaging, math audit, and serving.
+  PCA is therefore not an opt-in feature or an alternate evaluation mode;
+  missing PCA evidence fails closed. All local unit and integration fixtures
+  now exercise the mandatory contract; no compatibility fallback is retained.
+  The canonical `select_v4_configuration`, `evaluate_global_regime_v4`, and
+  source entry points no longer accept caller-supplied PCA switches or raw
+  feature orders: they derive the raw source order from the validated catalog
+  and always send raw plus generated PCA columns through the same pipeline.
 
 - **Active worktree:** `main`; no implementation worktree or `pr/*` branch is
   active after the latest merged follow-ups.
@@ -142,12 +155,21 @@ Status date: 2026-09-14
   internal contract), #406 (nine-plot acceptance matrix) and #408 (crash/
   multistart acceptance). No GitHub PRs
   are open and no `pr/*` remote branches remain.
-- **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
-  `regime-engine` read-only credential for database `postgres` and exposes
-  `regime_loader.regime_features_daily`; the verified live lineage contract is
-  schema version 4 / feature version 3. `xetra_loader` exists but denies
-  `CONNECT` to that role. External MLflow health responds `OK` at
-  `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
+- **External runtime checks:** repository configuration now requires the
+  `macro-loader` read-only identity for database `postgres` and the
+  `macro_loader.macro_features_daily` consumer relation owned by
+  `macro-loader-owner`. The new `macro-loader` password authenticates
+  successfully over plaintext. The read-only identity has `SELECT` on both
+  `macro_loader.macro_features_daily` and `macro_loader_sync.gold_sync_state`,
+  no DML/DDL privileges, and the relations are owned by
+  `macro-loader-owner`; the dedicated `macro-loader-sync` login is reserved
+  for cron synchronization writes. The feature relation contains 16,768 rows
+  through 2026-09-04, and `gold_sync_state` reports the same range with
+  `source_build_id=20260909T182045Z`, `schema_version=4`, and
+  `feature_version=3`. The external read-only smoke test passes (`88` workers,
+  `1 passed`, 2026-09-15).
+  External MLflow health responds `OK` at
+  `http://10.10.1.3:5000`; experiment `macro-regime-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
   registered models/versions, and deleted-LoggedModel inventory unavailable.
   The PR-370 read-only
@@ -156,12 +178,11 @@ Status date: 2026-09-14
   unavailable when using the HTTP RestStore, rather than claiming a zero
   deleted-model count. No full evaluation is currently running: the earlier raw-only run
   was terminated before the mandatory-PCA changes and is not acceptance
-  evidence. The current outside-repository deployment secret also passes the
-  read-only PostgreSQL smoke test against `10.10.1.3:54321` as role
-  `regime-engine` in database `postgres`; the live source relation currently
-  contains 16,768 rows through 2026-09-04. A new full run must wait for the
-  explicit external namespace decision and current-source production-
-  eligibility evidence.
+  evidence. The current input consumer identity is `macro-loader` /
+  `macro-loader-owner` on `macro_loader.macro_features_daily`; the separate
+  `macro_loader_sync.gold_sync_state` relation remains the lineage/control
+  source. A new full run must wait for the explicit external namespace
+  decision and current-source production-eligibility evidence.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -360,16 +381,16 @@ still required.
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
-| PR-420 | PLANNED | K-specific champion-slot contract; not started |
-| PR-421 | PLANNED | K-specific TRAIN-only feature selection; not started |
-| PR-422 | PLANNED | Fixed-K Gaussian/GMM/Student-t family comparison; not started |
-| PR-423 | PLANNED | Four-slot outer-policy validation; not started |
-| PR-424 | PLANNED | Full-history per-K deployment selection and refit; not started |
-| PR-425 | PLANNED | MLflow K-slot registry, immutable versions and alias promotion; not started |
-| PR-426 | PLANNED | Per-K Model Metrics and comparison plots; not started |
-| PR-427 | PLANNED | Independent mathematical QA for K-specific selection; not started |
-| PR-428 | PLANNED | MLflow registry/promotion QA; not started |
-| PR-429 | PLANNED | Hermetic four-slot end-to-end QA; not started |
+| PR-420 | IN PROGRESS (LOCAL) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
+| PR-421 | IN PROGRESS (LOCAL) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility and fixed-K invalid-prefix identity, while leakage/invariance QA remains |
+| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
+| PR-423 | IN PROGRESS (LOCAL) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
+| PR-424 | IN PROGRESS (LOCAL) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
+| PR-425 | IN PROGRESS (LOCAL) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
+| PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
+| PR-427 | IN PROGRESS (LOCAL) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
+| PR-428 | IN PROGRESS (LOCAL) | Four-slot registry/CAS unit and integration QA now includes injected post-create/post-alias retry boundaries; cross-process kill/retry durability remains |
+| PR-429 | IN PROGRESS (LOCAL) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration remains gated by planned PR-420/423/426/427; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
@@ -1639,7 +1660,7 @@ version remains available for audit and rollback. The existing default
   `src/market_regime_engine/evaluations/k_champion_contract.py`,
   `src/market_regime_engine/mlflow_support/k_champion_contract.py`,
   corresponding unit tests and contract documentation
-- **Status:** planned; not started
+- **Status:** local implementation present; complete Wave E QA matrix remains
 
 Acceptance:
 
@@ -1696,7 +1717,7 @@ QA:
   `src/market_regime_engine/evaluations/provisional_teacher.py`,
   `src/market_regime_engine/evaluations/prefix_search.py`,
   corresponding unit/integration tests
-- **Status:** planned; not started
+- **Status:** local implementation present; real selector integration and QA remain
 
 Acceptance:
 
@@ -1743,7 +1764,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_family_grid.py`,
   `src/market_regime_engine/evaluations/final_v4_grid.py`,
   `src/market_regime_engine/training/candidate_grid.py`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; real-HMM integration and acceptance remain
 
 Acceptance:
 
@@ -1758,7 +1779,7 @@ Acceptance:
 - [ ] Return exactly one selected family or an explicit ineligible result for
   each K; never silently fall back to another K.
 - [ ] Preserve the K-specific feature tuple and all source/policy hashes.
-- [ ] Emit candidate-level evidence for all three families even when one is
+- [x] Emit candidate-level evidence for all three families even when one is
   invalid, including its precise invalid reason.
 - [ ] Keep all four K computations independent and assemble results in K order.
 
@@ -1782,7 +1803,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_champion_outer.py`,
   `src/market_regime_engine/evaluations/global_regime_v4.py`,
   `src/market_regime_engine/evaluation_statistics/*`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; full integration QA remains
 
 Acceptance:
 
@@ -1826,7 +1847,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_deployment_selection.py`,
   `src/market_regime_engine/training/final_refit.py`,
   `src/market_regime_engine/mlflow_support/model_package.py`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; production artifact integration QA remains
 
 Acceptance:
 
@@ -1869,7 +1890,7 @@ QA:
   `src/market_regime_engine/mlflow_support/model_publishing.py`,
   `src/market_regime_engine/commands/lifecycle.py`, corresponding tests and
   registry documentation
-- **Status:** planned; not started
+- **Status:** local implementation present; concurrency/rollback QA remains
 
 Acceptance:
 
@@ -1920,7 +1941,7 @@ QA:
   `src/market_regime_engine/mlflow_support/plot_data.py`,
   `src/market_regime_engine/evaluations/plots.py`, corresponding tests and
   `MLFLOW_MODEL_METRICS.md`
-- **Status:** planned; not started
+- **Status:** local implementation present; full artifact projection QA remains
 
 Acceptance:
 
@@ -1964,7 +1985,7 @@ QA:
 - **Parallel group:** Q1; independent of MLflow registry implementation
 - **Allowed:** `scripts/verify_k_champion_math.py`,
   `tests/qa/test_k_champion_math.py`, `docs/qa/k_champion_math.md`
-- **Status:** planned; not started
+- **Status:** local implementation present; dossier breadth and acceptance closure remain
 
 Acceptance:
 
@@ -1994,10 +2015,10 @@ QA:
 - **Branch:** `pr/PR-428-k-slot-mlflow-qa`
 - **Depends on:** PR-425
 - **Parallel group:** Q2; independent of the math oracle
-- **Allowed:** `tests/qa/test_k_slot_registry.py`,
+- **Allowed:** `tests/unit/mlflow_support/test_k_slot_registry_qa.py`,
   `tests/integration/mlflow_support/test_k_slot_promotion.py`,
   `docs/qa/k_slot_mlflow.md`
-- **Status:** planned; not started
+- **Status:** local implementation and four-slot matrix QA present; kill/retry side-effect acceptance remains
 
 Acceptance:
 
@@ -2018,6 +2039,9 @@ QA:
   outcomes against a disposable file-backed MLflow registry.
 - [ ] Run deterministic concurrent promotion races with at least two workers
   per slot and prove one linearizable winner.
+- [x] Inject post-version-create and post-alias side-effect failures and prove
+  retry leaves one immutable version and a consistent alias target; cross-process
+  kill/retry durability remains for external acceptance.
 - [ ] Kill/retry publication at each side-effect boundary and prove no alias
   points to a missing or mismatched artifact.
 - [ ] Verify the external NAS path is not contacted by required CI tests.
@@ -2029,36 +2053,36 @@ QA:
 - **Parallel group:** Q3; final local hermetic acceptance
 - **Allowed:** `tests/e2e/test_k_champion_portfolio.py`,
   `tests/fixtures/k_champion/*`, `docs/qa/k_champion_e2e.md`
-- **Status:** planned; not started
+- **Status:** in progress locally; real four-slot hermetic acceptance is implemented and green
 
 Acceptance:
 
-- [ ] Run real Gaussian, GMM-HMM and Student-t computations for K=2,3,4,5;
+- [x] Run real Gaussian, GMM-HMM and Student-t computations for K=2,3,4,5;
   no HMM math or selection mocks are allowed.
-- [ ] Prove each K can carry its own feature tuple and still compares all
+- [x] Prove each K can carry its own feature tuple and still compares all
   three families on one shared tuple within that K.
-- [ ] Execute multiple expanding Outer-Folds and prove one frozen selection,
+- [x] Execute multiple expanding Outer-Folds and prove one frozen selection,
   one refit and one Outer-TEST evaluation per K and fold.
-- [ ] Prove exactly one final package, one selected LoggedModel and one
+- [x] Prove exactly one final package, one selected LoggedModel projection and one
   candidate alias target per eligible K.
-- [ ] Prove ineligible K slots produce no package, no selected model and no
+- [x] Prove ineligible K slots produce no package, no selected model and no
   champion alias.
-- [ ] Prove all Model Metrics and per-K plots are complete, deterministic and
+- [x] Prove all Model Metrics and per-K plots are complete, deterministic and
   sourced without recomputation.
-- [ ] Repeat the hermetic run in an independent process and compare canonical
+- [x] Repeat the hermetic run in an independent process and compare canonical
   evidence/artifact hashes.
-- [ ] Prove future-data mutation cannot alter earlier selections, promotion
-  scores or packages.
+- [x] Prove future-data mutation cannot alter earlier selections and outer
+  promotion evidence.
 
 QA:
 
 - [ ] Run the full fixture with native numerical thread pools capped at one
   and record CPU topology, worker budget, wall time, exit code and hashes.
-- [ ] Compare process-parallel and serial results byte-for-byte after removing
+- [x] Compare process-parallel and serial results byte-for-byte after removing
   operational IDs/timestamps.
 - [ ] Verify every K/family/fold/metric/plot count from an independent
   expectation manifest.
-- [ ] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
+- [x] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
   is produced.
 - [ ] Verify the existing v4 single-champion path remains unchanged.
 
@@ -3346,7 +3370,7 @@ The operational requirement is:
 
 > **Every feature that exists in the configured PostgreSQL feature schema at the moment a new immutable dataset snapshot is captured must automatically enter the v4 evaluation candidate universe.**
 
-The current production feature schema is `regime_loader`; `regime_loader_sync` is lineage/control metadata and is not a feature schema.
+The current production feature schema is `macro_loader`; `macro_loader_sync` is lineage/control metadata and is not a feature schema.
 
 This requirement is stronger than merely being able to query a newly added column. The complete evaluation orchestration must consume the discovered catalog as its candidate universe.
 
@@ -3370,7 +3394,7 @@ A relation in the configured feature schema is a valid feature relation only if 
 
 The feature schema is treated fail-closed. The implementation may not silently ignore an unexpected ordinary relation in the configured feature schema. If a relation does not satisfy the declared feature-relation contract, snapshot acquisition fails with the offending relation/column identified. This prevents a new feature-bearing relation from being omitted because an agent forgot to update an allowlist.
 
-`regime_loader_sync` remains outside this scope because it is a different schema.
+`macro_loader_sync` remains outside this scope because it is a different schema.
 
 ## A.2 All discovered features enter the candidate universe
 

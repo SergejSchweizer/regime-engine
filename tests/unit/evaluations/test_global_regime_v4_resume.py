@@ -43,22 +43,33 @@ def test_global_v4_reuses_completed_outer_folds_after_restart(
         min_timestamp=timestamps[0],
         max_timestamp=timestamps[-1],
     )
-    names = ("feature_a", "feature_b")
+    raw_names = tuple(f"feature_{chr(97 + index)}" for index in range(8))
+    names = (*raw_names, *tuple(f"pca_pc_{index:03d}" for index in range(1, 9)))
     snapshot = FeatureSnapshot(
         lineage,
         names,
-        tuple(FeatureRow(timestamp, (1.0, 2.0)) for timestamp in timestamps),
+        tuple(FeatureRow(timestamp, (1.0,) * len(names)) for timestamp in timestamps),
     )
     catalog = FeatureCatalogSnapshot.from_entries(
         lineage,
         "timestamp_m1",
-        tuple(FeatureCatalogEntry(name, index) for index, name in enumerate(names, 1)),
+        tuple(FeatureCatalogEntry(name, index) for index, name in enumerate(raw_names, 1))
+        + tuple(
+            FeatureCatalogEntry(
+                name,
+                len(raw_names) + index,
+                schema_name="regime_engine",
+                relation_name="pca_generated_features",
+                relation_kind="VIEW",
+                ordinal_position=index,
+            )
+            for index, name in enumerate(names[len(raw_names) :], 1)
+        ),
     ).with_materialization(snapshot)
     source_rows = pd.DataFrame(
         {
             "timestamp_m1": timestamps,
-            "feature_a": [1.0] * len(timestamps),
-            "feature_b": [2.0] * len(timestamps),
+            **{name: [1.0] * len(timestamps) for name in names},
         }
     )
     folds = tuple(
@@ -248,7 +259,7 @@ def test_ledger_process_worker_captures_selection_in_the_same_outer_pass(
         nested_worker_limits=(1,),
         run_store_root=str(store.root),
         run_identity=identity,
-        pca_raw_feature_order=None,
+        pca_raw_feature_order=("feature_a", "feature_b"),
         pca_variance_threshold=0.9,
     )
     monkeypatch.setattr(global_v4, "_OUTER_PROCESS_CONTEXT", context)

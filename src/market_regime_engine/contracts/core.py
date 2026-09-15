@@ -13,6 +13,31 @@ PREDICTION_SCHEMA_VERSION = "RegimePrediction.v1"
 INVOCATION_SCHEMA_VERSION = "RegimeInvocationResponse.v1"
 ERROR_SCHEMA_VERSION = "RegimeError.v1"
 
+# The per-K champion portfolio is a separate policy from the legacy/global
+# v4 ``champion`` route.  Keep these identifiers in the backend-independent
+# contract module so registry, evaluation and serving code cannot drift.
+K_CHAMPION_POLICY_ID = "k_champion_portfolio"
+K_CHAMPION_POLICY_VERSION = "k_champion_portfolio.v1"
+K_CHAMPION_SLOT_IDS = ("k2", "k3", "k4", "k5")
+K_CHAMPION_ALIASES = ("champion-k2", "champion-k3", "champion-k4", "champion-k5")
+
+
+class KChampionSlot(StrEnum):
+    """The only legal independently promoted K slots."""
+
+    K2 = "k2"
+    K3 = "k3"
+    K4 = "k4"
+    K5 = "k5"
+
+    @property
+    def state_count(self) -> int:
+        return int(self.value[1:])
+
+    @property
+    def alias(self) -> str:
+        return f"champion-{self.value}"
+
 
 def _require_text(value: str, field: str) -> None:
     if not value or value.strip() != value:

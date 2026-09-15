@@ -7,10 +7,10 @@ mlflow:
 feature_postgres:
   host: 10.10.1.3
   port: 54321
-  database: <required-regime-loader-serving-database>
-  user: regime-engine
+  database: <required-macro-loader-serving-database>
+  user: macro-loader
   sslmode: disable
-  password_file: /absolute/path/to/regime_feature_password
+  password_file: /absolute/path/to/pg_macro_loader_password
 evaluation:
   checkpoint_root: /absolute/path/to/evaluation-checkpoints
 runtime:

@@ -31,6 +31,7 @@ from market_regime_engine.profiles.loader import load_profile
 
 HASH = "a" * 64
 FEATURES = ("prototype_0", "prototype_1")
+FEATURE_UNIVERSE = (*FEATURES, "pca_pc_001")
 
 
 def source_rows(row_count: int = 819) -> pd.DataFrame:
@@ -41,6 +42,7 @@ def source_rows(row_count: int = 819) -> pd.DataFrame:
             "timestamp_m1": tuple(start + timedelta(days=int(value)) for value in index),
             FEATURES[0]: np.sin(index / 11.0),
             FEATURES[1]: np.cos(index / 17.0),
+            "pca_pc_001": np.sin(index / 23.0),
         }
     )
 
@@ -122,6 +124,7 @@ def test_preflight_runs_before_any_candidate_runner() -> None:
             feature_selection_definition_hash=HASH,
             feature_selection_execution_hash=HASH,
             runner=runner,
+            pca_raw_feature_order=FEATURES,
         )
     assert calls == []
 
@@ -182,6 +185,7 @@ def test_teacher_runs_only_gaussian_candidates_on_one_shared_prototype_contract(
         feature_selection_execution_hash=HASH,
         runner=runner,
         max_workers=1,
+        pca_raw_feature_order=FEATURES,
     )
 
     assert {call[0] for call in calls} == {
@@ -253,6 +257,7 @@ def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch,
     plan = module.build_inner_walk_forward_plan(tuple(rows["timestamp_m1"]))
     candidate = module._candidates(
         FEATURES,
+        original_feature_universe=FEATURE_UNIVERSE,
         source_build_id="build-1",
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
@@ -283,9 +288,16 @@ def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch,
         *,
         max_workers,
         seed_checkpoint_factory,
+        pca_raw_feature_order,
+        pca_variance_threshold,
     ):
         nonlocal calls
-        del candidate_adapter_factory, seed_checkpoint_factory
+        del (
+            candidate_adapter_factory,
+            seed_checkpoint_factory,
+            pca_raw_feature_order,
+            pca_variance_threshold,
+        )
         assert max_workers == 1
         calls += 1
         assert frame is rows
@@ -315,6 +327,7 @@ def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch,
         runner,
         max_workers=1,
         seed_checkpoint_factory=seed_factory,
+        pca_raw_feature_order=FEATURES,
     )
     second = module._evaluate_candidates(
         rows,
@@ -324,6 +337,7 @@ def test_durable_candidate_stage_checkpoint_reuses_candidate_result(monkeypatch,
         runner,
         max_workers=1,
         seed_checkpoint_factory=seed_factory,
+        pca_raw_feature_order=FEATURES,
     )
 
     assert first == second

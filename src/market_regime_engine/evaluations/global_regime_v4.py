@@ -94,6 +94,7 @@ from market_regime_engine.preprocessing.pca_features import (
     PCAGeneratedFeatureSet,
     fit_and_materialize_pca_source,
     materialize_pca_generated_features,
+    validate_pca_feature_universe,
 )
 from market_regime_engine.preprocessing.pca_policy import fit_pca_inner_train
 from market_regime_engine.profiles.config import ModelProfile
@@ -232,7 +233,7 @@ class _OuterProcessContext:
     nested_worker_limits: tuple[int, ...]
     run_store_root: str | None
     run_identity: EvaluationRunIdentity | None
-    pca_raw_feature_order: tuple[str, ...] | None
+    pca_raw_feature_order: tuple[str, ...]
     pca_variance_threshold: float
 
 
@@ -298,11 +299,9 @@ def _selection_train_rows(
     *,
     catalog: FeatureCatalogSnapshot,
     profile: ModelProfile,
-    pca_raw_feature_order: tuple[str, ...] | None,
+    pca_raw_feature_order: tuple[str, ...],
 ) -> pd.DataFrame:
     train_rows = source_rows.iloc[: fold.train_source_observations].copy()
-    if pca_raw_feature_order is None:
-        return train_rows
     return _outer_train_with_local_pca(
         train_rows,
         catalog=catalog,
@@ -623,16 +622,17 @@ def select_v4_configuration(
     max_workers: int | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
     prefix_evaluation_sink: PrefixEvaluationSink | None = None,
-    pca_raw_feature_order: tuple[str, ...] | None = None,
-    pca_variance_threshold: float | None = None,
 ) -> V4ConfigurationSelection:
     """Run the complete adaptive chain using only one immutable Outer-TRAIN frame."""
 
+    mandatory_raw_order = validate_pca_feature_universe(
+        catalog,
+        component_count=profile.pca.component_count,
+    )
+    pca_raw_feature_order = mandatory_raw_order
     build_id = catalog.lineage.source_build_id if source_build_id is None else source_build_id
     snapshot = _validate_train_inputs(train_rows, catalog, profile, build_id)
-    pca_threshold = (
-        profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
-    )
+    pca_threshold = profile.pca.variance_threshold
     train_start = snapshot.rows[0].timestamp
     train_end = snapshot.rows[-1].timestamp
     definition_hash, execution_hash = _selection_hashes(
@@ -957,7 +957,7 @@ def _evaluate_outer_fold(
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationSink | None = None,
     stage_checkpoint: StageCheckpoint | None = None,
-    pca_raw_feature_order: tuple[str, ...] | None = None,
+    pca_raw_feature_order: tuple[str, ...],
     pca_variance_threshold: float | None = None,
 ) -> OuterFoldResult:
     """Evaluate one outer fold; callers may persist this atomic result."""
@@ -982,8 +982,6 @@ def _evaluate_outer_fold(
             max_workers=max_workers,
             stage_checkpoint=stage_checkpoint,
             prefix_evaluation_sink=prefix_evaluation_sink,
-            pca_raw_feature_order=pca_raw_feature_order,
-            pca_variance_threshold=pca_variance_threshold,
         )
     except (ValueError, TypeError) as exc:
         return _invalid_outer_fold(
@@ -1108,20 +1106,21 @@ def evaluate_global_regime_v4(
     run_identity: EvaluationRunIdentity | None = None,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
-    pca_raw_feature_order: tuple[str, ...] | None = None,
-    pca_variance_threshold: float | None = None,
 ) -> AdaptiveEvaluationResult:
     """Run every outer fold with TRAIN-only adaptive selection and frozen TEST use."""
 
+    mandatory_raw_order = validate_pca_feature_universe(
+        catalog,
+        component_count=profile.pca.component_count,
+    )
+    pca_raw_feature_order = mandatory_raw_order
     if (run_store is None) != (run_identity is None):
         raise ValueError("run_store and run_identity must be supplied together")
     if not isinstance(source_rows, pd.DataFrame):
         raise TypeError("global v4 evaluation requires a pandas DataFrame")
     if _TIMESTAMP_COLUMN not in source_rows.columns:
         raise ValueError(f"source rows must contain {_TIMESTAMP_COLUMN}")
-    pca_threshold = (
-        profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
-    )
+    pca_threshold = profile.pca.variance_threshold
     if not 0.0 < pca_threshold <= 1.0:
         raise ValueError("PCA variance_threshold must be in (0,1]")
     if run_store is not None and run_identity is not None:
@@ -1219,8 +1218,6 @@ def evaluate_global_regime_v4(
                     source_build_id=build_id,
                     max_workers=nested_worker_limit_for_fold(fold),
                     stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
-                    pca_raw_feature_order=pca_raw_feature_order,
-                    pca_variance_threshold=pca_threshold,
                 )
                 selection_sink(fold.fold_index, selection)
             return cached
@@ -1307,8 +1304,6 @@ def evaluate_global_regime_v4(
                         source_build_id=build_id,
                         max_workers=nested_worker_limit_for_fold(fold),
                         stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
-                        pca_raw_feature_order=pca_raw_feature_order,
-                        pca_variance_threshold=pca_threshold,
                     )
                     selection_sink(fold.fold_index, selection)
                 return fold_result
@@ -1342,8 +1337,6 @@ def evaluate_global_regime_v4(
                         source_build_id=build_id,
                         max_workers=nested_worker_limit_for_fold(fold),
                         stage_checkpoint=StageCheckpoint(run_identity, run_store, fold.fold_id),
-                        pca_raw_feature_order=pca_raw_feature_order,
-                        pca_variance_threshold=pca_threshold,
                     )
                     selection_sink(fold.fold_index, selection)
             if prefix_evaluation_sink is not None:
@@ -1501,8 +1494,6 @@ def evaluate_global_regime_v4_from_source(
     evaluation_contract_version: int = 1,
     selection_sink: Callable[[int, V4ConfigurationSelection], None] | None = None,
     prefix_evaluation_sink: PrefixEvaluationPayloadSink | None = None,
-    pca_raw_feature_order: tuple[str, ...] | None = None,
-    pca_variance_threshold: float | None = None,
     require_production_eligible_source_clock: bool = False,
 ) -> AdaptiveEvaluationResult:
     """Capture the complete dynamic source universe and run v4 on that snapshot.
@@ -1533,7 +1524,6 @@ def evaluate_global_regime_v4_from_source(
     # PCA is mandatory for canonical Xetra v4.  Materialize it before any
     # quality, distance, scoring, clustering, or model-selection stage so the
     # generated components share the same feature-universe path as raw fields.
-    pca_raw_order = _raw_feature_order(catalog)
     raw_catalog = _raw_catalog(catalog)
     generated = fit_and_materialize_pca_source(
         raw_catalog,
@@ -1543,6 +1533,10 @@ def evaluate_global_regime_v4_from_source(
     )
     catalog = generated.catalog
     snapshot = generated.snapshot
+    validate_pca_feature_universe(
+        catalog,
+        component_count=profile.pca.component_count,
+    )
     run_identity: EvaluationRunIdentity | None = None
     if snapshot_store is not None:
         dataset_identity = DatasetSnapshotIdentity.from_catalog(catalog)
@@ -1597,8 +1591,6 @@ def evaluate_global_regime_v4_from_source(
         run_identity=run_identity,
         selection_sink=selection_sink,
         prefix_evaluation_sink=prefix_evaluation_sink,
-        pca_raw_feature_order=pca_raw_order,
-        pca_variance_threshold=profile.pca.variance_threshold,
     )
 
 

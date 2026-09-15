@@ -1,4 +1,4 @@
-"""Read-only PostgreSQL adapter for the regime-loader serving replica."""
+"""Read-only PostgreSQL adapter for the macro-loader serving replica."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ from market_regime_engine.features.ports import (
     SourceMode,
 )
 
-_DATASET_ID = "regime_features_daily"
-_FEATURE_TABLE = sql.Identifier("regime_loader", "regime_features_daily")
-_SYNC_TABLE = sql.Identifier("regime_loader_sync", "gold_sync_state")
-_FEATURE_SCHEMA = "regime_loader"
+_DATASET_ID = "macro_features_daily"
+_FEATURE_TABLE = sql.Identifier("macro_loader", "macro_features_daily")
+_SYNC_TABLE = sql.Identifier("macro_loader_sync", "gold_sync_state")
+_FEATURE_SCHEMA = "macro_loader"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RELATION_KINDS = {
     "r": "BASE TABLE",
@@ -212,7 +212,7 @@ class PostgresFeatureSource:
         cursor.execute(query, (_DATASET_ID,))
         row = cursor.fetchone()
         if row is None:
-            raise ValueError("missing sync-state for regime_features_daily")
+            raise ValueError("missing sync-state for macro_features_daily")
         if len(row) != 8:
             raise ValueError("unexpected sync-state shape")
         (
@@ -240,12 +240,12 @@ class PostgresFeatureSource:
             raise ValueError("source timestamp bounds are inverted")
         synced_at = _utc_datetime(synced, "source synced_at_utc")
         return SourceLineage(
-            source_dataset="regime_loader.regime_features_daily",
+            source_dataset="macro_loader.macro_features_daily",
             source_build_id=str(source_build_id),
             data_sha256=str(digest),
             schema_version=schema_version_int,
             feature_version=feature_version_int,
-            source_table="regime_loader.regime_features_daily",
+            source_table="macro_loader.macro_features_daily",
             synced_at_utc=synced_at,
             data_time_semantics=DATA_TIME_SEMANTICS,
             row_count=row_count_int,
@@ -261,7 +261,7 @@ class PostgresFeatureSource:
             "WHERE table_schema = %s AND table_name = %s "
             "ORDER BY ordinal_position ASC"
         )
-        cursor.execute(query, ("regime_loader", "regime_features_daily"))
+        cursor.execute(query, ("macro_loader", "macro_features_daily"))
         columns = cursor.fetchall()
         if not columns:
             raise ValueError("feature table catalog is empty")

@@ -15,6 +15,7 @@ from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
     run_walk_forward_candidate,
+    validate_mandatory_pca_feature_universe,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
@@ -55,7 +56,7 @@ class _CandidateProcessTask:
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
     max_workers: int
-    pca_raw_feature_order: tuple[str, ...] | None
+    pca_raw_feature_order: tuple[str, ...]
     pca_variance_threshold: float
     runner: CandidateRunner
     adapter_factory_builder: AdapterFactoryBuilder | None
@@ -317,6 +318,10 @@ def evaluate_candidate_grid(
     )
     if plan.plan_hash == "" or not plan.folds:
         raise ValueError("candidate grid requires a non-empty complete walk-forward plan")
+    pca_order = validate_mandatory_pca_feature_universe(
+        pca_raw_feature_order,
+        resolved_profile.original_feature_universe,
+    )
 
     worker_limit = cpu_worker_count(max_workers, task_count=len(resolved_profile.candidates))
     total_worker_budget = cpu_worker_count(max_workers)
@@ -368,13 +373,12 @@ def evaluate_candidate_grid(
                     "max_workers": candidate_max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
-                if pca_raw_feature_order is not None:
-                    kwargs.update(
-                        {
-                            "pca_raw_feature_order": pca_raw_feature_order,
-                            "pca_variance_threshold": pca_variance_threshold,
-                        }
-                    )
+                kwargs.update(
+                    {
+                        "pca_raw_feature_order": pca_order,
+                        "pca_variance_threshold": pca_variance_threshold,
+                    }
+                )
                 return _default_runner(
                     source_rows,
                     plan,
@@ -393,12 +397,14 @@ def evaluate_candidate_grid(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        if pca_raw_feature_order is not None and runner is not _default_runner:
-            raise ValueError(
-                "PCA candidate-grid evaluation requires the canonical candidate runner"
+        if runner is not _default_runner:
+            return runner(
+                source_rows,
+                plan,
+                profile,
+                candidate,
+                candidate_adapter,
             )
-        if pca_raw_feature_order is None:
-            return runner(source_rows, plan, profile, candidate, candidate_adapter)
         return _default_runner(
             source_rows,
             plan,
@@ -406,13 +412,14 @@ def evaluate_candidate_grid(
             candidate,
             candidate_adapter,
             max_workers=candidate_max_workers,
-            pca_raw_feature_order=pca_raw_feature_order,
+            pca_raw_feature_order=pca_order,
             pca_variance_threshold=pca_variance_threshold,
         )
 
     use_processes = (
         seed_checkpoint_factory is None
         and worker_limit > 1
+        and runner is _default_runner
         and is_pickleable(runner)
         and (adapter_factory_builder is None or is_pickleable(adapter_factory_builder))
     )
@@ -425,7 +432,7 @@ def evaluate_candidate_grid(
                 profile,
                 candidate,
                 nested_limits[index % worker_limit],
-                pca_raw_feature_order,
+                pca_order,
                 pca_variance_threshold,
                 runner,
                 adapter_factory_builder,

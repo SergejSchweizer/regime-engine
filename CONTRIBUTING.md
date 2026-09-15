@@ -101,7 +101,7 @@ Weak implementation agents do not rewrite contract-owner files unless their PR e
 
 ## Production source and serving boundaries
 
-Production features come from the external `regime-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `regime-engine`. Direct upstream Parquet is not the production source.
+Production features come from the external `macro-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `macro-loader`. The consumer relation is `macro_loader.macro_features_daily`, owned by `macro-loader-owner`; direct upstream Parquet is not the production source.
 
 Production serving is the existing external MLflow service at `http://10.10.1.3:5000`, extended by the `regime-engine` MLflow Flask app. This repository does not define or run a local MLflow/PostgreSQL Compose deployment. There is no separate FastAPI/Uvicorn application, reverse proxy, or Prometheus exposure.
 

@@ -267,7 +267,7 @@ class _ExternalMlflowFixture:
         self.registered = SimpleNamespace(aliases={"champion": "7"})
 
     def get_experiment_by_name(self, name: str) -> object:
-        assert name == "regime-engine-evaluation"
+        assert name == "macro-regime-evaluation"
         return self.experiment
 
     def search_runs(self, **kwargs: object) -> list[object]:

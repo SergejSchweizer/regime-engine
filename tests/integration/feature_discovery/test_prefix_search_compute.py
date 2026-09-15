@@ -38,6 +38,7 @@ def source_rows() -> pd.DataFrame:
             "f1": second_axis + 0.10 * noise.normal(size=row_count),
             "f2": np.sin(index / 13.0) + 0.05 * noise.normal(size=row_count),
             "f3": np.cos(index / 19.0) + 0.05 * noise.normal(size=row_count),
+            "pca_pc_001": np.sin(index / 29.0),
         }
     )
 
@@ -88,6 +89,7 @@ def test_all_prefixes_and_gaussian_states_execute_with_real_hmm_math(monkeypatch
         ),
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         source_build_id="synthetic-build",
+        pca_raw_feature_order=FEATURES,
     )
 
     assert tuple(item.prefix_length for item in result.evaluations) == (2, 3, 4)

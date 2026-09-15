@@ -81,22 +81,34 @@ def _catalog() -> FeatureCatalogSnapshot:
         min_timestamp=START,
         max_timestamp=START + timedelta(days=1448),
     )
+    raw_names = tuple(f"f{index}" for index in range(8))
     entries = tuple(
-        FeatureCatalogEntry(name, index + 1) for index, name in enumerate(("f0", "f1", "f2"))
+        FeatureCatalogEntry(name, index + 1) for index, name in enumerate(raw_names)
+    ) + tuple(
+        FeatureCatalogEntry(
+            f"pca_pc_{index:03d}",
+            len(raw_names) + index,
+            schema_name="regime_engine",
+            relation_name="pca_generated_features",
+            relation_kind="VIEW",
+            ordinal_position=index,
+        )
+        for index in range(1, 9)
     )
     return FeatureCatalogSnapshot.from_entries(lineage, "timestamp_m1", entries)
 
 
 def _rows(count: int = 1449) -> pd.DataFrame:
     index = np.arange(count, dtype=np.float64)
-    return pd.DataFrame(
-        {
-            "timestamp_m1": tuple(START + timedelta(days=int(value)) for value in index),
-            "f0": np.sin(index / 17.0),
-            "f1": np.cos(index / 23.0),
-            "f2": np.sin(index / 7.0) + index / 1000.0,
-        }
-    )
+    values = {
+        "timestamp_m1": tuple(START + timedelta(days=int(value)) for value in index),
+        **{f"f{feature}": np.sin(index / (17.0 + feature)) + feature for feature in range(8)},
+        **{
+            f"pca_pc_{component:03d}": np.cos(index / (11.0 + component))
+            for component in range(1, 9)
+        },
+    }
+    return pd.DataFrame(values)
 
 
 def _candidate(catalog: FeatureCatalogSnapshot) -> ResolvedCandidateProfile:
@@ -626,7 +638,7 @@ def test_train_snapshot_rejects_test_only_column_and_keeps_catalog_order() -> No
         global_v4.select_v4_configuration(train, catalog=catalog, profile=profile)
 
     snapshot = global_v4._as_feature_snapshot(_rows(20), catalog)
-    assert snapshot.feature_names == ("f0", "f1", "f2")
+    assert snapshot.feature_names == catalog.feature_names
     assert snapshot.rows[0].timestamp == START
 
 
@@ -683,6 +695,9 @@ def test_outer_test_stage_checkpoint_reuses_refit_and_test_result(
         "outer_runner": outer_runner,
         "teacher_refitter": teacher_refitter,
         "max_workers": 1,
+        "pca_raw_feature_order": tuple(
+            name for name in catalog.feature_names if not name.startswith("pca_pc_")
+        ),
         "stage_checkpoint": checkpoint,
     }
     first = global_v4._evaluate_outer_fold(rows, fold, **arguments)

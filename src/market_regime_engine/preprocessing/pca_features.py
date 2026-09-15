@@ -26,6 +26,46 @@ _GENERATED_SCHEMA = "regime_engine"
 _GENERATED_RELATION = "pca_generated_features"
 
 
+def validate_pca_feature_universe(
+    catalog: FeatureCatalogSnapshot,
+    *,
+    component_count: int,
+) -> tuple[str, ...]:
+    """Validate and return the raw order of the mandatory v4 universe.
+
+    Canonical v4 never evaluates a raw-only catalog.  PCA columns are ordinary
+    catalogued features for discovery and selection, but their generated
+    provenance must still be structurally identifiable so fold-local PCA can
+    be refit without leaking the source snapshot fit.
+    """
+
+    if component_count < 1:
+        raise ValueError("PCA component_count must be positive")
+    generated = tuple(name for name in catalog.feature_names if name.startswith("pca_pc_"))
+    expected = tuple(f"pca_pc_{index:03d}" for index in range(1, component_count + 1))
+    if generated != expected:
+        raise ValueError(
+            "canonical v4 requires the complete raw-plus-PCA feature universe "
+            f"({', '.join(expected)})"
+        )
+    raw = tuple(name for name in catalog.feature_names if not name.startswith("pca_pc_"))
+    if not raw:
+        raise ValueError("canonical v4 PCA feature universe requires raw features")
+    generated_entries = {
+        entry.feature_name: entry
+        for entry in catalog.entries
+        if entry.feature_name.startswith("pca_pc_")
+    }
+    if any(
+        generated_entries[name].schema_name != _GENERATED_SCHEMA
+        or generated_entries[name].relation_name != _GENERATED_RELATION
+        or generated_entries[name].relation_kind not in {"VIEW", "MATERIALIZED VIEW"}
+        for name in expected
+    ):
+        raise ValueError("PCA feature entries must retain generated-feature provenance")
+    return raw
+
+
 def _utc(value: datetime, name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
         raise ValueError(f"{name} must be timezone-aware UTC")
@@ -241,4 +281,5 @@ __all__ = [
     "PCAGeneratedFeatureSet",
     "fit_and_materialize_pca_source",
     "materialize_pca_generated_features",
+    "validate_pca_feature_universe",
 ]

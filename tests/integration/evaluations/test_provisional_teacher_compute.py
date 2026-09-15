@@ -26,6 +26,7 @@ def source_rows() -> pd.DataFrame:
             "timestamp_m1": tuple(start + timedelta(days=int(value)) for value in index),
             FEATURES[0]: first_regime_axis + 0.10 * noise.normal(size=row_count),
             FEATURES[1]: second_regime_axis + 0.10 * noise.normal(size=row_count),
+            "pca_pc_001": np.sin(index / 29.0),
         }
     )
 
@@ -38,6 +39,7 @@ def test_real_four_k_gaussian_teacher_compute_and_selection() -> None:
         source_build_id="synthetic-build",
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
+        pca_raw_feature_order=FEATURES,
     )
 
     assert len(result.inner_plan.folds) == 1
