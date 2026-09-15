@@ -405,6 +405,85 @@ class _ThreadSafeFileBackedRegistryClient(_LocalRegistryClient):
             self._persist()
 
 
+class _FailAfterVersionCreateClient(_LocalRegistryClient):
+    """Inject a process-side failure after MLflow has persisted a version."""
+
+    fail_once = True
+
+    def create_model_version(
+        self,
+        *,
+        name: str,
+        source: str,
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> _Version:
+        version = super().create_model_version(
+            name=name,
+            source=source,
+            description=description,
+            tags=tags,
+        )
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("simulated client disconnect after version creation")
+        return version
+
+
+class _FailAfterAliasSetClient(_LocalRegistryClient):
+    """Inject a process-side failure after an alias target was written."""
+
+    fail_once = True
+
+    def set_registered_model_alias(self, name: str, alias: str, version: str) -> None:
+        super().set_registered_model_alias(name, alias, version)
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("simulated client disconnect after alias mutation")
+
+
+def test_retry_after_version_side_effect_reuses_the_immutable_version() -> None:
+    client = _FailAfterVersionCreateClient()
+    registry = MlflowModelRegistry(client)
+    selection = _selection()
+
+    with pytest.raises(RuntimeError, match="after version creation"):
+        _register(registry, selection, source="runs:/qa/retry-version")
+
+    retry = _register(registry, selection, source="runs:/qa/retry-version")
+    assert retry == "1"
+    assert client.create_count == 1
+    assert len(client.versions) == 1
+
+
+def test_retry_after_alias_side_effect_keeps_the_written_target_consistent() -> None:
+    client = _FailAfterAliasSetClient()
+    registry = MlflowModelRegistry(client)
+    selection = _selection()
+    version = _register(registry, selection)
+
+    with pytest.raises(RuntimeError, match="after alias mutation"):
+        registry.compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias=selection.alias,
+            expected_current_version=None,
+            new_version=version,
+            reason="fault-injected first promotion",
+        )
+
+    assert client.aliases["regime-xetra", selection.alias] == version
+    retry = registry.compare_and_swap_alias_with_audit(
+        model_name="regime-xetra",
+        alias=selection.alias,
+        expected_current_version=version,
+        new_version=version,
+        reason="reconcile after retry",
+    )
+    assert retry.changed is True
+    assert retry.observed_current_version == version
+    assert client.aliases["regime-xetra", selection.alias] == version
+
+
 @pytest.mark.parametrize("slot_id", ("k2", "k3", "k4", "k5"))
 def test_all_four_slots_register_and_promote_only_to_their_matching_alias(
     slot_id: str,

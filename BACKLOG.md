@@ -383,13 +383,13 @@ still required.
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
 | PR-420 | IN PROGRESS (LOCAL) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
 | PR-421 | IN PROGRESS (LOCAL) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility, while leakage/invariance QA remains |
-| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix; candidate-level invalid-result and full downstream integration acceptance remain |
+| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
 | PR-423 | IN PROGRESS (LOCAL) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (LOCAL) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (LOCAL) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
 | PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (LOCAL) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
-| PR-428 | IN PROGRESS (LOCAL) | Four-slot registry/CAS unit and integration QA is present; kill/retry side-effect acceptance remains |
+| PR-428 | IN PROGRESS (LOCAL) | Four-slot registry/CAS unit and integration QA now includes injected post-create/post-alias retry boundaries; cross-process kill/retry durability remains |
 | PR-429 | IN PROGRESS (LOCAL) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration remains gated by planned PR-420/423/426/427; branch deleted |
@@ -1779,7 +1779,7 @@ Acceptance:
 - [ ] Return exactly one selected family or an explicit ineligible result for
   each K; never silently fall back to another K.
 - [ ] Preserve the K-specific feature tuple and all source/policy hashes.
-- [ ] Emit candidate-level evidence for all three families even when one is
+- [x] Emit candidate-level evidence for all three families even when one is
   invalid, including its precise invalid reason.
 - [ ] Keep all four K computations independent and assemble results in K order.
 
@@ -2039,6 +2039,9 @@ QA:
   outcomes against a disposable file-backed MLflow registry.
 - [ ] Run deterministic concurrent promotion races with at least two workers
   per slot and prove one linearizable winner.
+- [x] Inject post-version-create and post-alias side-effect failures and prove
+  retry leaves one immutable version and a consistent alias target; cross-process
+  kill/retry durability remains for external acceptance.
 - [ ] Kill/retry publication at each side-effect boundary and prove no alias
   points to a missing or mismatched artifact.
 - [ ] Verify the external NAS path is not contacted by required CI tests.
