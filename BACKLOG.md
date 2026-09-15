@@ -391,7 +391,7 @@ still required.
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
-| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS unit and integration QA now includes injected post-create/post-alias retry boundaries; cross-process kill/retry durability remains |
+| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected and real cross-process post-create/post-alias kill/retry boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
@@ -2042,8 +2042,9 @@ QA:
 - [ ] Run deterministic concurrent promotion races with at least two workers
   per slot and prove one linearizable winner.
 - [x] Inject post-version-create and post-alias side-effect failures and prove
-  retry leaves one immutable version and a consistent alias target; cross-process
-  kill/retry durability remains for external acceptance.
+  retry leaves one immutable version and a consistent alias target; a separate
+  SQLite-backed process-kill test now proves the same invariant across process
+  boundaries.
 - [ ] Kill/retry publication at each side-effect boundary and prove no alias
   points to a missing or mismatched artifact.
 - [ ] Verify the external NAS path is not contacted by required CI tests.
