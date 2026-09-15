@@ -158,12 +158,13 @@ Status date: 2026-09-15
 - **External runtime checks:** repository configuration now requires the
   `macro-loader` read-only identity for database `postgres` and the
   `macro_loader.macro_features_daily` consumer relation owned by
-  `macro-loader-owner`. The new `macro-loader` password now authenticates
-  successfully over plaintext, but the NAS currently has no
-  `macro_loader.macro_features_daily` relation and grants the new user no
-  usable access to the old `regime_loader` relation; the schema/table
-  migration and read-only smoke evidence are therefore pending. External
-  MLflow health responds `OK` at
+  `macro-loader-owner`. The new `macro-loader` password authenticates
+  successfully over plaintext and the relation now contains 16,768 rows
+  through 2026-09-04, but NAS provisioning is not yet least-privilege:
+  the table owner is `postgres`, the reader still has write privileges on the
+  feature table, and `regime_loader_sync.gold_sync_state` is not granted to
+  the new reader. The read-only smoke evidence therefore remains pending.
+  External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
   registered models/versions, and deleted-LoggedModel inventory unavailable.
@@ -176,8 +177,7 @@ Status date: 2026-09-15
   evidence. The current input consumer identity is `macro-loader` /
   `macro-loader-owner` on `macro_loader.macro_features_daily`; the separate
   `regime_loader_sync.gold_sync_state` relation remains the lineage/control
-  source; the live source relation currently contains 16,768 rows through
-  2026-09-04. A new full run must wait for the explicit external namespace
+  source. A new full run must wait for the explicit external namespace
   decision and current-source production-eligibility evidence.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
