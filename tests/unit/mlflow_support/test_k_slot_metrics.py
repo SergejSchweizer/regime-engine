@@ -8,6 +8,7 @@ from market_regime_engine.mlflow_support.k_slot_metrics import (
     build_four_k_slot_projection,
     build_k_slot_projection,
     validate_k_metric_comparison,
+    validate_k_metric_points,
 )
 from market_regime_engine.mlflow_support.k_slot_plots import (
     build_cross_k_plot_payload,
@@ -83,12 +84,11 @@ def test_slot_projection_requires_all_families_and_four_slots() -> None:
 def test_same_feature_metric_comparison_rejects_feature_hash_mismatch() -> None:
     left = slot(2)
     assert left.metadata.feature_order_sha256
+    base_tags = metadata(2).tags(scope="candidate")
     tags = {
-        "one": {
-            "regime_engine.feature_order_sha256": "a" * 64,
-            "regime_engine.feature_dimension": "2",
-        },
+        "one": base_tags,
         "two": {
+            **base_tags,
             "regime_engine.feature_order_sha256": "b" * 64,
             "regime_engine.feature_dimension": "3",
         },
@@ -103,3 +103,43 @@ def test_same_feature_metric_comparison_rejects_feature_hash_mismatch() -> None:
             tags,
             state_count=2,
         )
+
+
+def test_k_metric_validation_requires_complete_lineage_and_identity() -> None:
+    points = {"model": (MetricPoint("valid_fold_rate", 1.0, 0, 1),)}
+    complete = metadata(2).tags(scope="candidate")
+
+    missing = {
+        key: value for key, value in complete.items() if key != "regime_engine.source_build_id"
+    }
+    with pytest.raises(ValueError, match="required lineage tags"):
+        validate_k_metric_points(points, {"model": missing})
+
+    mismatched = {
+        "one": complete,
+        "two": {**complete, "regime_engine.source_build_id": "different-source"},
+    }
+    with pytest.raises(ValueError, match="source_build_id lineage"):
+        validate_k_metric_comparison(
+            "valid_fold_rate",
+            {
+                "one": points["model"],
+                "two": points["model"],
+            },
+            mismatched,
+            state_count=2,
+        )
+
+
+def test_k_plot_inputs_are_canonical_across_order_and_process_count() -> None:
+    from market_regime_engine.mlflow_support.k_slot_plots import prepare_k_plot_payloads
+
+    slots = tuple(slot(k) for k in (2, 3, 4, 5))
+    keys = ("fit_quality_oos_predictive_loglik_per_obs",)
+    serial = prepare_k_plot_payloads(slots, keys, max_workers=1)
+    parallel = prepare_k_plot_payloads(tuple(reversed(slots)), tuple(reversed(keys)), max_workers=2)
+
+    assert tuple(item.canonical_payload_hash for item in serial) == tuple(
+        item.canonical_payload_hash for item in parallel
+    )
+    assert tuple(item.slot_id for item in serial) == ("k2", "k3", "k4", "k5")
