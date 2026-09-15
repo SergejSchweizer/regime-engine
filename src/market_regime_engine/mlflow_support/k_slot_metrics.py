@@ -37,6 +37,18 @@ TAG_SOURCE_BUILD_ID = "regime_engine.source_build_id"
 TAG_SOURCE_DATA_SHA256 = "regime_engine.source_data_sha256"
 TAG_EVALUATION_PLAN_HASH = "regime_engine.evaluation_plan_hash"
 
+_REQUIRED_LINEAGE_TAGS = (
+    TAG_SLOT_ID,
+    TAG_STATE_COUNT,
+    TAG_FEATURE_ORDER_SHA256,
+    TAG_FEATURE_DIMENSION,
+    TAG_POLICY_VERSION,
+    TAG_COMPARISON_DOMAIN_ID,
+    TAG_SOURCE_BUILD_ID,
+    TAG_SOURCE_DATA_SHA256,
+    TAG_EVALUATION_PLAN_HASH,
+)
+
 # Only these catalogued quantities are dimension-independent enough for a
 # cross-K plot.  In particular, likelihood and information criteria remain
 # same-feature-vector metrics even when their numeric values happen to exist.
@@ -301,13 +313,40 @@ def validate_k_metric_points(
     for model_id, points in metric_points.items():
         if not model_id or model_id not in tags:
             raise ValueError(f"missing tags for LoggedModel {model_id!r}")
+        model_tags = tags[model_id]
+        missing = tuple(key for key in _REQUIRED_LINEAGE_TAGS if not model_tags.get(key))
+        if missing:
+            raise ValueError(
+                f"LoggedModel {model_id!r} is missing required lineage tags: {', '.join(missing)}"
+            )
+        try:
+            state_count = int(model_tags[TAG_STATE_COUNT])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"LoggedModel {model_id!r} has an invalid state count") from exc
+        if state_count not in LEGAL_K:
+            raise ValueError(f"LoggedModel {model_id!r} has an invalid K-slot state count")
+        try:
+            slot = KChampionSlot(model_tags[TAG_SLOT_ID])
+        except ValueError as exc:
+            raise ValueError(f"LoggedModel {model_id!r} has an invalid K-slot ID") from exc
+        if slot.state_count != state_count:
+            raise ValueError(f"LoggedModel {model_id!r} has mismatched slot and state count")
+        try:
+            dimension = int(model_tags[TAG_FEATURE_DIMENSION])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"LoggedModel {model_id!r} has an invalid feature dimension") from exc
+        if dimension < 1:
+            raise ValueError(f"LoggedModel {model_id!r} has an invalid feature dimension")
+        _text(model_tags[TAG_POLICY_VERSION], "policy_version")
+        _text(model_tags[TAG_COMPARISON_DOMAIN_ID], "comparison_domain_id")
+        _text(model_tags[TAG_SOURCE_BUILD_ID], "source_build_id")
+        _sha256(model_tags[TAG_FEATURE_ORDER_SHA256], "feature_order_sha256")
+        _sha256(model_tags[TAG_SOURCE_DATA_SHA256], "source_data_sha256")
+        _sha256(model_tags[TAG_EVALUATION_PLAN_HASH], "evaluation_plan_hash")
         point_tuple = tuple(points)
         validate_metric_points(point_tuple)
         if not point_tuple:
             raise ValueError(f"LoggedModel {model_id!r} has no Model Metrics")
-        if tags[model_id].get(TAG_FEATURE_ORDER_SHA256, "") == "":
-            raise ValueError(f"LoggedModel {model_id!r} is missing feature-order hash")
-        _sha256(tags[model_id][TAG_FEATURE_ORDER_SHA256], "feature_order_sha256")
 
 
 def validate_k_metric_comparison(
@@ -322,6 +361,16 @@ def validate_k_metric_comparison(
 
     definition = require_metric_definition(metric_key)
     validate_k_metric_points(metric_points, tags)
+    for identity_key in (
+        TAG_SOURCE_BUILD_ID,
+        TAG_SOURCE_DATA_SHA256,
+        TAG_EVALUATION_PLAN_HASH,
+        TAG_POLICY_VERSION,
+        TAG_COMPARISON_DOMAIN_ID,
+    ):
+        values = {tags[model_id][identity_key] for model_id in metric_points}
+        if len(values) != 1:
+            raise ValueError(f"{metric_key} has incompatible {identity_key} lineage")
     if definition.comparison_domain == "same_feature_vector_source_plan":
         hashes = {tags[model_id].get(TAG_FEATURE_ORDER_SHA256, "") for model_id in metric_points}
         dimensions = {tags[model_id].get(TAG_FEATURE_DIMENSION, "") for model_id in metric_points}

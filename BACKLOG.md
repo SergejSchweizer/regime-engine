@@ -389,7 +389,7 @@ still required.
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
-| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
+| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected and real cross-process post-create/post-alias kill/retry boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
@@ -1975,7 +1975,8 @@ QA:
 - [ ] Tests reject mixed feature dimensions for raw likelihood/AIC/BIC plots.
 - [ ] Completion-order, LoggedModel-ID and process-count permutations produce
   identical canonical metric/plot payload hashes.
-- [ ] Missing, duplicate, conflicting and unknown metric points fail closed.
+- [x] Missing lineage, duplicate, conflicting and unknown metric points fail
+  closed; order/process-count permutations preserve canonical payload hashes.
 - [ ] Ineligible K slots produce explicit unavailable status rather than an
   empty or fabricated plot.
 - [ ] Plot manifests prove no evaluation recomputation occurred.
