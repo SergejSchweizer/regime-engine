@@ -7,7 +7,7 @@ Repository `SergejSchweizer/regime-engine` ships Python distribution `market-reg
 ## Ownership boundary
 
 ```text
-regime-loader
+macro-loader
   -> immutable Gold
   -> external feature PostgreSQL 10.10.1.3:54321
   -> regime-engine
@@ -33,7 +33,7 @@ Production exposes exactly one MLflow 3.15.1 HTTP service on `10.10.1.3:5000`:
 There is no standalone FastAPI/Uvicorn service, `mlflow models serve`, reverse proxy, or Prometheus exporter. MLflow custom apps are Flask/WSGI and are hosted by the existing external MLflow service.
 
 Feature PostgreSQL is external and uses a dedicated read-only trusted-LAN
-`"regime-engine"` role with explicit plaintext `sslmode=disable`. MLflow
+`"macro-loader"` role with explicit plaintext `sslmode=disable`. MLflow
 tracking, registry, artifacts, and the profile API are provided by the existing
 service at `http://10.10.1.3:5000`. This repository owns no MLflow or PostgreSQL
 Compose services and no application image.

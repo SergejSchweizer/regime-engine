@@ -9,11 +9,21 @@ from market_regime_engine.mlflow_support.model_package import save_production_pa
 from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
 
 
 def artifact() -> ProductionModelArtifact:
     features = ("f0",)
+    pca_scaler = fit_pca_hmm_scaler(
+        (datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)),
+        ((0.0,), (1.0,)),
+        raw_feature_order=features,
+        inner_fold_id="integration",
+        fit_start=datetime(2026, 1, 1, tzinfo=UTC),
+        fit_end=datetime(2026, 1, 2, tzinfo=UTC),
+        component_count=1,
+        model_feature_order=features,
+    )
     return ProductionModelArtifact(
         profile_id="xetra",
         profile_config_version=4,
@@ -34,12 +44,7 @@ def artifact() -> ProductionModelArtifact:
         source_catalog_hash="f" * 64,
         state_identity_scope="model_version_local",
         feature_order=features,
-        scaler=StandardScalerArtifact(
-            feature_order=features,
-            means=(0.0,),
-            variances=(1.0,),
-            scales=(1.0,),
-        ),
+        scaler=pca_scaler.hmm_scaler,
         hmm=GaussianHMMArtifact(
             state_count=2,
             feature_order=features,
@@ -54,6 +59,7 @@ def artifact() -> ProductionModelArtifact:
         terminal_filtered_probabilities=(0.4, 0.6),
         retained_observation_count=1500,
         skipped_incomplete_observation_count=0,
+        pca_scaler=pca_scaler,
     )
 
 

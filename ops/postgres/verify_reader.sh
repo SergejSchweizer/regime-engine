@@ -15,25 +15,34 @@ WITH role_check AS (
          rolsuper,
          COALESCE(rolconfig, ARRAY[]::text[]) AS rolconfig
   FROM pg_roles
-  WHERE rolname = 'regime-engine'
+  WHERE rolname = 'macro-loader'
 ), assertions AS (
   SELECT
-    rolname = 'regime-engine' AS exact_role,
+    rolname = 'macro-loader' AS exact_role,
     rolcanlogin AS can_login,
     NOT rolcreatedb AND NOT rolcreaterole AND NOT rolsuper AS no_admin,
     EXISTS (
       SELECT 1 FROM unnest(rolconfig) config
       WHERE config = 'default_transaction_read_only=on'
     ) AS read_only_default,
-    has_database_privilege('regime-engine', :'target_db', 'CONNECT') AS db_connect,
-    has_schema_privilege('regime-engine', 'regime_loader', 'USAGE') AS feature_schema_usage,
-    has_schema_privilege('regime-engine', 'regime_loader_sync', 'USAGE') AS sync_schema_usage,
-    has_table_privilege('regime-engine', 'regime_loader.regime_features_daily', 'SELECT') AS feature_select,
-    has_table_privilege('regime-engine', 'regime_loader_sync.gold_sync_state', 'SELECT') AS sync_select,
-    NOT has_table_privilege('regime-engine', 'regime_loader.regime_features_daily', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') AS no_feature_write,
-    NOT has_table_privilege('regime-engine', 'regime_loader_sync.gold_sync_state', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') AS no_sync_write,
-    NOT has_schema_privilege('regime-engine', 'regime_loader', 'CREATE') AS no_feature_create,
-    NOT has_schema_privilege('regime-engine', 'regime_loader_sync', 'CREATE') AS no_sync_create
+    has_database_privilege('macro-loader', :'target_db', 'CONNECT') AS db_connect,
+    has_schema_privilege('macro-loader', 'macro_loader', 'USAGE') AS feature_schema_usage,
+    has_schema_privilege('macro-loader', 'macro_loader_sync', 'USAGE') AS sync_schema_usage,
+    has_table_privilege('macro-loader', 'macro_loader.macro_features_daily', 'SELECT') AS feature_select,
+    has_table_privilege('macro-loader', 'macro_loader_sync.gold_sync_state', 'SELECT') AS sync_select,
+    NOT has_table_privilege('macro-loader', 'macro_loader.macro_features_daily', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') AS no_feature_write,
+    NOT has_table_privilege('macro-loader', 'macro_loader_sync.gold_sync_state', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') AS no_sync_write,
+    NOT has_schema_privilege('macro-loader', 'macro_loader', 'CREATE') AS no_feature_create,
+    NOT has_schema_privilege('macro-loader', 'macro_loader_sync', 'CREATE') AS no_sync_create,
+    EXISTS (
+      SELECT 1
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_roles owner_role ON owner_role.oid = c.relowner
+      WHERE n.nspname = 'macro_loader'
+        AND c.relname = 'macro_features_daily'
+        AND owner_role.rolname = 'macro-loader-owner'
+    ) AS expected_owner
   FROM role_check
 )
 SELECT CASE WHEN bool_and(ok) THEN 'reader privileges verified' ELSE pg_catalog.set_config('regime_engine.verify_failed', '1', false) END
@@ -41,7 +50,8 @@ FROM assertions,
 LATERAL unnest(ARRAY[
   exact_role, can_login, no_admin, read_only_default, db_connect,
   feature_schema_usage, sync_schema_usage, feature_select, sync_select,
-  no_feature_write, no_sync_write, no_feature_create, no_sync_create
+  no_feature_write, no_sync_write, no_feature_create, no_sync_create,
+  expected_owner
 ]) AS checks(ok);
 
 DO $$

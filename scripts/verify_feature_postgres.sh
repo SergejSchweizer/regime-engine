@@ -53,7 +53,7 @@ fi
 
 export REGIME_FEATURE_PGHOST="${REGIME_FEATURE_PGHOST:-10.10.1.3}"
 export REGIME_FEATURE_PGPORT="${REGIME_FEATURE_PGPORT:-54321}"
-export REGIME_FEATURE_PGUSER="${REGIME_FEATURE_PGUSER:-regime-engine}"
+export REGIME_FEATURE_PGUSER="${REGIME_FEATURE_PGUSER:-macro-loader}"
 export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-disable}"
 
 [[ "$REGIME_FEATURE_PGHOST" == "10.10.1.3" ]] || {
@@ -64,8 +64,8 @@ export REGIME_FEATURE_PGSSLMODE="${REGIME_FEATURE_PGSSLMODE:-disable}"
   echo "external feature PostgreSQL port must be exactly 54321" >&2
   exit 2
 }
-[[ "$REGIME_FEATURE_PGUSER" == "regime-engine" ]] || {
-  echo "external feature PostgreSQL user must be exactly regime-engine" >&2
+[[ "$REGIME_FEATURE_PGUSER" == "macro-loader" ]] || {
+  echo "external feature PostgreSQL user must be exactly macro-loader" >&2
   exit 2
 }
 [[ "$REGIME_FEATURE_PGSSLMODE" == "disable" ]] || {

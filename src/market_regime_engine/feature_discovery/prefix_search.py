@@ -20,6 +20,7 @@ from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
     run_walk_forward_candidate,
+    validate_mandatory_pca_feature_universe,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
@@ -69,7 +70,7 @@ class _PrefixProcessTask:
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
     max_workers: int
-    pca_raw_feature_order: tuple[str, ...] | None
+    pca_raw_feature_order: tuple[str, ...]
     pca_variance_threshold: float
     runner: PrefixCandidateRunner
 
@@ -84,6 +85,7 @@ class _PrefixSearchTask:
     profile: ModelProfile
     teacher: ProvisionalTeacherReference
     feature_order: tuple[str, ...]
+    state_counts: tuple[int, ...]
     original_feature_universe: tuple[str, ...]
     source_build_id: str
     feature_selection_definition_hash: str
@@ -153,6 +155,8 @@ def _evaluate_candidates(
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate one prefix's candidates concurrently with deterministic output assembly."""
 
+    if pca_raw_feature_order is None:
+        raise ValueError("PCA prefix evaluation requires a raw feature order")
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
     total_worker_budget = cpu_worker_count(max_workers)
 
@@ -190,13 +194,12 @@ def _evaluate_candidates(
                     "max_workers": candidate_max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
-                if pca_raw_feature_order is not None:
-                    kwargs.update(
-                        {
-                            "pca_raw_feature_order": pca_raw_feature_order,
-                            "pca_variance_threshold": pca_variance_threshold,
-                        }
-                    )
+                kwargs.update(
+                    {
+                        "pca_raw_feature_order": pca_raw_feature_order,
+                        "pca_variance_threshold": pca_variance_threshold,
+                    }
+                )
                 return run_prefix_gaussian_candidate(
                     source_rows,
                     plan,
@@ -216,9 +219,7 @@ def _evaluate_candidates(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        if pca_raw_feature_order is not None and runner is not run_prefix_gaussian_candidate:
-            raise ValueError("PCA prefix evaluation requires the canonical candidate runner")
-        if pca_raw_feature_order is None:
+        if runner is not run_prefix_gaussian_candidate:
             return runner(
                 source_rows,
                 plan,
@@ -237,12 +238,7 @@ def _evaluate_candidates(
             pca_variance_threshold=pca_variance_threshold,
         )
 
-    use_processes = (
-        seed_checkpoint_factory is None
-        and worker_limit > 1
-        and is_pickleable(runner)
-        and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
-    )
+    use_processes = seed_checkpoint_factory is None and worker_limit > 1 and is_pickleable(runner)
     if use_processes:
         nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
         tasks = tuple(
@@ -293,6 +289,7 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
     try:
         candidates = _prefix_candidates(
             task.feature_order,
+            state_counts=task.state_counts,
             original_feature_universe=task.original_feature_universe,
             source_build_id=task.source_build_id,
             feature_selection_definition_hash=task.feature_selection_definition_hash,
@@ -363,6 +360,7 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
                     task.feature_order,
                     "shared teacher support "
                     f"{teacher_coverage:.6f} below {MIN_TEACHER_SHARED_SUPPORT:.2f}",
+                    candidate_id=raw_evaluations[0].candidate_id,
                     candidate_evaluations=candidate_summaries,
                     shared_timestamp_count=agreement.shared_timestamp_count,
                 ),
@@ -382,7 +380,12 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
         )
     except (ValueError, TypeError) as exc:
         return _EvaluatedPrefix(
-            _invalid_prefix(task.prefix_length, task.feature_order, str(exc)),
+            _invalid_prefix(
+                task.prefix_length,
+                task.feature_order,
+                str(exc),
+                candidate_id=f"gaussian_hmm_k{task.state_counts[0]}_full",
+            ),
             None,
         )
 
@@ -432,6 +435,7 @@ def _validate_profile(profile: ModelProfile) -> None:
 def _prefix_candidates(
     feature_order: tuple[str, ...],
     *,
+    state_counts: tuple[int, ...] = _GAUSSIAN_STATE_COUNTS,
     original_feature_universe: tuple[str, ...],
     source_build_id: str,
     feature_selection_definition_hash: str,
@@ -450,7 +454,7 @@ def _prefix_candidates(
             original_feature_universe=original_feature_universe,
             feature_contract_version=4,
         )
-        for state_count in _GAUSSIAN_STATE_COUNTS
+        for state_count in state_counts
     )
 
 
@@ -507,13 +511,14 @@ def _invalid_prefix(
     feature_order: tuple[str, ...],
     reason: str,
     *,
+    candidate_id: str = "gaussian_hmm_k2_full",
     candidate_evaluations: tuple[CandidateEvaluation, ...] = (),
     shared_timestamp_count: int = 0,
 ) -> PrefixEvaluation:
     return PrefixEvaluation(
         prefix_length=prefix_length,
         feature_order=feature_order,
-        candidate_id="gaussian_hmm_k2_full",
+        candidate_id=candidate_id,
         shared_timestamp_count=shared_timestamp_count,
         shared_teacher_coverage=0.0,
         soft_regime_nmi=0.0,
@@ -553,6 +558,7 @@ def search_ranked_prefixes(
     evaluation_sink: PrefixEvaluationSink | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
+    state_counts: tuple[int, ...] = _GAUSSIAN_STATE_COUNTS,
 ) -> PrefixSearchResult:
     """Evaluate every exact ranked prefix and choose only by teacher soft NMI.
 
@@ -567,10 +573,25 @@ def search_ranked_prefixes(
     if not isinstance(teacher, ProvisionalTeacherReference):
         raise TypeError("prefix search requires a ProvisionalTeacherReference")
     _validate_profile(profile)
+    state_counts = tuple(state_counts)
+    if (
+        not state_counts
+        or state_counts != tuple(sorted(set(state_counts)))
+        or any(state_count not in _GAUSSIAN_STATE_COUNTS for state_count in state_counts)
+    ):
+        raise ValueError("state_counts must be an ordered non-empty subset of K=2,3,4,5")
     build_id = teacher.source_build_id if source_build_id is None else source_build_id
     if build_id != teacher.source_build_id:
         raise ValueError("prefix search source build differs from the frozen teacher")
-    universe = ranked_features if original_feature_universe is None else original_feature_universe
+    universe = (
+        tuple(column for column in source_rows.columns if column != _TIMESTAMP_COLUMN)
+        if original_feature_universe is None
+        else original_feature_universe
+    )
+    pca_order = validate_mandatory_pca_feature_universe(
+        pca_raw_feature_order,
+        universe,
+    )
     _validate_features(ranked_features, universe)
     if not isinstance(build_id, str) or not build_id or build_id.strip() != build_id:
         raise ValueError("prefix search source_build_id must be non-empty and trimmed")
@@ -605,6 +626,7 @@ def search_ranked_prefixes(
             profile,
             teacher,
             ranked_features[:prefix_length],
+            state_counts,
             universe,
             build_id,
             definition_hash,
@@ -612,7 +634,7 @@ def search_ranked_prefixes(
             runner,
             total_worker_budget,
             seed_checkpoint_factory,
-            pca_raw_feature_order,
+            pca_order,
             pca_variance_threshold,
         )
         for prefix_length in prefix_lengths
@@ -626,11 +648,7 @@ def search_ranked_prefixes(
             replace(task, max_workers=nested_limits[index % prefix_worker_limit])
             for index, task in enumerate(prefix_tasks)
         )
-        use_processes = (
-            seed_checkpoint_factory is None
-            and is_pickleable(runner)
-            and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
-        )
+        use_processes = seed_checkpoint_factory is None and is_pickleable(runner)
         if use_processes:
             with cpu_process_pool(prefix_worker_limit) as executor:
                 futures = tuple(
@@ -662,6 +680,7 @@ def search_ranked_prefixes(
                     prefix_evaluation.prefix_length,
                     prefix_evaluation.feature_order,
                     str(exc),
+                    candidate_id=prefix_evaluation.candidate_id,
                 )
         prefix_results.append(prefix_evaluation)
     prefix_evaluations = tuple(prefix_results)

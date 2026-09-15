@@ -11,7 +11,6 @@ from market_regime_engine.evaluation_runs.math_audit import (
     build_math_expectations,
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
 
 
@@ -24,6 +23,15 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
             "f0": (0.0, 1.0, 0.5, 1.5),
             "f1": (1.0, 2.0, 1.5, 2.5),
         }
+    )
+    pca_scaler = fit_pca_hmm_scaler(
+        timestamps,
+        rows[["f0"]].to_numpy(),
+        raw_feature_order=("f0",),
+        inner_fold_id="fold_001",
+        fit_start=timestamps[0],
+        fit_end=timestamps[-1],
+        model_feature_order=("f0",),
     )
     artifact = GaussianHMMArtifact(
         state_count=2,
@@ -39,12 +47,8 @@ def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
         oos_timestamps=timestamps[2:],
         oos_filtered_probabilities=((0.5, 0.5),) * 2,
         model_artifact=artifact,
-        scaler_artifact=StandardScalerArtifact(
-            feature_order=("f0",),
-            means=(0.5,),
-            variances=(0.25,),
-            scales=(0.5,),
-        ),
+        scaler_artifact=pca_scaler.hmm_scaler,
+        pca_scaler_artifact=pca_scaler,
         train_log_likelihood=-3.0,
         oos_predictive_log_likelihood=-2.0,
     )

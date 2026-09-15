@@ -79,15 +79,15 @@ class SchemaConnection:
 
 def _relations() -> list[tuple[Any, ...]]:
     return [
-        ("regime_loader", "alpha_features", "r"),
-        ("regime_loader", "beta_features", "r"),
+        ("macro_loader", "alpha_features", "r"),
+        ("macro_loader", "beta_features", "r"),
     ]
 
 
 def _columns() -> list[tuple[Any, ...]]:
     return [
         (
-            "regime_loader",
+            "macro_loader",
             "alpha_features",
             "r",
             "timestamp_m1",
@@ -95,9 +95,9 @@ def _columns() -> list[tuple[Any, ...]]:
             "timestamp with time zone",
             "timestamptz",
         ),
-        ("regime_loader", "alpha_features", "r", "alpha", 2, "double precision", "float8"),
+        ("macro_loader", "alpha_features", "r", "alpha", 2, "double precision", "float8"),
         (
-            "regime_loader",
+            "macro_loader",
             "beta_features",
             "r",
             "timestamp_m1",
@@ -105,7 +105,7 @@ def _columns() -> list[tuple[Any, ...]]:
             "timestamp with time zone",
             "timestamptz",
         ),
-        ("regime_loader", "beta_features", "r", "beta", 2, "double precision", "float8"),
+        ("macro_loader", "beta_features", "r", "beta", 2, "double precision", "float8"),
     ]
 
 
@@ -166,7 +166,7 @@ def test_schema_wide_request_discovers_and_unions_every_relation() -> None:
 def test_schema_wide_accepts_explicit_postgres_timestamp_precision() -> None:
     columns = _columns()
     columns[0] = (
-        "regime_loader",
+        "macro_loader",
         "alpha_features",
         "r",
         "timestamp_m1",
@@ -224,7 +224,7 @@ def test_schema_wide_materialization_preserves_explicit_database_nulls() -> None
 
 
 def test_schema_wide_discovery_rejects_unsupported_relation_kind() -> None:
-    connection = _connection(relations=[("regime_loader", "foreign_features", "f")])
+    connection = _connection(relations=[("macro_loader", "foreign_features", "f")])
     with pytest.raises(ValueError, match="unsupported relation kind"):
         PostgresFeatureSource(lambda: connection).read_schema_wide_with_catalog(
             FeatureRequest.all_features()
@@ -235,7 +235,7 @@ def test_schema_wide_discovery_rejects_unsupported_relation_kind() -> None:
 def test_schema_wide_discovery_rejects_duplicate_bare_feature_names() -> None:
     columns = _columns()
     columns[-1] = (
-        "regime_loader",
+        "macro_loader",
         "beta_features",
         "r",
         "alpha",
@@ -254,7 +254,7 @@ def test_new_database_feature_changes_snapshot_identity_without_code_configurati
     baseline = _connection()
     extended_columns = [
         *_columns(),
-        ("regime_loader", "beta_features", "r", "beta_new", 3, "double precision", "float8"),
+        ("macro_loader", "beta_features", "r", "beta_new", 3, "double precision", "float8"),
     ]
     extended_rows = [
         [(START, 1.0), (START + timedelta(days=1), 2.0)],
@@ -292,12 +292,12 @@ def test_schema_wide_api_rejects_a_caller_feature_allowlist() -> None:
     ("relations", "columns", "message"),
     [
         ([], _columns(), "contains no relations"),
-        ([("regime_loader", "alpha_features")], _columns(), "relation catalog shape"),
+        ([("macro_loader", "alpha_features")], _columns(), "relation catalog shape"),
         ([(None, "alpha_features", "r")], _columns(), "invalid text"),
         ([("other_schema", "alpha_features", "r")], _columns(), "escaped"),
-        ([("regime_loader", "bad-relation", "r")], _columns(), "unsafe feature relation"),
-        ([("regime_loader", "alpha_features", "r")] * 2, _columns(), "duplicate relations"),
-        ([("regime_loader", "alpha_features", "r")], [], "has no columns"),
+        ([("macro_loader", "bad-relation", "r")], _columns(), "unsafe feature relation"),
+        ([("macro_loader", "alpha_features", "r")] * 2, _columns(), "duplicate relations"),
+        ([("macro_loader", "alpha_features", "r")], [], "has no columns"),
     ],
 )
 def test_schema_wide_relation_catalog_failures(
@@ -322,7 +322,7 @@ def test_schema_wide_relation_catalog_failures(
             [
                 *_columns()[:1],
                 (
-                    "regime_loader",
+                    "macro_loader",
                     "alpha_features",
                     "r",
                     "alpha",
@@ -338,7 +338,7 @@ def test_schema_wide_relation_catalog_failures(
             [
                 *_columns()[:1],
                 (
-                    "regime_loader",
+                    "macro_loader",
                     "alpha_features",
                     "r",
                     "Bad-Feature",
@@ -354,7 +354,7 @@ def test_schema_wide_relation_catalog_failures(
             [
                 *_columns()[:1],
                 (
-                    "regime_loader",
+                    "macro_loader",
                     "alpha_features",
                     "r",
                     "alpha",
@@ -369,7 +369,7 @@ def test_schema_wide_relation_catalog_failures(
         (
             [
                 (
-                    "regime_loader",
+                    "macro_loader",
                     "alpha_features",
                     "r",
                     "timestamp_m1",
@@ -385,7 +385,7 @@ def test_schema_wide_relation_catalog_failures(
             [
                 *_columns()[:-1],
                 (
-                    "regime_loader",
+                    "macro_loader",
                     "beta_features",
                     "r",
                     "alpha",
@@ -412,21 +412,21 @@ def test_schema_wide_column_catalog_shape_and_unknown_relation_fail_closed() -> 
         (
             [
                 *_columns(),
-                ("regime_loader", "alpha_features", "r", "broken", 2, "double precision"),
+                ("macro_loader", "alpha_features", "r", "broken", 2, "double precision"),
             ],
             "column catalog shape",
         ),
         (
             [
                 *_columns(),
-                ("regime_loader", "unknown", "r", "broken", 2, "double precision", "float8"),
+                ("macro_loader", "unknown", "r", "broken", 2, "double precision", "float8"),
             ],
             "unknown feature relation",
         ),
         (
             [
                 *_columns()[:1],
-                ("regime_loader", "alpha_features", "f", "alpha", 2, "double precision", "float8"),
+                ("macro_loader", "alpha_features", "f", "alpha", 2, "double precision", "float8"),
                 *_columns()[2:],
             ],
             "unsupported relation kind",

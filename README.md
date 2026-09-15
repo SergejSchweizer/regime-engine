@@ -2,7 +2,7 @@
 
 `regime-engine` is the implementation repository for the Python distribution `market-regime-engine` and import package `market_regime_engine`.
 
-The MVP is a statistical regime service built around full-covariance Gaussian HMMs. It reads the external `regime-loader` feature PostgreSQL serving replica and exposes predictions through the same MLflow 3.15.1 service that owns tracking, registry, and artifacts.
+The MVP is a statistical regime service built around full-covariance Gaussian HMMs. It reads the external `macro-loader` feature PostgreSQL serving replica (`macro_loader.macro_features_daily`) and exposes predictions through the same MLflow 3.15.1 service that owns tracking, registry, and artifacts.
 
 ## Canonical identity
 
@@ -29,7 +29,7 @@ The script rejects any interpreter other than Python 3.14.7 and installs the exa
 
 ## Data and scientific claim boundary
 
-The production feature source is the external PostgreSQL service at `10.10.1.3:54321`, read through the dedicated trusted-LAN plaintext `"regime-engine"` role (`sslmode=disable`). Source data has `data_time_semantics=current_vintage_observation_day`: evaluation is causal/split-leak-free relative to the current-vintage observation sequence, but it does not claim provider-release-time historical-vintage safety.
+The production feature source is the external PostgreSQL service at `10.10.1.3:54321`, read through the dedicated trusted-LAN plaintext `"macro-loader"` role (`sslmode=disable`). Source data has `data_time_semantics=current_vintage_observation_day`: evaluation is causal/split-leak-free relative to the current-vintage observation sequence, but it does not claim provider-release-time historical-vintage safety.
 
 For the opt-in external feature-PG verifier and cron jobs, copy
 `config.example.yaml` to the Git-ignored `config.yaml` and set the deployment
@@ -48,7 +48,7 @@ server, reverse proxy, or second serving port.
 
 The lifecycle/evaluation commands default to this endpoint and reject local or
 alternate MLflow URIs. The feature PostgreSQL remains external at
-`10.10.1.3:54321` and is accessed through the read-only `regime-engine` role.
+`10.10.1.3:54321` and is accessed through the read-only `macro-loader` role.
 
 Run the complete Xetra v4 evaluation as one cron-safe command:
 

@@ -14,6 +14,8 @@ from market_regime_engine.profiles.loader import load_profile
 
 HASH = "a" * 64
 FEATURES = ("f0", "f1")
+FEATURE_UNIVERSE = (*FEATURES, "unused", "pca_pc_001")
+PCA_RAW_FEATURES = (*FEATURES, "unused")
 
 
 def source_rows(row_count: int = 1323) -> pd.DataFrame:
@@ -78,13 +80,14 @@ def test_final_grid_runs_exact_ordered_12_candidates_on_one_feature_contract() -
     result = evaluate_final_v4_grid(
         rows,
         feature_order=FEATURES,
-        original_feature_universe=("f0", "f1", "unused"),
+        original_feature_universe=FEATURE_UNIVERSE,
         profile=profile,
         plan=plan,
         source_build_id="build-1",
         feature_selection_definition_hash=HASH,
         feature_selection_execution_hash=HASH,
         runner=fake_runner,
+        pca_raw_feature_order=PCA_RAW_FEATURES,
         max_workers=1,
     )
 
@@ -105,6 +108,8 @@ def test_final_grid_returns_explicit_no_champion_when_every_candidate_fails() ->
         plan=plan,
         source_build_id="build-1",
         runner=invalid_runner,
+        original_feature_universe=FEATURE_UNIVERSE,
+        pca_raw_feature_order=PCA_RAW_FEATURES,
         max_workers=1,
     )
 
@@ -125,5 +130,7 @@ def test_final_grid_rejects_invalid_selected_feature_contract(
             plan=plan,
             source_build_id="build-1",
             runner=fake_runner,
+            original_feature_universe=FEATURE_UNIVERSE,
+            pca_raw_feature_order=FEATURES,
             max_workers=1,
         )

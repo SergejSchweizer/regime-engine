@@ -66,14 +66,12 @@ def _likelihood_item(
         plan_fold.train_source_observations : plan_fold.train_source_observations
         + plan_fold.test_source_observations
     ]
-    pca_scaler = getattr(fold, "pca_scaler_artifact", None)
+    pca_scaler = fold.pca_scaler_artifact
     if pca_scaler is None:
-        train_values = scaler.transform(_complete_rows(train_source, feature_order))
-        test_values = scaler.transform(_complete_rows(test_source, feature_order))
-    else:
-        raw_feature_order = tuple(pca_scaler.raw_feature_order)
-        train_values = pca_scaler.transform(_complete_rows(train_source, raw_feature_order))
-        test_values = pca_scaler.transform(_complete_rows(test_source, raw_feature_order))
+        raise ValueError("v4 math audit requires fold-local PCA evidence")
+    raw_feature_order = tuple(pca_scaler.raw_feature_order)
+    train_values = pca_scaler.transform(_complete_rows(train_source, raw_feature_order))
+    test_values = pca_scaler.transform(_complete_rows(test_source, raw_feature_order))
     train_filter = causal_filter(train_values, model_artifact)
     continuation_start = tuple(
         float(value)

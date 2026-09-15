@@ -46,7 +46,7 @@ def _populate_file_store(tmp_path: Path) -> tuple[MlflowClient, MlflowClient, st
     tracking_uri = (tmp_path / "mlruns").as_uri()
     target_port = FileMlflowTrackingPort(
         tracking_uri,
-        experiment_name="regime-engine-evaluation",
+        experiment_name="macro-regime-evaluation",
     )
     parent_run = target_port.start_run(run_name="legacy-parent")
     nested_run = target_port.start_run(run_name="legacy-nested", parent_run_id=parent_run)

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from market_regime_engine.mlflow_support.model_package import save_production_package
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing import fit_pca_hmm_scaler
 from market_regime_engine.serving import model_resolver
 from market_regime_engine.serving.model_cache import ModelCache, ModelCacheCapacityError
 from market_regime_engine.serving.model_resolver import ModelResolver
@@ -20,6 +21,17 @@ from market_regime_engine.serving.profile_registry import ProfileModelTarget, Pr
 
 def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
     features = ("f0",)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    timestamps = tuple(start + timedelta(days=index) for index in range(120))
+    pca_scaler = fit_pca_hmm_scaler(
+        timestamps,
+        np.arange(120, dtype=np.float64).reshape(-1, 1),
+        raw_feature_order=features,
+        inner_fold_id="fold_001",
+        fit_start=start,
+        fit_end=timestamps[-1],
+        model_feature_order=features,
+    )
     return ProductionModelArtifact(
         profile_id="xetra",
         profile_config_version=4,
@@ -40,7 +52,7 @@ def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
         source_catalog_hash="f" * 64,
         state_identity_scope="model_version_local",
         feature_order=features,
-        scaler=StandardScalerArtifact(features, (0.0,), (1.0,), (1.0,)),
+        scaler=pca_scaler.hmm_scaler,
         hmm=GaussianHMMArtifact(
             state_count=2,
             feature_order=features,
@@ -55,6 +67,7 @@ def artifact(*, build: str = "build-1") -> ProductionModelArtifact:
         terminal_filtered_probabilities=(0.4, 0.6),
         retained_observation_count=1500,
         skipped_incomplete_observation_count=0,
+        pca_scaler=pca_scaler,
     )
 
 

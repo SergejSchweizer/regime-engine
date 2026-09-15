@@ -20,7 +20,7 @@ class EvaluationClient:
         self.models = {"model-b", "model-a"}
 
     def get_experiment_by_name(self, name: str) -> object:
-        assert name == "regime-engine-evaluation"
+        assert name == "macro-regime-evaluation"
         return self.experiment
 
     def search_runs(self, experiment_ids: list[str]) -> list[object]:
@@ -46,7 +46,7 @@ def test_evaluation_cleanup_is_exact_and_verified() -> None:
     )
     assert manifest == EvaluationCleanupManifest(
         "http://10.10.1.3:5000",
-        "regime-engine-evaluation",
+        "macro-regime-evaluation",
         "7",
         ("model-a", "model-b"),
         ("run-a", "run-b"),

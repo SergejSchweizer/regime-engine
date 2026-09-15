@@ -41,7 +41,8 @@ from market_regime_engine.training.candidate_grid import (
 
 PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 FEATURES = ("f0", "f1")
-UNIVERSE = tuple(f"f{index}" for index in range(48))
+RAW_FEATURES = tuple(f"f{index}" for index in range(48))
+UNIVERSE = (*RAW_FEATURES, *tuple(f"pca_pc_{index:03d}" for index in range(1, 9)))
 
 EXPECTED_CANDIDATE_IDS = (
     "gaussian_hmm_k2_full",
@@ -152,8 +153,7 @@ def source_rows(row_count: int = 1386) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "timestamp_m1": timestamps,
-            "f0": signs,
-            "f1": signs + np.where(signs > 0.0, 0.05, -0.05),
+            **{name: signs + (index * 0.001) for index, name in enumerate(RAW_FEATURES)},
         }
     )
 
@@ -168,6 +168,7 @@ def base_evaluation() -> tuple[WalkForwardEvaluation, object, object]:
         profile=profile,
         candidate=candidate(2),
         adapter_factory=DeterministicAdapter,
+        pca_raw_feature_order=RAW_FEATURES,
     )
     return evaluation, profile, plan
 
@@ -251,6 +252,7 @@ def test_grid_runs_exact_k2_k3_k4_on_one_shared_contract() -> None:
         resolved_profile=resolved_profile(),
         adapter_factory_builder=lambda item: DeterministicAdapter,
         runner=runner,
+        pca_raw_feature_order=RAW_FEATURES,
         max_workers=1,
     )
     assert sorted(call[0] for call in calls) == sorted(EXPECTED_CANDIDATE_IDS)
@@ -276,6 +278,7 @@ def test_grid_default_adapter_factory_and_profile_derived_model_families() -> No
         profile=profile,
         resolved_profile=resolved_profile(),
         runner=runner,
+        pca_raw_feature_order=RAW_FEATURES,
         max_workers=1,
     )
 
@@ -344,6 +347,7 @@ def test_non_pickleable_parallel_candidate_callbacks_fail_closed(monkeypatch) ->
             profile=profile,
             resolved_profile=resolved_profile(),
             adapter_factory_builder=lambda _candidate: DeterministicAdapter,
+            pca_raw_feature_order=RAW_FEATURES,
             max_workers=4,
         )
 
@@ -379,6 +383,7 @@ def test_grid_fails_closed_on_runner_contract_drift() -> None:
             profile=profile,
             resolved_profile=resolved_profile(),
             runner=bad_order,
+            pca_raw_feature_order=RAW_FEATURES,
             max_workers=1,
         )
 
@@ -398,6 +403,7 @@ def test_grid_fails_closed_on_runner_contract_drift() -> None:
             profile=profile,
             resolved_profile=resolved_profile(),
             runner=wrong_plan,
+            pca_raw_feature_order=RAW_FEATURES,
             max_workers=1,
         )
 

@@ -5,9 +5,9 @@ from pathlib import Path
 
 def test_reader_sql_is_exact_least_privilege_and_safe() -> None:
     sql_text = Path("ops/postgres/regime_engine_reader.sql").read_text(encoding="utf-8")
-    assert '"regime-engine"' in sql_text
-    assert "regime_loader.regime_features_daily" in sql_text
-    assert "regime_loader_sync.gold_sync_state" in sql_text
+    assert '"macro-loader"' in sql_text
+    assert "macro_loader.macro_features_daily" in sql_text
+    assert "macro_loader_sync.gold_sync_state" in sql_text
     assert "GRANT SELECT" in sql_text
     assert "GRANT USAGE" in sql_text
     assert "GRANT CONNECT" in sql_text

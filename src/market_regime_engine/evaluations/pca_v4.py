@@ -48,15 +48,18 @@ def select_v4_configuration_with_pca(
 
     if not isinstance(generated, PCAGeneratedFeatureSet):
         raise TypeError("PCA v4 selection requires a generated feature set")
-    return selector(
-        _as_v4_frame(generated),
-        catalog=generated.catalog,
-        profile=profile,
-        source_build_id=generated.catalog.lineage.source_build_id,
-        max_workers=max_workers,
-        pca_raw_feature_order=generated.raw_feature_names,
-        pca_variance_threshold=profile.pca.variance_threshold,
-    )
+    kwargs = {
+        "catalog": generated.catalog,
+        "profile": profile,
+        "source_build_id": generated.catalog.lineage.source_build_id,
+        "max_workers": max_workers,
+    }
+    if selector is not select_v4_configuration:
+        kwargs.update(
+            pca_raw_feature_order=generated.raw_feature_names,
+            pca_variance_threshold=profile.pca.variance_threshold,
+        )
+    return selector(_as_v4_frame(generated), **kwargs)
 
 
 def evaluate_global_regime_v4_with_pca(
@@ -70,15 +73,18 @@ def evaluate_global_regime_v4_with_pca(
 
     if not isinstance(generated, PCAGeneratedFeatureSet):
         raise TypeError("PCA v4 evaluation requires a generated feature set")
-    return evaluator(
-        _as_v4_frame(generated),
-        catalog=generated.catalog,
-        profile=profile,
-        source_build_id=generated.catalog.lineage.source_build_id,
-        max_workers=max_workers,
-        pca_raw_feature_order=generated.raw_feature_names,
-        pca_variance_threshold=profile.pca.variance_threshold,
-    )
+    kwargs = {
+        "catalog": generated.catalog,
+        "profile": profile,
+        "source_build_id": generated.catalog.lineage.source_build_id,
+        "max_workers": max_workers,
+    }
+    if evaluator is not evaluate_global_regime_v4:
+        kwargs.update(
+            pca_raw_feature_order=generated.raw_feature_names,
+            pca_variance_threshold=profile.pca.variance_threshold,
+        )
+    return evaluator(_as_v4_frame(generated), **kwargs)
 
 
 __all__ = [

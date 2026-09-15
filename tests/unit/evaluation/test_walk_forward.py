@@ -22,6 +22,8 @@ from market_regime_engine.training.multistart import (
 )
 
 PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
+RAW_FEATURES = ("f0", "f1")
+FEATURE_UNIVERSE = (*RAW_FEATURES, "pca_pc_001")
 
 
 def candidate() -> ResolvedCandidateProfile:
@@ -29,19 +31,19 @@ def candidate() -> ResolvedCandidateProfile:
         candidate_id="gaussian_hmm_k2_full",
         state_count=2,
         covariance_type="full",
-        feature_order=("f0", "f1"),
+        feature_order=RAW_FEATURES,
         feature_dimension=2,
         source_build_id="build-1",
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        original_feature_universe=tuple(f"f{index}" for index in range(48)),
+        original_feature_universe=FEATURE_UNIVERSE,
     )
 
 
 def model_artifact() -> GaussianHMMArtifact:
     return GaussianHMMArtifact(
         state_count=2,
-        feature_order=("f0", "f1"),
+        feature_order=RAW_FEATURES,
         start_probabilities=(0.5, 0.5),
         transition_matrix=((0.8, 0.2), (0.2, 0.8)),
         means=((-1.0, -1.0), (1.0, 1.0)),
@@ -103,6 +105,7 @@ def evaluate(rows: pd.DataFrame):
         profile=profile,
         candidate=candidate(),
         adapter_factory=DeterministicAdapter,
+        pca_raw_feature_order=RAW_FEATURES,
     )
 
 
@@ -136,6 +139,7 @@ def test_independent_folds_use_process_workers_with_canonical_result_order() -> 
         profile=profile,
         candidate=candidate(),
         adapter_factory=DeterministicAdapter,
+        pca_raw_feature_order=RAW_FEATURES,
         max_workers=2,
     )
 
@@ -187,6 +191,7 @@ def test_seed_checkpoint_factory_is_forwarded_to_each_fold(monkeypatch) -> None:
         profile=load_profile(PROFILE_CONFIG),
         candidate=candidate(),
         adapter_factory=DeterministicAdapter,
+        pca_raw_feature_order=RAW_FEATURES,
         seed_checkpoint_factory=lambda fold_id: type("Checkpoint", (), {"fold_id": fold_id})(),
     )
 
@@ -255,4 +260,5 @@ def test_plan_source_mismatch_fails_before_model_work() -> None:
             profile=profile,
             candidate=candidate(),
             adapter_factory=DeterministicAdapter,
+            pca_raw_feature_order=RAW_FEATURES,
         )

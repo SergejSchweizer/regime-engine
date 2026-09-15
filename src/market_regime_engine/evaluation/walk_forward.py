@@ -32,7 +32,7 @@ from market_regime_engine.inference.predictive_likelihood import (
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import GaussianHMMAdapter
 from market_regime_engine.preprocessing.pca_policy import validate_pca_source_universe
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
+from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.preprocessing.two_stage import (
     PCATwoStageScalerArtifact,
     fit_pca_hmm_scaler,
@@ -223,6 +223,7 @@ class WalkForwardFoldResult:
         if self.valid:
             required = (
                 self.scaler_artifact,
+                self.pca_scaler_artifact,
                 self.multistart_result,
                 self.model_artifact,
                 self.alignment,
@@ -374,28 +375,36 @@ def _validate_candidate_contract(
         raise ValueError("Xetra v4 walk-forward candidates require feature contract version 4")
 
 
-def _validate_pca_raw_feature_order(
+def validate_mandatory_pca_feature_universe(
     raw_feature_order: tuple[str, ...] | None,
-    candidate_feature_order: tuple[str, ...],
     original_feature_universe: tuple[str, ...],
-) -> tuple[str, ...] | None:
+) -> tuple[str, ...]:
     if raw_feature_order is None:
-        return None
+        raise ValueError("Xetra v4 evaluation requires a PCA raw feature order")
     if (
         not raw_feature_order
         or len(set(raw_feature_order)) != len(raw_feature_order)
         or any(not name or name.strip() != name for name in raw_feature_order)
     ):
         raise ValueError("PCA raw feature order must be non-empty and duplicate-free")
-    if any(name.startswith("pca_pc_") for name in raw_feature_order):
-        raise ValueError("PCA raw feature order cannot contain generated PCA feature names")
     validate_pca_source_universe(raw_feature_order, original_feature_universe)
-    if any(
-        name not in raw_feature_order and not name.startswith("pca_pc_")
-        for name in candidate_feature_order
-    ):
-        raise ValueError("PCA candidate feature order contains an unknown feature")
+    if not any(name.startswith("pca_pc_") for name in original_feature_universe):
+        raise ValueError("Xetra v4 feature universe must contain generated PCA features")
     return raw_feature_order
+
+
+def _validate_pca_raw_feature_order(
+    raw_feature_order: tuple[str, ...] | None,
+    candidate_feature_order: tuple[str, ...],
+    original_feature_universe: tuple[str, ...],
+) -> tuple[str, ...]:
+    validated = validate_mandatory_pca_feature_universe(
+        raw_feature_order,
+        original_feature_universe,
+    )
+    if any(name not in original_feature_universe for name in candidate_feature_order):
+        raise ValueError("PCA candidate feature order contains an unknown feature")
+    return validated
 
 
 def _fold_source_frames(
@@ -653,11 +662,11 @@ def run_walk_forward_candidate(
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection.
 
-    When ``pca_raw_feature_order`` is supplied, each fold fits PCA exclusively
-    on that fold's complete raw TRAIN rows, then fits HMM standardization on
-    the selected raw-plus-PCA TRAIN columns. TEST rows are transformed only
-    with those fold-local artifacts. Candidate features may be any ordered
-    subset of the complete raw-plus-generated PCA universe.
+    Each fold fits PCA exclusively on that fold's complete raw TRAIN rows,
+    then fits HMM standardization on the selected raw-plus-PCA TRAIN columns.
+    TEST rows are transformed only with those fold-local artifacts. Candidate
+    features may be any ordered subset of the complete raw-plus-generated PCA
+    universe; omitting the PCA source contract is invalid.
     """
 
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
@@ -683,7 +692,7 @@ def run_walk_forward_candidate(
     )
     if plan.evaluation_cutoff is None or not plan.folds:
         raise ValueError("walk-forward plan must contain at least one complete fold")
-    source_feature_order = candidate.feature_order if pca_raw_order is None else pca_raw_order
+    source_feature_order = pca_raw_order
     timestamps = _validate_source_rows(source_rows, source_feature_order)
     if timestamps[0] != plan.folds[0].train_start:
         raise ValueError("source sequence start does not match walk-forward plan")
@@ -693,11 +702,6 @@ def run_walk_forward_candidate(
     results: list[WalkForwardFoldResult] = []
     reference_signatures: tuple[StateSignature, ...] | None = None
     reference_scaler: StandardScalerArtifact | None = None
-    if pca_raw_order is None:
-        first_train_source, _ = _fold_source_frames(source_rows, plan.folds[0])
-        first_train_rows, _, _ = _complete_case(first_train_source, candidate.feature_order)
-        reference_scaler = fit_standard_scaler(first_train_rows, candidate.feature_order)
-
     # Fold-local scaling/PCA, HMM fitting, filtering and diagnostics are
     # independent.  State alignment is the only ordered operation: reconcile
     # completed fold payloads below in plan order so persistent state IDs and
@@ -767,7 +771,7 @@ def run_walk_forward_candidate(
         pca_scaler: PCATwoStageScalerArtifact | None = None
         try:
             train_source, test_source = _fold_source_frames(source_rows, fold)
-            train_order = candidate.feature_order if pca_raw_order is None else pca_raw_order
+            train_order = pca_raw_order
             train_rows, train_timestamps, skipped_train = _complete_case(train_source, train_order)
             train_model_count = int(train_rows.shape[0])
             test_rows, test_timestamps, skipped_test = _complete_case(
@@ -784,29 +788,24 @@ def run_walk_forward_candidate(
                     f"retained TEST observations are below pinned minimum 42: {test_model_count}"
                 )
 
-            if pca_raw_order is None:
-                scaler = fit_standard_scaler(train_rows, candidate.feature_order)
-                scaled_train = scaler.transform(train_rows)
-                scaled_test = scaler.transform(test_rows)
-            else:
-                pca_scaler = fit_pca_hmm_scaler(
-                    train_timestamps,
-                    train_rows,
-                    raw_feature_order=pca_raw_order,
-                    inner_fold_id=fold.fold_id,
-                    fit_start=fold.train_start,
-                    fit_end=fold.train_end,
-                    variance_threshold=pca_variance_threshold,
-                    component_count=profile.pca.component_count,
-                    model_feature_order=candidate.feature_order,
+            pca_scaler = fit_pca_hmm_scaler(
+                train_timestamps,
+                train_rows,
+                raw_feature_order=pca_raw_order,
+                inner_fold_id=fold.fold_id,
+                fit_start=fold.train_start,
+                fit_end=fold.train_end,
+                variance_threshold=pca_variance_threshold,
+                component_count=profile.pca.component_count,
+                model_feature_order=candidate.feature_order,
+            )
+            if pca_scaler.model_feature_order != candidate.feature_order:
+                raise ValueError(
+                    "fold-local PCA generated feature order differs from candidate order"
                 )
-                if pca_scaler.model_feature_order != candidate.feature_order:
-                    raise ValueError(
-                        "fold-local PCA generated feature order differs from candidate order"
-                    )
-                scaler = pca_scaler.hmm_scaler
-                scaled_train = pca_scaler.transform(train_rows)
-                scaled_test = pca_scaler.transform(test_rows)
+            scaler = pca_scaler.hmm_scaler
+            scaled_train = pca_scaler.transform(train_rows)
+            scaled_test = pca_scaler.transform(test_rows)
             if reference_scaler is None:
                 reference_scaler = scaler
             assert reference_scaler is not None

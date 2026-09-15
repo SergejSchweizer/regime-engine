@@ -68,7 +68,7 @@ def test_exact_defaults_plain_transport_password_file_and_safe_summary(tmp_path:
     )
     assert settings.host == "10.10.1.3"
     assert settings.port == 54321
-    assert settings.user == "regime-engine"
+    assert settings.user == "macro-loader"
     assert settings.sslmode == "disable"
     assert settings.pool_min_size == 1
     assert settings.pool_max_size == 4

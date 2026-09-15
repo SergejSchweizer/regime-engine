@@ -8,7 +8,7 @@ from pathlib import Path
 
 _FEATURE_HOST = "10.10.1.3"
 _FEATURE_PORT = 54321
-_FEATURE_USER = "regime-engine"
+_FEATURE_USER = "macro-loader"
 _FEATURE_SSLMODE = "disable"
 _POOL_MIN = 1
 _POOL_MAX = 4
@@ -39,7 +39,7 @@ class FeaturePostgresSettings:
         if self.host != _FEATURE_HOST or self.port != _FEATURE_PORT:
             raise ValueError("feature PostgreSQL host/port differ from the production contract")
         if self.user != _FEATURE_USER:
-            raise ValueError("feature PostgreSQL user must be exactly regime-engine")
+            raise ValueError("feature PostgreSQL user must be exactly macro-loader")
         if self.sslmode != _FEATURE_SSLMODE:
             raise ValueError("feature PostgreSQL sslmode must be exactly disable")
         invalid_pool_bounds = (

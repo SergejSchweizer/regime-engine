@@ -26,11 +26,7 @@ class LatestInferenceResult:
 
 
 def _validate_snapshot(artifact: ProductionModelArtifact, snapshot: FeatureSnapshot) -> None:
-    expected_features = (
-        artifact.pca_scaler.raw_feature_order
-        if artifact.pca_scaler is not None
-        else artifact.feature_order
-    )
+    expected_features = artifact.pca_scaler.raw_feature_order
     if snapshot.feature_names != expected_features:
         raise ValueError("serving source feature order differs from production artifact")
     if snapshot.lineage.schema_version != artifact.source_schema_version:
@@ -54,11 +50,7 @@ def _filter_rows(
         if len(complete_values) != len(row.values):
             raise ValueError("resolved-model snapshot cannot contain incomplete feature rows")
         matrix = np.asarray([complete_values], dtype=np.float64)
-        scaled = (
-            artifact.pca_scaler.transform(matrix)
-            if artifact.pca_scaler is not None
-            else artifact.scaler.transform(matrix)
-        )
+        scaled = artifact.pca_scaler.transform(matrix)
         filtered = causal_filter(
             scaled,
             artifact.hmm,

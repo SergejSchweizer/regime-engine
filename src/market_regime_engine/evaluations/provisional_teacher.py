@@ -25,6 +25,7 @@ from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
     run_walk_forward_candidate,
+    validate_mandatory_pca_feature_universe,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
@@ -75,7 +76,7 @@ class _ProvisionalProcessTask:
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
     max_workers: int
-    pca_raw_feature_order: tuple[str, ...] | None
+    pca_raw_feature_order: tuple[str, ...]
     pca_variance_threshold: float
     runner: ProvisionalCandidateRunner
 
@@ -117,6 +118,8 @@ def _evaluate_candidates(
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate teacher candidates concurrently while preserving canonical output order."""
 
+    if pca_raw_feature_order is None:
+        raise ValueError("PCA provisional evaluation requires a raw feature order")
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
     total_worker_budget = cpu_worker_count(max_workers)
 
@@ -148,13 +151,12 @@ def _evaluate_candidates(
                     "max_workers": max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
-                if pca_raw_feature_order is not None:
-                    kwargs.update(
-                        {
-                            "pca_raw_feature_order": pca_raw_feature_order,
-                            "pca_variance_threshold": pca_variance_threshold,
-                        }
-                    )
+                kwargs.update(
+                    {
+                        "pca_raw_feature_order": pca_raw_feature_order,
+                        "pca_variance_threshold": pca_variance_threshold,
+                    }
+                )
                 return run_provisional_gaussian_candidate(
                     source_rows,
                     plan,
@@ -173,9 +175,7 @@ def _evaluate_candidates(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        if pca_raw_feature_order is not None and runner is not run_provisional_gaussian_candidate:
-            raise ValueError("PCA provisional evaluation requires the canonical candidate runner")
-        if pca_raw_feature_order is None:
+        if runner is not run_provisional_gaussian_candidate:
             return runner(
                 source_rows,
                 plan,
@@ -198,7 +198,7 @@ def _evaluate_candidates(
         seed_checkpoint_factory is None
         and worker_limit > 1
         and is_pickleable(runner)
-        and (pca_raw_feature_order is None or runner is run_provisional_gaussian_candidate)
+        and runner is run_provisional_gaussian_candidate
     )
     if use_processes:
         nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
@@ -378,6 +378,7 @@ def _validate_prototypes(source_rows: pd.DataFrame, prototype_features: tuple[st
 def _candidates(
     prototype_features: tuple[str, ...],
     *,
+    original_feature_universe: tuple[str, ...],
     source_build_id: str,
     feature_selection_definition_hash: str,
     feature_selection_execution_hash: str,
@@ -392,7 +393,7 @@ def _candidates(
             source_build_id=source_build_id,
             feature_selection_definition_hash=feature_selection_definition_hash,
             feature_selection_execution_hash=feature_selection_execution_hash,
-            original_feature_universe=prototype_features,
+            original_feature_universe=original_feature_universe,
             feature_contract_version=4,
         )
         for state_count in V4_PROVISIONAL_STATE_COUNTS
@@ -538,6 +539,13 @@ def select_provisional_teacher(
         raise TypeError("source_rows must be a pandas DataFrame")
     _validate_profile(profile)
     _validate_prototypes(source_rows, prototype_features)
+    original_feature_universe = tuple(
+        column for column in source_rows.columns if column != _TIMESTAMP_COLUMN
+    )
+    pca_order = validate_mandatory_pca_feature_universe(
+        pca_raw_feature_order,
+        original_feature_universe,
+    )
     plan = build_inner_walk_forward_plan(tuple(source_rows[_TIMESTAMP_COLUMN]))
 
     # This is deliberately before candidate construction, adapters, and runner calls.
@@ -553,6 +561,7 @@ def select_provisional_teacher(
 
     candidates = _candidates(
         prototype_features,
+        original_feature_universe=original_feature_universe,
         source_build_id=source_build_id,
         feature_selection_definition_hash=feature_selection_definition_hash,
         feature_selection_execution_hash=feature_selection_execution_hash,
@@ -570,7 +579,7 @@ def select_provisional_teacher(
             scheduled,
             runner,
             max_workers,
-            pca_raw_feature_order=pca_raw_feature_order,
+            pca_raw_feature_order=pca_order,
             pca_variance_threshold=pca_variance_threshold,
         )
     else:
@@ -582,7 +591,7 @@ def select_provisional_teacher(
             runner,
             max_workers,
             seed_checkpoint_factory,
-            pca_raw_feature_order,
+            pca_order,
             pca_variance_threshold,
         )
     evaluations = tuple(evaluations_by_id[candidate_id] for candidate_id in _GAUSSIAN_CANDIDATE_IDS)

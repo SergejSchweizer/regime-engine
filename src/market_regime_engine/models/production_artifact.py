@@ -49,7 +49,8 @@ class ProductionModelArtifact:
     terminal_filtered_probabilities: tuple[float, ...]
     retained_observation_count: int
     skipped_incomplete_observation_count: int
-    pca_scaler: PCATwoStageScalerArtifact | None = None
+    # PCA is part of the canonical v4 production feature universe.
+    pca_scaler: PCATwoStageScalerArtifact
 
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version != 4:
@@ -117,11 +118,10 @@ class ProductionModelArtifact:
         )
         if feature_order_mismatch:
             raise ValueError("scaler/HMM feature order must equal frozen production feature order")
-        if self.pca_scaler is not None:
-            if self.pca_scaler.hmm_scaler != self.scaler:
-                raise ValueError("production PCA artifact must contain the production HMM scaler")
-            if self.pca_scaler.model_feature_order != self.feature_order:
-                raise ValueError("production PCA artifact feature order differs from production")
+        if self.pca_scaler.hmm_scaler != self.scaler:
+            raise ValueError("production PCA artifact must contain the production HMM scaler")
+        if self.pca_scaler.model_feature_order != self.feature_order:
+            raise ValueError("production PCA artifact feature order differs from production")
         if self.hmm.state_count != self.state_count:
             raise ValueError("HMM state count must equal production state count")
         if len(self.terminal_filtered_probabilities) != self.state_count:
