@@ -397,7 +397,7 @@ still required.
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422/#427) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
-| PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
+| PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427; single-champion QA #444) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and explicit preservation of the default `champion` alias; production lineage gaps remain |
 | PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Formula, independent eligibility-gate, non-finite-input, canonical-hash and full K=2..5 projection QA is covered by merged follow-up PR-442 (GitHub #430). Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
@@ -2124,7 +2124,7 @@ QA:
   expectation manifest.
 - [x] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
   is produced.
-- [ ] Verify the existing v4 single-champion path remains unchanged.
+- [x] Verify the existing v4 single-champion path remains unchanged.
 
 ### PR-430 — External four-slot production acceptance QA
 
