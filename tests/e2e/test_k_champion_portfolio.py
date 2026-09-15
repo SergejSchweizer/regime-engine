@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -114,8 +115,16 @@ def _portfolio_payload(
 def test_real_four_slot_portfolio_is_canonical_and_parallel(
     portfolio: HermeticPortfolio, tmp_path: Path
 ) -> None:
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "fixtures/k_champion/expectation_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert len(portfolio.plan.folds) == 3
-    assert len(portfolio.models.candidates) == 3 * 4 * len(FAMILIES)
+    assert len(portfolio.plan.folds) == manifest["outer_folds"]
+    assert len(portfolio.models.candidates) == manifest["candidate_fits"]
+    assert len(portfolio.models.refits) == manifest["selected_refits"]
+    assert len(portfolio.models.teachers) == manifest["teacher_refits"]
     for fold in portfolio.plan.folds:
         for state_count in (2, 3, 4, 5):
             records = portfolio.models.candidates_for(fold.fold_id, f"k{state_count}")
@@ -124,14 +133,14 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
 
     parallel = portfolio.outer(max_workers=None)
     serial = portfolio.outer(max_workers=1)
-    assert len(parallel.outer_folds) == 3 * 4
+    assert len(parallel.outer_folds) == manifest["outer_folds"] * manifest["slots"]
     assert tuple(item.slot_id for item in parallel.outer_folds[:4]) == ("k2", "k3", "k4", "k5")
     assert all(item.valid for item in parallel.outer_folds)
     assert all(item.eligible for item in parallel.slots)
     assert parallel.result_hash == serial.result_hash
 
     deployment = portfolio.deployment(parallel, tmp_path / "packages", max_workers=None)
-    assert len(deployment.eligible_artifacts) == 4
+    assert len(deployment.eligible_artifacts) == manifest["deployment_packages"]
     assert all(
         (Path(item.package_directory) / "model.json").is_file()
         for item in deployment.eligible_artifacts
@@ -148,9 +157,10 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
         ("train_loglik_per_obs", "valid_fold_rate"),
         max_workers=None,
     )
-    assert len(plot_payloads) == 8
+    assert len(plot_payloads) == manifest["plot_payloads"]
     assert all(payload.status == "available" for payload in plot_payloads)
-    assert all(len(payload.series) == 3 for payload in plot_payloads)
+    assert sum(len(payload.series) for payload in plot_payloads) == manifest["plot_series"]
+    assert all(len(payload.series) == manifest["families_per_slot"] for payload in plot_payloads)
     assert all(payload.no_evaluation_recomputation for payload in plot_payloads)
     manifests = tuple(
         render_k_plot_payload(payload, tmp_path / "plots") for payload in plot_payloads
@@ -184,7 +194,7 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
         )
         for index, item in enumerate(registered)
     )
-    assert aliases == (True, True, True, True)
+    assert aliases == (True,) * manifest["registry_aliases"]
     assert tuple(registry_client.aliases) == tuple(
         ("regime-xetra", alias) for alias in K_CHAMPION_ALIASES
     )
