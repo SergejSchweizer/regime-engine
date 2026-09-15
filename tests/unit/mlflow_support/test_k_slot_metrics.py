@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from market_regime_engine.mlflow_support.k_slot_metrics import (
     KCandidateMetricProjection,
     KSlotMetadata,
+    KSlotMetricProjection,
     build_four_k_slot_projection,
     build_k_slot_projection,
     validate_k_metric_comparison,
@@ -13,6 +16,7 @@ from market_regime_engine.mlflow_support.k_slot_metrics import (
 from market_regime_engine.mlflow_support.k_slot_plots import (
     build_cross_k_plot_payload,
     build_k_plot_payload,
+    render_k_plot_payload,
 )
 from market_regime_engine.mlflow_support.ports import MetricPoint
 
@@ -30,14 +34,19 @@ def metadata(k: int, *, feature_order: tuple[str, ...] = ("f0", "f1")) -> KSlotM
     )
 
 
-def slot(k: int, *, eligible: bool = True) -> object:
+def slot(k: int, *, eligible: bool = True, cross_k_metric: bool = False) -> KSlotMetricProjection:
     info = metadata(k)
+    metric_points = [
+        MetricPoint("fit_quality_oos_predictive_loglik_per_obs", 0.5, 0, 100),
+    ]
+    if cross_k_metric:
+        metric_points.append(MetricPoint("valid_fold_rate", 1.0, 0, 100))
     candidates = tuple(
         KCandidateMetricProjection(
             logged_model_id=f"k{k}-{family}",
             model_family=family,
             metadata=info,
-            metric_points=(MetricPoint("fit_quality_oos_predictive_loglik_per_obs", 0.5, 0, 100),),
+            metric_points=tuple(metric_points),
         )
         for family in ("gaussian_hmm", "gmm_hmm", "student_t_hmm")
     )
@@ -50,7 +59,9 @@ def slot(k: int, *, eligible: bool = True) -> object:
     )
 
 
-def test_per_k_plot_uses_three_families_and_cross_k_rejects_likelihood() -> None:
+def test_per_k_plot_uses_three_families_and_cross_k_rejects_likelihood(
+    tmp_path: Path,
+) -> None:
     per_k = build_k_plot_payload(slot(2), "fit_quality_oos_predictive_loglik_per_obs")
     assert per_k.status == "available"
     assert len(per_k.series) == 3
@@ -58,8 +69,36 @@ def test_per_k_plot_uses_three_families_and_cross_k_rejects_likelihood() -> None
         tuple(slot(k) for k in (2, 3, 4, 5)), "fit_quality_oos_predictive_loglik_per_obs"
     )
     assert mixed.status == "not_available"
-    cross = build_cross_k_plot_payload(tuple(slot(k) for k in (2, 3, 4, 5)), "valid_fold_rate")
-    assert cross.status == "not_available"  # selected projection has no such metric
+    cross = build_cross_k_plot_payload(
+        tuple(slot(k, cross_k_metric=True) for k in (2, 3, 4, 5)), "valid_fold_rate"
+    )
+    assert cross.status == "available"
+    assert cross.comparison_domain_id == "cross_k_dimension_independent.v1"
+    assert tuple(series.model_family for series in cross.series) == (
+        "K=2",
+        "K=3",
+        "K=4",
+        "K=5",
+    )
+    assert cross.no_evaluation_recomputation
+    manifest = render_k_plot_payload(cross, tmp_path)
+    assert manifest["canonical_payload_hash"] == cross.canonical_payload_hash
+    assert manifest["logged_model_ids"] == list(cross.logged_model_ids)
+    assert manifest["feature_order_hashes"] == list(cross.feature_order_hashes)
+    assert manifest["source_data_hashes"] == list(cross.source_data_hashes)
+    assert manifest["no_evaluation_recomputation"] is True
+
+
+def test_ineligible_cross_k_plot_writes_only_an_unavailable_manifest(tmp_path: Path) -> None:
+    payload = build_cross_k_plot_payload(
+        tuple(slot(k, eligible=k != 5, cross_k_metric=True) for k in (2, 3, 4, 5)),
+        "valid_fold_rate",
+    )
+    assert payload.status == "not_available"
+    manifest = render_k_plot_payload(payload, tmp_path)
+    assert manifest["png_path"] is None
+    assert not tuple(tmp_path.glob("*.png"))
+    assert manifest["unavailable_reason"]
 
 
 def test_slot_projection_requires_all_families_and_four_slots() -> None:
