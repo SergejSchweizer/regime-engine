@@ -393,7 +393,7 @@ still required.
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
-| PR-430 | IN PROGRESS (readback QA #424) | Read-only external four-slot alias/provenance verifier and hermetic fake-client QA implemented; authorized NAS publication/readback evidence remains |
+| PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
@@ -2102,8 +2102,11 @@ QA:
   `tests/external/test_k_champion_external.py`,
   `docs/qa/k_champion_external.md`
 - **Status:** read-only external alias/provenance verifier and hermetic QA
-  merged in GitHub #424; authorized NAS publication/readback evidence remains
-  open.
+  merged in GitHub #424. External preflight on 2026-09-15 against
+  `http://10.10.1.3:5000` failed closed with
+  `RESOURCE_DOES_NOT_EXIST: Registered Model with name=regime-xetra not found`;
+  no publication or alias mutation was attempted. Full-source/audit
+  prerequisites and authorized publication/readback evidence remain open.
 
 Acceptance:
 
