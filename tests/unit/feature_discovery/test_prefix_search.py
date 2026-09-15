@@ -32,21 +32,50 @@ def source_rows(row_count: int = 819) -> pd.DataFrame:
     )
 
 
-def teacher(rows: pd.DataFrame) -> ProvisionalTeacherReference:
+def teacher(rows: pd.DataFrame, *, state_count: int = 2) -> ProvisionalTeacherReference:
     plan = build_inner_walk_forward_plan(tuple(rows["timestamp_m1"]))
     timestamps = tuple(rows["timestamp_m1"].iloc[756:819])
     probabilities = tuple(
-        ((1.0, 0.0) if index % 2 == 0 else (0.0, 1.0)) for index in range(len(timestamps))
+        tuple(1.0 if state == index % state_count else 0.0 for state in range(state_count))
+        for index in range(len(timestamps))
     )
     return ProvisionalTeacherReference(
-        candidate_id="gaussian_hmm_k2_full",
-        state_count=2,
+        candidate_id=f"gaussian_hmm_k{state_count}_full",
+        state_count=state_count,
         timestamps=timestamps,
         filtered_probabilities=probabilities,
-        dominant_states=tuple(index % 2 for index in range(len(timestamps))),
+        dominant_states=tuple(index % state_count for index in range(len(timestamps))),
         valid_inner_fold_ids=("fold_001",),
         source_build_id="build-1",
         inner_plan_hash=plan.plan_hash,
+    )
+
+
+def k3_runner(frame, plan, profile, candidate, candidate_adapter_factory):
+    del profile, candidate_adapter_factory
+    timestamps = tuple(frame["timestamp_m1"].iloc[756:819])
+    probabilities = tuple(
+        tuple(1.0 if state == index % 3 else 0.0 for state in range(3))
+        for index in range(len(timestamps))
+    )
+    fold = SimpleNamespace(
+        fold_id="fold_001",
+        oos_timestamps=timestamps,
+        oos_filtered_probabilities=probabilities,
+        oos_predictive_log_likelihood_per_observation=float(len(candidate.feature_order)),
+        bic=float(len(candidate.feature_order)),
+        aic=float(len(candidate.feature_order)),
+    )
+    return SimpleNamespace(
+        candidate_id=candidate.candidate_id,
+        state_count=candidate.state_count,
+        source_build_id=candidate.source_build_id,
+        feature_order=candidate.feature_order,
+        feature_selection_definition_hash=candidate.feature_selection_definition_hash,
+        feature_selection_execution_hash=candidate.feature_selection_execution_hash,
+        evaluation_plan_hash=plan.plan_hash,
+        folds=(fold,),
+        valid_folds=(fold,),
     )
 
 
@@ -201,3 +230,26 @@ def test_prefix_search_rejects_duplicate_or_too_short_rankings() -> None:
         module.search_ranked_prefixes(ranked_features=("f0",), **common)
     with pytest.raises(ValueError, match="at least two unique"):
         module.search_ranked_prefixes(ranked_features=("f0", "f0", "f1"), **common)
+
+
+def test_fixed_k_invalid_sink_evidence_keeps_the_requested_k_identity() -> None:
+    rows = source_rows()
+
+    def reject_prefix_sink(prefix_length, _candidate_id, _evaluation):
+        if prefix_length == 3:
+            raise ValueError("fixture sink rejection")
+
+    result = module.search_ranked_prefixes(
+        rows,
+        ranked_features=FEATURES,
+        teacher=teacher(rows, state_count=3),
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        runner=k3_runner,
+        pca_raw_feature_order=FEATURES,
+        state_counts=(3,),
+        evaluation_sink=reject_prefix_sink,
+    )
+
+    invalid = next(item for item in result.evaluations if item.prefix_length == 3)
+    assert not invalid.valid
+    assert invalid.candidate_id == "gaussian_hmm_k3_full"

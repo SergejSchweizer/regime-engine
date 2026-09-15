@@ -360,6 +360,7 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
                     task.feature_order,
                     "shared teacher support "
                     f"{teacher_coverage:.6f} below {MIN_TEACHER_SHARED_SUPPORT:.2f}",
+                    candidate_id=raw_evaluations[0].candidate_id,
                     candidate_evaluations=candidate_summaries,
                     shared_timestamp_count=agreement.shared_timestamp_count,
                 ),
@@ -379,7 +380,12 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
         )
     except (ValueError, TypeError) as exc:
         return _EvaluatedPrefix(
-            _invalid_prefix(task.prefix_length, task.feature_order, str(exc)),
+            _invalid_prefix(
+                task.prefix_length,
+                task.feature_order,
+                str(exc),
+                candidate_id=f"gaussian_hmm_k{task.state_counts[0]}_full",
+            ),
             None,
         )
 
@@ -505,13 +511,14 @@ def _invalid_prefix(
     feature_order: tuple[str, ...],
     reason: str,
     *,
+    candidate_id: str = "gaussian_hmm_k2_full",
     candidate_evaluations: tuple[CandidateEvaluation, ...] = (),
     shared_timestamp_count: int = 0,
 ) -> PrefixEvaluation:
     return PrefixEvaluation(
         prefix_length=prefix_length,
         feature_order=feature_order,
-        candidate_id="gaussian_hmm_k2_full",
+        candidate_id=candidate_id,
         shared_timestamp_count=shared_timestamp_count,
         shared_teacher_coverage=0.0,
         soft_regime_nmi=0.0,
@@ -673,6 +680,7 @@ def search_ranked_prefixes(
                     prefix_evaluation.prefix_length,
                     prefix_evaluation.feature_order,
                     str(exc),
+                    candidate_id=prefix_evaluation.candidate_id,
                 )
         prefix_results.append(prefix_evaluation)
     prefix_evaluations = tuple(prefix_results)
