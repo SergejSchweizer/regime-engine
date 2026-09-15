@@ -10,7 +10,7 @@ feature_postgres:
   database: <required-macro-loader-serving-database>
   user: macro-loader
   sslmode: disable
-  password_file: /absolute/path/to/regime_feature_password
+  password_file: /absolute/path/to/pg_macro_loader_password
 evaluation:
   checkpoint_root: /absolute/path/to/evaluation-checkpoints
 runtime:

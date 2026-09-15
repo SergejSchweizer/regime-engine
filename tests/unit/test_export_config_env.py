@@ -24,7 +24,7 @@ def _config(tmp_path: Path) -> Path:
                     "database": "postgres",
                     "user": "macro-loader",
                     "sslmode": "disable",
-                    "password_file": "/run/secrets/regime_feature_password",
+                    "password_file": "/run/secrets/pg_macro_loader_password",
                 },
                 "evaluation": {"checkpoint_root": "/var/lib/regime-engine/evaluations"},
                 "runtime": {"cpu_workers": 86, "native_threads": 1},
