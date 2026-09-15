@@ -15,8 +15,10 @@ from hashlib import sha256
 from math import isfinite, tanh
 from statistics import fmean
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.mlflow_support.metric_catalog import validate_metric_points
 from market_regime_engine.mlflow_support.ports import MetricPoint
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 K_SCORE_VERSION = "cross_k_score.v1"
 LEGAL_STATE_COUNTS = (2, 3, 4, 5)
@@ -42,6 +44,8 @@ def _require_sha256(value: str, field: str) -> None:
 
 
 def _require_unit_interval(value: float, field: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be finite and in [0, 1]")
     if not isfinite(value) or not 0.0 <= value <= 1.0:
         raise ValueError(f"{field} must be finite and in [0, 1]")
 
@@ -61,6 +65,8 @@ class KScoreFoldEvidence:
 
     def __post_init__(self) -> None:
         _require_text(self.fold_id, "fold_id")
+        if not isinstance(self.valid, bool):
+            raise ValueError("K-score fold validity must be a boolean")
         if not self.valid:
             _require_text(self.invalid_reason or "", "invalid_reason")
             if any(
@@ -84,7 +90,13 @@ class KScoreFoldEvidence:
             self.stability_score,
             self.support_score,
         )
-        if any(value is None or not isfinite(value) for value in score_values):
+        if any(
+            value is None
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            for value in score_values
+        ):
             raise ValueError("valid K-score folds require finite score values")
         assert self.calibration_error is not None
         assert self.stability_score is not None
@@ -116,9 +128,17 @@ class KScoreCandidate:
         _require_text(self.target_horizon, "target_horizon")
         if not self.folds:
             raise ValueError("K-score candidate requires at least one planned fold")
+        if not isinstance(self.folds, tuple) or any(
+            not isinstance(fold, KScoreFoldEvidence) for fold in self.folds
+        ):
+            raise ValueError("K-score candidate folds must be a tuple of fold evidence")
         fold_ids = tuple(fold.fold_id for fold in self.folds)
         if len(set(fold_ids)) != len(fold_ids):
             raise ValueError("K-score fold IDs must be unique")
+        # Completion order is operational metadata, not score evidence.  Keep
+        # the fold order canonical before fmean() so process/serial execution
+        # produces identical floating-point evidence and hashes.
+        object.__setattr__(self, "folds", tuple(sorted(self.folds, key=lambda fold: fold.fold_id)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,16 +163,34 @@ class KScoreBreakdown:
     rejection_reasons: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.state_count not in LEGAL_STATE_COUNTS:
+        if isinstance(self.state_count, bool) or self.state_count not in LEGAL_STATE_COUNTS:
             raise ValueError("K-score breakdown has an illegal state count")
         _require_sha256(self.feature_order_hash, "feature_order_hash")
-        if self.planned_fold_count < 1 or not 0 <= self.valid_fold_count <= self.planned_fold_count:
+        if (
+            isinstance(self.planned_fold_count, bool)
+            or isinstance(self.valid_fold_count, bool)
+            or not isinstance(self.planned_fold_count, int)
+            or not isinstance(self.valid_fold_count, int)
+            or self.planned_fold_count < 1
+            or not 0 <= self.valid_fold_count <= self.planned_fold_count
+        ):
             raise ValueError("K-score fold counts are inconsistent")
+        _require_unit_interval(self.valid_fold_rate, "valid_fold_rate")
         expected_rate = self.valid_fold_count / self.planned_fold_count
         if abs(self.valid_fold_rate - expected_rate) > SCORE_ABS_TOLERANCE:
             raise ValueError("K-score valid-fold rate does not reconcile")
-        if not isfinite(self.complexity_penalty) or self.complexity_penalty < 0.0:
+        if isinstance(self.latest_fold_valid, bool) is False:
+            raise ValueError("K-score latest-fold validity must be a boolean")
+        if (
+            isinstance(self.complexity_penalty, bool)
+            or not isinstance(self.complexity_penalty, (int, float))
+            or not isfinite(self.complexity_penalty)
+            or self.complexity_penalty < 0.0
+        ):
             raise ValueError("K-score complexity penalty must be finite and non-negative")
+        expected_penalty = COMPLEXITY_PENALTY_PER_EXTRA_STATE * (self.state_count - 2)
+        if abs(self.complexity_penalty - expected_penalty) > SCORE_ABS_TOLERANCE:
+            raise ValueError("K-score complexity penalty does not reconcile")
         for field_name in (
             "forecast_score",
             "calibration_score",
@@ -164,14 +202,51 @@ class KScoreBreakdown:
             value = getattr(self, field_name)
             if value is not None:
                 _require_unit_interval(value, field_name)
+        if not isinstance(self.eligible, bool):
+            raise ValueError("K-score eligibility must be a boolean")
+        if not isinstance(self.rejection_reasons, tuple) or any(
+            not isinstance(reason, str) or not reason or reason.strip() != reason
+            for reason in self.rejection_reasons
+        ):
+            raise ValueError("K-score rejection reasons must be non-empty trimmed strings")
+        if len(set(self.rejection_reasons)) != len(self.rejection_reasons):
+            raise ValueError("K-score rejection reasons must be unique")
         if self.eligible != (not self.rejection_reasons):
             raise ValueError("K-score eligibility must match rejection reasons")
         if self.eligible and self.total_score is None:
             raise ValueError("eligible K-score must have a total score")
+        if self.eligible and any(
+            getattr(self, field_name) is None
+            for field_name in (
+                "forecast_score",
+                "calibration_score",
+                "stability_score",
+                "robustness_score",
+                "worst_fold_forecast_score",
+                "mean_support_score",
+            )
+        ):
+            raise ValueError("eligible K-score must contain every score component")
         if not self.eligible and self.total_score is not None:
             raise ValueError("ineligible K-score cannot have a total score")
-        if self.total_score is not None and not isfinite(self.total_score):
-            raise ValueError("K-score total must be finite")
+        if self.total_score is not None:
+            if isinstance(self.total_score, bool) or not isinstance(self.total_score, (int, float)):
+                raise ValueError("K-score total must be finite")
+            if not isfinite(self.total_score):
+                raise ValueError("K-score total must be finite")
+            assert self.forecast_score is not None
+            assert self.calibration_score is not None
+            assert self.stability_score is not None
+            assert self.robustness_score is not None
+            expected_total = (
+                FORECAST_WEIGHT * self.forecast_score
+                + CALIBRATION_WEIGHT * self.calibration_score
+                + STABILITY_WEIGHT * self.stability_score
+                + ROBUSTNESS_WEIGHT * self.robustness_score
+                - self.complexity_penalty
+            )
+            if abs(self.total_score - expected_total) > SCORE_ABS_TOLERANCE:
+                raise ValueError("K-score total does not reconcile")
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,11 +264,18 @@ class KScoreRanking:
             raise ValueError("unsupported K-score version")
         if len({score.state_count for score in self.scores}) != len(self.scores):
             raise ValueError("K-score state counts must be unique")
+        if len(set(self.ranked_state_counts)) != len(self.ranked_state_counts):
+            raise ValueError("K-score ranked state counts must be unique")
         if set(self.ranked_state_counts) != {
             score.state_count for score in self.scores if score.eligible
         }:
             raise ValueError("K-score ranking must contain exactly all eligible state counts")
         if self.selected_state_count is not None:
+            if (
+                isinstance(self.selected_state_count, bool)
+                or self.selected_state_count not in LEGAL_STATE_COUNTS
+            ):
+                raise ValueError("selected K is illegal")
             if (
                 not self.ranked_state_counts
                 or self.ranked_state_counts[0] != self.selected_state_count
@@ -201,8 +283,10 @@ class KScoreRanking:
                 raise ValueError("selected K must be the first eligible ranked K")
             if self.no_winner_reason is not None:
                 raise ValueError("a selected K cannot have a no-winner reason")
-        elif self.no_winner_reason is None:
+        elif self.no_winner_reason is None or not self.no_winner_reason.strip():
             raise ValueError("missing K winner requires an explicit reason")
+        elif self.no_winner_reason.strip() != self.no_winner_reason:
+            raise ValueError("K no-winner reason must be trimmed")
 
     @property
     def canonical_json(self) -> str:
@@ -363,6 +447,27 @@ def score_k_candidate(candidate: KScoreCandidate, *, latest_fold_id: str) -> KSc
     )
 
 
+def _score_candidate_process(task: tuple[KScoreCandidate, str]) -> KScoreBreakdown:
+    candidate, latest_fold_id = task
+    return score_k_candidate(candidate, latest_fold_id=latest_fold_id)
+
+
+def _score_candidates(
+    candidates: tuple[KScoreCandidate, ...],
+    *,
+    latest_fold_id: str,
+    max_workers: int | None,
+) -> tuple[KScoreBreakdown, ...]:
+    """Score independent K candidates in processes, preserving canonical order."""
+
+    worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
+    tasks = tuple((candidate, latest_fold_id) for candidate in candidates)
+    if worker_limit <= 1:
+        return tuple(_score_candidate_process(task) for task in tasks)
+    with cpu_process_pool(worker_limit) as executor:
+        return tuple(executor.map(_score_candidate_process, tasks))
+
+
 def _anchored_partitions(
     items: tuple[KScoreBreakdown, ...], field_name: str
 ) -> tuple[tuple[KScoreBreakdown, ...], ...]:
@@ -404,9 +509,17 @@ def _rank_eligible(scores: tuple[KScoreBreakdown, ...]) -> tuple[KScoreBreakdown
 
 
 def rank_k_candidates(
-    candidates: Sequence[KScoreCandidate], *, latest_fold_id: str
+    candidates: Sequence[KScoreCandidate],
+    *,
+    latest_fold_id: str,
+    max_workers: int | None = None,
 ) -> KScoreRanking:
-    """Rank eligible K values under one common source/target evaluation contract."""
+    """Rank eligible K values under one common source/target evaluation contract.
+
+    Each K score is independent and therefore runs in GIL-independent worker
+    processes by default.  ``max_workers=1`` is an explicit serial reference
+    mode for deterministic QA and constrained callers.
+    """
 
     candidate_tuple = tuple(candidates)
     if not candidate_tuple:
@@ -418,7 +531,7 @@ def rank_k_candidates(
         candidate_tuple[0].evaluation_plan_hash,
         candidate_tuple[0].target_metric_id,
         candidate_tuple[0].target_horizon,
-        tuple(fold.fold_id for fold in candidate_tuple[0].folds),
+        tuple(sorted(fold.fold_id for fold in candidate_tuple[0].folds)),
     )
     for candidate in candidate_tuple[1:]:
         current_contract = (
@@ -426,7 +539,7 @@ def rank_k_candidates(
             candidate.evaluation_plan_hash,
             candidate.target_metric_id,
             candidate.target_horizon,
-            tuple(fold.fold_id for fold in candidate.folds),
+            tuple(sorted(fold.fold_id for fold in candidate.folds)),
         )
         if current_contract != common_contract:
             raise ValueError(
@@ -442,9 +555,10 @@ def rank_k_candidates(
                     raise ValueError("cross-K ranking requires one common baseline per fold")
                 baseline_by_fold[fold.fold_id] = fold.baseline_target_log_score
 
-    scores = tuple(
-        score_k_candidate(candidate, latest_fold_id=latest_fold_id)
-        for candidate in sorted(candidate_tuple, key=lambda item: item.state_count)
+    scores = _score_candidates(
+        tuple(sorted(candidate_tuple, key=lambda item: item.state_count)),
+        latest_fold_id=latest_fold_id,
+        max_workers=max_workers,
     )
     eligible = tuple(score for score in scores if score.eligible)
     ranked = _rank_eligible(eligible) if eligible else ()

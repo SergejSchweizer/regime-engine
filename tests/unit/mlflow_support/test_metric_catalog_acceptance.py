@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import fields
+from math import isfinite
 from types import UnionType
 from typing import Any, get_args, get_origin, get_type_hints
 
@@ -11,13 +12,65 @@ from market_regime_engine.evaluation.walk_forward import (
     WalkForwardEvaluation,
     WalkForwardFoldResult,
 )
+from market_regime_engine.evaluations.k_score import (
+    KScoreCandidate,
+    KScoreFoldEvidence,
+    rank_k_candidates,
+)
 from market_regime_engine.mlflow_support.metric_catalog import (
     _DYNAMIC_PATTERNS,
     METRIC_CATALOG,
     metric_definition,
+    validate_metric_points,
 )
 from market_regime_engine.mlflow_support.model_metrics import model_metric_points
+from market_regime_engine.mlflow_support.ports import MetricPoint
 from tests.unit.mlflow_support.test_all_plotting_functions import _evaluation
+
+_K_SCORE_COMPONENTS = (
+    "valid_fold_rate",
+    "forecast_score",
+    "calibration_score",
+    "stability_score",
+    "robustness_score",
+    "worst_fold_forecast_score",
+    "mean_support_score",
+    "complexity_penalty",
+    "total_score",
+    "eligible",
+)
+_K_SCORE_FOLD_IDS = ("outer_001", "outer_002", "outer_003", "outer_004")
+_K_SCORE_FEATURE_HASH = "a" * 64
+_K_SCORE_PLAN_HASH = "b" * 64
+
+
+def _k_score_candidate(
+    state_count: int = 2,
+    *,
+    invalid_latest: bool = False,
+) -> KScoreCandidate:
+    folds = tuple(
+        KScoreFoldEvidence(
+            fold_id=fold_id,
+            valid=not (invalid_latest and fold_id == "outer_004"),
+            target_log_score=None if invalid_latest and fold_id == "outer_004" else 0.4,
+            baseline_target_log_score=None if invalid_latest and fold_id == "outer_004" else 0.0,
+            calibration_error=None if invalid_latest and fold_id == "outer_004" else 0.1,
+            stability_score=None if invalid_latest and fold_id == "outer_004" else 0.8,
+            support_score=None if invalid_latest and fold_id == "outer_004" else 0.9,
+            invalid_reason="fit failed" if invalid_latest and fold_id == "outer_004" else None,
+        )
+        for fold_id in _K_SCORE_FOLD_IDS
+    )
+    return KScoreCandidate(
+        state_count=state_count,
+        feature_order_hash=_K_SCORE_FEATURE_HASH,
+        source_build_id="source-1",
+        evaluation_plan_hash=_K_SCORE_PLAN_HASH,
+        target_metric_id="next_return_log_score",
+        target_horizon="one_step",
+        folds=folds,
+    )
 
 
 def _contains_numeric(annotation: Any) -> bool:
@@ -190,3 +243,52 @@ def test_synthetic_metric_dossier_maps_every_numeric_metric_once() -> None:
     # classified by one explicit definition or one, and only one, family.
     indexed_keys = tuple(sorted({point.key for point in points}))
     assert all(re.fullmatch(r"[A-Za-z0-9_]+", key) for key in indexed_keys)
+
+
+def test_cross_k_projection_registers_every_component_for_each_legal_k() -> None:
+    ranking = rank_k_candidates(
+        (_k_score_candidate(2), _k_score_candidate(3)),
+        latest_fold_id="outer_004",
+    )
+
+    points = ranking.metric_points(timestamp_ms=123, step=7)
+    expected_keys = {
+        f"k_score_{component}_k{state_count}"
+        for state_count in (2, 3)
+        for component in _K_SCORE_COMPONENTS
+    }
+
+    assert {point.key for point in points} == expected_keys
+    assert len({(point.key, point.step) for point in points}) == len(points)
+    assert all(isfinite(point.value) for point in points)
+    assert all(_definition_match_count(point.key) == 1 for point in points)
+    assert all(metric_definition(point.key) is not None for point in points)
+    validate_metric_points(points)
+
+
+def test_cross_k_ineligible_projection_is_finite_and_omits_total_score() -> None:
+    ranking = rank_k_candidates(
+        (_k_score_candidate(invalid_latest=True),),
+        latest_fold_id="outer_004",
+    )
+
+    points = ranking.metric_points(timestamp_ms=123)
+    keys = {point.key for point in points}
+
+    assert "k_score_total_score_k2" not in keys
+    assert "k_score_eligible_k2" in keys
+    assert next(point.value for point in points if point.key == "k_score_eligible_k2") == 0.0
+    assert all(isfinite(point.value) for point in points)
+    validate_metric_points(points)
+
+
+def test_cross_k_catalog_rejects_nonfinite_unknown_and_duplicate_points() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        MetricPoint("k_score_forecast_score_k2", float("nan"), 0, 123)
+
+    with pytest.raises(KeyError, match="not registered"):
+        validate_metric_points((MetricPoint("k_score_forecast_score_k6", 0.5, 0, 123),))
+
+    point = MetricPoint("k_score_eligible_k2", 1.0, 0, 123)
+    with pytest.raises(ValueError, match="duplicate metric point identity"):
+        validate_metric_points((point, point))

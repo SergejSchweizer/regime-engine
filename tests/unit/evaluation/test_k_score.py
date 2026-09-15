@@ -191,3 +191,31 @@ def test_metric_projection_is_complete_and_uses_registered_keys() -> None:
 
     with pytest.raises(ValueError, match="timestamp"):
         ranking.metric_points(timestamp_ms=-1)
+
+
+def test_process_parallel_and_serial_ranking_have_identical_canonical_evidence() -> None:
+    candidates = (
+        candidate(4, feature_hash=HASH_B),
+        candidate(2),
+        candidate(5, folds=tuple(fold(fold_id, target=0.45) for fold_id in FOLDS)),
+        candidate(3, feature_hash=HASH_B),
+    )
+
+    serial = rank_k_candidates(candidates, latest_fold_id="outer_004", max_workers=1)
+    parallel = rank_k_candidates(candidates, latest_fold_id="outer_004", max_workers=2)
+
+    assert parallel.canonical_json == serial.canonical_json
+    assert parallel.source_hash == serial.source_hash
+
+
+def test_score_evidence_rejects_boolean_numeric_fields() -> None:
+    with pytest.raises(ValueError, match="boolean"):
+        KScoreFoldEvidence(
+            fold_id="outer_001",
+            valid=1,  # type: ignore[arg-type]
+            target_log_score=0.4,
+            baseline_target_log_score=0.0,
+            calibration_error=0.1,
+            stability_score=0.8,
+            support_score=0.9,
+        )
