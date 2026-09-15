@@ -155,11 +155,13 @@ Status date: 2026-09-15
   internal contract), #406 (nine-plot acceptance matrix) and #408 (crash/
   multistart acceptance). No GitHub PRs
   are open and no `pr/*` remote branches remain.
-- **External runtime checks:** NAS PostgreSQL `10.10.1.3:54321` accepts the
-  `regime-engine` read-only credential for database `postgres` and exposes
-  `regime_loader.regime_features_daily`; the verified live lineage contract is
-  schema version 4 / feature version 3. `xetra_loader` exists but denies
-  `CONNECT` to that role. External MLflow health responds `OK` at
+- **External runtime checks:** repository configuration now requires the
+  `macro-loader` read-only identity for database `postgres` and the
+  `macro_loader.macro_features_daily` consumer relation owned by
+  `macro-loader-owner`. The NAS currently still authenticates the legacy
+  `regime-engine` credential, while the configured password is rejected for
+  `macro-loader`; the NAS role/owner migration and new read-only smoke
+  evidence are therefore pending. External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
   registered models/versions, and deleted-LoggedModel inventory unavailable.
@@ -169,12 +171,12 @@ Status date: 2026-09-15
   unavailable when using the HTTP RestStore, rather than claiming a zero
   deleted-model count. No full evaluation is currently running: the earlier raw-only run
   was terminated before the mandatory-PCA changes and is not acceptance
-  evidence. The current outside-repository deployment secret also passes the
-  read-only PostgreSQL smoke test against `10.10.1.3:54321` as role
-  `regime-engine` in database `postgres`; the live source relation currently
-  contains 16,768 rows through 2026-09-04. A new full run must wait for the
-  explicit external namespace decision and current-source production-
-  eligibility evidence.
+  evidence. The current input consumer identity is `macro-loader` /
+  `macro-loader-owner` on `macro_loader.macro_features_daily`; the separate
+  `regime_loader_sync.gold_sync_state` relation remains the lineage/control
+  source; the live source relation currently contains 16,768 rows through
+  2026-09-04. A new full run must wait for the explicit external namespace
+  decision and current-source production-eligibility evidence.
 - **Latest verification:** durable-run, source-resume, stage-checkpoint,
   registry, MLflow settings, and v4 tracking tests pass; Ruff and
   `git diff --check` pass. The full non-E2E suite previously passed (`445
@@ -2007,10 +2009,10 @@ QA:
 - **Branch:** `pr/PR-428-k-slot-mlflow-qa`
 - **Depends on:** PR-425
 - **Parallel group:** Q2; independent of the math oracle
-- **Allowed:** `tests/qa/test_k_slot_registry.py`,
+- **Allowed:** `tests/unit/mlflow_support/test_k_slot_registry_qa.py`,
   `tests/integration/mlflow_support/test_k_slot_promotion.py`,
   `docs/qa/k_slot_mlflow.md`
-- **Status:** planned; not started
+- **Status:** local implementation present; full matrix and concurrency/rollback acceptance remain
 
 Acceptance:
 
@@ -3359,7 +3361,7 @@ The operational requirement is:
 
 > **Every feature that exists in the configured PostgreSQL feature schema at the moment a new immutable dataset snapshot is captured must automatically enter the v4 evaluation candidate universe.**
 
-The current production feature schema is `regime_loader`; `regime_loader_sync` is lineage/control metadata and is not a feature schema.
+The current production feature schema is `macro_loader`; `regime_loader_sync` is lineage/control metadata and is not a feature schema.
 
 This requirement is stronger than merely being able to query a newly added column. The complete evaluation orchestration must consume the discovered catalog as its candidate universe.
 

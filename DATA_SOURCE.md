@@ -6,16 +6,16 @@ This document is authoritative for production feature-source transport, lineage,
 
 ## Canonical upstream
 
-Upstream data product: `regime-loader`
+Upstream data product: `macro-loader`
 
 ```text
-https://github.com/SergejSchweizer/regime-loader.git
+https://github.com/SergejSchweizer/macro-loader.git
 ```
 
 Production dependency:
 
 ```text
-regime-loader
+macro-loader
   -> immutable Gold
   -> PostgreSQL serving replica 10.10.1.3:54321
   -> regime-engine
@@ -31,19 +31,19 @@ regime-loader
 host:              10.10.1.3
 port:              54321
 database:          mandatory runtime value; no default
-dataset_id:        regime_features_daily
-feature schema:    regime_loader
-lineage table:     regime_loader.regime_features_daily
+dataset_id:        macro_features_daily
+feature schema:    macro_loader
+lineage table:     macro_loader.macro_features_daily
 sync-state table:  regime_loader_sync.gold_sync_state
 temporal key:      timestamp_m1 TIMESTAMPTZ(6)
 ```
 
-The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstream but is not required by the MVP engine read contract.
+The current row-digest table `regime_loader_sync.gold_row_hashes` exists upstream but is not required by the MVP engine read contract. The sync-state schema remains a separate lineage/control namespace; only the serving consumer identity changed to `macro_loader.macro_features_daily`.
 
 Feature columns are nullable `DOUBLE PRECISION`. SQL NULL is permitted by the upstream source; NaN/infinity is invalid.
 
 For global discovery v4, the engine enumerates every feature relation in
-`regime_loader` and reads its PostgreSQL catalog metadata in the same
+`macro_loader` and reads its PostgreSQL catalog metadata in the same
 repeatable-read transaction as sync-state and feature rows. A supported
 relation must contain exactly one `timestamp_m1` column of PostgreSQL
 timestamp-with-time-zone type; every other column is a feature and must be
@@ -60,35 +60,34 @@ catalog and matrix before closing the database transaction. Its
 timestamps, columns and values/nulls and is included in the catalog identity.
 
 The v4 source entrypoint can finalize this materialized matrix through
-`FileDatasetSnapshotStore` before model work starts. The corresponding
-`FileEvaluationRunStore` binds the snapshot key to the profile, plan, code,
-lockfile, and Python identities and resumes completed outer-fold units after
-a process restart. A v4 evaluation is always keyed to this immutable
-snapshot; schema changes are visible only to a newly acquired snapshot.
+`FileDatasetSnapshotStore` before model work starts. A v4 evaluation is always
+keyed to this immutable snapshot; schema changes are visible only to a newly
+acquired snapshot. The full evaluation has no computation-position ledger: an
+interruption requires a fresh run from the beginning.
 
 ## Dedicated least-privilege identity
 
 Production runtime username is exactly:
 
 ```text
-regime-engine
+macro-loader
 ```
 
 SQL role identifier is quoted as:
 
 ```sql
-"regime-engine"
+"macro-loader"
 ```
 
 Required grants only:
 
 - database `CONNECT` on the explicitly supplied serving database;
-- schema `USAGE` on `regime_loader` and `regime_loader_sync`;
-- `SELECT` on every current feature relation in `regime_loader` (and the
+- schema `USAGE` on `macro_loader` and `regime_loader_sync`;
+- `SELECT` on every current feature relation in `macro_loader` (and the
   corresponding default privileges for future feature relations);
 - `SELECT` on `regime_loader_sync.gold_sync_state`.
 
-No writer/admin/ownership/CREATE privileges are required. The engine must never reuse the `regime-loader` writer credential.
+No writer/admin/ownership/CREATE privileges are required. The engine must never reuse the `macro-loader` writer credential.
 
 ## Runtime environment contract
 
@@ -99,7 +98,7 @@ MLflow service has its own independent tracking backend:
 REGIME_FEATURE_PGHOST=10.10.1.3
 REGIME_FEATURE_PGPORT=54321
 REGIME_FEATURE_PGDATABASE=<required runtime value>
-REGIME_FEATURE_PGUSER=regime-engine
+REGIME_FEATURE_PGUSER=macro-loader
 REGIME_FEATURE_PGPASSWORD_FILE=<preferred production secret file>
 REGIME_FEATURE_PGPASSWORD=<optional local/test direct secret>
 REGIME_FEATURE_PGSSLMODE=disable
@@ -113,7 +112,7 @@ No password or credential-bearing DSN may be committed, logged, embedded in MLfl
 
 ## Source lineage
 
-For `dataset_id=regime_features_daily`, read from `regime_loader_sync.gold_sync_state` and preserve at least:
+For `dataset_id=macro_features_daily`, read from `regime_loader_sync.gold_sync_state` and preserve at least:
 
 ```text
 source_build_id
@@ -210,7 +209,7 @@ Required tests remain hermetic and never depend on `10.10.1.3:54321`.
 
 Required tests use injected/fake/local PostgreSQL-shaped sources representing the feature table and sync-state table.
 
-A real NAS smoke test is allowed only when explicitly marked `external_service`, opted in by the operator, authenticated as `regime-engine`, uses `sslmode=disable`, and is read-only. It verifies privilege metadata rather than attempting destructive writes.
+A real NAS smoke test is allowed only when explicitly marked `external_service`, opted in by the operator, authenticated as `macro-loader`, uses `sslmode=disable`, and is read-only. It verifies privilege metadata rather than attempting destructive writes.
 
 ## Non-goals
 

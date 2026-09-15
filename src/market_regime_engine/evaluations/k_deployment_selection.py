@@ -185,9 +185,12 @@ def select_k_deployment_packages(
         raise ValueError("deployment source must extend exactly through deployment cutoff")
     if validation.validation_cutoff >= deployment_cutoff:
         raise ValueError("deployment cutoff must be after validation cutoff")
-    if not is_pickleable(selector) or not is_pickleable(refitter):
+    workers = cpu_worker_count(max_workers, task_count=len(_SLOTS))
+    if workers > 1 and (not is_pickleable(selector) or not is_pickleable(refitter)):
         raise TypeError("parallel K deployment requires pickleable selector and refitter")
     by_slot = {item.slot_id: item for item in validation.slots}
+    if set(by_slot) != set(_SLOTS) or len(by_slot) != len(_SLOTS):
+        raise ValueError("deployment validation must contain exactly one dossier per K slot")
     tasks = tuple(
         (
             source_rows.copy(deep=True),
@@ -200,7 +203,6 @@ def select_k_deployment_packages(
         )
         for slot_id in _SLOTS
     )
-    workers = cpu_worker_count(max_workers, task_count=len(tasks))
     if workers == 1:
         results = tuple(_run_slot(task) for task in tasks)
     else:

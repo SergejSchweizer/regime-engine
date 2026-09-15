@@ -22,7 +22,7 @@ def _config(tmp_path: Path) -> Path:
                     "host": "10.10.1.3",
                     "port": 54321,
                     "database": "postgres",
-                    "user": "regime-engine",
+                    "user": "macro-loader",
                     "sslmode": "disable",
                     "password_file": "/run/secrets/regime_feature_password",
                 },
