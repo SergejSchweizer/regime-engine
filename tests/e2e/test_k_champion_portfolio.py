@@ -184,6 +184,14 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
         for item in deployment.slots
         if item.eligible and item.selection is not None and item.artifact is not None
     )
+    legacy_champion_version = registered[0].exact_version
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias="champion",
+        expected_current_version=None,
+        new_version=legacy_champion_version,
+        reason="seed unchanged single-champion route",
+    )
     aliases = tuple(
         registry.compare_and_swap_alias(
             model_name="regime-xetra",
@@ -195,9 +203,10 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
         for index, item in enumerate(registered)
     )
     assert aliases == (True,) * manifest["registry_aliases"]
-    assert tuple(registry_client.aliases) == tuple(
-        ("regime-xetra", alias) for alias in K_CHAMPION_ALIASES
-    )
+    assert set(registry_client.aliases) == {
+        ("regime-xetra", alias) for alias in (*K_CHAMPION_ALIASES, "champion")
+    }
+    assert registry_client.aliases[("regime-xetra", "champion")] == legacy_champion_version
 
     payload = _portfolio_payload(portfolio, parallel, slots)
     expected_hash = canonical_hash_payload(payload)
