@@ -158,10 +158,12 @@ Status date: 2026-09-15
 - **External runtime checks:** repository configuration now requires the
   `macro-loader` read-only identity for database `postgres` and the
   `macro_loader.macro_features_daily` consumer relation owned by
-  `macro-loader-owner`. The NAS currently still authenticates the legacy
-  `regime-engine` credential, while the configured password is rejected for
-  `macro-loader`; the NAS role/owner migration and new read-only smoke
-  evidence are therefore pending. External MLflow health responds `OK` at
+  `macro-loader-owner`. The new `macro-loader` password now authenticates
+  successfully over plaintext, but the NAS currently has no
+  `macro_loader.macro_features_daily` relation and grants the new user no
+  usable access to the old `regime_loader` relation; the schema/table
+  migration and read-only smoke evidence are therefore pending. External
+  MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
   registered models/versions, and deleted-LoggedModel inventory unavailable.
@@ -2012,7 +2014,7 @@ QA:
 - **Allowed:** `tests/unit/mlflow_support/test_k_slot_registry_qa.py`,
   `tests/integration/mlflow_support/test_k_slot_promotion.py`,
   `docs/qa/k_slot_mlflow.md`
-- **Status:** local implementation present; full matrix and concurrency/rollback acceptance remain
+- **Status:** local implementation and four-slot matrix QA present; kill/retry side-effect acceptance remains
 
 Acceptance:
 

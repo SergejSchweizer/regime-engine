@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -26,6 +31,29 @@ REGISTERED_MODEL_NAME = "regime-xetra"
 K_SLOT_ALIASES = frozenset({"champion-k2", "champion-k3", "champion-k4", "champion-k5"})
 ALLOWED_ALIASES = frozenset({"challenger", "champion", *K_SLOT_ALIASES})
 _K_SLOT_BY_ALIAS = {alias: int(alias.rsplit("-k", 1)[1]) for alias in K_SLOT_ALIASES}
+_REGISTRY_THREAD_LOCK = threading.RLock()
+
+
+@contextmanager
+def _registry_mutation_lock() -> Iterator[None]:
+    """Serialize registry side effects across local worker processes."""
+
+    with _REGISTRY_THREAD_LOCK:
+        configured = os.environ.get(
+            "REGIME_MLFLOW_REGISTRY_LOCK_FILE",
+            os.path.join(
+                os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
+                "regime-engine-mlflow-registry.lock",
+            ),
+        )
+        lock_path = Path(configured).expanduser().resolve()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 class _ModelVersion(Protocol):
@@ -278,6 +306,22 @@ class MlflowModelRegistry:
         artifact_hash: str,
         description: str | None = None,
     ) -> RegisteredKSlotModel:
+        with _registry_mutation_lock():
+            return self._register_k_slot_package_unlocked(
+                selection,
+                package_source_uri=package_source_uri,
+                artifact_hash=artifact_hash,
+                description=description,
+            )
+
+    def _register_k_slot_package_unlocked(
+        self,
+        selection: KChampionSelection,
+        *,
+        package_source_uri: str,
+        artifact_hash: str,
+        description: str | None,
+    ) -> RegisteredKSlotModel:
         """Register one immutable K-slot package by its remote ``runs:/`` URI."""
 
         _require_model_name(REGISTERED_MODEL_NAME)
@@ -298,13 +342,19 @@ class MlflowModelRegistry:
             "regime_engine.alias": selection.alias,
             "regime_engine.state_count": str(selection.state_count),
             "regime_engine.model_family": selection.model_family,
+            "regime_engine.candidate_identity": selection.candidate_identity,
             "regime_engine.policy_id": selection.policy_id,
             "regime_engine.policy_version": selection.policy_version,
+            "regime_engine.profile_id": selection.profile_id,
+            "regime_engine.profile_config_version": str(selection.profile_config_version),
             "regime_engine.source_snapshot_id": selection.source_snapshot_id,
             "regime_engine.feature_order_sha256": selection.feature_order_hash,
             "regime_engine.comparison_domain_id": selection.comparison_domain_id,
             "regime_engine.promotion_score_version": selection.promotion_score_version,
             "regime_engine.reference_teacher_id": selection.reference_teacher_id,
+            "regime_engine.validation_cutoff": selection.validation_cutoff.isoformat(),
+            "regime_engine.deployment_cutoff": selection.deployment_cutoff.isoformat(),
+            "regime_engine.selection_sha256": selection.selection_hash,
             "regime_engine.artifact_sha256": artifact_hash,
             "regime_engine.idempotency_key": selection.idempotency_key,
         }
@@ -375,6 +425,24 @@ class MlflowModelRegistry:
         new_version: str,
         reason: str,
     ) -> AliasMutationAudit:
+        with _registry_mutation_lock():
+            return self._compare_and_swap_alias_with_audit_unlocked(
+                model_name=model_name,
+                alias=alias,
+                expected_current_version=expected_current_version,
+                new_version=new_version,
+                reason=reason,
+            )
+
+    def _compare_and_swap_alias_with_audit_unlocked(
+        self,
+        *,
+        model_name: str,
+        alias: str,
+        expected_current_version: str | None,
+        new_version: str,
+        reason: str,
+    ) -> AliasMutationAudit:
         _require_model_name(model_name)
         _require_alias(alias)
         if not new_version:
@@ -403,6 +471,29 @@ class MlflowModelRegistry:
         key = f"regime_engine.alias_audit.{audit.observed_at_utc.timestamp():.6f}"
         self._client.set_registered_model_tag(model_name, key, audit.canonical_json())
         return audit
+
+    def rollback_k_slot(
+        self,
+        *,
+        model_name: str,
+        alias: str,
+        expected_current_version: str,
+        rollback_version: str,
+        reason: str = "K-slot rollback",
+    ) -> AliasMutationAudit:
+        """Restore one retained K-slot version through the same audited CAS."""
+
+        if alias not in K_SLOT_ALIASES:
+            raise ValueError("rollback is permitted only for champion-k2..champion-k5")
+        if not expected_current_version:
+            raise ValueError("rollback requires the currently observed alias version")
+        return self.compare_and_swap_alias_with_audit(
+            model_name=model_name,
+            alias=alias,
+            expected_current_version=expected_current_version,
+            new_version=rollback_version,
+            reason=reason,
+        )
 
     def compare_and_swap_alias(
         self,

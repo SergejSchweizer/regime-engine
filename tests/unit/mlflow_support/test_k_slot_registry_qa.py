@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
+from threading import RLock
 
 import pytest
 from mlflow.exceptions import MlflowException
@@ -198,6 +202,10 @@ def test_registration_is_immutable_and_idempotent_when_search_is_supported() -> 
     assert stored.tags["regime_engine.alias"] == "champion-k2"
     assert stored.tags["regime_engine.state_count"] == "2"
     assert stored.tags["regime_engine.idempotency_key"] == selection.idempotency_key
+    assert stored.tags["regime_engine.selection_sha256"] == selection.selection_hash
+    assert stored.tags["regime_engine.candidate_identity"] == selection.candidate_identity
+    assert stored.tags["regime_engine.validation_cutoff"] == selection.validation_cutoff.isoformat()
+    assert stored.tags["regime_engine.deployment_cutoff"] == selection.deployment_cutoff.isoformat()
 
 
 def test_slot_k_mismatch_is_rejected_and_stale_cas_is_a_no_op() -> None:
@@ -301,3 +309,366 @@ def test_ineligible_slot_cannot_create_a_promotion_instruction() -> None:
     assert decision.winner is None
     with pytest.raises(ValueError, match="ineligible K slot"):
         build_promotion_instruction(decision, exact_model_version="1")
+
+
+class _ThreadSafeFileBackedRegistryClient(_LocalRegistryClient):
+    """Process-local registry double with an atomic persisted state boundary.
+
+    MLflow's public client methods used by ``MlflowModelRegistry`` are separate
+    calls, so the double makes the version-creation operation idempotent at the
+    registry boundary and serializes alias mutations.  This models the
+    guarantees that the current adapter can actually rely on without adding a
+    production-only synchronization API.
+    """
+
+    def __init__(self, state_path: Path) -> None:
+        super().__init__()
+        self._lock = RLock()
+        self._state_path = state_path
+
+    def _persist(self) -> None:
+        payload = {
+            "models": sorted(self.models),
+            "versions": {
+                f"{name}:{version}": {
+                    "source": item.source,
+                    "tags": item.tags,
+                }
+                for (name, version), item in sorted(self.versions.items())
+            },
+            "aliases": {
+                f"{name}:{alias}": version
+                for (name, alias), version in sorted(self.aliases.items())
+            },
+            "model_tags": {
+                f"{name}:{key}": value for (name, key), value in sorted(self.model_tags.items())
+            },
+            "create_count": self.create_count,
+        }
+        self._state_path.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+    def get_registered_model(self, name: str) -> object:
+        with self._lock:
+            return super().get_registered_model(name)
+
+    def create_registered_model(self, name: str) -> object:
+        with self._lock:
+            result = super().create_registered_model(name)
+            self._persist()
+            return result
+
+    def create_model_version(
+        self,
+        *,
+        name: str,
+        source: str,
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> _Version:
+        with self._lock:
+            requested_tags = dict(tags or {})
+            for existing in self.versions.values():
+                if existing.tags == requested_tags:
+                    return existing
+            version = super().create_model_version(
+                name=name,
+                source=source,
+                description=description,
+                tags=requested_tags,
+            )
+            self._persist()
+            return version
+
+    def search_model_versions(self, filter_string: str) -> tuple[_Version, ...]:
+        with self._lock:
+            return super().search_model_versions(filter_string)
+
+    def get_model_version(self, name: str, version: str) -> _Version:
+        with self._lock:
+            return super().get_model_version(name, version)
+
+    def get_model_version_by_alias(self, name: str, alias: str) -> _Version:
+        with self._lock:
+            return super().get_model_version_by_alias(name, alias)
+
+    def set_registered_model_alias(self, name: str, alias: str, version: str) -> None:
+        with self._lock:
+            super().set_registered_model_alias(name, alias, version)
+            self._persist()
+
+    def set_registered_model_tag(self, name: str, key: str, value: str) -> None:
+        with self._lock:
+            super().set_registered_model_tag(name, key, value)
+            self._persist()
+
+
+@pytest.mark.parametrize("slot_id", ("k2", "k3", "k4", "k5"))
+def test_all_four_slots_register_and_promote_only_to_their_matching_alias(
+    slot_id: str,
+) -> None:
+    client = _LocalRegistryClient()
+    registry = MlflowModelRegistry(client)
+    selection = _selection(slot_id=slot_id, artifact_byte=slot_id[-1])
+    version = _register(registry, selection)
+
+    audit = registry.compare_and_swap_alias_with_audit(
+        model_name="regime-xetra",
+        alias=selection.alias,
+        expected_current_version=None,
+        new_version=version,
+        reason=f"first promotion for {slot_id}",
+    )
+
+    assert audit.changed is True
+    assert client.aliases["regime-xetra", selection.alias] == version
+    assert client.versions["regime-xetra", version].tags["regime_engine.slot_id"] == slot_id
+
+
+@pytest.mark.parametrize("slot_id", ("k2", "k3", "k4", "k5"))
+def test_first_better_worse_and_tie_outcomes_are_deterministic(slot_id: str) -> None:
+    client = _LocalRegistryClient()
+    registry = MlflowModelRegistry(client)
+    first_selection = _selection(slot_id=slot_id, feature_order=("f0", "f1"), artifact_byte="a")
+    better_selection = _selection(
+        slot_id=slot_id,
+        feature_order=("f0", "f1", "pca0"),
+        artifact_byte="b",
+        candidate_identity="gaussian_hmm_k2_pca0",
+    )
+    worse_selection = _selection(
+        slot_id=slot_id,
+        feature_order=("f0", "f1", "pca1"),
+        artifact_byte="c",
+        candidate_identity="gaussian_hmm_k2_pca1",
+    )
+    tie_selection = _selection(
+        slot_id=slot_id,
+        feature_order=("f0", "f1", "pca2"),
+        artifact_byte="d",
+        candidate_identity="gaussian_hmm_k2_pca2",
+    )
+    first_version = _register(registry, first_selection)
+    better_version = _register(registry, better_selection)
+    worse_version = _register(registry, worse_selection)
+    tie_version = _register(registry, tie_selection)
+
+    first = registry.compare_and_swap_alias_with_audit(
+        model_name="regime-xetra",
+        alias=first_selection.alias,
+        expected_current_version=None,
+        new_version=first_version,
+        reason="first candidate",
+    )
+    assert first.changed is True
+
+    better_decision = rank_k_slot_candidates(
+        (
+            KChampionPromotionCandidate(first_selection, _evidence(first_selection, mean_nmi=0.80)),
+            KChampionPromotionCandidate(
+                better_selection,
+                _evidence(better_selection, mean_nmi=0.90),
+            ),
+        )
+    )
+    assert better_decision.winner is not None
+    assert better_decision.winner.selection == better_selection
+    better = registry.apply_k_slot_promotion(
+        build_promotion_instruction(
+            better_decision,
+            exact_model_version=better_version,
+            expected_current_version=first_version,
+            reason="better candidate",
+        )
+    )
+    assert better.changed is True
+
+    worse_decision = rank_k_slot_candidates(
+        (
+            KChampionPromotionCandidate(
+                better_selection, _evidence(better_selection, mean_nmi=0.90)
+            ),
+            KChampionPromotionCandidate(worse_selection, _evidence(worse_selection, mean_nmi=0.70)),
+        )
+    )
+    assert worse_decision.winner is not None
+    assert worse_decision.winner.selection == better_selection
+    assert client.aliases["regime-xetra", first_selection.alias] == better_version
+    assert worse_version != better_version
+
+    tie_decision = rank_k_slot_candidates(
+        (
+            KChampionPromotionCandidate(
+                better_selection, _evidence(better_selection, mean_nmi=0.90)
+            ),
+            KChampionPromotionCandidate(tie_selection, _evidence(tie_selection, mean_nmi=0.90)),
+        )
+    )
+    assert tie_decision.winner is not None
+    expected_tie_winner = min(
+        (better_selection, tie_selection),
+        key=lambda item: (item.feature_order_hash, item.candidate_identity),
+    )
+    assert tie_decision.winner.selection == expected_tie_winner
+    tie_version_for_winner = (
+        better_version if expected_tie_winner == better_selection else tie_version
+    )
+    tie = registry.apply_k_slot_promotion(
+        build_promotion_instruction(
+            tie_decision,
+            exact_model_version=tie_version_for_winner,
+            expected_current_version=better_version,
+            reason="deterministic tie winner",
+        )
+    )
+    assert tie.changed is True
+    assert client.aliases["regime-xetra", first_selection.alias] == tie_version_for_winner
+
+
+@pytest.mark.parametrize("slot_id", ("k2", "k3", "k4", "k5"))
+def test_stale_cas_and_cas_based_rollback_restore_an_earlier_version(slot_id: str) -> None:
+    client = _LocalRegistryClient()
+    registry = MlflowModelRegistry(client)
+    original = _selection(slot_id=slot_id, artifact_byte="a")
+    replacement = _selection(
+        slot_id=slot_id,
+        feature_order=("f0", "f1", "pca0"),
+        artifact_byte="b",
+        candidate_identity="gaussian_hmm_k2_pca0",
+    )
+    original_version = _register(registry, original)
+    replacement_version = _register(registry, replacement)
+
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias=original.alias,
+        expected_current_version=None,
+        new_version=original_version,
+        reason="establish original",
+    )
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias=original.alias,
+        expected_current_version=original_version,
+        new_version=replacement_version,
+        reason="promote replacement",
+    )
+
+    stale = registry.compare_and_swap_alias_with_audit(
+        model_name="regime-xetra",
+        alias=original.alias,
+        expected_current_version=original_version,
+        new_version=original_version,
+        reason="stale rollback operator view",
+    )
+    assert stale.changed is False
+    assert stale.observed_current_version == replacement_version
+    assert client.aliases["regime-xetra", original.alias] == replacement_version
+
+    other_slot = "k3" if slot_id != "k3" else "k2"
+    other_selection = _selection(slot_id=other_slot, artifact_byte="c")
+    other_version = _register(registry, other_selection)
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias=other_selection.alias,
+        expected_current_version=None,
+        new_version=other_version,
+        reason="preserve another K slot",
+    )
+    assert registry.compare_and_swap_alias(
+        model_name="regime-xetra",
+        alias="champion",
+        expected_current_version=None,
+        new_version=other_version,
+        reason="preserve legacy alias",
+    )
+
+    restored = registry.rollback_k_slot(
+        model_name="regime-xetra",
+        alias=original.alias,
+        expected_current_version=replacement_version,
+        rollback_version=original_version,
+        reason="restore original through CAS",
+    )
+    assert restored.changed is True
+    assert client.aliases["regime-xetra", original.alias] == original_version
+    assert client.aliases["regime-xetra", other_selection.alias] == other_version
+    assert client.aliases["regime-xetra", "champion"] == other_version
+
+
+def test_incompatible_provenance_and_registry_targets_are_rejected() -> None:
+    selection = _selection()
+    mismatched_source = replace(_evidence(selection), source_snapshot_id="other-snapshot")
+    with pytest.raises(ValueError, match="selection/evidence source snapshot mismatch"):
+        KChampionPromotionCandidate(selection, mismatched_source)
+
+    k3_selection = _selection(slot_id="k3", artifact_byte="b")
+    with pytest.raises(ValueError, match="cross-K promotion comparison"):
+        rank_k_slot_candidates(
+            (
+                KChampionPromotionCandidate(selection, _evidence(selection)),
+                KChampionPromotionCandidate(k3_selection, _evidence(k3_selection)),
+            )
+        )
+
+    client = _LocalRegistryClient()
+    registry = MlflowModelRegistry(client)
+    version = _register(registry, selection)
+    with pytest.raises(ValueError, match="artifact hash differs"):
+        registry.register_k_slot_package(
+            selection,
+            package_source_uri="runs:/qa/incompatible-artifact",
+            artifact_hash="b" * 64,
+        )
+    client.versions["regime-xetra", version] = replace(
+        client.versions["regime-xetra", version],
+        tags={**client.versions["regime-xetra", version].tags, "regime_engine.state_count": "3"},
+    )
+    with pytest.raises(ValueError, match="champion-k2 requires a matching K=2"):
+        registry.compare_and_swap_alias(
+            model_name="regime-xetra",
+            alias="champion-k2",
+            expected_current_version=None,
+            new_version=version,
+            reason="incompatible target provenance",
+        )
+
+
+@pytest.mark.parametrize("slot_id", ("k2", "k3", "k4", "k5"))
+def test_concurrent_registration_and_promotion_are_idempotent_in_a_file_backed_double(
+    tmp_path: Path, slot_id: str
+) -> None:
+    client = _ThreadSafeFileBackedRegistryClient(tmp_path / "registry-state.json")
+    registry = MlflowModelRegistry(client)
+    selection = _selection(slot_id=slot_id, artifact_byte=slot_id[-1])
+
+    def register() -> str:
+        return _register(registry, selection, source="runs:/qa/concurrent")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        versions = tuple(executor.map(lambda _: register(), range(16)))
+
+    assert set(versions) == {versions[0]}
+    assert client.create_count == 1
+
+    def promote() -> object:
+        return registry.compare_and_swap_alias_with_audit(
+            model_name="regime-xetra",
+            alias=selection.alias,
+            expected_current_version=None,
+            new_version=versions[0],
+            reason="concurrent idempotent promotion",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        audits = tuple(executor.map(lambda _: promote(), range(16)))
+
+    assert 1 <= sum(audit.changed for audit in audits) <= len(audits)
+    assert all(audit.new_version == versions[0] for audit in audits)
+    assert all(audit.observed_current_version in {None, versions[0]} for audit in audits)
+    assert client.aliases["regime-xetra", selection.alias] == versions[0]
+    persisted = json.loads((tmp_path / "registry-state.json").read_text(encoding="utf-8"))
+    assert persisted["aliases"][f"regime-xetra:{selection.alias}"] == versions[0]
+    assert persisted["create_count"] == 1
