@@ -121,6 +121,10 @@ Status date: 2026-09-15
   local PR-420/423/426/427 contracts; it does not mutate any alias. The
   fixed-K and hermetic four-slot implementation/proof work is merged through
   GitHub PR #418; only the explicitly listed external/production gaps remain.
+  Cross-K scoring acceptance was then hardened locally in follow-up PR-442:
+  the complete formula, independent eligibility gates, non-finite input
+  rejection, order-independent evidence hashes, and K=2..5 Model Metrics
+  projection are covered without contacting external services.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -394,7 +398,7 @@ still required.
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
-| PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
+| PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Formula, independent eligibility-gate, non-finite-input, canonical-hash and full K=2..5 projection QA is covered by follow-up PR-442. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
@@ -2162,7 +2166,9 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_score.py`,
   `src/market_regime_engine/mlflow_support/metric_catalog.py`,
   `tests/unit/evaluation/test_k_score.py`
-- **Status:** in progress; implementation branch created
+- **Status:** implementation merged in GitHub #415; local acceptance hardening
+  is submitted as follow-up PR-442. External four-slot integration remains
+  under PR-420 through PR-430.
 
 Acceptance:
 
