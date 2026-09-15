@@ -23,10 +23,11 @@ from tests.fixtures.k_champion.portfolio import (
     build_portfolio,
     canonical_hash_payload,
     independent_canonical_hash,
+    independent_portfolio_outer_hash,
     metric_slots,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
 @pytest.fixture(scope="module")
@@ -279,3 +280,12 @@ def test_future_rows_do_not_change_completed_outer_evidence(portfolio: HermeticP
         deployment_cutoff=portfolio.deployment_cutoff,
     )
     assert future_portfolio.outer(max_workers=None).result_hash == baseline.result_hash
+
+
+def test_full_portfolio_repeats_in_an_independent_process(
+    portfolio: HermeticPortfolio,
+) -> None:
+    baseline = portfolio.outer(max_workers=None).result_hash
+    with __import__("concurrent.futures").futures.ProcessPoolExecutor(max_workers=1) as executor:
+        repeated = executor.submit(independent_portfolio_outer_hash).result()
+    assert repeated == baseline

@@ -36,10 +36,12 @@ The proof checks:
 - mutation of rows after the validation cutoff cannot change completed outer
   selections or promotion evidence.
 
+The module is marked `integration` and `slow`, so it is excluded from the
+normal pre-commit integration lane and run explicitly by the local proof
+workflow. The independent-process test rebuilds the real numerical portfolio
+and compares the complete outer-evidence hash with the fixture run.
+
 This is intentionally hermetic. It does not contact NAS PostgreSQL, remote
 MLflow, or the full evaluation. The registry and package boundaries are local
 test doubles/filesystem fixtures, so external MLflow side-effect, LoggedModel
 lineage, and remote alias durability remain PR-430/registry acceptance work.
-The independent-process check canonicalizes the completed immutable evidence;
-the expensive real numerical fit is executed once per focused test-module
-fixture rather than duplicated as a second full portfolio run.

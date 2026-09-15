@@ -692,6 +692,13 @@ def independent_canonical_hash(payload: object) -> str:
     return canonical_hash_payload(payload)
 
 
+def independent_portfolio_outer_hash() -> str:
+    """Build and validate a fresh portfolio in an independent process."""
+
+    portfolio = build_portfolio(max_workers=None)
+    return portfolio.outer(max_workers=None).result_hash
+
+
 __all__ = [
     "FAMILIES",
     "FEATURE_ORDER_BY_K",
@@ -701,6 +708,7 @@ __all__ = [
     "build_portfolio",
     "canonical_hash_payload",
     "independent_canonical_hash",
+    "independent_portfolio_outer_hash",
     "metric_slots",
     "source_rows",
 ]

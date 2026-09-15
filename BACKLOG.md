@@ -390,7 +390,7 @@ still required.
 | PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (LOCAL) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (LOCAL) | Four-slot registry/CAS unit and integration QA is present; kill/retry side-effect acceptance remains |
-| PR-429 | IN PROGRESS (LOCAL) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; independent-process and production lineage gaps remain |
+| PR-429 | IN PROGRESS (LOCAL) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration remains gated by planned PR-420/423/426/427; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
@@ -2066,7 +2066,7 @@ Acceptance:
   champion alias.
 - [x] Prove all Model Metrics and per-K plots are complete, deterministic and
   sourced without recomputation.
-- [ ] Repeat the hermetic run in an independent process and compare canonical
+- [x] Repeat the hermetic run in an independent process and compare canonical
   evidence/artifact hashes.
 - [x] Prove future-data mutation cannot alter earlier selections and outer
   promotion evidence.
