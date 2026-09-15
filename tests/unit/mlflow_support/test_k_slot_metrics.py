@@ -34,9 +34,7 @@ def metadata(k: int, *, feature_order: tuple[str, ...] = ("f0", "f1")) -> KSlotM
     )
 
 
-def slot(
-    k: int, *, eligible: bool = True, cross_k_metric: bool = False
-) -> KSlotMetricProjection:
+def slot(k: int, *, eligible: bool = True, cross_k_metric: bool = False) -> KSlotMetricProjection:
     info = metadata(k)
     metric_points = [
         MetricPoint("fit_quality_oos_predictive_loglik_per_obs", 0.5, 0, 100),
