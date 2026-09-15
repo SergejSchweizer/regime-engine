@@ -41,6 +41,7 @@ from market_regime_engine.training.final_refit import (
 PROFILE_CONFIG = Path("configs/profiles/xetra_v4.yaml")
 FEATURES = ("f0", "f1")
 PCA_FEATURES = ("f0", "f1", "pca_pc_001")
+FEATURE_UNIVERSE = (*FEATURES, "pca_pc_001")
 
 
 def candidate() -> ResolvedCandidateProfile:
@@ -53,7 +54,7 @@ def candidate() -> ResolvedCandidateProfile:
         source_build_id="build-1",
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        original_feature_universe=tuple(f"f{index}" for index in range(48)),
+        original_feature_universe=FEATURE_UNIVERSE,
     )
 
 
@@ -258,6 +259,7 @@ def winning_evaluation(rows: pd.DataFrame):
         profile=profile,
         candidate=candidate(),
         adapter_factory=DeterministicAdapter,
+        pca_raw_feature_order=FEATURES,
     )
 
 
@@ -317,6 +319,8 @@ def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> N
         candidate=candidate(),
         winning_evaluation=evaluation,
         deployment_selection=deployment_selection(rows, evaluation),
+        profile=load_profile(PROFILE_CONFIG),
+        pca_raw_feature_order=FEATURES,
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     assert result.registered_model == "regime-xetra"
@@ -371,6 +375,8 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
         candidate=candidate(),
         winning_evaluation=evaluation,
         deployment_selection=deployment_selection(rows, evaluation),
+        profile=load_profile(PROFILE_CONFIG),
+        pca_raw_feature_order=FEATURES,
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     future = rows.copy()
@@ -386,6 +392,8 @@ def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:
         candidate=candidate(),
         winning_evaluation=evaluation,
         deployment_selection=deployment_selection(rows, evaluation),
+        profile=load_profile(PROFILE_CONFIG),
+        pca_raw_feature_order=FEATURES,
         adapter_factory_builder=lambda item: DeterministicAdapter,
     )
     assert changed.scaler == baseline.scaler
@@ -410,6 +418,8 @@ def test_final_refit_rejects_deployment_cutoff_after_source_lineage_maximum() ->
             candidate=candidate(),
             winning_evaluation=evaluation,
             deployment_selection=drifted_cutoff,
+            profile=load_profile(PROFILE_CONFIG),
+            pca_raw_feature_order=FEATURES,
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
 
@@ -424,6 +434,8 @@ def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
             candidate=replace(candidate(), candidate_id="gaussian_hmm_k3_full", state_count=3),
             winning_evaluation=evaluation,
             deployment_selection=deployment_selection(rows, evaluation),
+            profile=load_profile(PROFILE_CONFIG),
+            pca_raw_feature_order=FEATURES,
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
     with pytest.raises(ValueError, match="source lineage"):
@@ -433,6 +445,8 @@ def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
             candidate=candidate(),
             winning_evaluation=evaluation,
             deployment_selection=deployment_selection(rows, evaluation),
+            profile=load_profile(PROFILE_CONFIG),
+            pca_raw_feature_order=FEATURES,
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
     drifted = replace(candidate(), feature_selection_execution_hash="c" * 64)
@@ -443,6 +457,8 @@ def test_final_refit_rejects_champion_source_and_selection_drift() -> None:
             candidate=drifted,
             winning_evaluation=evaluation,
             deployment_selection=deployment_selection(rows, evaluation),
+            profile=load_profile(PROFILE_CONFIG),
+            pca_raw_feature_order=FEATURES,
             adapter_factory_builder=lambda item: DeterministicAdapter,
         )
 
@@ -546,6 +562,7 @@ def real_final_refit_artifacts(
                 candidate_profile=selected,
             ),
             profile=profile,
+            pca_raw_feature_order=FEATURES,
             adapter_factory_builder=lambda item: adapter_factory(profile, item),
         )
     return artifacts

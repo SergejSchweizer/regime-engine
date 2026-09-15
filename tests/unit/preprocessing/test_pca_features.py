@@ -11,6 +11,7 @@ from market_regime_engine.preprocessing import (
     PCAFitResult,
     fit_pca_inner_train,
     materialize_pca_generated_features,
+    validate_pca_feature_universe,
 )
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -109,3 +110,31 @@ def test_generated_values_match_frozen_transform_and_mismatch_fails_closed() -> 
     )
     with pytest.raises(ValueError, match="feature order"):
         materialize_pca_generated_features(wrong_catalog, fit, timestamps, rows)
+
+
+def test_mandatory_v4_universe_rejects_raw_only_and_returns_raw_order() -> None:
+    raw_catalog, timestamps, rows = _raw()
+    fit = _fit(raw_catalog, timestamps, rows)
+    generated = materialize_pca_generated_features(raw_catalog, fit, timestamps, rows)
+
+    assert (
+        validate_pca_feature_universe(
+            generated.catalog,
+            component_count=fit.artifact.retained_component_count,
+        )
+        == raw_catalog.feature_names
+    )
+    with pytest.raises(ValueError, match="complete raw-plus-PCA feature universe"):
+        validate_pca_feature_universe(raw_catalog, component_count=1)
+
+
+def test_mandatory_v4_universe_rejects_wrong_component_count_or_provenance() -> None:
+    raw_catalog, timestamps, rows = _raw()
+    fit = _fit(raw_catalog, timestamps, rows)
+    generated = materialize_pca_generated_features(raw_catalog, fit, timestamps, rows)
+
+    with pytest.raises(ValueError, match="complete raw-plus-PCA feature universe"):
+        validate_pca_feature_universe(
+            generated.catalog,
+            component_count=fit.artifact.retained_component_count + 1,
+        )

@@ -47,6 +47,16 @@ def _valid_pca_fold(fold: WalkForwardFoldResult) -> PCATwoStageScalerArtifact:
     return fold.pca_scaler_artifact
 
 
+def require_pca_artifacts(
+    evaluation: WalkForwardEvaluation,
+) -> tuple[tuple[int, PCATwoStageScalerArtifact], ...]:
+    """Return PCA evidence for every valid fold, failing closed on omission."""
+
+    return tuple(
+        (fold.fold_index, _valid_pca_fold(fold)) for fold in evaluation.folds if fold.valid
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PCAMetricComparison:
     """Matched raw-only and raw-plus-PCA evaluations on one frozen source plan."""
@@ -230,4 +240,5 @@ __all__ = [
     "PCAMetricComparison",
     "pca_comparison_metric_points",
     "pca_metric_points",
+    "require_pca_artifacts",
 ]

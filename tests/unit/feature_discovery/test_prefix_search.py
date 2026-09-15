@@ -14,6 +14,7 @@ from market_regime_engine.profiles.loader import load_profile
 
 HASH = "a" * 64
 FEATURES = ("f0", "f1", "f2", "f3")
+FEATURE_UNIVERSE = (*FEATURES, "pca_pc_001")
 
 
 def source_rows(row_count: int = 819) -> pd.DataFrame:
@@ -26,6 +27,7 @@ def source_rows(row_count: int = 819) -> pd.DataFrame:
             "f1": np.cos(index / 17.0),
             "f2": np.sin(index / 23.0) + index / 10_000.0,
             "f3": np.cos(index / 31.0) + index / 20_000.0,
+            "pca_pc_001": np.sin(index / 37.0),
         }
     )
 
@@ -87,6 +89,7 @@ def test_nested_prefixes_choose_by_teacher_nmi_not_cross_dimension_likelihood() 
         teacher=teacher(rows),
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         runner=fake_runner,
+        pca_raw_feature_order=FEATURES,
         max_workers=2,
     )
 
@@ -110,6 +113,7 @@ def test_serial_prefix_search_evaluates_every_ranked_prefix() -> None:
         teacher=teacher(rows),
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         runner=fake_runner,
+        pca_raw_feature_order=FEATURES,
         max_workers=1,
     )
 
@@ -135,6 +139,7 @@ def test_non_pickleable_parallel_prefix_runner_fails_closed(monkeypatch) -> None
             teacher=teacher(rows),
             profile=load_profile("configs/profiles/xetra_v4.yaml"),
             runner=synchronized_runner,
+            pca_raw_feature_order=FEATURES,
             max_workers=3,
         )
 
@@ -149,6 +154,7 @@ def test_prefix_evaluation_sink_exposes_selected_raw_candidate_without_persisten
         teacher=teacher(rows),
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         runner=fake_runner,
+        pca_raw_feature_order=FEATURES,
         evaluation_sink=lambda prefix_length, candidate_id, evaluation: captured.__setitem__(
             (prefix_length, candidate_id), evaluation
         ),
@@ -176,6 +182,7 @@ def test_prefix_clock_preflight_happens_before_any_candidate_runner() -> None:
             teacher=teacher(rows),
             profile=load_profile("configs/profiles/xetra_v4.yaml"),
             runner=runner,
+            pca_raw_feature_order=FEATURES,
             max_workers=1,
         )
     assert calls == []
@@ -188,6 +195,7 @@ def test_prefix_search_rejects_duplicate_or_too_short_rankings() -> None:
         "teacher": teacher(rows),
         "profile": load_profile("configs/profiles/xetra_v4.yaml"),
         "runner": fake_runner,
+        "pca_raw_feature_order": FEATURES,
     }
     with pytest.raises(ValueError, match="at least two unique"):
         module.search_ranked_prefixes(ranked_features=("f0",), **common)

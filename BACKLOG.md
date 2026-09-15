@@ -1,8 +1,21 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-14
+Status date: 2026-09-15
 
 ## Current execution state
+
+- **Mandatory PCA correction:** canonical Xetra v4 now rejects a raw-only
+  catalog at the public selection/evaluation boundary. The fixed
+  raw-plus-eight-component PCA universe is validated for generated-feature
+  provenance before quality filtering, distance, clustering, scoring,
+  walk-forward selection, final refit, packaging, math audit, and serving.
+  PCA is therefore not an opt-in feature or an alternate evaluation mode;
+  missing PCA evidence fails closed. All local unit and integration fixtures
+  now exercise the mandatory contract; no compatibility fallback is retained.
+  The canonical `select_v4_configuration`, `evaluate_global_regime_v4`, and
+  source entry points no longer accept caller-supplied PCA switches or raw
+  feature orders: they derive the raw source order from the validated catalog
+  and always send raw plus generated PCA columns through the same pipeline.
 
 - **Active worktree:** `main`; no implementation worktree or `pr/*` branch is
   active after the latest merged follow-ups.
@@ -360,14 +373,14 @@ still required.
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
-| PR-420 | PLANNED | K-specific champion-slot contract; not started |
-| PR-421 | PLANNED | K-specific TRAIN-only feature selection; not started |
-| PR-422 | PLANNED | Fixed-K Gaussian/GMM/Student-t family comparison; not started |
-| PR-423 | PLANNED | Four-slot outer-policy validation; not started |
-| PR-424 | PLANNED | Full-history per-K deployment selection and refit; not started |
-| PR-425 | PLANNED | MLflow K-slot registry, immutable versions and alias promotion; not started |
-| PR-426 | PLANNED | Per-K Model Metrics and comparison plots; not started |
-| PR-427 | PLANNED | Independent mathematical QA for K-specific selection; not started |
+| PR-420 | IN PROGRESS (LOCAL) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
+| PR-421 | IN PROGRESS (LOCAL) | TRAIN-only process-parallel K orchestration and explicit discovery/teacher/prefix evidence payload implemented; real selector integration and QA remain |
+| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family grid contract and process-parallel runner implemented; real-HMM integration and acceptance remain |
+| PR-423 | IN PROGRESS (LOCAL) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; full integration QA remains |
+| PR-424 | IN PROGRESS (LOCAL) | Per-K deployment/refit orchestration with cutoff/source binding implemented; production artifact integration QA remains |
+| PR-425 | IN PROGRESS (LOCAL) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
+| PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; full artifact projection matrix remains |
+| PR-427 | IN PROGRESS (LOCAL) | Independent stdlib math oracle and QA fixtures implemented; dossier breadth and acceptance closure remain |
 | PR-428 | PLANNED | MLflow registry/promotion QA; not started |
 | PR-429 | PLANNED | Hermetic four-slot end-to-end QA; not started |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
@@ -1639,7 +1652,7 @@ version remains available for audit and rollback. The existing default
   `src/market_regime_engine/evaluations/k_champion_contract.py`,
   `src/market_regime_engine/mlflow_support/k_champion_contract.py`,
   corresponding unit tests and contract documentation
-- **Status:** planned; not started
+- **Status:** local implementation present; complete Wave E QA matrix remains
 
 Acceptance:
 
@@ -1696,7 +1709,7 @@ QA:
   `src/market_regime_engine/evaluations/provisional_teacher.py`,
   `src/market_regime_engine/evaluations/prefix_search.py`,
   corresponding unit/integration tests
-- **Status:** planned; not started
+- **Status:** local implementation present; real selector integration and QA remain
 
 Acceptance:
 
@@ -1743,7 +1756,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_family_grid.py`,
   `src/market_regime_engine/evaluations/final_v4_grid.py`,
   `src/market_regime_engine/training/candidate_grid.py`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; real-HMM integration and acceptance remain
 
 Acceptance:
 
@@ -1782,7 +1795,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_champion_outer.py`,
   `src/market_regime_engine/evaluations/global_regime_v4.py`,
   `src/market_regime_engine/evaluation_statistics/*`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; full integration QA remains
 
 Acceptance:
 
@@ -1826,7 +1839,7 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_deployment_selection.py`,
   `src/market_regime_engine/training/final_refit.py`,
   `src/market_regime_engine/mlflow_support/model_package.py`, corresponding tests
-- **Status:** planned; not started
+- **Status:** local implementation present; production artifact integration QA remains
 
 Acceptance:
 
@@ -1869,7 +1882,7 @@ QA:
   `src/market_regime_engine/mlflow_support/model_publishing.py`,
   `src/market_regime_engine/commands/lifecycle.py`, corresponding tests and
   registry documentation
-- **Status:** planned; not started
+- **Status:** local implementation present; concurrency/rollback QA remains
 
 Acceptance:
 
@@ -1920,7 +1933,7 @@ QA:
   `src/market_regime_engine/mlflow_support/plot_data.py`,
   `src/market_regime_engine/evaluations/plots.py`, corresponding tests and
   `MLFLOW_MODEL_METRICS.md`
-- **Status:** planned; not started
+- **Status:** local implementation present; full artifact projection QA remains
 
 Acceptance:
 
@@ -1964,7 +1977,7 @@ QA:
 - **Parallel group:** Q1; independent of MLflow registry implementation
 - **Allowed:** `scripts/verify_k_champion_math.py`,
   `tests/qa/test_k_champion_math.py`, `docs/qa/k_champion_math.md`
-- **Status:** planned; not started
+- **Status:** local implementation present; dossier breadth and acceptance closure remain
 
 Acceptance:
 

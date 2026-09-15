@@ -32,6 +32,7 @@ from market_regime_engine.mlflow_support.metric_export import (
     export_model_metric_points,
 )
 from market_regime_engine.mlflow_support.model_metrics import model_metric_points
+from market_regime_engine.mlflow_support.pca_metrics import require_pca_artifacts
 from market_regime_engine.mlflow_support.plots import (
     PlotManifestEntry,
     candidate_covariance_scale,
@@ -64,6 +65,7 @@ class _CandidateTrackingEvidence:
 
     candidate_points: tuple[MetricPoint, ...]
     aggregate_points: tuple[MetricPoint, ...]
+    model_points: tuple[MetricPoint, ...]
     timeline_rows: tuple[dict[str, object], ...]
     metric_rows: tuple[dict[str, object], ...]
 
@@ -385,9 +387,7 @@ def _candidate_model_tags(
     model_family = candidate_id.split("_k", maxsplit=1)[0]
     mixture_count = "2" if model_family == "gmm_hmm" else "1"
     pca_fit_hashes = tuple(
-        fold.pca_scaler_artifact.fit_hash
-        for fold in evaluation.folds
-        if fold.valid and fold.pca_scaler_artifact is not None
+        scaler.fit_hash for _fold_index, scaler in require_pca_artifacts(evaluation)
     )
     pca_tags = (
         {
@@ -558,6 +558,10 @@ def _prepare_candidate_tracking_evidence(
         _CandidateTrackingEvidence(
             candidate_points=_candidate_metric_points(evaluation, plan),
             aggregate_points=_aggregate_metric_points(evaluation),
+            model_points=model_metric_points(
+                evaluation,
+                fold_timestamps=tuple(item.test_end for item in plan.folds),
+            ),
             timeline_rows=tuple(_timeline_rows(evaluation, plan)),
             metric_rows=tuple(_metric_rows(evaluation, plan)),
         ),
@@ -865,6 +869,7 @@ def track_walk_forward_evaluations(
         )
         port.log_metric_points(candidate_run_id, evidence.candidate_points)
         port.log_metric_points(candidate_run_id, evidence.aggregate_points)
+        port.log_metric_points(candidate_run_id, evidence.model_points)
 
         candidate_dir = root / evaluation.candidate_id
         timeline_path = candidate_dir / "fold_timeline.parquet"

@@ -5,9 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from market_regime_engine.contracts import DATA_TIME_SEMANTICS, PredictionMode, SourceLineage
-from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation, WalkForwardFoldResult
+from market_regime_engine.evaluation.walk_forward import (
+    WalkForwardEvaluation,
+    WalkForwardFoldResult,
+)
 from market_regime_engine.predictions.oos_publication import publish_walk_forward_oos
 from market_regime_engine.predictions.store import PredictionStore
+from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
 from market_regime_engine.states.alignment import StateAlignment
 
 
@@ -25,6 +29,16 @@ def alignment() -> StateAlignment:
 
 def valid_fold() -> WalkForwardFoldResult:
     start = datetime(2026, 1, 1, tzinfo=UTC)
+    pca_scaler = fit_pca_hmm_scaler(
+        (start, start + timedelta(days=1)),
+        ((0.0, 1.0), (1.0, 0.0)),
+        raw_feature_order=("f0", "f1"),
+        inner_fold_id="fold_001",
+        fit_start=start,
+        fit_end=start + timedelta(days=1),
+        component_count=1,
+        model_feature_order=("f0", "f1"),
+    )
     return WalkForwardFoldResult(
         fold_id="fold_001",
         fold_index=1,
@@ -36,7 +50,8 @@ def valid_fold() -> WalkForwardFoldResult:
         test_model_observation_count=2,
         skipped_train_incomplete_count=0,
         skipped_test_incomplete_count=61,
-        scaler_artifact=object(),  # type: ignore[arg-type]
+        scaler_artifact=pca_scaler.hmm_scaler,
+        pca_scaler_artifact=pca_scaler,
         multistart_result=object(),  # type: ignore[arg-type]
         model_artifact=object(),  # type: ignore[arg-type]
         alignment=alignment(),

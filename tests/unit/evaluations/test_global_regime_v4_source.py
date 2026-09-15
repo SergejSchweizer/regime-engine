@@ -24,7 +24,17 @@ START = datetime(2020, 1, 1, tzinfo=UTC)
 
 
 def _raw_profile():
-    return load_profile("configs/profiles/xetra_v4.yaml")
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+
+    # Keep source-entrypoint fixtures small while preserving the mandatory
+    # raw-plus-PCA contract exercised by the production route.
+    class SmallPCAProfile:
+        pca = SimpleNamespace(variance_threshold=0.90, component_count=2)
+
+        def __getattr__(self, name):
+            return getattr(profile, name)
+
+    return SmallPCAProfile()
 
 
 def _lineage() -> SourceLineage:

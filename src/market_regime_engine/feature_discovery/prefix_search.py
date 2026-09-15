@@ -20,6 +20,7 @@ from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
     run_walk_forward_candidate,
+    validate_mandatory_pca_feature_universe,
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
@@ -69,7 +70,7 @@ class _PrefixProcessTask:
     profile: ModelProfile
     candidate: ResolvedCandidateProfile
     max_workers: int
-    pca_raw_feature_order: tuple[str, ...] | None
+    pca_raw_feature_order: tuple[str, ...]
     pca_variance_threshold: float
     runner: PrefixCandidateRunner
 
@@ -153,6 +154,8 @@ def _evaluate_candidates(
 ) -> dict[str, WalkForwardEvaluation]:
     """Evaluate one prefix's candidates concurrently with deterministic output assembly."""
 
+    if pca_raw_feature_order is None:
+        raise ValueError("PCA prefix evaluation requires a raw feature order")
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
     total_worker_budget = cpu_worker_count(max_workers)
 
@@ -190,13 +193,12 @@ def _evaluate_candidates(
                     "max_workers": candidate_max_workers,
                     "seed_checkpoint_factory": scoped_seed_checkpoint,
                 }
-                if pca_raw_feature_order is not None:
-                    kwargs.update(
-                        {
-                            "pca_raw_feature_order": pca_raw_feature_order,
-                            "pca_variance_threshold": pca_variance_threshold,
-                        }
-                    )
+                kwargs.update(
+                    {
+                        "pca_raw_feature_order": pca_raw_feature_order,
+                        "pca_variance_threshold": pca_variance_threshold,
+                    }
+                )
                 return run_prefix_gaussian_candidate(
                     source_rows,
                     plan,
@@ -216,9 +218,7 @@ def _evaluate_candidates(
                     ("plan_hash", plan.plan_hash),
                 ),
             )
-        if pca_raw_feature_order is not None and runner is not run_prefix_gaussian_candidate:
-            raise ValueError("PCA prefix evaluation requires the canonical candidate runner")
-        if pca_raw_feature_order is None:
+        if runner is not run_prefix_gaussian_candidate:
             return runner(
                 source_rows,
                 plan,
@@ -237,12 +237,7 @@ def _evaluate_candidates(
             pca_variance_threshold=pca_variance_threshold,
         )
 
-    use_processes = (
-        seed_checkpoint_factory is None
-        and worker_limit > 1
-        and is_pickleable(runner)
-        and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
-    )
+    use_processes = seed_checkpoint_factory is None and worker_limit > 1 and is_pickleable(runner)
     if use_processes:
         nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
         tasks = tuple(
@@ -570,7 +565,15 @@ def search_ranked_prefixes(
     build_id = teacher.source_build_id if source_build_id is None else source_build_id
     if build_id != teacher.source_build_id:
         raise ValueError("prefix search source build differs from the frozen teacher")
-    universe = ranked_features if original_feature_universe is None else original_feature_universe
+    universe = (
+        tuple(column for column in source_rows.columns if column != _TIMESTAMP_COLUMN)
+        if original_feature_universe is None
+        else original_feature_universe
+    )
+    pca_order = validate_mandatory_pca_feature_universe(
+        pca_raw_feature_order,
+        universe,
+    )
     _validate_features(ranked_features, universe)
     if not isinstance(build_id, str) or not build_id or build_id.strip() != build_id:
         raise ValueError("prefix search source_build_id must be non-empty and trimmed")
@@ -612,7 +615,7 @@ def search_ranked_prefixes(
             runner,
             total_worker_budget,
             seed_checkpoint_factory,
-            pca_raw_feature_order,
+            pca_order,
             pca_variance_threshold,
         )
         for prefix_length in prefix_lengths
@@ -626,11 +629,7 @@ def search_ranked_prefixes(
             replace(task, max_workers=nested_limits[index % prefix_worker_limit])
             for index, task in enumerate(prefix_tasks)
         )
-        use_processes = (
-            seed_checkpoint_factory is None
-            and is_pickleable(runner)
-            and (pca_raw_feature_order is None or runner is run_prefix_gaussian_candidate)
-        )
+        use_processes = seed_checkpoint_factory is None and is_pickleable(runner)
         if use_processes:
             with cpu_process_pool(prefix_worker_limit) as executor:
                 futures = tuple(

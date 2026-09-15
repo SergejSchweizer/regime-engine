@@ -22,11 +22,22 @@ from market_regime_engine.mlflow_support.model_package import (
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing import fit_pca_hmm_scaler
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 
 
 def artifact() -> ProductionModelArtifact:
     feature_order = ("f0", "f1")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    timestamps = tuple(start + timedelta(days=index) for index in range(120))
+    index = np.arange(120, dtype=np.float64)
+    pca_scaler = fit_pca_hmm_scaler(
+        timestamps,
+        np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0))),
+        raw_feature_order=feature_order,
+        inner_fold_id="fold_001",
+        fit_start=start,
+        fit_end=timestamps[-1],
+        model_feature_order=feature_order,
+    )
     return ProductionModelArtifact(
         profile_id="xetra",
         profile_config_version=4,
@@ -47,12 +58,7 @@ def artifact() -> ProductionModelArtifact:
         source_catalog_hash="f" * 64,
         state_identity_scope="model_version_local",
         feature_order=feature_order,
-        scaler=StandardScalerArtifact(
-            feature_order=feature_order,
-            means=(0.25, -0.5),
-            variances=(1.5, 2.0),
-            scales=(1.5**0.5, 2.0**0.5),
-        ),
+        scaler=pca_scaler.hmm_scaler,
         hmm=GaussianHMMArtifact(
             state_count=2,
             feature_order=feature_order,
@@ -70,6 +76,7 @@ def artifact() -> ProductionModelArtifact:
         terminal_filtered_probabilities=(0.3, 0.7),
         retained_observation_count=1500,
         skipped_incomplete_observation_count=12,
+        pca_scaler=pca_scaler,
     )
 
 
@@ -221,6 +228,11 @@ def test_json_loader_rejects_root_shape_fields_and_schema() -> None:
     raw = json.loads(production_artifact_json(artifact()))
     raw["pca_scaler"] = []
     with pytest.raises(ValueError, match="PCA scaler payload"):
+        production_artifact_from_json(json.dumps(raw))
+
+    raw = json.loads(production_artifact_json(artifact()))
+    raw.pop("pca_scaler")
+    with pytest.raises(ValueError, match="unknown or missing"):
         production_artifact_from_json(json.dumps(raw))
 
 

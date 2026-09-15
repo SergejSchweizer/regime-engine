@@ -568,8 +568,8 @@ def model_metric_points(
         )
         if fold.valid and fold.model_artifact is not None and fold.alignment is not None:
             state_step_offset += max(len(fold.oos_timestamps), evaluation.state_count) + 1
-    if any(fold.pca_scaler_artifact is not None for fold in evaluation.folds):
-        points.extend(pca_metric_points(evaluation, fold_timestamps=fold_timestamps))
+    # PCA is mandatory v4 model evidence, not an optional side projection.
+    points.extend(pca_metric_points(evaluation, fold_timestamps=fold_timestamps))
     result = tuple(points)
     validate_metric_points(result)
     return result

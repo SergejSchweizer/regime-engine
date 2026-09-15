@@ -34,6 +34,7 @@ def source_rows() -> pd.DataFrame:
             "timestamp_m1": tuple(start + timedelta(days=int(value)) for value in index),
             "f0": first_axis + 0.10 * noise.normal(size=row_count),
             "f1": second_axis + 0.10 * noise.normal(size=row_count),
+            "pca_pc_001": np.sin(index / 29.0),
         }
     )
 
@@ -75,6 +76,7 @@ def test_exact_12_candidate_grid_runs_all_model_families_with_real_fits(monkeypa
         source_build_id="synthetic-build",
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
+        pca_raw_feature_order=("f0", "f1"),
     )
 
     assert tuple(item.candidate_id for item in result.grid.evaluations) == FINAL_CANDIDATE_IDS

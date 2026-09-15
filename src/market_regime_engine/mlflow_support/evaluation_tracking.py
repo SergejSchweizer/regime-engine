@@ -44,6 +44,7 @@ from market_regime_engine.mlflow_support.model_metrics import (
     model_metric_points,
     outer_selection_metric_points,
 )
+from market_regime_engine.mlflow_support.pca_metrics import require_pca_artifacts
 from market_regime_engine.mlflow_support.pca_plots import render_pca_diagnostics
 from market_regime_engine.mlflow_support.ports import MetricPoint, TrackingPort
 from market_regime_engine.mlflow_support.tracking import (
@@ -532,6 +533,16 @@ def _prepare_global_v4_candidate_tracking(
         "source_build_id": candidate.source_build_id,
         "evaluation_plan_hash": candidate.evaluation_plan_hash,
         "aggregate": _aggregate_record(aggregate),
+        "pca": [
+            {
+                "fold_index": fold_index,
+                "fit_hash": scaler.fit_hash,
+                "raw_feature_order": list(scaler.raw_feature_order),
+                "model_feature_order": list(scaler.model_feature_order),
+                "artifact": json.loads(scaler.to_canonical_json()),
+            }
+            for fold_index, scaler in require_pca_artifacts(candidate)
+        ],
         "selection_context": fold_evidence,
     }
     points = (
@@ -566,7 +577,8 @@ def _materialize_candidate_tracking_artifacts(
 
     candidate_dir.mkdir(parents=True, exist_ok=True)
     (candidate_dir / "candidate_evidence.json").write_bytes(evidence_json)
-    if not any(item.valid and item.pca_scaler_artifact is not None for item in candidate.folds):
+    require_pca_artifacts(candidate)
+    if not any(item.valid for item in candidate.folds):
         return
     pca_entries = render_pca_diagnostics(candidate, candidate_dir)
     pca_manifest_entries: list[dict[str, object]] = []

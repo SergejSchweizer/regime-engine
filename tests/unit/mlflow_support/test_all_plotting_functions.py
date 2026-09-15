@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import pytest
 
 import market_regime_engine.mlflow_support.model_metrics as model_metrics
@@ -33,7 +34,7 @@ from market_regime_engine.mlflow_support.plots import (
 from market_regime_engine.mlflow_support.ports import MetricPoint
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
-from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
+from market_regime_engine.preprocessing import fit_pca_hmm_scaler
 from market_regime_engine.states.alignment import align_first_fold
 from market_regime_engine.training.multistart import (
     MULTISTART_SEEDS,
@@ -114,12 +115,18 @@ def _evaluation(
     plan = _plan()
     artifact = _artifact(feature_order)
     alignment = align_first_fold(artifact)
-    scaler = StandardScalerArtifact(
-        feature_order=feature_order,
-        means=tuple(0.0 for _ in feature_order),
-        variances=tuple(1.0 for _ in feature_order),
-        scales=tuple(1.0 for _ in feature_order),
+    pca_timestamps = tuple(START + timedelta(days=index) for index in range(120))
+    pca_index = np.arange(120, dtype=np.float64)
+    pca_scaler = fit_pca_hmm_scaler(
+        pca_timestamps,
+        np.column_stack([np.sin(pca_index / (index + 2.0)) for index in range(len(feature_order))]),
+        raw_feature_order=feature_order,
+        inner_fold_id="fold_001",
+        fit_start=START,
+        fit_end=pca_timestamps[-1],
+        model_feature_order=feature_order,
     )
+    scaler = pca_scaler.hmm_scaler
     folds: list[WalkForwardFoldResult] = []
     for index, planned in enumerate(plan.folds, start=1):
         if index <= valid_fold_count:
@@ -138,6 +145,7 @@ def _evaluation(
                     skipped_train_incomplete_count=0,
                     skipped_test_incomplete_count=60,
                     scaler_artifact=scaler,
+                    pca_scaler_artifact=pca_scaler,
                     multistart_result=_multistart(artifact),
                     model_artifact=artifact,
                     alignment=alignment,
