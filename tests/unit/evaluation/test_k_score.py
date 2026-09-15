@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from math import tanh
+from math import inf, isnan, tanh
 
 import pytest
 
@@ -66,6 +66,176 @@ def test_score_uses_common_target_and_exposes_auditable_components() -> None:
     assert result.stability_score == pytest.approx(0.8)
     assert result.mean_support_score == pytest.approx(0.9)
     assert result.total_score is not None
+
+
+def test_score_formula_binds_every_component_and_complexity_penalty() -> None:
+    evidence = (
+        fold("outer_001", target=0.0, calibration_error=0.0, stability=0.2, support=0.4),
+        fold(
+            "outer_002",
+            target=1.0,
+            baseline=0.25,
+            calibration_error=0.25,
+            stability=0.4,
+            support=0.6,
+        ),
+        fold(
+            "outer_003",
+            target=-0.5,
+            baseline=0.5,
+            calibration_error=0.5,
+            stability=0.6,
+            support=0.8,
+        ),
+        fold("outer_004", target=2.0, calibration_error=0.75, stability=0.8, support=1.0),
+    )
+    result = score_k_candidate(candidate(5, folds=evidence), latest_fold_id="outer_004")
+
+    forecast_values = tuple(
+        0.5 + 0.5 * tanh(item.target_log_score - item.baseline_target_log_score)  # type: ignore[operator]
+        for item in evidence
+    )
+    expected_forecast = sum(forecast_values) / len(forecast_values)
+    expected_calibration = (1.0 + 0.75 + 0.5 + 0.25) / 4.0
+    expected_stability = (0.2 + 0.4 + 0.6 + 0.8) / 4.0
+    expected_support = (0.4 + 0.6 + 0.8 + 1.0) / 4.0
+    expected_worst = min(forecast_values)
+    expected_robustness = 0.50 + 0.25 * expected_worst + 0.25 * expected_support
+    expected_total = (
+        0.50 * expected_forecast
+        + 0.20 * expected_calibration
+        + 0.20 * expected_stability
+        + 0.10 * expected_robustness
+        - 0.03
+    )
+
+    assert result.forecast_score == pytest.approx(expected_forecast)
+    assert result.calibration_score == pytest.approx(expected_calibration)
+    assert result.stability_score == pytest.approx(expected_stability)
+    assert result.mean_support_score == pytest.approx(expected_support)
+    assert result.worst_fold_forecast_score == pytest.approx(expected_worst)
+    assert result.robustness_score == pytest.approx(expected_robustness)
+    assert result.complexity_penalty == pytest.approx(0.03)
+    assert result.total_score == pytest.approx(expected_total)
+
+
+@pytest.mark.parametrize(
+    ("valid_ids", "eligible", "required_reasons"),
+    (
+        ({*FOLDS, "outer_005"}, True, ()),
+        ({"outer_001", "outer_002", "outer_005"}, False, ("valid-fold rate below 0.80",)),
+        ({"outer_001", "outer_002", "outer_003", "outer_005"}, True, ()),
+        (
+            {"outer_001", "outer_005"},
+            False,
+            ("valid-fold rate below 0.80", "fewer than three valid outer folds"),
+        ),
+        (
+            set(),
+            False,
+            (
+                "zero valid outer folds",
+                "valid-fold rate below 0.80",
+                "fewer than three valid outer folds",
+                "latest complete outer fold is invalid",
+            ),
+        ),
+    ),
+)
+def test_eligibility_gates_are_independent_and_keep_invalid_folds_in_denominator(
+    valid_ids: set[str], eligible: bool, required_reasons: tuple[str, ...]
+) -> None:
+    fold_ids = (*FOLDS, "outer_005")
+    evidence = tuple(
+        fold(fold_id)
+        if fold_id in valid_ids
+        else KScoreFoldEvidence(fold_id=fold_id, valid=False, invalid_reason="fit failed")
+        for fold_id in fold_ids
+    )
+    result = score_k_candidate(candidate(2, folds=evidence), latest_fold_id="outer_005")
+
+    assert result.eligible is eligible
+    assert result.valid_fold_rate == pytest.approx(len(valid_ids) / len(fold_ids))
+    assert all(reason in result.rejection_reasons for reason in required_reasons)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("target_log_score", float("nan")),
+        ("baseline_target_log_score", inf),
+        ("calibration_error", float("nan")),
+        ("stability_score", inf),
+        ("support_score", float("nan")),
+    ),
+)
+def test_valid_fold_evidence_rejects_nonfinite_values(field: str, value: float) -> None:
+    values = {
+        "target_log_score": 0.4,
+        "baseline_target_log_score": 0.0,
+        "calibration_error": 0.1,
+        "stability_score": 0.8,
+        "support_score": 0.9,
+    }
+    values[field] = value
+    with pytest.raises(ValueError, match="finite"):
+        KScoreFoldEvidence(fold_id="outer_001", valid=True, **values)
+
+
+def test_canonical_cross_k_evidence_ignores_input_order_but_binds_feature_identity() -> None:
+    candidates = (
+        candidate(2, feature_hash=HASH_A),
+        candidate(3, feature_hash=HASH_B),
+        candidate(4, feature_hash="c" * 64),
+        candidate(5, feature_hash="d" * 64),
+    )
+    canonical = rank_k_candidates(candidates, latest_fold_id="outer_004", max_workers=1)
+    reordered = rank_k_candidates(
+        tuple(replace(item, folds=tuple(reversed(item.folds))) for item in reversed(candidates)),
+        latest_fold_id="outer_004",
+        max_workers=1,
+    )
+
+    assert reordered.canonical_json == canonical.canonical_json
+    assert reordered.source_hash == canonical.source_hash
+
+    changed_feature = rank_k_candidates(
+        (candidate(2, feature_hash="e" * 64),), latest_fold_id="outer_004", max_workers=1
+    )
+    assert (
+        changed_feature.source_hash
+        != rank_k_candidates((candidate(2),), latest_fold_id="outer_004", max_workers=1).source_hash
+    )
+
+
+def test_metric_projection_covers_all_legal_slots_and_omits_ineligible_total() -> None:
+    invalid = tuple(
+        KScoreFoldEvidence(fold_id=fold_id, valid=False, invalid_reason="unsupported")
+        for fold_id in FOLDS
+    )
+    ranking = rank_k_candidates(
+        (
+            candidate(2),
+            candidate(3, feature_hash=HASH_B),
+            candidate(4, feature_hash="c" * 64),
+            candidate(5, feature_hash="d" * 64, folds=invalid),
+        ),
+        latest_fold_id="outer_004",
+    )
+    keys = {point.key for point in ranking.metric_points(timestamp_ms=123)}
+
+    for state_count in (2, 3, 4):
+        assert f"k_score_total_score_k{state_count}" in keys
+        assert f"k_score_eligible_k{state_count}" in keys
+    assert "k_score_total_score_k5" not in keys
+    assert "k_score_eligible_k5" in keys
+    assert not isnan(
+        next(
+            point.value
+            for point in ranking.metric_points(timestamp_ms=123)
+            if point.key == "k_score_eligible_k5"
+        )
+    )
 
 
 def test_cross_k_ranking_allows_different_features_but_requires_common_target_contract() -> None:
