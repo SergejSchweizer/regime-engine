@@ -100,6 +100,12 @@ Status date: 2026-09-14
   freshness window, Xetra source identities are cross-bound, and the local-vs-
   external proof boundary is explicit. Both passed local and GitHub gates;
   neither ran a full evaluation or NAS/MLflow write.
+  PR-431 (GitHub #415) is merged: the dimension-independent `cross_k_score.v1`
+  kernel accepts K-specific feature hashes without invalid raw-PLL/AIC/BIC
+  comparisons, projects the complete registered K=2..5 metric matrix, and
+  scores independent K candidates in bounded processes with serial/process
+  canonical-hash parity. Its later four-slot integration remains gated by
+  planned PR-420/423/426/427 contracts; it does not mutate any alias.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -125,11 +131,11 @@ Status date: 2026-09-14
   and pair arithmetic. Native NumPy/SciPy rank/correlation operations reduce
   that stage to 0.139 s (about 84x), preserving pairwise missing-value rules,
   deterministic ordering, and the result contract.
-- **Remote branch/PR state:** GitHub PRs #270–#413 are merged except #277,
+- **Remote branch/PR state:** GitHub PRs #270–#415 are merged except #277,
   #284 and #317, which are closed without merge; follow-up GitHub PRs #368,
   #369, #370, #377, #378, #379, #380, #381, #383, #385, #386, #387, #388
-  #389, #390, #391, #392, #393, #394, #395, #396, #398, #399, #412 and #413 are also merged. No GitHub PRs are open and
-  no `pr/*` remote branches remain. The implementation branches for #303–#413
+  #389, #390, #391, #392, #393, #394, #395, #396, #398, #399, #412, #413, #414 and #415 are also merged. No GitHub PRs are open and
+  no `pr/*` remote branches remain. The implementation branches for #303–#415
   have therefore been reconciled into `main` or explicitly superseded. The
   latest merged follow-ups are #401 (fold process parallelization), #402 (v4
   lifecycle acceptance), #403 (MLflow acceptance QA) and #404 (fold-order
@@ -235,7 +241,7 @@ The previous draft planning IDs `PR-186`–`PR-206` are superseded by this audit
 
 As of 2026-09-14, the primary worktree is on `main` and aligned with
 `origin/main`. The status ledger below is recorded as part of this backlog
-update. GitHub has no open PRs. GitHub PRs #270–#413
+update. GitHub has no open PRs. GitHub PRs #270–#415
 are merged except #277, #284 and #317, which are closed without merge. The
 full current-source audit, production-eligibility proof and final Model
 Metrics completeness evidence remain open acceptance work.
@@ -365,7 +371,7 @@ still required.
 | PR-428 | PLANNED | MLflow registry/promotion QA; not started |
 | PR-429 | PLANNED | Hermetic four-slot end-to-end QA; not started |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
-| PR-431 | IN_PROGRESS | Dimension-independent Cross-K score and MLflow metric projection; implementation branch created |
+| PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration remains gated by planned PR-420/423/426/427; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
 | PCA PR-257 (#305) | IMPLEMENTED | Closed |
