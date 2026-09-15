@@ -388,10 +388,10 @@ still required.
 | PR-422 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
-| PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
+| PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-slot aliases, immutable registration and audited CAS promotion implemented; real concurrent process registration/CAS race QA merged in GitHub #423, while the remaining production matrix stays open |
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
-| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected and real cross-process post-create/post-alias kill/retry boundaries; external production durability remains |
+| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected, cross-process kill/retry, and concurrent process race boundaries merged in GitHub #423; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
@@ -2042,6 +2042,8 @@ QA:
   outcomes against a disposable file-backed MLflow registry.
 - [ ] Run deterministic concurrent promotion races with at least two workers
   per slot and prove one linearizable winner.
+- [x] Run independent concurrent MLflow clients against a persistent SQLite
+  registry; prove one immutable version and one linearizable alias winner.
 - [x] Inject post-version-create and post-alias side-effect failures and prove
   retry leaves one immutable version and a consistent alias target; a separate
   SQLite-backed process-kill test now proves the same invariant across process

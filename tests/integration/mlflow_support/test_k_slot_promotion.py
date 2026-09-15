@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -104,6 +106,28 @@ def _run_crashing_child(
                 new_version=version,
                 reason="crash after alias side effect",
             )
+        elif operation == "register":
+            registered = MlflowModelRegistry(client).register_k_slot_package(
+                selection,
+                package_source_uri="runs:/concurrent/register",
+                artifact_hash=selection.artifact_hash,
+            )
+            print(registered.exact_version)
+            raise SystemExit(0)
+        elif operation == "promote":
+            audit = MlflowModelRegistry(client).compare_and_swap_alias_with_audit(
+                model_name="regime-xetra",
+                alias=selection.alias,
+                expected_current_version=None,
+                new_version=version,
+                reason="concurrent process promotion race",
+            )
+            print(
+                json.dumps(
+                    {"changed": audit.changed, "observed": audit.observed_current_version}
+                )
+            )
+            raise SystemExit(0)
         else:
             raise AssertionError(operation)
         raise AssertionError("child did not terminate at the injected side effect")
@@ -158,5 +182,49 @@ def test_process_kill_after_registry_side_effect_retries_without_duplicates(
         reason="reconcile after process kill",
     )
     assert retry.changed is True
+    assert client.get_model_version_by_alias("regime-xetra", selection.alias).version == 1
+    assert len(client.search_model_versions("name='regime-xetra'")) == 1
+
+
+def test_concurrent_process_clients_linearize_registration_and_alias_promotion(
+    tmp_path: Path,
+) -> None:
+    """Independent registry clients create one version and one CAS winner."""
+
+    tracking_uri = f"sqlite:///{(tmp_path / 'mlflow.db').resolve()}"
+    selection = _selection()
+    client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    # Initialize the MLflow schema before launching concurrent interpreters;
+    # the registry adapter's file lock then covers all mutation sequences.
+    client.search_registered_models()
+
+    def register(_: int) -> subprocess.CompletedProcess[str]:
+        return _run_crashing_child(tracking_uri, selection, operation="register")
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        registrations = tuple(executor.map(register, range(4)))
+    assert all(item.returncode == 0 for item in registrations), tuple(
+        item.stderr for item in registrations
+    )
+    versions = tuple(item.stdout.strip().splitlines()[-1] for item in registrations)
+    assert set(versions) == {"1"}
+    assert len(client.search_model_versions("name='regime-xetra'")) == 1
+
+    def promote(_: int) -> subprocess.CompletedProcess[str]:
+        return _run_crashing_child(
+            tracking_uri,
+            selection,
+            operation="promote",
+            version="1",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        promotions = tuple(executor.map(promote, range(4)))
+    assert all(item.returncode == 0 for item in promotions), tuple(
+        item.stderr for item in promotions
+    )
+    audits = tuple(json.loads(item.stdout.strip().splitlines()[-1]) for item in promotions)
+    assert sum(bool(item["changed"]) for item in audits) == 1
+    assert all(item["observed"] in {None, "1"} for item in audits)
     assert client.get_model_version_by_alias("regime-xetra", selection.alias).version == 1
     assert len(client.search_model_versions("name='regime-xetra'")) == 1
