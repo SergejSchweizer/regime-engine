@@ -393,7 +393,7 @@ still required.
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected, cross-process kill/retry, and concurrent process race boundaries merged in GitHub #423; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
-| PR-430 | PLANNED | External four-slot production acceptance QA; not started |
+| PR-430 | IN PROGRESS | Read-only external four-slot alias/provenance verifier and hermetic fake-client QA implemented; authorized NAS publication/readback evidence remains |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
@@ -2101,7 +2101,8 @@ QA:
   `scripts/publish_hmm_model.py`, `scripts/verify_mlflow_model_metrics.py`,
   `tests/external/test_k_champion_external.py`,
   `docs/qa/k_champion_external.md`
-- **Status:** planned; not started
+- **Status:** read-only external alias/provenance verifier implemented;
+  authorized NAS publication/readback evidence remains open.
 
 Acceptance:
 
