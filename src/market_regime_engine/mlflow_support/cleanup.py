@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from market_regime_engine.mlflow_support.registry import REGISTERED_MODEL_NAME
 from market_regime_engine.mlflow_support.settings import PRODUCTION_MLFLOW_URI
 
-EVALUATION_EXPERIMENT_NAME = "regime-engine-evaluation"
+EVALUATION_EXPERIMENT_NAME = "macro-regime-evaluation"
 V4_PACKAGE_SCHEMA = "RegimeEngineProductionModel.v4"
 ALLOWED_ALIASES = frozenset({"challenger", "champion"})
 

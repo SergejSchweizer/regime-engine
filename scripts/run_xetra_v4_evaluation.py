@@ -614,7 +614,7 @@ def _run(performance: PerformanceRecorder) -> None:
         }
     )
     tracking_uri = MLflowSettings.from_environment().tracking_uri
-    port = FileMlflowTrackingPort(tracking_uri, experiment_name="regime-engine-evaluation")
+    port = FileMlflowTrackingPort(tracking_uri, experiment_name="macro-regime-evaluation")
     evidence_workers = cpu_worker_count(None, task_count=len(result.outer_folds))
     with performance.stage(
         "evidence_assembly",

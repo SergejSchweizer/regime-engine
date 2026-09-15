@@ -97,7 +97,7 @@ class FileMlflowTrackingPort:
         self,
         tracking_uri: str,
         *,
-        experiment_name: str = "regime-engine-evaluation",
+        experiment_name: str = "macro-regime-evaluation",
     ) -> None:
         self._client = MlflowClient(tracking_uri=tracking_uri)
         experiment = self._client.get_experiment_by_name(experiment_name)

@@ -278,7 +278,7 @@ class V4LifecycleBackend:
         track_global_v4_evaluation(
             FileMlflowTrackingPort(
                 self.mlflow_settings.tracking_uri,
-                experiment_name="regime-engine-evaluation",
+                experiment_name="macro-regime-evaluation",
             ),
             StatisticsWriter(self.state_root / "statistics"),
             evidence=evidence,

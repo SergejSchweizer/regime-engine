@@ -15,7 +15,7 @@ for the historical evaluation namespace:
 ```bash
 .venv/bin/python scripts/verify_mlflow_model_metrics.py \
   --tracking-uri "http://10.10.1.3:5000" \
-  --experiment "regime-engine-evaluation" \
+  --experiment "macro-regime-evaluation" \
   --require-clean-namespace \
   --json-out mlflow-historical-namespace-proof.json
 ```

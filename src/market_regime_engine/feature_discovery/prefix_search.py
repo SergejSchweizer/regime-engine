@@ -85,6 +85,7 @@ class _PrefixSearchTask:
     profile: ModelProfile
     teacher: ProvisionalTeacherReference
     feature_order: tuple[str, ...]
+    state_counts: tuple[int, ...]
     original_feature_universe: tuple[str, ...]
     source_build_id: str
     feature_selection_definition_hash: str
@@ -288,6 +289,7 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
     try:
         candidates = _prefix_candidates(
             task.feature_order,
+            state_counts=task.state_counts,
             original_feature_universe=task.original_feature_universe,
             source_build_id=task.source_build_id,
             feature_selection_definition_hash=task.feature_selection_definition_hash,
@@ -427,6 +429,7 @@ def _validate_profile(profile: ModelProfile) -> None:
 def _prefix_candidates(
     feature_order: tuple[str, ...],
     *,
+    state_counts: tuple[int, ...] = _GAUSSIAN_STATE_COUNTS,
     original_feature_universe: tuple[str, ...],
     source_build_id: str,
     feature_selection_definition_hash: str,
@@ -445,7 +448,7 @@ def _prefix_candidates(
             original_feature_universe=original_feature_universe,
             feature_contract_version=4,
         )
-        for state_count in _GAUSSIAN_STATE_COUNTS
+        for state_count in state_counts
     )
 
 
@@ -548,6 +551,7 @@ def search_ranked_prefixes(
     evaluation_sink: PrefixEvaluationSink | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
+    state_counts: tuple[int, ...] = _GAUSSIAN_STATE_COUNTS,
 ) -> PrefixSearchResult:
     """Evaluate every exact ranked prefix and choose only by teacher soft NMI.
 
@@ -562,6 +566,13 @@ def search_ranked_prefixes(
     if not isinstance(teacher, ProvisionalTeacherReference):
         raise TypeError("prefix search requires a ProvisionalTeacherReference")
     _validate_profile(profile)
+    state_counts = tuple(state_counts)
+    if (
+        not state_counts
+        or state_counts != tuple(sorted(set(state_counts)))
+        or any(state_count not in _GAUSSIAN_STATE_COUNTS for state_count in state_counts)
+    ):
+        raise ValueError("state_counts must be an ordered non-empty subset of K=2,3,4,5")
     build_id = teacher.source_build_id if source_build_id is None else source_build_id
     if build_id != teacher.source_build_id:
         raise ValueError("prefix search source build differs from the frozen teacher")
@@ -608,6 +619,7 @@ def search_ranked_prefixes(
             profile,
             teacher,
             ranked_features[:prefix_length],
+            state_counts,
             universe,
             build_id,
             definition_hash,

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 PRODUCTION_MLFLOW_URI = "http://10.10.1.3:5000"
-EVALUATION_EXPERIMENT_NAME = "regime-engine-evaluation"
+EVALUATION_EXPERIMENT_NAME = "macro-regime-evaluation"
 REGISTERED_MODEL_NAME = "regime-xetra"
 PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v4"
 GLOBAL_V4_EVALUATION_ID = "global_regime_v4"

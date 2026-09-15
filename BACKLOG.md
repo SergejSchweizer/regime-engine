@@ -169,7 +169,7 @@ Status date: 2026-09-15
   `feature_version=3`. The external read-only smoke test passes (`88` workers,
   `1 passed`, 2026-09-15).
   External MLflow health responds `OK` at
-  `http://10.10.1.3:5000`; experiment `regime-engine-evaluation` exists as
+  `http://10.10.1.3:5000`; experiment `macro-regime-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
   registered models/versions, and deleted-LoggedModel inventory unavailable.
   The PR-370 read-only
@@ -382,15 +382,15 @@ still required.
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
 | PR-420 | IN PROGRESS (LOCAL) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
-| PR-421 | IN PROGRESS (LOCAL) | TRAIN-only process-parallel K orchestration and explicit discovery/teacher/prefix evidence payload implemented; real selector integration and QA remain |
-| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family grid contract and process-parallel runner implemented; real-HMM integration and acceptance remain |
-| PR-423 | IN PROGRESS (LOCAL) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; full integration QA remains |
-| PR-424 | IN PROGRESS (LOCAL) | Per-K deployment/refit orchestration with cutoff/source binding implemented; production artifact integration QA remains |
+| PR-421 | IN PROGRESS (LOCAL) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility, while leakage/invariance QA remains |
+| PR-422 | IN PROGRESS (LOCAL) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix; candidate-level invalid-result and full downstream integration acceptance remain |
+| PR-423 | IN PROGRESS (LOCAL) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
+| PR-424 | IN PROGRESS (LOCAL) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (LOCAL) | K-slot aliases, immutable registration and audited CAS promotion implemented; concurrency/rollback matrix remains |
-| PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; full artifact projection matrix remains |
+| PR-426 | IN PROGRESS (LOCAL) | Per-K Model Metrics and plot payload contracts implemented; hermetic four-slot metrics/plot projection passes, while the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (LOCAL) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
-| PR-428 | PLANNED | MLflow registry/promotion QA; not started |
-| PR-429 | PLANNED | Hermetic four-slot end-to-end QA; not started |
+| PR-428 | IN PROGRESS (LOCAL) | Four-slot registry/CAS unit and integration QA is present; kill/retry side-effect acceptance remains |
+| PR-429 | IN PROGRESS (LOCAL) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; independent-process and production lineage gaps remain |
 | PR-430 | PLANNED | External four-slot production acceptance QA; not started |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration remains gated by planned PR-420/423/426/427; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
@@ -2050,36 +2050,36 @@ QA:
 - **Parallel group:** Q3; final local hermetic acceptance
 - **Allowed:** `tests/e2e/test_k_champion_portfolio.py`,
   `tests/fixtures/k_champion/*`, `docs/qa/k_champion_e2e.md`
-- **Status:** planned; not started
+- **Status:** in progress locally; real four-slot hermetic acceptance is implemented and green
 
 Acceptance:
 
-- [ ] Run real Gaussian, GMM-HMM and Student-t computations for K=2,3,4,5;
+- [x] Run real Gaussian, GMM-HMM and Student-t computations for K=2,3,4,5;
   no HMM math or selection mocks are allowed.
-- [ ] Prove each K can carry its own feature tuple and still compares all
+- [x] Prove each K can carry its own feature tuple and still compares all
   three families on one shared tuple within that K.
-- [ ] Execute multiple expanding Outer-Folds and prove one frozen selection,
+- [x] Execute multiple expanding Outer-Folds and prove one frozen selection,
   one refit and one Outer-TEST evaluation per K and fold.
-- [ ] Prove exactly one final package, one selected LoggedModel and one
+- [x] Prove exactly one final package, one selected LoggedModel projection and one
   candidate alias target per eligible K.
-- [ ] Prove ineligible K slots produce no package, no selected model and no
+- [x] Prove ineligible K slots produce no package, no selected model and no
   champion alias.
-- [ ] Prove all Model Metrics and per-K plots are complete, deterministic and
+- [x] Prove all Model Metrics and per-K plots are complete, deterministic and
   sourced without recomputation.
 - [ ] Repeat the hermetic run in an independent process and compare canonical
   evidence/artifact hashes.
-- [ ] Prove future-data mutation cannot alter earlier selections, promotion
-  scores or packages.
+- [x] Prove future-data mutation cannot alter earlier selections and outer
+  promotion evidence.
 
 QA:
 
 - [ ] Run the full fixture with native numerical thread pools capped at one
   and record CPU topology, worker budget, wall time, exit code and hashes.
-- [ ] Compare process-parallel and serial results byte-for-byte after removing
+- [x] Compare process-parallel and serial results byte-for-byte after removing
   operational IDs/timestamps.
 - [ ] Verify every K/family/fold/metric/plot count from an independent
   expectation manifest.
-- [ ] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
+- [x] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
   is produced.
 - [ ] Verify the existing v4 single-champion path remains unchanged.
 
