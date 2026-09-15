@@ -2082,7 +2082,7 @@ QA:
   and record CPU topology, worker budget, wall time, exit code and hashes.
 - [x] Compare process-parallel and serial results byte-for-byte after removing
   operational IDs/timestamps.
-- [ ] Verify every K/family/fold/metric/plot count from an independent
+- [x] Verify every K/family/fold/metric/plot count from an independent
   expectation manifest.
 - [x] Verify no cross-K invalid likelihood/AIC/BIC plot or registry comparison
   is produced.

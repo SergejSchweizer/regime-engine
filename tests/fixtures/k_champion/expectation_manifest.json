@@ -1,0 +1,13 @@
+{
+  "outer_folds": 3,
+  "slots": 4,
+  "families_per_slot": 3,
+  "candidate_fits": 36,
+  "selected_refits": 12,
+  "teacher_refits": 12,
+  "metric_slots": 4,
+  "plot_payloads": 8,
+  "plot_series": 24,
+  "deployment_packages": 4,
+  "registry_aliases": 4
+}
