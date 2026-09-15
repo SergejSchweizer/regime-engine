@@ -383,17 +383,17 @@ still required.
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
-| PR-420 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
+| PR-420 | IN PROGRESS (IMPLEMENTATION MERGED #418; expectation QA #420) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
 | PR-421 | IN PROGRESS (IMPLEMENTATION MERGED #418) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility and fixed-K invalid-prefix identity, while leakage/invariance QA remains |
 | PR-422 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
-| PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418) | K-slot aliases, immutable registration and audited CAS promotion implemented; real concurrent process registration/CAS race QA merged in GitHub #423, while the remaining production matrix stays open |
-| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; the full artifact projection matrix remains |
+| PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
+| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
-| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot registry/CAS QA now includes injected, cross-process kill/retry, and concurrent process race boundaries merged in GitHub #423; external production durability remains |
-| PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
-| PR-430 | IN PROGRESS | Read-only external four-slot alias/provenance verifier and hermetic fake-client QA implemented; authorized NAS publication/readback evidence remains |
+| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
+| PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior and future-row invariance; production lineage gaps remain |
+| PR-430 | IN PROGRESS (readback QA #424) | Read-only external four-slot alias/provenance verifier and hermetic fake-client QA implemented; authorized NAS publication/readback evidence remains |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
@@ -1662,7 +1662,7 @@ version remains available for audit and rollback. The existing default
   `src/market_regime_engine/evaluations/k_champion_contract.py`,
   `src/market_regime_engine/mlflow_support/k_champion_contract.py`,
   corresponding unit tests and contract documentation
-- **Status:** implementation merged through GitHub PR #418; complete Wave E QA matrix remains
+- **Status:** implementation merged through GitHub PR #418; expectation-manifest QA merged in GitHub #420; complete Wave E QA matrix remains
 
 Acceptance:
 
@@ -1943,7 +1943,7 @@ QA:
   `src/market_regime_engine/mlflow_support/plot_data.py`,
   `src/market_regime_engine/evaluations/plots.py`, corresponding tests and
   `MLFLOW_MODEL_METRICS.md`
-- **Status:** implementation merged through GitHub PR #418; full artifact projection QA remains
+- **Status:** implementation merged through GitHub PR #418; lineage/order/process parity QA merged in GitHub #422; full artifact projection QA remains
 
 Acceptance:
 
@@ -2021,7 +2021,7 @@ QA:
 - **Allowed:** `tests/unit/mlflow_support/test_k_slot_registry_qa.py`,
   `tests/integration/mlflow_support/test_k_slot_promotion.py`,
   `docs/qa/k_slot_mlflow.md`
-- **Status:** implementation and four-slot matrix QA merged through GitHub PR #418; kill/retry side-effect acceptance remains
+- **Status:** implementation and four-slot matrix QA merged through GitHub PR #418; process-kill/retry and concurrent race QA merged in GitHub #421 and #423; external side-effect acceptance remains
 
 Acceptance:
 
@@ -2059,7 +2059,7 @@ QA:
 - **Parallel group:** Q3; final local hermetic acceptance
 - **Allowed:** `tests/e2e/test_k_champion_portfolio.py`,
   `tests/fixtures/k_champion/*`, `docs/qa/k_champion_e2e.md`
-- **Status:** implementation and local hermetic acceptance merged through GitHub PR #418; production lineage acceptance remains
+- **Status:** implementation and local hermetic acceptance merged through GitHub PR #418; independent expectation-manifest QA merged in GitHub #420; production lineage acceptance remains
 
 Acceptance:
 
@@ -2101,8 +2101,9 @@ QA:
   `scripts/publish_hmm_model.py`, `scripts/verify_mlflow_model_metrics.py`,
   `tests/external/test_k_champion_external.py`,
   `docs/qa/k_champion_external.md`
-- **Status:** read-only external alias/provenance verifier implemented;
-  authorized NAS publication/readback evidence remains open.
+- **Status:** read-only external alias/provenance verifier and hermetic QA
+  merged in GitHub #424; authorized NAS publication/readback evidence remains
+  open.
 
 Acceptance:
 
@@ -2408,7 +2409,7 @@ The following active PRs gain additional requirements:
 - `PR-229`: evidence schema must include dataset snapshot key, evaluation run key, work-unit input/payload hashes and resume provenance.
 - `PR-230`: MLflow is replayed from durable completed units; tracking outages must not erase statistical progress.
 - `PR-231`: forced-crash/resume equivalence is mandatory.
-- `PR-232`: full current-Xetra run must support stop/restart without source recapture or loss of completed HMM work.
+- `PR-232`: the full current-Xetra run is one-shot; interruption restarts from the beginning and no computation-position resume is permitted.
 - `PR-233`: deployment selection is a deterministic resumable work unit bound to the already pinned dataset snapshot.
 - `PR-237`: evaluate -> deployment select -> refit -> register challenger is logically idempotent end to end; duplicate model registration is forbidden.
 - `PR-241`: document operator resume commands, run keys, snapshot keys and corruption/failure recovery.
