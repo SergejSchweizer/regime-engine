@@ -24,6 +24,8 @@ _DATASET_ID = "macro_features_daily"
 _FEATURE_TABLE = sql.Identifier("macro_loader", "macro_features_daily")
 _SYNC_TABLE = sql.Identifier("macro_loader_sync", "gold_sync_state")
 _FEATURE_SCHEMA = "macro_loader"
+_CURRENT_SOURCE_SCHEMA_VERSION = 6
+_CURRENT_SOURCE_FEATURE_VERSION = 5
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RELATION_KINDS = {
     "r": "BASE TABLE",
@@ -68,8 +70,8 @@ class PostgresFeatureSource:
         connect: Callable[[], ConnectionLike],
         registered_feature_names: Iterable[str] | None = None,
         *,
-        expected_schema_version: int = 4,
-        expected_feature_version: int = 3,
+        expected_schema_version: int = _CURRENT_SOURCE_SCHEMA_VERSION,
+        expected_feature_version: int = _CURRENT_SOURCE_FEATURE_VERSION,
     ) -> None:
         self._connect = connect
         self._registered = frozenset(registered_feature_names or ())
