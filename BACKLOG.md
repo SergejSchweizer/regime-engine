@@ -126,6 +126,11 @@ Status date: 2026-09-16
   the complete formula, independent eligibility gates, non-finite input
   rejection, order-independent evidence hashes, and K=2..5 Model Metrics
   projection are covered without contacting external services.
+  PR-420 contract acceptance is now complete locally: strict canonical
+  selection round trips reject schema drift and operational metadata, the
+  four slots/aliases derive from one core source, identity mutations either
+  change both hashes or fail closed, and the dimension-independent promotion
+  hierarchy is deterministic under candidate-order reversal.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -401,7 +406,7 @@ still required.
 | PR-406 | IMPLEMENTED | Spawned process-kill/filesystem crash-boundary and three-family multistart interruption/golden acceptance; merged in GitHub #408 after rebase and all gates; branch deleted |
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
-| PR-420 | IN PROGRESS (IMPLEMENTATION MERGED #418; expectation QA #420) | K-specific champion-slot contract, immutable selection records, slot-local promotion and registry primitives implemented; complete QA matrix remains |
+| PR-420 | ACCEPTANCE COMPLETE | K-specific champion-slot contract, strict canonical selection serialization, single-source slot aliases, dimension-independent promotion ranking, immutable/idempotent registry behavior and legacy `champion` preservation are covered locally; implementation merged in #418 and contract closure follows in PR-445 |
 | PR-421 | IN PROGRESS (IMPLEMENTATION MERGED #418) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility and fixed-K invalid-prefix identity, while leakage/invariance QA remains |
 | PR-422 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
@@ -1709,51 +1714,51 @@ version remains available for audit and rollback. The existing default
   `src/market_regime_engine/evaluations/k_champion_contract.py`,
   `src/market_regime_engine/mlflow_support/k_champion_contract.py`,
   corresponding unit tests and contract documentation
-- **Status:** implementation merged through GitHub PR #418; expectation-manifest QA merged in GitHub #420; complete Wave E QA matrix remains
+- **Status:** acceptance complete; implementation merged through GitHub PR #418, expectation-manifest QA merged in GitHub #420, and strict contract closure is covered by PR-445
 
 Acceptance:
 
-- [ ] Define an explicit versioned policy identifier for the K-champion
+- [x] Define an explicit versioned policy identifier for the K-champion
   portfolio; existing `global_regime_v4` behavior remains unchanged.
-- [ ] Define exactly four legal slot IDs: `k2`, `k3`, `k4` and `k5`.
-- [ ] Define one immutable selection record per slot containing state count,
+- [x] Define exactly four legal slot IDs: `k2`, `k3`, `k4` and `k5`.
+- [x] Define one immutable selection record per slot containing state count,
   model family, ordered feature tuple, feature-order hash, source snapshot
   identity, profile/policy version, validation cutoff, deployment cutoff,
   comparison-domain ID, promotion-score version and artifact hash.
-- [ ] Define the allowed model families as Gaussian HMM, GMM-HMM and Student-t
+- [x] Define the allowed model families as Gaussian HMM, GMM-HMM and Student-t
   HMM, with state count equal to the slot K.
-- [ ] Define `champion-k2`, `champion-k3`, `champion-k4` and `champion-k5` as
+- [x] Define `champion-k2`, `champion-k3`, `champion-k4` and `champion-k5` as
   the only automatic promotion aliases; preserve the existing `champion`
   alias and its route semantics.
-- [ ] Define the within-K same-feature selection score as the existing causal
+- [x] Define the within-K same-feature selection score as the existing causal
   predictive ranking: valid-fold gates, mean OOS predictive log likelihood,
   population dispersion, worst fold, BIC, AIC and deterministic tie breaks.
-- [ ] Define the across-feature-set K-slot promotion score without raw PLL,
+- [x] Define the across-feature-set K-slot promotion score without raw PLL,
   AIC or BIC: valid-fold rate, mean causal soft-regime NMI to the frozen
   K-specific reference teacher, worst-fold NMI, then common support; define
   direction, tolerance and deterministic tie behavior.
-- [ ] Require compared promotion candidates to share source build, validation
+- [x] Require compared promotion candidates to share source build, validation
   window, profile/policy version, score version and reference-teacher identity;
   otherwise fail closed.
-- [ ] Define model versions as immutable and replacement as an alias move only;
+- [x] Define model versions as immutable and replacement as an alias move only;
   deletion of the previous champion is forbidden.
-- [ ] Define idempotency keys for `(slot, source snapshot, policy hash,
+- [x] Define idempotency keys for `(slot, source snapshot, policy hash,
   feature-order hash, candidate identity, artifact hash)`.
-- [ ] Define explicit no-champion and ineligible-slot states; an ineligible K
+- [x] Define explicit no-champion and ineligible-slot states; an ineligible K
   must never receive a champion alias.
 
 QA:
 
-- [ ] Independent serialization tests reject K values outside 2–5, malformed
+- [x] Independent serialization tests reject K values outside 2–5, malformed
   feature orders, missing hashes, invalid comparison domains and alias/slot
   mismatches.
-- [ ] Independent contract tests prove raw likelihood/AIC/BIC comparison across
+- [x] Independent contract tests prove raw likelihood/AIC/BIC comparison across
   different feature dimensions is rejected.
-- [ ] Canonical JSON hashing excludes MLflow run IDs, timestamps and temporary
+- [x] Canonical JSON hashing excludes MLflow run IDs, timestamps and temporary
   paths but includes all selection/provenance fields.
-- [ ] Mutation tests prove changing K, feature order, source snapshot, policy
+- [x] Mutation tests prove changing K, feature order, source snapshot, policy
   version or score version changes the identity hash.
-- [ ] Tests prove an ineligible slot cannot produce a promotion instruction and
+- [x] Tests prove an ineligible slot cannot produce a promotion instruction and
   the legacy `champion` alias remains untouched.
 
 ### PR-421 — Implement K-specific TRAIN-only feature selection

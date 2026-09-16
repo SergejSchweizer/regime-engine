@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from market_regime_engine.contracts.core import K_CHAMPION_ALIASES as CORE_K_CHAMPION_ALIASES
 from market_regime_engine.contracts.core import KChampionSlot
 from market_regime_engine.evaluations.k_champion_contract import (
     KChampionPromotionDecision,
@@ -16,7 +17,7 @@ from market_regime_engine.evaluations.k_champion_contract import (
 )
 
 REGISTERED_MODEL_NAME = "regime-xetra"
-K_CHAMPION_ALIASES = frozenset({"champion-k2", "champion-k3", "champion-k4", "champion-k5"})
+K_CHAMPION_ALIASES = frozenset(CORE_K_CHAMPION_ALIASES)
 LEGACY_ALIAS = "champion"
 
 
@@ -50,12 +51,21 @@ class KChampionPromotionInstruction:
             raise ValueError("K-champion policy cannot mutate the legacy champion alias")
         for value, field in (
             (self.exact_model_version, "exact_model_version"),
-            (self.selection_hash, "selection_hash"),
-            (self.idempotency_key, "idempotency_key"),
             (self.reason, "reason"),
         ):
             if not isinstance(value, str) or not value or value.strip() != value:
                 raise ValueError(f"{field} must be a non-empty trimmed string")
+        for value, field in (
+            (self.selection_hash, "selection_hash"),
+            (self.idempotency_key, "idempotency_key"),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or value != value.lower()
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{field} must be a lowercase SHA-256")
         if self.expected_current_version is not None and (
             not self.expected_current_version
             or self.expected_current_version.strip() != self.expected_current_version

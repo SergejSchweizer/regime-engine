@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from hashlib import sha256
 from math import isfinite
@@ -165,6 +165,44 @@ class KChampionSelection:
         payload["validation_cutoff"] = self.validation_cutoff.isoformat().replace("+00:00", "Z")
         payload["deployment_cutoff"] = self.deployment_cutoff.isoformat().replace("+00:00", "Z")
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @classmethod
+    def from_canonical_json(cls, payload: str) -> KChampionSelection:
+        """Load one exact selection record and reject schema drift.
+
+        Operational fields such as run IDs, wall-clock timestamps and temporary
+        paths are intentionally not part of this contract.  Rejecting unknown
+        keys keeps them out of the identity hash instead of silently accepting
+        non-canonical provenance.
+        """
+
+        try:
+            raw = json.loads(payload)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("K-champion selection must be canonical JSON") from exc
+        expected = {item.name for item in fields(cls)}
+        if not isinstance(raw, dict) or set(raw) != expected:
+            raise ValueError("unknown or missing K-champion selection fields")
+        feature_order = raw["feature_order"]
+        if not isinstance(feature_order, list):
+            raise ValueError("feature_order must be a JSON array")
+        for name in ("state_count", "profile_config_version"):
+            value = raw[name]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{name} must be an integer")
+        cutoffs: dict[str, datetime] = {}
+        for name in ("validation_cutoff", "deployment_cutoff"):
+            value = raw[name]
+            if not isinstance(value, str) or not value.endswith("Z"):
+                raise ValueError(f"{name} must use canonical UTC Z notation")
+            try:
+                cutoffs[name] = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+            except ValueError as exc:
+                raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+        values = dict(raw)
+        values["feature_order"] = tuple(feature_order)
+        values.update(cutoffs)
+        return cls(**values)
 
     @property
     def selection_hash(self) -> str:
