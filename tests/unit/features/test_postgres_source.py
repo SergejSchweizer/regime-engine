@@ -108,8 +108,8 @@ def lineage_row() -> tuple[Any, ...]:
     return (
         "build-7",
         "a" * 64,
-        4,
-        3,
+        6,
+        5,
         2,
         NOW,
         NOW.replace(day=25),

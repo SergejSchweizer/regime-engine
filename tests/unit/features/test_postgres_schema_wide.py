@@ -32,8 +32,8 @@ class SchemaCursor:
         return (
             "build-schema-1",
             "a" * 64,
-            4,
-            3,
+            6,
+            5,
             2,
             START,
             START + timedelta(days=2),

@@ -23,7 +23,7 @@ class DynamicCursor:
         self.executed.append((query, params))
 
     def fetchone(self) -> tuple[Any, ...]:
-        return ("build-1", "a" * 64, 4, 3, 2, NOW, NOW.replace(day=10), NOW)
+        return ("build-1", "a" * 64, 6, 5, 2, NOW, NOW.replace(day=10), NOW)
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         self.fetchall_count += 1

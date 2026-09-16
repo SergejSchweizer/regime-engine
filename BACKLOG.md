@@ -172,9 +172,9 @@ Status date: 2026-09-15
   `macro-loader-owner`; the dedicated `macro-loader-sync` login is reserved
   for cron synchronization writes. The feature relation contains 16,768 rows
   through 2026-09-04, and `gold_sync_state` reports the same range with
-  `source_build_id=20260909T182045Z`, `schema_version=4`, and
-  `feature_version=3`. The external read-only smoke test passes (`88` workers,
-  `1 passed`, 2026-09-15).
+  `source_build_id=20260915T212921Z`, `schema_version=6`, and
+  `feature_version=5`. The external read-only smoke test passes (`88` workers,
+  `1 passed`, 2026-09-16) against the current NAS source contract.
   External MLflow health responds `OK` at
   `http://10.10.1.3:5000`; experiment `macro-regime-evaluation` exists as
   experiment 3 with 768 historical runs, zero visible LoggedModels, zero
