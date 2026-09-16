@@ -259,10 +259,13 @@ def test_same_vector_family_ranking_covers_every_k_and_each_tie_stage(
     assert result["winner_candidate_id"] == expected
 
 
-def test_same_vector_family_ranking_is_completion_order_invariant_and_uses_id_tie_break() -> None:
+@pytest.mark.parametrize("state_count", LEGAL_K)
+def test_same_vector_family_ranking_is_completion_order_invariant_and_uses_id_tie_break(
+    state_count: int,
+) -> None:
     oracle = _oracle()
     candidates = tuple(
-        _family(candidate_id, family, state_count=5)
+        _family(candidate_id, family, state_count=state_count)
         for candidate_id, family in zip(("zeta", "alpha", "mu"), FAMILIES, strict=True)
     )
     outputs = {
@@ -283,43 +286,56 @@ def test_family_numeric_tolerance_is_a_tie_before_the_next_rule() -> None:
     assert result["winner_candidate_id"] == "gaussian"
 
 
-def test_same_vector_family_ranking_rejects_ineligible_and_adversarial_candidates() -> None:
+@pytest.mark.parametrize("state_count", LEGAL_K)
+def test_same_vector_family_ranking_rejects_ineligible_and_adversarial_candidates(
+    state_count: int,
+) -> None:
     oracle = _oracle()
     ineligible = tuple(
-        _family(name, family, valid_fold_count=2)
+        _family(name, family, state_count=state_count, valid_fold_count=2)
         for name, family in zip(("gaussian", "gmm", "student"), FAMILIES, strict=True)
     )
     with pytest.raises(ValueError, match="no same-vector"):
         oracle.independent_same_vector_family_ranking(ineligible)
     result = oracle.independent_same_vector_family_ranking(
         (
-            _family("gaussian", "gaussian_hmm", oos_mean=math.nan),
-            _family("gmm", "gmm_hmm"),
-            _family("student", "student_t_hmm"),
+            _family("gaussian", "gaussian_hmm", state_count=state_count, oos_mean=math.nan),
+            _family("gmm", "gmm_hmm", state_count=state_count),
+            _family("student", "student_t_hmm", state_count=state_count),
         )
     )
     assert result["rejected"] == {"gaussian": "missing or nonfinite ranking metric"}
     with pytest.raises(ValueError, match="no same-vector"):
         oracle.independent_same_vector_family_ranking(
             tuple(
-                _family(name, family, oos_mean=math.nan)
+                _family(name, family, state_count=state_count, oos_mean=math.nan)
                 for name, family in zip(("gaussian", "gmm", "student"), FAMILIES, strict=True)
             )
         )
     with pytest.raises(ValueError, match="exact provenance"):
         oracle.independent_same_vector_family_ranking(
             (
-                _family("gaussian", "gaussian_hmm"),
-                _family("gmm", "gmm_hmm", feature_order_hash=_hash("d")),
-                _family("student", "student_t_hmm"),
+                _family("gaussian", "gaussian_hmm", state_count=state_count),
+                _family(
+                    "gmm",
+                    "gmm_hmm",
+                    state_count=state_count,
+                    feature_order_hash=_hash("d"),
+                ),
+                _family("student", "student_t_hmm", state_count=state_count),
             )
         )
     with pytest.raises(ValueError, match="unique fold IDs"):
         oracle.independent_same_vector_family_ranking(
             (
-                _family("gaussian", "gaussian_hmm", fold_ids=("outer-001", "outer-001")),
-                _family("gmm", "gmm_hmm"),
-                _family("student", "student_t_hmm"),
+                _family(
+                    "gaussian",
+                    "gaussian_hmm",
+                    state_count=state_count,
+                    fold_ids=("outer-001", "outer-001"),
+                ),
+                _family("gmm", "gmm_hmm", state_count=state_count),
+                _family("student", "student_t_hmm", state_count=state_count),
             )
         )
 
