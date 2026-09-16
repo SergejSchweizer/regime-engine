@@ -18,6 +18,7 @@ from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 from mlflow.tracking import MlflowClient
 
+from market_regime_engine.contracts.core import K_CHAMPION_ALIASES
 from market_regime_engine.evaluations.k_champion_contract import KChampionSelection
 from market_regime_engine.mlflow_support.k_champion_contract import (
     KChampionPromotionInstruction,
@@ -28,7 +29,7 @@ from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 
 REGISTERED_MODEL_NAME = "regime-xetra"
-K_SLOT_ALIASES = frozenset({"champion-k2", "champion-k3", "champion-k4", "champion-k5"})
+K_SLOT_ALIASES = frozenset(K_CHAMPION_ALIASES)
 ALLOWED_ALIASES = frozenset({"challenger", "champion", *K_SLOT_ALIASES})
 _K_SLOT_BY_ALIAS = {alias: int(alias.rsplit("-k", 1)[1]) for alias in K_SLOT_ALIASES}
 _REGISTRY_THREAD_LOCK = threading.RLock()
