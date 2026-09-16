@@ -60,8 +60,8 @@ def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
         source_dataset="macro_features_daily",
         source_build_id="fixed-k-build",
         data_sha256="d" * 64,
-        schema_version=4,
-        feature_version=3,
+        schema_version=6,
+        feature_version=5,
         source_table="macro_loader.macro_features_daily",
         synced_at_utc=START,
         row_count=len(rows),
@@ -136,6 +136,69 @@ def test_fixed_k_selection_runs_real_train_only_discovery_and_prefix(monkeypatch
         for item in result
         if item.selection is not None
     )
+    selected_orders = {
+        item.selection.feature_order for item in result if item.selection is not None
+    }
+    assert len(selected_orders) >= 2
     k4 = result[2]
     assert k4.selection is None
     assert k4.rejection_reason and "no eligible regime feature score" in k4.rejection_reason
+
+    labelled_rows = rows.assign(
+        semantic_label=np.random.default_rng(9101).permutation(len(rows)),
+        display_label=np.random.default_rng(9102).permutation(len(rows)),
+    )
+    labelled = run_real_k_feature_selection(
+        labelled_rows,
+        catalog=_catalog(rows),
+        profile=profile,
+        source_snapshot_id="snapshot-fixed-k",
+        source_build_id="fixed-k-build",
+        validation_cutoff=rows["timestamp_m1"].iloc[-1],
+        deployment_cutoff=rows["timestamp_m1"].iloc[-1] + timedelta(days=1),
+        requested_state_counts=(2, 3, 4, 5),
+        max_workers=4,
+    )
+    assert labelled == result
+
+    serial = run_real_k_feature_selection(
+        rows,
+        catalog=_catalog(rows),
+        profile=profile,
+        source_snapshot_id="snapshot-fixed-k",
+        source_build_id="fixed-k-build",
+        validation_cutoff=rows["timestamp_m1"].iloc[-1],
+        deployment_cutoff=rows["timestamp_m1"].iloc[-1] + timedelta(days=1),
+        requested_state_counts=(2, 3, 4, 5),
+        max_workers=1,
+    )
+    assert serial == result
+
+
+def test_fixed_k_selection_rejects_any_outer_test_row_before_discovery(monkeypatch) -> None:
+    monkeypatch.setattr(walk_forward, "run_multistart", _one_real_fit_multistart)
+    train_rows = _rows()
+    cutoff = train_rows["timestamp_m1"].iloc[-1]
+    outer_test_row = train_rows.iloc[[-1]].copy()
+    outer_test_row.loc[:, "timestamp_m1"] = cutoff + timedelta(days=1)
+    outer_test_row.loc[:, [column for column in train_rows if column != "timestamp_m1"]] += 1e6
+    contaminated = pd.concat((train_rows, outer_test_row), ignore_index=True)
+
+    result = run_real_k_feature_selection(
+        contaminated,
+        catalog=_catalog(train_rows),
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        source_snapshot_id="snapshot-fixed-k",
+        source_build_id="fixed-k-build",
+        validation_cutoff=cutoff,
+        deployment_cutoff=cutoff + timedelta(days=1),
+        requested_state_counts=(2,),
+        max_workers=1,
+    )
+
+    assert len(result) == 1
+    assert result[0].eligible is False
+    assert result[0].selection is None
+    assert result[0].rejection_reason == (
+        "ValueError: TRAIN rows must end exactly at validation_cutoff"
+    )

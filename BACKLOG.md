@@ -131,6 +131,10 @@ Status date: 2026-09-16
   four slots/aliases derive from one core source, identity mutations either
   change both hashes or fail closed, and the dimension-independent promotion
   hierarchy is deterministic under candidate-order reversal.
+  PR-421 acceptance is also complete locally: the real K=2..5 selector proves
+  distinct K-specific feature tuples, ignores randomized semantic/display
+  columns, rejects any row beyond the validation cutoff before discovery, and
+  preserves canonical results between process and explicit serial execution.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -407,7 +411,7 @@ still required.
 | PR-413 | IMPLEMENTED | Hermetic deployment/lifecycle/package acceptance: source identity/cutoff binding, no last-outer-fold reuse, alias immutability on failure and v4 documentation/schema contracts; merged in GitHub #412 after rebase and all gates; branch deleted |
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
 | PR-420 | ACCEPTANCE COMPLETE | K-specific champion-slot contract, strict canonical selection serialization, single-source slot aliases, dimension-independent promotion ranking, immutable/idempotent registry behavior and legacy `champion` preservation are covered locally; implementation merged in #418 and contract closure follows in PR-445 |
-| PR-421 | IN PROGRESS (IMPLEMENTATION MERGED #418) | TRAIN-only process-parallel K orchestration now has a real fixed-K selector covering discovery, a forced Gaussian teacher, feature scoring and K-bound prefix evidence; the real K=2..5 process matrix passes with explicit per-K ineligibility and fixed-K invalid-prefix identity, while leakage/invariance QA remains |
+| PR-421 | ACCEPTANCE COMPLETE | TRAIN-only process-parallel K orchestration, real fixed-K discovery/teacher/scoring/prefix evidence, distinct K feature tuples, label invariance, validation-cutoff isolation, independent prefix/NMI oracle and serial/process canonical parity are covered; implementation merged in #418 and closure follows in PR-446 |
 | PR-422 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
@@ -1771,44 +1775,44 @@ QA:
   `src/market_regime_engine/evaluations/provisional_teacher.py`,
   `src/market_regime_engine/evaluations/prefix_search.py`,
   corresponding unit/integration tests
-- **Status:** implementation merged through GitHub PR #418; real selector integration and QA remain
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and leakage/invariance closure is covered by PR-446
 
 Acceptance:
 
-- [ ] Add one reusable selector that accepts exactly one requested K in 2–5
+- [x] Add one reusable selector that accepts exactly one requested K in 2–5
   and returns one K-specific feature-selection result.
-- [ ] Run quality filtering, global discovery, clustering and prototype
+- [x] Run quality filtering, global discovery, clustering and prototype
   construction only from the supplied Outer-TRAIN data.
-- [ ] Force the provisional Gaussian reference teacher to the requested K; do
+- [x] Force the provisional Gaussian reference teacher to the requested K; do
   not select a different teacher K inside this selector.
-- [ ] Use causal Inner-Fold filtered probabilities from that frozen K teacher
+- [x] Use causal Inner-Fold filtered probabilities from that frozen K teacher
   for feature scoring and prefix selection.
-- [ ] Evaluate exactly `L=2..min(M*,8)` and choose one `L*_K` using the causal
+- [x] Evaluate exactly `L=2..min(M*,8)` and choose one `L*_K` using the causal
   soft-regime-NMI contract.
-- [ ] Return the ordered K-specific feature tuple, discovery hash, teacher
+- [x] Return the ordered K-specific feature tuple, discovery hash, teacher
   identity, prefix evidence and comparison-domain identity.
-- [ ] Never read, score, fit on or branch on Outer-TEST observations.
-- [ ] Never compare raw PLL, AIC or BIC across K-specific feature dimensions.
-- [ ] Fail closed if the requested K has no valid teacher, no eligible prefix,
+- [x] Never read, score, fit on or branch on Outer-TEST observations.
+- [x] Never compare raw PLL, AIC or BIC across K-specific feature dimensions.
+- [x] Fail closed if the requested K has no valid teacher, no eligible prefix,
   insufficient support or an invalid feature tuple.
-- [ ] Make repeated execution on the same pinned input byte-identical apart
+- [x] Make repeated execution on the same pinned input byte-identical apart
   from operational timing/run metadata.
-- [ ] Expose four independent K tasks that can be process-parallelized while
+- [x] Expose four independent K tasks that can be process-parallelized while
   preserving canonical K/result ordering.
 
 QA:
 
-- [ ] Real-HMM synthetic fixture runs K=2,3,4,5 without mocked fitting and
+- [x] Real-HMM synthetic fixture runs K=2,3,4,5 without mocked fitting and
   records four independently hashed feature-selection results.
-- [ ] Fixture proves at least two K values can select different feature tuples
+- [x] Fixture proves at least two K values can select different feature tuples
   without changing the other K results.
-- [ ] Future-row mutation cannot change earlier Inner-Fold selections or hashes.
-- [ ] Outer-TEST spy proves no selector callback receives Outer-TEST rows,
+- [x] Future-row mutation cannot change earlier Inner-Fold selections or hashes.
+- [x] Outer-TEST spy proves no selector callback receives Outer-TEST rows,
   targets or metrics.
-- [ ] Randomized semantic/display labels leave all four statistical results
+- [x] Randomized semantic/display labels leave all four statistical results
   unchanged.
-- [ ] Independent prefix/NMI oracle reproduces every `L*_K` decision and tie.
-- [ ] Process-parallel and serial executions produce identical canonical results.
+- [x] Independent prefix/NMI oracle reproduces every `L*_K` decision and tie.
+- [x] Process-parallel and serial executions produce identical canonical results.
 
 ### PR-422 — Select the best model family within each fixed-K feature tuple
 
