@@ -1,6 +1,6 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-15
+Status date: 2026-09-16
 
 ## Current execution state
 
@@ -130,6 +130,19 @@ Status date: 2026-09-15
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
   crash-boundary hardening is included through PRs #259–#354.
+- **Authorized full-evaluation attempt (2026-09-16):** the one-shot live run
+  reached the NAS source snapshot and failed closed before PCA, HMM, plotting,
+  or MLflow tracking at the production source/model-clock preflight:
+  `potentially_valid_outer_folds=0/246` and
+  `first_inner_train_complete_observations=0`. The current
+  `source_build_id=20260915T212921Z` exposes 169 raw features; four
+  `fed_*` columns have zero non-null observations across all 16,768 rows, and
+  five `estr_*` long-horizon columns have only 4.6–79.8% coverage in the
+  latest 1,260-row window. The mandatory complete raw-plus-PCA contract
+  therefore has no valid fit clock. No MLflow run, model publication, alias
+  mutation, or NAS write was performed. Re-run only after the upstream
+  `macro_loader` serving dataset is republished with a production-eligible
+  complete raw feature universe; no fallback or imputation is permitted.
 - **Current CPU topology/performance implementation:** the runtime now sizes
   workers from Linux process affinity and the active cgroup quota, exposes
   physical-core/NUMA topology, and accepts the `REGIME_CPU_WORKERS` override.
