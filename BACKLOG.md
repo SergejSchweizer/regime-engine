@@ -17,10 +17,11 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `main`; no implementation worktree or `pr/*` branch is
-  active after the latest merged follow-ups.
-- **Reference base:** `origin/main` as checked on 2026-09-14; local `main` is
-  aligned with the remote reference branch before this backlog update.
+- **Active worktree:** `pr/PR-447-fixed-k-family-acceptance-closure`, based
+  directly on current `origin/main`; PR-447 closes the remaining hermetic
+  PR-422 acceptance gaps and has not run a full evaluation or external write.
+- **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
+  aligned with the remote reference branch before PR-447 was created.
 - **Latest implementation:** the parallel audit dossier handoff is complete
   on top of the merged resumability, MLflow Model Metrics, PCA and
   process-parallel work. Follow-up PRs #333–#354 are also merged: global
@@ -135,6 +136,12 @@ Status date: 2026-09-16
   distinct K-specific feature tuples, ignores randomized semantic/display
   columns, rejects any row beyond the validation cutoff before discovery, and
   preserves canonical results between process and explicit serial execution.
+  PR-422 acceptance is now complete locally: the exact fixed-K three-family
+  universe is enforced, cross-K comparisons fail at the production boundary,
+  all four K grids can run as independent GIL-free process tasks under one
+  bounded CPU budget, and real-HMM serial/process results plus independent
+  adversarial ranking evidence are canonical for K=2,3,4,5. Closure is tracked
+  by PR-447.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -412,7 +419,7 @@ still required.
 | PR-414 | IMPLEMENTED | Strict MLflow evidence artifact hash/size/mtime/freshness binding, Xetra source-identity cross-binding and explicit local-vs-external proof boundary; merged in GitHub #413 after rebase and all gates; branch deleted |
 | PR-420 | ACCEPTANCE COMPLETE | K-specific champion-slot contract, strict canonical selection serialization, single-source slot aliases, dimension-independent promotion ranking, immutable/idempotent registry behavior and legacy `champion` preservation are covered locally; implementation merged in #418 and contract closure follows in PR-445 |
 | PR-421 | ACCEPTANCE COMPLETE | TRAIN-only process-parallel K orchestration, real fixed-K discovery/teacher/scoring/prefix evidence, distinct K feature tuples, label invariance, validation-cutoff isolation, independent prefix/NMI oracle and serial/process canonical parity are covered; implementation merged in #418 and closure follows in PR-446 |
-| PR-422 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Fixed-K three-family contract and process-parallel runner are covered by a real-HMM K=2..5 integration matrix plus precise all-family invalid evidence; full downstream integration acceptance remains |
+| PR-422 | ACCEPTANCE COMPLETE | Exact fixed-K Gaussian/GMM/Student-t ranking, strict same-K comparison domain, real-HMM K=2..5 serial/process parity, four-K GIL-free orchestration, canonical completion-order assembly, adversarial independent oracle and lineage/feature-tuple invariants are covered; implementation merged in #418 and closure follows in PR-447 |
 | PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
@@ -1822,36 +1829,36 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_family_grid.py`,
   `src/market_regime_engine/evaluations/final_v4_grid.py`,
   `src/market_regime_engine/training/candidate_grid.py`, corresponding tests
-- **Status:** implementation merged through GitHub PR #418; real-HMM integration and acceptance remain
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and closure follows in PR-447
 
 Acceptance:
 
-- [ ] For each K, evaluate exactly three candidates on the exact same
+- [x] For each K, evaluate exactly three candidates on the exact same
   K-specific feature tuple: Gaussian HMM K, GMM-HMM K/M=2 and Student-t HMM K.
-- [ ] Reuse existing adapters, multistart, causal filter and ranking kernels;
+- [x] Reuse existing adapters, multistart, causal filter and ranking kernels;
   no duplicate HMM implementation is allowed.
-- [ ] Use the same Inner-Fold plan, timestamps, support and initialization
+- [x] Use the same Inner-Fold plan, timestamps, support and initialization
   policy for all three families within one K.
-- [ ] Select one family per K using same-vector predictive ranking followed by
+- [x] Select one family per K using same-vector predictive ranking followed by
   same-vector dispersion, worst fold, BIC, AIC and deterministic ties.
-- [ ] Return exactly one selected family or an explicit ineligible result for
+- [x] Return exactly one selected family or an explicit ineligible result for
   each K; never silently fall back to another K.
-- [ ] Preserve the K-specific feature tuple and all source/policy hashes.
+- [x] Preserve the K-specific feature tuple and all source/policy hashes.
 - [x] Emit candidate-level evidence for all three families even when one is
   invalid, including its precise invalid reason.
-- [ ] Keep all four K computations independent and assemble results in K order.
+- [x] Keep all four K computations independent and assemble results in K order.
 
 QA:
 
-- [ ] Independent same-vector reference computes family ranking for Gaussian,
+- [x] Independent same-vector reference computes family ranking for Gaussian,
   GMM-HMM and Student-t candidates at each K.
-- [ ] Tests reject a reordered, missing or extra family candidate.
-- [ ] Tests prove family selection cannot change the K-specific feature tuple.
-- [ ] Synthetic fixtures cover valid, invalid, tied and non-finite outcomes
+- [x] Tests reject a reordered, missing or extra family candidate.
+- [x] Tests prove family selection cannot change the K-specific feature tuple.
+- [x] Synthetic fixtures cover valid, invalid, tied and non-finite outcomes
   for every K.
-- [ ] Candidate completion-order permutations produce identical winner and
+- [x] Candidate completion-order permutations produce identical winner and
   evidence bytes.
-- [ ] A cross-K comparison attempt fails with a precise comparison-domain error.
+- [x] A cross-K comparison attempt fails with a precise comparison-domain error.
 
 ### PR-423 — Validate the four K slots through the outer walk-forward
 

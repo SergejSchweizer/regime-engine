@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from time import sleep
 
 import numpy as np
 import pandas as pd
@@ -14,7 +15,10 @@ from market_regime_engine.evaluation.walk_forward import (
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluations.k_family_grid import (
     K_FAMILY_ORDER,
+    KFamilyGridRequest,
     evaluate_k_family_grid,
+    evaluate_k_family_grids,
+    rank_k_family_candidates,
 )
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.profiles.loader import load_profile
@@ -71,6 +75,39 @@ def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory, **_kwa
     )
 
 
+def _invalid_family_runner(frame, candidate_plan, candidate_profile, candidate, adapter):
+    """Pickle-safe runner with deliberately reversed family completion latency."""
+
+    del frame, adapter
+    sleep({"gaussian_hmm": 0.03, "gmm_hmm": 0.02, "student_t_hmm": 0.01}[candidate.model_family])
+    fold = candidate_plan.folds[0]
+    invalid_fold = WalkForwardFoldResult(
+        fold_id=fold.fold_id,
+        fold_index=fold.fold_index,
+        valid=False,
+        failure_reason=f"fixture rejected {candidate.model_family}",
+        train_source_observation_count=fold.train_source_observations,
+        test_source_observation_count=fold.test_source_observations,
+        train_model_observation_count=0,
+        test_model_observation_count=0,
+        skipped_train_incomplete_count=fold.train_source_observations,
+        skipped_test_incomplete_count=fold.test_source_observations,
+    )
+    return WalkForwardEvaluation(
+        profile_id=candidate_profile.profile_id,
+        profile_config_version=candidate_profile.profile_config_version,
+        candidate_id=candidate.candidate_id,
+        state_count=candidate.state_count,
+        source_build_id=candidate.source_build_id,
+        feature_order=candidate.feature_order,
+        feature_selection_definition_hash=candidate.feature_selection_definition_hash,
+        feature_selection_execution_hash=candidate.feature_selection_execution_hash,
+        evaluation_plan_hash=candidate_plan.plan_hash,
+        evaluation_cutoff=candidate_plan.evaluation_cutoff,
+        folds=(invalid_fold,),
+    )
+
+
 @pytest.mark.parametrize("state_count", (2, 3, 4, 5))
 def test_k_family_grid_runs_real_gaussian_gmm_and_student_t_for_each_k(
     monkeypatch: pytest.MonkeyPatch, state_count: int
@@ -82,6 +119,19 @@ def test_k_family_grid_runs_real_gaussian_gmm_and_student_t_for_each_k(
     universe = tuple(column for column in rows.columns if column != "timestamp_m1")
 
     result = evaluate_k_family_grid(
+        rows,
+        state_count=state_count,
+        feature_order=("f0", "f1"),
+        original_feature_universe=universe,
+        profile=profile,
+        plan=plan,
+        source_build_id="synthetic-k-family-build",
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        max_workers=3,
+        pca_raw_feature_order=("f0", "f1"),
+    )
+    serial = evaluate_k_family_grid(
         rows,
         state_count=state_count,
         feature_order=("f0", "f1"),
@@ -107,6 +157,12 @@ def test_k_family_grid_runs_real_gaussian_gmm_and_student_t_for_each_k(
     assert tuple(item.candidate_id for item in result.aggregates) == expected_ids
     assert all(item.state_count == state_count for item in result.evaluations)
     assert result.selection is not None or result.no_selection_reason
+    assert result == serial
+    assert result.evidence_hash == serial.evidence_hash
+    assert all(item.feature_order == ("f0", "f1") for item in result.evaluations)
+    assert all(item.evaluation_plan_hash == plan.plan_hash for item in result.evaluations)
+    assert all(item.feature_selection_definition_hash == "a" * 64 for item in result.evaluations)
+    assert all(item.feature_selection_execution_hash == "b" * 64 for item in result.evaluations)
 
 
 def test_k_family_grid_retains_precise_invalid_evidence_for_every_family() -> None:
@@ -114,35 +170,6 @@ def test_k_family_grid_retains_precise_invalid_evidence_for_every_family() -> No
     profile = load_profile("configs/profiles/xetra_v4.yaml")
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     universe = tuple(column for column in rows.columns if column != "timestamp_m1")
-
-    def invalid_runner(frame, candidate_plan, candidate_profile, candidate, adapter):
-        del frame, adapter
-        fold = candidate_plan.folds[0]
-        invalid_fold = WalkForwardFoldResult(
-            fold_id=fold.fold_id,
-            fold_index=fold.fold_index,
-            valid=False,
-            failure_reason=f"fixture rejected {candidate.model_family}",
-            train_source_observation_count=fold.train_source_observations,
-            test_source_observation_count=fold.test_source_observations,
-            train_model_observation_count=0,
-            test_model_observation_count=0,
-            skipped_train_incomplete_count=fold.train_source_observations,
-            skipped_test_incomplete_count=fold.test_source_observations,
-        )
-        return WalkForwardEvaluation(
-            profile_id=candidate_profile.profile_id,
-            profile_config_version=candidate_profile.profile_config_version,
-            candidate_id=candidate.candidate_id,
-            state_count=candidate.state_count,
-            source_build_id=candidate.source_build_id,
-            feature_order=candidate.feature_order,
-            feature_selection_definition_hash=candidate.feature_selection_definition_hash,
-            feature_selection_execution_hash=candidate.feature_selection_execution_hash,
-            evaluation_plan_hash=candidate_plan.plan_hash,
-            evaluation_cutoff=candidate_plan.evaluation_cutoff,
-            folds=(invalid_fold,),
-        )
 
     result = evaluate_k_family_grid(
         rows,
@@ -154,7 +181,7 @@ def test_k_family_grid_retains_precise_invalid_evidence_for_every_family() -> No
         source_build_id="synthetic-k-family-build",
         feature_selection_definition_hash="a" * 64,
         feature_selection_execution_hash="b" * 64,
-        runner=invalid_runner,
+        runner=_invalid_family_runner,
         max_workers=1,
         pca_raw_feature_order=("f0", "f1"),
     )
@@ -166,3 +193,65 @@ def test_k_family_grid_retains_precise_invalid_evidence_for_every_family() -> No
         evaluation.folds[0].failure_reason == f"fixture rejected {family}"
         for evaluation, family in zip(result.evaluations, K_FAMILY_ORDER, strict=True)
     )
+
+
+def test_all_k_family_grids_are_process_independent_and_canonically_assembled() -> None:
+    rows = _source_rows()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+    universe = tuple(column for column in rows.columns if column != "timestamp_m1")
+    requests = tuple(
+        KFamilyGridRequest(
+            state_count=state_count,
+            feature_order=("f0", "f1") if state_count % 2 == 0 else ("f1", "f0"),
+            feature_selection_definition_hash=f"{state_count}" * 64,
+            feature_selection_execution_hash=f"{state_count + 4}" * 64,
+        )
+        for state_count in (5, 4, 3, 2)
+    )
+    kwargs = dict(
+        source_rows=rows,
+        requests=requests,
+        original_feature_universe=universe,
+        profile=profile,
+        plan=plan,
+        source_build_id="synthetic-k-family-build",
+        runner=_invalid_family_runner,
+        pca_raw_feature_order=("f0", "f1"),
+    )
+
+    parallel = evaluate_k_family_grids(**kwargs, max_workers=4)
+    constrained = evaluate_k_family_grids(**kwargs, max_workers=2)
+    serial = evaluate_k_family_grids(**kwargs, max_workers=1)
+
+    assert tuple(result.state_count for result in parallel) == (2, 3, 4, 5)
+    assert parallel == serial
+    assert constrained == serial
+    assert tuple(result.evidence_hash for result in parallel) == tuple(
+        result.evidence_hash for result in serial
+    )
+    assert tuple(result.feature_order for result in parallel) == (
+        ("f0", "f1"),
+        ("f1", "f0"),
+        ("f0", "f1"),
+        ("f1", "f0"),
+    )
+
+    k2, k3, *_ = parallel
+    with pytest.raises(ValueError, match="exact ordered Gaussian/GMM/Student-t"):
+        rank_k_family_candidates(
+            tuple(reversed(k2.evaluations)),
+            k2.aggregates,
+        )
+    with pytest.raises(ValueError, match="exact ordered Gaussian/GMM/Student-t"):
+        rank_k_family_candidates(k2.evaluations[:-1], k2.aggregates[:-1])
+    with pytest.raises(ValueError, match="exact ordered Gaussian/GMM/Student-t"):
+        rank_k_family_candidates(
+            (*k2.evaluations, k2.evaluations[-1]),
+            (*k2.aggregates, k2.aggregates[-1]),
+        )
+    with pytest.raises(ValueError, match="cross-K comparison"):
+        rank_k_family_candidates(
+            (k2.evaluations[0], *k3.evaluations[1:]),
+            (k2.aggregates[0], *k3.aggregates[1:]),
+        )
