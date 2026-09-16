@@ -202,6 +202,18 @@ def test_train_only_selector_runs_one_independent_process_task_per_k() -> None:
     assert tuple(item.state_count for item in results) == (2, 3, 4, 5)
     assert all(item.eligible for item in results)
 
+    serial = run_k_feature_selection(
+        pd.DataFrame({"f0": (1.0, 2.0), "f1": (2.0, 1.0)}),
+        source_snapshot_id="snapshot-1",
+        validation_cutoff=BASE,
+        selector=_train_selector,
+        max_workers=1,
+    )
+    assert serial == results
+    assert tuple(item.selection_hash for item in serial) == tuple(
+        item.selection_hash for item in results
+    )
+
 
 def test_selection_canonical_round_trip_has_an_exact_decision_only_schema() -> None:
     item = selection()
