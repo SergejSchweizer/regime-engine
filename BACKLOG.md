@@ -1,6 +1,6 @@
 # Regime Engine — Canonical Backlog
 
-Status date: 2026-09-16
+Status date: 2026-09-18
 
 This file is the **single authoritative backlog** for `regime-engine`.
 Open and acceptance-pending work is kept at the top. Completed implementation and
@@ -203,6 +203,379 @@ attempted.
 
 ---
 
+## Planned medoid-only L-elbow redesign
+
+This tranche implements the user-directed replacement for the current
+medoid -> provisional teacher -> raw-feature regime scoring -> ranked-prefix
+selection loop. The replacement keeps the existing TRAIN-only quality filter,
+absolute-Spearman redundancy structure, global hierarchical clustering and
+cluster-count selection, but after clustering it permits **only the cluster
+medoids** to enter HMM feature-count selection.
+
+The target semantics are:
+
+```text
+eligible raw features
+    -> absolute-Spearman distance
+    -> hierarchical clustering
+    -> M* clusters
+    -> exactly one medoid per cluster
+    -> full-medoid Gaussian HMM references for K=2,3,4,5
+    -> greedy backward medoid elimination
+    -> causal inner-OOS regime-preservation curve Q_L
+    -> deterministic elbow/knee
+    -> one common final L* medoid tuple
+    -> final K=2,3,4,5/model-family evaluation
+    -> strict outer OOS evaluation
+```
+
+The new path must not score non-medoid raw features against HMM states and must
+not use a provisional teacher to replace a medoid with another member of the
+same cluster. The HMM is used only to measure how much latent regime structure
+is lost as medoids are removed.
+
+For one outer TRAIN fold:
+
+- `M*` = number of statistically distinct redundancy clusters selected from
+  the TRAIN-only Spearman hierarchy.
+- `S_M` = ordered tuple containing exactly one deterministic medoid from each
+  of those `M*` clusters.
+- `L*` = number of medoids retained after causal inner-OOS backward
+  elimination and deterministic elbow selection.
+- `K` remains separate from `L`; K=2,3,4,5 must all consume the same final
+  `S_{L*}` feature tuple for a given selection identity.
+
+The existing source, PCA, missing-value, quality, outer walk-forward, final
+refit, MLflow, registry and state-identity contracts remain unchanged unless an
+item below explicitly says otherwise.
+
+### PR-459 — Define the medoid-only L-elbow evaluation contract
+
+**Type:** architecture / contracts
+
+**Depends on:** PR-448
+
+**Purpose:** introduce the next evaluation/profile contract without silently
+mutating the active v4 statistical meaning.
+
+#### Acceptance
+
+- [ ] Define a new canonical evaluation/profile version for the medoid-only
+  L-elbow path; v4 remains unchanged until the explicit cutover PR.
+- [ ] Define `N`, `M*`, `S_M`, `L*`, `S_{L*}`, and K=2,3,4,5 as
+  separate quantities with non-overlapping meanings.
+- [ ] Preserve the existing TRAIN-only quality filter, absolute-Spearman
+  distance, hierarchical average-linkage clustering and silhouette-based
+  `M*` selection.
+- [ ] Define the cluster medoid as the actual cluster member with minimum mean
+  distance to the other members; existing deterministic `1e-12` tie handling
+  and canonical ordinal ordering remain authoritative.
+- [ ] State explicitly that after medoid selection no non-medoid raw feature
+  may re-enter the candidate universe.
+- [ ] Forbid provisional-teacher feature scoring, `state_information_ratio`,
+  eta-squared winner selection, raw-feature cluster-winner replacement and
+  teacher-NMI ranked-prefix selection in the new path.
+- [ ] Define one common final medoid tuple for K=2,3,4,5; K-specific feature
+  tuples are forbidden for the same selection identity.
+- [ ] Preserve mandatory PCA/source semantics and existing model-family
+  availability; this tranche changes feature selection, not upstream feature
+  generation or the final family inventory.
+- [ ] No production alias, external PostgreSQL or MLflow mutation occurs in
+  this contract-only PR.
+
+### PR-460 — Make cluster medoids the sole post-clustering feature candidates
+
+**Type:** implementation / feature-selection simplification
+
+**Depends on:** PR-459
+
+#### Acceptance
+
+- [ ] Reuse the selected `M*` cluster memberships and emit exactly one medoid
+  per cluster in canonical cluster order.
+- [ ] Persist cluster ID, member tuple, selected medoid, every candidate mean
+  distance, canonical ordinal and a deterministic medoid-set hash.
+- [ ] Singleton clusters select their sole member.
+- [ ] Ties within `1e-12` select the smallest canonical ordinal.
+- [ ] Once `S_M` is emitted, the new evaluation path exposes no API that can
+  substitute another raw feature from the cluster.
+- [ ] `feature_discovery.scoring` and `feature_discovery.winners` are not
+  called by the new path.
+- [ ] Raw feature catalog/quality evidence remains available for audit, but raw
+  non-medoids cannot become HMM inputs after this boundary.
+- [ ] Serial and process-backed construction produce byte-identical canonical
+  evidence.
+
+### PR-461 — Build causal full-medoid K=2..5 reference evidence
+
+**Type:** implementation / inner walk-forward HMM evidence
+
+**Depends on:** PR-460
+
+#### Acceptance
+
+- [ ] For every outer TRAIN fold, evaluate Gaussian full-covariance HMM
+  K=2,3,4,5 on the complete medoid tuple `S_M` using the canonical inner
+  expanding walk-forward plan.
+- [ ] Every K sees exactly the same medoid order and inner fold boundaries.
+- [ ] Use existing deterministic multistart, occupancy, covariance and model
+  validity gates.
+- [ ] Persist only causal inner-TEST filtered state probabilities as
+  regime-reference arrays; smoothed probabilities and full-sample Viterbi
+  labels are forbidden.
+- [ ] Persist exact K, fold, timestamps, feature tuple/hash, source identity,
+  model identity and canonical evidence hash for every reference array.
+- [ ] The reference HMMs do not rank raw features and do not choose replacement
+  members inside clusters.
+- [ ] Parameter-safety bounds are checked before fitting; an unsafe full-medoid
+  dimension fails closed rather than silently dropping features.
+- [ ] Serial and process execution produce the same canonical reference
+  evidence.
+
+### PR-462 — Implement greedy backward medoid elimination
+
+**Type:** implementation / feature-count search
+
+**Depends on:** PR-461
+
+**Canonical elimination rule:** let `S_M` be the fixed full-medoid tuple. At
+current size `L`, evaluate every one-medoid removal from the current nested
+subset. Each reduced subset is compared against the **fixed full-medoid
+reference of the same K and inner fold**, never against a moving teacher.
+
+For an eligible subset `S`, define:
+
+```text
+nmi(K, f, S) =
+    soft_NMI(
+        full_medoid_filtered_probabilities(K, f),
+        reduced_subset_filtered_probabilities(K, f, S)
+    )
+
+q_K(S) = median over valid inner folds f of nmi(K, f, S)
+Q(S)   = min over K in {2,3,4,5} of q_K(S)
+```
+
+#### Acceptance
+
+- [ ] Start from `S_M` and generate one nested subset for every
+  `L=M*, M*-1, ..., 2`.
+- [ ] At each step evaluate every possible single-medoid removal from the
+  current subset; unrestricted subset search is forbidden.
+- [ ] Each reduced candidate is fit for Gaussian K=2,3,4,5 on the same inner
+  fold plan as the full-medoid references.
+- [ ] Compare only same-K full vs reduced posterior arrays on exact shared
+  timestamps.
+- [ ] Reuse the existing soft-NMI primitive and require its canonical finite,
+  entropy and shared-support gates; shared timestamp support must be at least
+  0.90.
+- [ ] Each K must satisfy the existing inner valid-fold-rate hard gate before
+  the subset can be eligible.
+- [ ] `q_K(S)` is the median of valid fold-local soft NMI values; `Q(S)` is
+  the minimum across K=2,3,4,5 so a subset cannot hide degradation at one state
+  resolution behind good results at another.
+- [ ] Set `Q(S_M)=1.0` by identity and retain the separately computed
+  full-reference evidence.
+- [ ] Remove the medoid whose resulting subset has the largest eligible
+  `Q(S)`.
+- [ ] If removal candidates tie within `1e-12`, remove the candidate with the
+  largest canonical ordinal so lower canonical ordinals remain stable.
+- [ ] Persist every tested removal, per-K/per-fold NMI, validity evidence,
+  aggregate `q_K`, aggregate `Q`, selected removal and resulting subset.
+- [ ] Process parallelism may evaluate independent removals/K fits concurrently,
+  but completion order cannot change the selected path or evidence bytes.
+
+### PR-463 — Select L* with a deterministic medoid-preservation elbow
+
+**Type:** implementation / deterministic model-dimension selection
+
+**Depends on:** PR-462
+
+The elbow operates only on the nested subsets emitted by PR-462. It does not
+search new feature combinations.
+
+#### Acceptance
+
+- [ ] Build the raw preservation curve `Q_L = Q(S_L)` for
+  `L=2,...,M*`, with `Q_M=1.0`.
+- [ ] Preserve the raw curve for audit and derive the monotone decision curve
+  `Qhat_L = max(Q_j for j <= L)` so finite-sample downward noise from adding
+  a dimension cannot create a false reverse elbow.
+- [ ] When `M*=2`, select `L*=2`.
+- [ ] When fewer than three distinct L candidates exist and no exact lower-L
+  identity exists, select the full medoid count conservatively.
+- [ ] If the smallest candidate already has `Qhat_L=1.0` within `1e-12`,
+  select the smallest such L.
+- [ ] Otherwise normalize candidate coordinates to `x in [0,1]` and
+  `y in [0,1]` using the endpoints of the monotone curve and compute the
+  elbow score as the perpendicular/chord-equivalent distance
+  `E_L = (y_L - x_L) / sqrt(2)`.
+- [ ] Select the interior L with maximum `E_L`; ties within `1e-12` choose
+  the smaller L.
+- [ ] Persist raw `Q_L`, monotone `Qhat_L`, normalized coordinates,
+  `E_L`, selected `L*` and the exact `S_{L*}` tuple.
+- [ ] Outer TEST data cannot influence the elimination path, preservation curve
+  or elbow.
+- [ ] The selected `S_{L*}` is common to K=2,3,4,5.
+
+### PR-464 — Integrate medoid-elbow selection into outer validation and deployment
+
+**Type:** implementation / orchestration
+
+**Depends on:** PR-463
+
+#### Acceptance
+
+- [ ] The new evaluation path is exactly:
+  quality -> Spearman distance -> clustering/`M*` -> medoids -> full-medoid
+  K2-K5 inner references -> backward elimination -> elbow/`L*` -> common
+  final feature tuple -> final candidate grid -> outer OOS.
+- [ ] The old provisional teacher, all-raw-feature regime scoring, cluster
+  regime-winner replacement and ranked-prefix selection are unreachable from
+  the new path.
+- [ ] Freeze `M*`, cluster memberships, medoids, elimination path, `L*`,
+  final tuple and final candidate configuration before touching Outer TEST.
+- [ ] Final Gaussian/GMM-HMM/Student-t candidate families, where retained by the
+  current production contract, all consume the same selected `S_{L*}` tuple;
+  no model family or K may rerun feature selection independently.
+- [ ] All K=2,3,4,5 production slots for one selection identity bind the same
+  final feature tuple/hash; K-specific model parameters remain independent.
+- [ ] Deployment selection reruns the complete medoid-elbow TRAIN-only
+  procedure through the deployment cutoff and never copies the last outer-fold
+  tuple.
+- [ ] Final refit/package identities bind source build, cutoffs, cluster/medoid
+  evidence, `L*`, final tuple, K and model family.
+- [ ] Existing fold-local/model-version-local state identity semantics remain
+  unchanged.
+
+### PR-465 — QA: independent oracle for medoid elimination and elbow selection
+
+**Type:** QA only
+
+**Depends on:** PR-464
+
+#### Acceptance
+
+- [ ] Independent test code recomputes medoids from cluster memberships and the
+  distance matrix without calling the production medoid selector.
+- [ ] Independent soft-NMI math recomputes every full-vs-reduced K/fold value
+  used by a deterministic synthetic elimination path.
+- [ ] Golden fixtures cover M*=2, M*=3, a clear elbow, an exactly flat
+  preservation curve, tied removal candidates, and a finite but non-monotone
+  raw `Q_L` curve.
+- [ ] State-label permutation leaves soft NMI, removal order, `Q_L`, elbow and
+  `L*` unchanged.
+- [ ] One K below the validity gate makes that subset ineligible even when the
+  other three K values are perfect.
+- [ ] Mutation of the K aggregation from minimum to mean/maximum fails QA.
+- [ ] Mutation of the tie rule or monotone-envelope rule fails QA.
+- [ ] Serial, randomized task completion and process-backed execution produce
+  identical elimination/evidence hashes.
+- [ ] A spy proves the new path never invokes raw-feature regime scoring,
+  cluster-winner replacement or provisional-teacher selection.
+
+### PR-466 — Project medoid-elbow evidence into MLflow and diagnostics
+
+**Type:** implementation / observability
+
+**Depends on:** PR-464
+
+#### Acceptance
+
+- [ ] Log `N`, `M*`, silhouette curve, cluster memberships, medoids and
+  medoid mean-distance evidence.
+- [ ] Log the full-medoid K2-K5 reference identities without treating them as
+  production champions.
+- [ ] Log every backward-elimination candidate, selected removal, per-K
+  `q_K`, aggregate `Q`, and the nested subset path.
+- [ ] Add a canonical L-preservation/elbow diagnostic exposing raw `Q_L`,
+  monotone `Qhat_L`, elbow score and selected `L*`.
+- [ ] Log the common final feature tuple/hash and prove it is identical across
+  all K slots for one selection identity.
+- [ ] New-path runs emit no `state_information_ratio`, eta-squared
+  cluster-winner, provisional-teacher or teacher-prefix decision artifacts.
+- [ ] Metric/artifact catalog versioning distinguishes medoid-elbow evidence
+  from historical v4 teacher evidence.
+- [ ] Plot/artifact generation is deterministic and independent of task
+  completion order.
+- [ ] Hermetic tests require no NAS MLflow endpoint; external publication
+  remains separately authorized.
+
+### PR-467 — Cut over canonical Xetra selection to the medoid-elbow profile
+
+**Type:** implementation / controlled migration
+
+**Depends on:** PR-465, PR-466
+
+#### Acceptance
+
+- [ ] Promote the new profile/evaluation version to the sole canonical Xetra
+  discovery/selection path.
+- [ ] Retire v4 teacher-based selection from canonical runtime entry points;
+  there is no compatibility flag or silent fallback to the old algorithm.
+- [ ] Historical v4 MLflow runs/packages remain historical evidence only and
+  are never mislabelled as medoid-elbow runs.
+- [ ] Update README, EVALUATION, source/lifecycle documentation and public
+  identity constants to the new contract.
+- [ ] Zero-legacy/static audits reject canonical imports/calls of provisional
+  teacher scoring, raw-feature winner selection and old teacher-prefix
+  selection.
+- [ ] Existing source/PCA quality rules, non-resumable full-run policy,
+  external PostgreSQL/MLflow boundaries and manual champion promotion remain
+  unchanged.
+- [ ] Open K-slot production acceptance PR-423..PR-430 is rebased conceptually
+  onto the new selection identity: same `S_{L*}` feature tuple across K
+  slots, independent K/model artifacts thereafter.
+- [ ] No production alias mutation occurs as part of the code cutover.
+
+### PR-468 — QA: full medoid-elbow end-to-end acceptance
+
+**Type:** QA / acceptance closure
+
+**Depends on:** PR-467
+
+#### Acceptance
+
+- [ ] Run a complete hermetic evaluation with real HMM fits from source
+  snapshot through quality, clustering, medoids, elimination, elbow, final
+  grid and Outer TEST evidence.
+- [ ] Independently reproduce the selected `M*`, each medoid, the complete
+  elimination path, raw/monotone L curves, elbow and `L*`.
+- [ ] Prove future Outer-TEST row mutation cannot change any TRAIN-side
+  clustering, medoid, elimination or elbow decision.
+- [ ] Prove every final K=2,3,4,5 slot uses the exact same final feature
+  tuple/hash.
+- [ ] Prove deployment selection reruns the full procedure at the deployment
+  cutoff and can legitimately choose a different `M*`, medoid set or `L*`
+  from the last validation fold.
+- [ ] Prove no teacher/raw-feature-scoring artifact or runtime call appears in
+  the new canonical path.
+- [ ] Verify complete deterministic MLflow/local evidence hashes in serial and
+  process-backed execution.
+- [ ] Run the zero-legacy audit and all merge/push quality gates before closure.
+
+### Medoid-elbow execution order
+
+```text
+PR-459
+  -> PR-460
+  -> PR-461
+  -> PR-462
+  -> PR-463
+  -> PR-464
+       |-> PR-465
+       |-> PR-466
+PR-465 + PR-466
+  -> PR-467
+  -> PR-468
+```
+
+PR-459 through PR-468 supersede the unimplemented teacher-prefix evidence work
+in PR-457/PR-458. The other repository-audit tracks remain independent unless
+their implementation touches the new selection path.
+
+---
+
 ## Open repository-audit correctness tranche
 
 A focused review of current `main` found five correctness/contract gaps. Each
@@ -365,6 +738,8 @@ contract.
 
 ### PR-457 — Align prefix candidate `valid` evidence with the 0.80 hard gate
 
+**Status:** SUPERSEDED — do not implement; replaced by PR-459–PR-468
+
 **Type:** implementation / evidence semantics
 
 **Depends on:** PR-448
@@ -383,6 +758,8 @@ contract.
 - [ ] Prefix winner policy remains unchanged; this PR fixes evidence semantics only.
 
 ### PR-458 — QA: candidate evidence/ranking gate equivalence
+
+**Status:** SUPERSEDED — do not implement; replaced by PR-459–PR-468
 
 **Type:** QA only
 
@@ -405,17 +782,20 @@ PR-449 -> PR-450
 PR-449 -> PR-451 -> PR-452
 PR-453 -> PR-454
 PR-455 -> PR-456
-PR-457 -> PR-458
+PR-457 -> PR-458  # superseded; do not execute
 ```
 
-The implementation tracks are otherwise independent. Every branch must start from the
-then-current `origin/main` and be rebased immediately before opening/updating its GitHub
-PR. QA follow-ups must be rebased after their implementation dependency merges.
+The implementation tracks are otherwise independent. PR-457/PR-458 are retained only
+as superseded traceability records and must not be implemented. Every active branch must
+start from the then-current `origin/main` and be rebased immediately before
+opening/updating its GitHub PR. QA follow-ups must be rebased after their implementation
+dependency merges.
 
 ---
 
 ## Current architectural decisions and non-goals
 
+- **Target selection redesign:** PR-459–PR-468 replace the v4 teacher/raw-feature-scoring/prefix loop with medoid-only candidate selection plus causal inner-OOS backward elimination and a deterministic L elbow. After clustering, non-medoid raw features cannot re-enter selection. One common `S_{L*}` tuple is used by K=2,3,4,5. The current v4 production path remains active only until the controlled cutover in PR-467.
 - Only **Xetra v4** is active. Legacy v1-v3 evaluation/package/serving compatibility is
   retired; Git history is the archive.
 - PCA is mandatory for canonical v4. The feature universe is raw plus eight generated
