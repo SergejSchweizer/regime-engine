@@ -38,6 +38,7 @@ The intended order is:
 ```text
 PR-448
   -> repository/CI correctness + focused QA
+  -> calendar-month refit/model-clock implementation + focused QA
   -> PCA-only statistical contract + focused QA
   -> raw quality/common-support -> scaler/PCA -> PC-prefix L search + focused QA
   -> outer/deployment integration -> evidence -> cutover + focused QA
@@ -171,6 +172,87 @@ dependency-ordered PCA-only plan below.
 
 ---
 
+## Phase 2 — Calendar-month refit and evaluation clock
+
+The canonical evaluation clock must mirror the intended live pipeline: the complete adaptive
+pipeline is refit **once after each calendar month closes**, then kept frozen for the immediately
+following calendar month. There is no intramonth refit.
+
+Canonical month semantics:
+
+```text
+month m closes
+    -> TRAIN uses all admissible history through the last source observation in month m
+    -> raw quality / scaler / PCA / L* / final HMM selection are rerun
+    -> resulting frozen model becomes effective for month m+1
+    -> every observation in month m+1 is causal OOS under that frozen model
+    -> next refit occurs only after month m+1 closes
+```
+
+Calendar membership is determined from `timestamp_m1` in `Europe/Berlin`. A validation TEST
+month must be a complete closed calendar month relative to the evaluation cutoff; the final partial
+month is never used as TEST evidence.
+
+### PR-507 — Implement the canonical calendar-month model clock
+
+**Type:** implementation / temporal contract  
+**Depends on:** PR-454
+
+#### Acceptance
+
+- [ ] Add one canonical `Europe/Berlin` calendar-month clock shared by outer evaluation, inner
+  selection and deployment/refit orchestration.
+- [ ] Convert each `timestamp_m1` to the canonical timezone only for month membership; preserve the
+  original timezone-aware timestamp as data/evidence.
+- [ ] Define a refit boundary as the last available source observation belonging to a closed
+  calendar month.
+- [ ] Outer TRAIN is expanding and must contain at least the existing canonical minimum TRAIN
+  history before the first eligible refit boundary.
+- [ ] Outer TEST is exactly the immediately following **complete calendar month**, not a fixed
+  63-observation block.
+- [ ] Outer STEP is exactly one calendar month.
+- [ ] The final partial calendar month at the evaluation cutoff produces no Outer TEST fold.
+- [ ] Inner selection mirrors the same cadence: expanding inner TRAIN, refit at closed month-end,
+  TEST on the immediately following complete calendar month, step one month.
+- [ ] Preserve the existing minimum inner TRAIN history; retire fixed 63-row/42-row TEST semantics
+  from the new profile because monthly TEST length is calendar-driven.
+- [ ] A monthly TEST fold is valid only when its source month is complete and the downstream
+  transform/model evidence is non-empty and passes the existing finite/entropy/support/model gates;
+  no synthetic rows may be added to reach a row count.
+- [ ] No TRAIN observation may have a timestamp later than its fold's month-end cutoff.
+- [ ] Persist for every fold: `train_through_month`, exact `train_cutoff_timestamp`,
+  `test_calendar_month`, first/last TEST timestamp, TEST source-row count and a month-clock hash.
+- [ ] Two folds may never overlap in TEST timestamps.
+- [ ] Missing calendar months remain explicit gaps; the evaluator must not silently test the next
+  non-empty month as though it were the immediately following month.
+- [ ] DST transitions cannot change month assignment or duplicate/drop a source timestamp.
+- [ ] This PR changes only clock construction/contracts; it does not change PCA/HMM math.
+
+### PR-508 — QA: month-boundary, leakage and live-cadence clock matrix
+
+**Type:** QA only  
+**Depends on:** PR-507
+
+#### Acceptance
+
+- [ ] Golden fixtures cover 28-, 29-, 30- and 31-day months and year rollover December -> January.
+- [ ] Cover CET/CEST transitions and prove every timestamp belongs to exactly one local calendar
+  month.
+- [ ] Prove a January refit uses data only through January month-end and February is the complete
+  OOS TEST month.
+- [ ] Prove the next fold refits through February month-end and tests March.
+- [ ] A snapshot cut off in the middle of September may validate through August at most; partial
+  September is never emitted as a TEST fold.
+- [ ] Mutation of any future-month row cannot alter an earlier fold's TRAIN cutoff or membership.
+- [ ] A fixed 63-row/63-step implementation fails QA.
+- [ ] A 21-trading-day approximation to a calendar month fails QA.
+- [ ] Skipping an empty/absent immediately-following month and jumping to a later month fails QA.
+- [ ] Duplicate TEST timestamps across adjacent folds fail QA.
+- [ ] Serial/process clock construction yields byte-identical fold plans and hashes.
+- [ ] QA adds no production statistical behavior.
+
+---
+
 ## Phase 2 — PCA-only statistical architecture
 
 The new architecture intentionally removes global Spearman clustering, cluster-count selection,
@@ -199,7 +281,7 @@ directly.
 ### PR-476 — Define the PCA-only regime-selection contract
 
 **Type:** architecture / contracts  
-**Depends on:** PR-454
+**Depends on:** PR-508
 
 #### Acceptance
 
@@ -211,6 +293,9 @@ directly.
 - [ ] Canonical HMM observations contain PCA scores only; raw feature columns are forbidden HMM
   inputs in the new profile.
 - [ ] Standardization and PCA fit only on TRAIN rows; TEST is transform-only.
+- [ ] The new profile adopts the PR-507 calendar-month clock: complete pipeline refit at closed
+  month-end, frozen inference through the immediately following calendar month.
+- [ ] No intramonth PCA, L* or HMM refit is allowed in canonical evaluation or production cadence.
 - [ ] PCA uses a single fold-local basis up to `D_ref`; all candidate L values are prefixes of
   that same basis.
 - [ ] `D_ref` is derived from the strictest parameter-safety bound of the retained final
@@ -238,6 +323,8 @@ directly.
 - [ ] Reject any L rule based directly on cumulative explained variance.
 - [ ] Prove L and K are distinct and K2-K5 require one common PC prefix.
 - [ ] Prove TEST data are transform-only for scaler/PCA.
+- [ ] Prove the profile references the canonical monthly clock rather than fixed observation blocks.
+- [ ] Prove no canonical intramonth refit entry point exists.
 - [ ] Prove no-imputation semantics are explicit.
 - [ ] Mutation of `D_ref` derivation, common-prefix rule or TRAIN boundary fails QA.
 - [ ] Production runtime is unchanged.
@@ -250,7 +337,8 @@ directly.
 #### Acceptance
 
 - [ ] Apply the existing raw quality rules to raw source features before any scaler/PCA fit.
-- [ ] Coverage denominator is the complete TRAIN source-row count, not an instrument's own lifespan.
+- [ ] Coverage denominator is the complete expanding TRAIN source-row count through the current
+  month-end refit cutoff, not an instrument's own lifespan or only the latest month.
 - [ ] Missing pre-history remains SQL-NULL/`None`; NaN/Inf remains a source-contract failure.
 - [ ] Raw features below minimum coverage or variance are excluded with deterministic reasons.
 - [ ] Build the PCA complete-case timestamp mask across the eligible raw tuple without imputation.
@@ -368,7 +456,9 @@ directly.
 
 #### Acceptance
 
-- [ ] For every inner fold, run raw-quality/common-support/scaler/PCA strictly on inner TRAIN.
+- [ ] For every monthly inner fold, run raw-quality/common-support/scaler/PCA strictly on the
+  expanding inner TRAIN through that fold's closed month-end boundary.
+- [ ] Evaluate the frozen inner model only on the immediately following complete calendar month.
 - [ ] Fit Gaussian full-covariance HMM K=2,3,4,5 on `PC1..PC_D_ref`.
 - [ ] All K values in one fold consume the same scaler/PCA identity and component order.
 - [ ] Reuse deterministic multistart, covariance, occupancy and validity gates.
@@ -387,6 +477,7 @@ directly.
 #### Acceptance
 
 - [ ] Future inner-TEST mutation cannot alter earlier filtered probabilities.
+- [ ] Inner folds are month-aligned and no fixed-row TEST/STEP plan can satisfy QA.
 - [ ] Smoothed-posterior substitution fails QA.
 - [ ] Viterbi-label substitution fails QA.
 - [ ] K2-K5 bind the exact same fold-local PCA identity.
@@ -410,7 +501,7 @@ nmi(K,f,L) =
         PC1..PC_L filtered posterior
     )
 
-q_K(L) = median over valid inner folds f of nmi(K,f,L)
+q_K(L) = median over valid monthly inner folds f of nmi(K,f,L)
 Q_L    = min over K in {2,3,4,5} q_K(L)
 ```
 
@@ -422,7 +513,7 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 - [ ] Reuse canonical soft NMI with finite/entropy/shared-support gates.
 - [ ] Shared support must satisfy the canonical minimum.
 - [ ] Every K must satisfy the canonical inner valid-fold-rate hard gate for L to be eligible.
-- [ ] `q_K(L)` is the median of valid fold-local NMI values.
+- [ ] `q_K(L)` is the median of valid month-local inner-OOS NMI values.
 - [ ] `Q_L` is the minimum across K2-K5; mean/max aggregation is forbidden.
 - [ ] Raw likelihood/AIC/BIC are never used for cross-L ranking.
 - [ ] Persist every per-fold/per-K NMI, validity reason, `q_K`, `Q_L`, L and PCA-prefix hash.
@@ -492,9 +583,11 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 
 #### Acceptance
 
-- [ ] Each Outer-TRAIN selection uses inner folds that independently run raw quality ->
-  common-support preflight -> scaler -> PCA -> L-prefix evaluation.
-- [ ] Freeze L* before Outer TEST.
+- [ ] Each month-end Outer-TRAIN selection uses monthly inner folds that independently run raw
+  quality -> common-support preflight -> scaler -> PCA -> L-prefix evaluation.
+- [ ] Freeze L* and all fitted transform/model parameters before the next calendar-month Outer TEST.
+- [ ] Outer TEST is exactly the immediately following complete calendar month; there is no
+  intramonth refit or parameter update.
 - [ ] Refit raw quality/scaler/PCA from scratch on complete Outer TRAIN after L* is selected.
 - [ ] Fit every final K/family candidate only on `PC1..PC_L*`.
 - [ ] K2-K5 and Gaussian/GMM-HMM/Student-t candidates for one selection identity bind the same
@@ -502,10 +595,17 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 - [ ] No final candidate receives raw source columns.
 - [ ] Transform Outer TEST using the frozen Outer-TRAIN scaler/PCA only.
 - [ ] Missing Outer-TEST raw vector -> no PC observation at that timestamp; preserve gap semantics.
-- [ ] Deployment selection reruns the full TRAIN-only procedure through the deployment cutoff;
-  it never copies the last Outer-fold PCA or L*.
+- [ ] Deployment selection resolves its usable cutoff to the latest **closed calendar month** at or
+  before the deployment request time and reruns the full TRAIN-only procedure through that
+  month-end cutoff; partial current-month observations are excluded from refit.
+- [ ] The resulting package is effective for the immediately following calendar month and remains
+  frozen for that whole month unless an explicit non-canonical emergency procedure is introduced
+  in a future contract.
+- [ ] Repeated canonical deployment requests within the same open calendar month resolve to the
+  same month-end training cutoff for the same source snapshot/lineage.
+- [ ] Deployment never copies the last Outer-fold PCA or L*.
 - [ ] Final package identity binds source build, raw eligible set, scaler, PCA loadings, L*, PC tuple,
-  K, family and cutoff.
+  K, family, `train_through_month`, exact month-end cutoff and `effective_calendar_month`.
 - [ ] Serial/process orchestration yields equivalent canonical selection identities.
 
 ### PR-491 — QA: orchestration leakage and raw-input exclusion
@@ -516,11 +616,14 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 #### Acceptance
 
 - [ ] Mutating Outer TEST raw rows cannot alter Outer-TRAIN raw eligibility, scaler, PCA or L*.
+- [ ] A model selected at month-end remains byte-identical throughout its effective TEST month;
+  adding observations within that month cannot trigger a refit.
 - [ ] A spy proves final HMM fit calls receive only PC columns.
 - [ ] Any raw-feature HMM input in the new profile fails QA.
 - [ ] K2-K5/family candidates bind one identical final PC tuple/hash.
 - [ ] Model-family changes cannot trigger PCA or L reselection.
-- [ ] Deployment selection executes anew at deployment cutoff.
+- [ ] Deployment selection executes anew only against the resolved latest closed-month cutoff;
+  a midmonth request cannot consume partial current-month data.
 - [ ] Serial/process runs yield equivalent selection/package identities.
 - [ ] Injected recoverable vs unexpected failures follow PR-453 semantics.
 - [ ] QA adds no production behavior.
@@ -533,6 +636,8 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 #### Acceptance
 
 - [ ] Log raw catalog/eligible counts and quality exclusion summaries.
+- [ ] Log the canonical month-clock identity, `train_through_month`, exact refit cutoff,
+  `effective_calendar_month`, TEST month and per-month source/transformed observation counts.
 - [ ] Store the complete raw eligible tuple/hash as an artifact rather than exploding thousands of
   feature names into MLflow parameters.
 - [ ] Store scaler means/scales and PCA loadings/component metadata as immutable artifacts with
@@ -555,7 +660,7 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 #### Acceptance
 
 - [ ] Independently enumerate every mandatory PCA/L/K evidence domain.
-- [ ] Missing scaler/PCA/eligible-set/L evidence makes a run incomplete.
+- [ ] Missing month-clock/scaler/PCA/eligible-set/L evidence makes a run incomplete.
 - [ ] K2-K5 final PC hashes must be identical for one selection identity.
 - [ ] Historical clustering/teacher artifacts cannot satisfy new-profile completeness.
 - [ ] New-profile runs containing clustering/medoid/teacher decision artifacts fail QA.
@@ -576,7 +681,10 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 - [ ] No compatibility flag or silent fallback can reactivate the old statistical architecture.
 - [ ] Historical v4 runs/packages remain historical evidence and are never relabelled.
 - [ ] Update README, EVALUATION, lifecycle/source documentation and public identity constants.
-- [ ] Canonical documentation shows raw quality -> scaler/PCA -> PC-prefix L* -> HMM K2-K5.
+- [ ] Canonical documentation shows month-end refit -> raw quality -> scaler/PCA -> PC-prefix L*
+  -> HMM K2-K5 -> frozen next-calendar-month inference.
+- [ ] Remove fixed 1260/63/63 and 756/63/63 TEST/STEP semantics from the new profile documentation;
+  minimum TRAIN history may remain observation-count based, while TEST/STEP are calendar-month based.
 - [ ] Existing source lineage, no-imputation, non-resumable full-run, external service and manual
   champion-promotion boundaries remain explicit.
 - [ ] No production alias mutation occurs in this cutover PR.
@@ -595,6 +703,7 @@ Q_L    = min over K in {2,3,4,5} q_K(L)
 - [ ] Historical v4 package/evidence readers remain distinguishable and read-only where required.
 - [ ] Documentation and runtime constants agree on the new canonical version.
 - [ ] K2-K5 enforce one final PC tuple per selection identity.
+- [ ] Static/runtime checks reject fixed-row monthly approximations and canonical intramonth refits.
 - [ ] No external service is mutated.
 - [ ] QA/documentation corrections only; no new selection behavior.
 
@@ -612,12 +721,14 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 #### Acceptance
 
 - [ ] Run a complete hermetic evaluation with real PCA and real HMM fits from immutable source
-  snapshot through raw quality, scaler/PCA, L search, final K/family grids and Outer TEST.
+  snapshot through multiple consecutive month-end refits, raw quality, scaler/PCA, L search,
+  final K/family grids and full next-calendar-month Outer TEST blocks.
 - [ ] Independently reproduce the raw eligible set, complete-case clock, scaler moments, PCA
   loadings/subspace, prefix preservation curve, elbow and L*.
 - [ ] Prove future Outer-TEST mutation cannot alter any TRAIN-side decision.
 - [ ] Prove every final K2-K5 slot uses the exact same PCA identity and PC tuple/hash.
-- [ ] Prove deployment reruns raw quality/scaler/PCA/L selection at deployment cutoff.
+- [ ] Prove deployment reruns raw quality/scaler/PCA/L selection at the latest closed month-end
+  cutoff and ignores partial current-month rows.
 - [ ] Verify serial/process canonical parity for selection/model/evidence identities.
 - [ ] Verify no clustering/medoid/teacher decision path is executed.
 - [ ] Run lint, format, strict mypy, unit and hermetic integration gates.
@@ -630,8 +741,8 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 #### Acceptance
 
-- [ ] Exercise synthetic universes of at least 2,000 and 5,000 raw features with the canonical
-  TRAIN row counts.
+- [ ] Exercise synthetic universes of at least 2,000 and 5,000 raw features across multiple
+  month-end refit cycles with the canonical minimum TRAIN history.
 - [ ] Prove no NxN raw-feature distance/correlation matrix is allocated by the PCA-only path.
 - [ ] Record wall time, peak parent/child RSS, effective worker count and PCA solver timing.
 - [ ] Prove memory grows with the source matrix/PCA workspace rather than O(N_raw^2) clustering
@@ -667,8 +778,10 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 - [ ] Exercise real deployment selection through final scaler/PCA refit and package assembly.
 - [ ] Every eligible K package binds the same deployment PCA identity and final PC tuple/hash.
-- [ ] Bind source build, deployment cutoff, raw eligible hash, scaler/PCA hashes, L*, K and family.
-- [ ] Prove deployment reruns selection rather than copying the last validation-fold transform.
+- [ ] Bind source build, train-through month, exact month-end deployment cutoff,
+  effective calendar month, raw eligible hash, scaler/PCA hashes, L*, K and family.
+- [ ] Prove deployment reruns selection at month-end rather than copying the last validation-fold
+  transform, and that midmonth requests do not consume partial-month observations.
 - [ ] Prove package round-trip restores scaler, PCA loadings, PC order and HMM exactly.
 - [ ] Ineligible K creates no package.
 - [ ] No external publication occurs.
@@ -697,8 +810,8 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 - [ ] Independent math code recomputes scaling, PCA reference quantities on small golden fixtures,
   same-K soft NMI aggregation and elbow selection without production selection helpers.
-- [ ] Cover sign permutations, state-label permutations, rank deficiency, missing-row clocks,
-  L ties and invalid K cases.
+- [ ] Cover calendar-month boundary construction, sign permutations, state-label permutations,
+  rank deficiency, missing-row clocks, L ties and invalid K cases.
 - [ ] Recompute every final PC tuple and K-slot identity for the golden fixture.
 - [ ] Mutation tests fail when common-PC, min-over-K, no-imputation, elbow or TRAIN-only rules change.
 - [ ] Prove serial/process canonical parity.
@@ -711,8 +824,8 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 #### Acceptance
 
-- [ ] Run the complete Gaussian/GMM-HMM/Student-t K2-K5 path against a production-shaped immutable
-  source fixture with thousands of raw features.
+- [ ] Run the complete Gaussian/GMM-HMM/Student-t K2-K5 path across multiple month-end refits
+  against a production-shaped immutable source fixture with thousands of raw features.
 - [ ] Preserve one common PC prefix across K and families.
 - [ ] Produce deployment packages, metrics and plots for eligible slots.
 - [ ] Prove ineligible-slot fail-closed behavior and future-row invariance.
@@ -732,8 +845,10 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 #### Acceptance
 
 - [ ] Capture one immutable current source snapshot and record exact catalog/data lineage.
-- [ ] Run the complete canonical PCA-only evaluation from raw quality through Outer OOS.
-- [ ] Record exact raw-eligible, complete-clock, scaler, PCA, L*, final-PC and K-slot identities.
+- [ ] Run the complete canonical PCA-only evaluation over consecutive calendar-month refit/test
+  cycles from raw quality through Outer OOS.
+- [ ] Record exact month-clock/refit cutoffs, raw-eligible, complete-clock, scaler, PCA, L*,
+  final-PC and K-slot identities.
 - [ ] Produce the complete independent math/audit dossier for every required fold.
 - [ ] Independently reproduce all required small-matrix PCA and L-selection checks from persisted
   artifacts without trusting production helper results.
@@ -753,7 +868,8 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 - [ ] Resolve historical experiment namespace handling by explicit operator decision; no silent
   deletion.
 - [ ] Verify the fresh PR-503 run against the PCA-only metric/artifact catalog.
-- [ ] Verify eligible-set, scaler, loadings, explained-variance, L/elbow, K-slot and plot artifacts.
+- [ ] Verify month-clock/refit, eligible-set, scaler, loadings, explained-variance, L/elbow,
+  K-slot and plot artifacts.
 - [ ] Verify exact dataset/model/PC lineage and metric identity.
 - [ ] Verify artifact hashes, sizes and freshness against the same evaluation identity.
 - [ ] Prove historical clustering/teacher runs cannot satisfy PCA-only completeness.
@@ -785,8 +901,9 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 - [ ] PR-503, PR-504 and PR-505 are green first.
 - [ ] Publish only explicitly authorized PCA-only packages.
-- [ ] Read back registered model names, versions, aliases, source lineage, scaler/PCA hashes,
-  final PC tuple/hash, L*, K, family and package digest from NAS MLflow.
+- [ ] Read back registered model names, versions, aliases, source lineage, train-through month,
+  exact month-end cutoff, effective calendar month, scaler/PCA hashes, final PC tuple/hash, L*,
+  K, family and package digest from NAS MLflow.
 - [ ] Verify every published K slot binds the expected common final PC tuple/hash.
 - [ ] Verify publication is idempotent for the same package identity.
 - [ ] Failed readback/promotion leaves prior alias state unchanged.
@@ -800,6 +917,7 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 ```text
 PR-448
   -> 449 -> 450 -> 451 -> 452 -> 453 -> 454
+  -> 507 -> 508
   -> 476 -> 477 -> 478 -> 479 -> 480 -> 481 -> 482 -> 483
   -> 484 -> 485 -> 486 -> 487 -> 488 -> 489
   -> 490 -> 491 -> 492 -> 493 -> 494 -> 495
@@ -814,7 +932,8 @@ plan and are not active execution items.
 
 ## Current architectural decisions and non-goals
 
-- **Target selection redesign:** PR-476–PR-506 replace the raw+PCA/clustering/medoid/teacher architecture with a PCA-only HMM input path. Raw features are quality-filtered on TRAIN, standardized on TRAIN, compressed into a fixed safe reference PCA basis, and only PC prefixes may enter HMMs. L* is selected from causal same-K OOS regime-preservation evidence; K=2..5 share one final PC prefix. The current v4 runtime remains historical/current only until the controlled cutover in PR-494.
+- **Target selection redesign:** PR-507/PR-508 plus PR-476–PR-506 replace the raw+PCA/clustering/medoid/teacher architecture with a PCA-only HMM input path. Raw features are quality-filtered on TRAIN, standardized on TRAIN, compressed into a fixed safe reference PCA basis, and only PC prefixes may enter HMMs. L* is selected from causal same-K OOS regime-preservation evidence; K=2..5 share one final PC prefix. The current v4 runtime remains historical/current only until the controlled cutover in PR-494.
+- **Canonical live/evaluation cadence:** the target profile refits the complete adaptive pipeline once after each `Europe/Berlin` calendar month closes. The fitted scaler/PCA/L*/HMM package is frozen for the immediately following calendar month. Inner and Outer walk-forward use the same month-aligned cadence; partial final months are excluded from OOS evidence and midmonth deployment requests resolve to the latest closed-month cutoff.
 - Only **Xetra v4** is active. Legacy v1-v3 evaluation/package/serving compatibility is
   retired; Git history is the archive.
 - Current v4 still uses the historical raw-plus-generated-PCA universe until PR-494. The target profile is PCA-only at the HMM boundary: raw features are PCA inputs, never HMM inputs.
