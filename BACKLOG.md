@@ -1,6 +1,6 @@
 # Regime Engine — Canonical Backlog
 
-Status date: 2026-09-18
+Status date: 2026-09-19
 
 This file is the **single authoritative backlog** for `regime-engine`.
 Open and acceptance-pending work is kept at the top. Completed implementation and
@@ -14,10 +14,14 @@ commit names. They do not need to equal the numeric GitHub pull-request number.
 
 ### Execution policy
 
-The target architecture is now **PCA-only HMM input** for a potentially very large raw
-feature universe. The active plan is ordered so that small implementation changes are made first,
-focused QA PRs immediately falsify each development step, and only after the canonical cutover do
-the expensive full-system and external tests run.
+The target architecture is now a **scalable fold-local HMM feature-selection pipeline** for a
+potentially multi-thousand-feature universe. Core features remain directly interpretable candidates;
+generated transformations are compressed by family-local PCA; all surviving core features and family
+PCs then pass deterministic global correlation-leader pruning before HMM-based SFFS selection and
+final ablation. Feature-selection metadata is persisted locally in DuckDB, while every major stage is
+auditable in MLflow through deterministic metrics, tables and plots. The plan is ordered so that small
+implementation changes land first, focused QA PRs immediately falsify each risky step, and only after
+the canonical cutover do expensive full-system and external tests run.
 
 Global rules for every active planning PR:
 
@@ -28,25 +32,27 @@ Global rules for every active planning PR:
   before opening/updating its GitHub PR;
 - every stochastic/numerical primitive has a source-controlled seed/configuration and canonical
   ordering/sign rules where relevant;
-- no Outer-TEST row may influence raw eligibility, standardization, PCA fitting, L selection,
-  model-family selection or K-slot fitting;
+- no Outer-TEST row may influence quality filtering, provenance classification, standardization,
+  family PCA, correlation pruning, SFFS, ablation, model-family selection or K-slot fitting;
 - external PostgreSQL/MLflow writes are forbidden unless the PR is explicitly marked external;
 - complete end-to-end acceptance starts only after all implementation and focused QA work is green.
 
 The intended order is:
 
-```text
+~~~text
 PR-448
   -> repository/CI correctness + focused QA
   -> calendar-month refit/model-clock implementation + focused QA
-  -> PCA-only statistical contract + focused QA
-  -> raw quality/common-support -> scaler/PCA -> PC-prefix L search + focused QA
-  -> outer/deployment integration -> evidence -> cutover + focused QA
+  -> canonical feature-selection contract + local metadata foundation
+  -> provenance + TRAIN-only quality + family PCA + focused QA
+  -> global correlation-leader pruning + MLflow auditability + focused QA
+  -> parallel HMM SFFS + ablation + cumulative statistics + focused QA
+  -> outer/deployment integration -> cutover -> zero-legacy QA
   -> complete hermetic/high-dimensional/system tests
   -> current-source external audit
   -> external MLflow/registry durability
   -> authorized publication/readback
-```
+~~~
 
 ---
 
@@ -55,9 +61,9 @@ PR-448
 **Status:** ACTIVE — planning/documentation only  
 **GitHub:** #439
 
-**Purpose:** keep `BACKLOG.md` as the single authoritative backlog, remove active work that
-belongs to the superseded clustering/medoid/teacher architectures, and replace it with the
-dependency-ordered PCA-only plan below.
+**Purpose:** keep BACKLOG.md as the single authoritative backlog, remove active work that
+belongs to superseded clustering/medoid/teacher and PCA-only-prefix architectures, and replace it
+with the dependency-ordered scalable feature-selection plan below.
 
 #### Acceptance
 
@@ -183,7 +189,7 @@ Canonical month semantics:
 ```text
 month m closes
     -> TRAIN uses all admissible history through the last source observation in month m
-    -> raw quality / scaler / PCA / L* / final HMM selection are rerun
+    -> quality / family PCA / correlation pruning / SFFS / ablation / final HMM selection are rerun
     -> resulting frozen model becomes effective for month m+1
     -> every observation in month m+1 is causal OOS under that frozen model
     -> next refit occurs only after month m+1 closes
@@ -253,658 +259,669 @@ month is never used as TEST evidence.
 
 ---
 
-## Phase 2 — PCA-only statistical architecture
+## Phase 3 — Canonical scalable feature-selection architecture
 
-The new architecture intentionally removes global Spearman clustering, cluster-count selection,
-medoids, provisional teacher HMMs, raw-feature regime scores and medoid/backward-elimination
-selection from the canonical path.
+The target feature-selection path is intentionally simple and must remain auditable:
 
-The target data flow is:
-
-```text
-large raw feature universe
-    -> TRAIN-only raw quality filter
-    -> TRAIN-only complete-case PCA clock
-    -> TRAIN-only standardization
-    -> TRAIN-only PCA (top D_ref components)
-    -> nested prefixes PC1..PCL
-    -> causal same-K HMM preservation curve
-    -> deterministic L*
-    -> one common PC1..PCL* tuple
-    -> same feature tuple for K=2,3,4,5 / all final families
+~~~text
+PostgreSQL candidate universe: potentially thousands of features
+    -> TRAIN-only quality filter
+    -> canonical provenance split
+         core features ------------------------------+
+         generated transformations                   |
+              -> family-local standardization        |
+              -> family-local PCA, max 8 PCs/family  |
+                                                     v
+    -> core candidates + family PCs
+    -> global absolute-Pearson correlation-leader pruning
+    -> small representative universe
+    -> HMM SFFS per configured K
+    -> final one-feature-at-a-time ablation
+    -> final HMM candidate tuple
     -> strict Outer OOS
-```
+~~~
 
-Raw features are **inputs to PCA only**. A canonical HMM may never consume a raw source feature
-directly.
+Canonical separation of responsibilities:
 
-### PR-476 — Define the PCA-only regime-selection contract
+- quality filtering removes invalid data, not weak HMM predictors;
+- family PCA compresses generated transformations only; core features bypass PCA;
+- global correlation pruning removes redundancy only; it does not score HMM usefulness;
+- SFFS is the only feature-combination search;
+- ablation measures marginal contribution of the selected final tuple;
+- local DuckDB is the durable feature-selection memory;
+- MLflow is the visual and metric audit trail, not the metadata source of truth;
+- raw likelihood, AIC and BIC may not be compared across different feature dimensions.
 
-**Type:** architecture / contracts  
+Canonical defaults for this profile are fixed in PR-476 and may change only through a new
+versioned contract:
+
+~~~text
+family_pca_max_components          = 8
+correlation_abs_threshold          = 0.95
+correlation_subwindow_abs_threshold= 0.90
+correlation_subwindows             = 3
+correlation_min_pair_rows          = 30
+correlation_min_subwindow_rows     = 10
+sffs_max_features                  = 10
+~~~
+
+The correlation step uses absolute Pearson correlation. Negative and positive correlations are
+therefore equally eligible for redundancy removal. Correlation is computed from TRAIN rows only.
+The three stability subwindows are contiguous chronological thirds of the TRAIN row positions;
+their sizes may differ by at most one row.
+
+### PR-476 — Define the canonical scalable feature-selection contract
+
+**Type:** contract / configuration  
 **Depends on:** PR-508
 
 #### Acceptance
 
-- [ ] Introduce a new explicit evaluation/profile version; historical v4 semantics remain
-  unchanged until the controlled cutover.
-- [ ] Define `N_raw` = raw catalog size, `N_eligible` = TRAIN-quality-eligible raw count,
-  `D_ref` = fixed PCA reference dimension, `L*` = selected PC prefix length, and K separately.
-- [ ] Raw quality filtering occurs before PCA on the current TRAIN partition only.
-- [ ] Canonical HMM observations contain PCA scores only; raw feature columns are forbidden HMM
-  inputs in the new profile.
-- [ ] Standardization and PCA fit only on TRAIN rows; TEST is transform-only.
-- [ ] The new profile adopts the PR-507 calendar-month clock: complete pipeline refit at closed
-  month-end, frozen inference through the immediately following calendar month.
-- [ ] No intramonth PCA, L* or HMM refit is allowed in canonical evaluation or production cadence.
-- [ ] PCA uses a single fold-local basis up to `D_ref`; all candidate L values are prefixes of
-  that same basis.
-- [ ] `D_ref` is derived from the strictest parameter-safety bound of the retained final
-  model-family/K universe and is currently expected to resolve to 8; the derivation, not a magic
-  hard-coded number, is canonical.
-- [ ] Explained-variance ratios are diagnostics only; the historical 0.90 explained-variance
-  threshold does not choose L in the new profile.
-- [ ] L candidates are exactly `2..D_ref`.
-- [ ] K candidates remain exactly 2,3,4,5 and must all consume the same selected PC prefix.
-- [ ] No clustering, silhouette, medoid, provisional teacher, raw-feature regime score,
-  state-information-ratio, eta-squared winner or medoid elimination participates in the new path.
-- [ ] Missing values are never imputed, filled, interpolated or carried.
-- [ ] No external service is mutated in this contract PR.
+- [ ] Introduce one versioned feature-selection profile for the pipeline defined above.
+- [ ] Persist the exact canonical defaults listed above; no hidden environment-specific threshold
+  changes are allowed.
+- [ ] Core features are direct HMM candidates and never forced through PCA.
+- [ ] Generated transformation features may reach the HMM only through a family PC.
+- [ ] Family PCA retains at most the first 8 non-zero-rank PCs; explained variance is diagnostic
+  only and never decides the retained count.
+- [ ] Global correlation pruning operates only on quality-eligible core features plus retained
+  family PCs.
+- [ ] Correlation pruning uses absolute Pearson correlation and the full-TRAIN plus three-subwindow
+  stability rule defined above.
+- [ ] Correlation pruning is explicitly redundancy-only; no target, HMM score, likelihood, AIC,
+  BIC, future return or semantic label may influence representative choice.
+- [ ] SFFS has a hard cap of 10 final features per configured K and starts from the best eligible
+  singleton under the canonical feature-subset score.
+- [ ] SFFS compares different feature dimensions only with a dimension-independent score; raw
+  HMM likelihood, AIC and BIC comparisons across dimensions are forbidden.
+- [ ] Final ablation removes exactly one selected feature at a time and refits/re-evaluates the
+  same HMM selector contract.
+- [ ] Outer TEST is evaluation-only and never influences any feature-selection step.
+- [ ] The complete feature-selection profile hash is part of fold/model evidence.
 
-### PR-477 — QA: static PCA-only contract consistency
+### PR-477 — QA: static feature-selection contract consistency
 
 **Type:** QA only  
 **Depends on:** PR-476
 
 #### Acceptance
 
-- [ ] Parse the new contract and prove all required identities and clocks are defined.
-- [ ] Reject any contract allowing a raw feature directly into an HMM.
-- [ ] Reject any new-profile reference to clustering/medoids/teacher/raw-feature scoring.
-- [ ] Reject any L rule based directly on cumulative explained variance.
-- [ ] Prove L and K are distinct and K2-K5 require one common PC prefix.
-- [ ] Prove TEST data are transform-only for scaler/PCA.
-- [ ] Prove the profile references the canonical monthly clock rather than fixed observation blocks.
-- [ ] Prove no canonical intramonth refit entry point exists.
-- [ ] Prove no-imputation semantics are explicit.
-- [ ] Mutation of `D_ref` derivation, common-prefix rule or TRAIN boundary fails QA.
-- [ ] Production runtime is unchanged.
+- [ ] Assert every canonical default exactly, including 8 PCA components, 0.95/0.90 correlation
+  thresholds, three subwindows, 30/10 support minima and 10-feature SFFS cap.
+- [ ] Mutation of any default changes the profile hash.
+- [ ] Reject a profile that routes a generated transformation directly to the HMM.
+- [ ] Reject a profile that forces all core features through PCA.
+- [ ] Reject Spearman, signed-only correlation or target-aware representative selection.
+- [ ] Reject explained-variance-driven PC-count selection.
+- [ ] Reject raw PLL/AIC/BIC as a cross-dimension SFFS objective.
+- [ ] Prove Outer-TEST access is absent from the feature-selection contract.
+- [ ] QA is hermetic and changes no production behavior.
 
-### PR-478 — Build TRAIN-only raw-quality and PCA common-support preflight
+### PR-478 — Add the local DuckDB feature-selection metadata store
 
-**Type:** implementation / input eligibility  
+**Type:** implementation / local metadata  
 **Depends on:** PR-477
+
+The store lives under the existing configured local evaluation state root as
+feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow remains tracking.
 
 #### Acceptance
 
-- [ ] Apply the existing raw quality rules to raw source features before any scaler/PCA fit.
-- [ ] Coverage denominator is the complete expanding TRAIN source-row count through the current
-  month-end refit cutoff, not an instrument's own lifespan or only the latest month.
-- [ ] Missing pre-history remains SQL-NULL/`None`; NaN/Inf remains a source-contract failure.
-- [ ] Raw features below minimum coverage or variance are excluded with deterministic reasons.
-- [ ] Build the PCA complete-case timestamp mask across the eligible raw tuple without imputation.
-- [ ] Preserve all source timestamps in evidence; complete-case filtering creates a model clock,
-  not a rewritten source dataset.
-- [ ] Require at least the canonical minimum model TRAIN observations on the PCA complete-case clock.
-- [ ] Require at least `D_ref + 1` complete TRAIN rows and at least `D_ref` non-degenerate raw
-  dimensions so the requested PCA rank is mathematically possible.
-- [ ] Insufficient common support is typed statistical invalidity, not a software exception.
-- [ ] Persist raw catalog hash, eligible tuple/hash, excluded-feature reasons, complete-row count,
-  first/last complete timestamp and complete-clock hash.
-- [ ] No scaler/PCA/HMM fit occurs when the preflight is invalid.
+- [ ] Add a single local DuckDB database at state_root/feature_selection.duckdb.
+- [ ] Create only these durable tables: feature_registry, fold_feature_stats, pca_loadings,
+  correlation_mapping, sffs_steps and fold_model_stats.
+- [ ] Create feature_global_stats as a deterministic SQL view, not a separately mutable table.
+- [ ] feature_registry records immutable feature identity, source identity, role, family,
+  transformation provenance, first_seen and lifecycle status.
+- [ ] fold_feature_stats records eligibility, quality reason, direct/PC participation, PCA credit,
+  representative status, SFFS participation, final selection and ablation loss.
+- [ ] pca_loadings records fold, family, PC ordinal, source feature, loading, squared loading and
+  explained-variance diagnostic.
+- [ ] correlation_mapping records fold, candidate, chosen representative, full absolute correlation,
+  three subwindow correlations, support counts and retained/rejected reason.
+- [ ] sffs_steps records fold, K, step number, action, candidate, selected tuple hash and canonical
+  score components.
+- [ ] fold_model_stats records fold identity, selected tuple/hash, K, family, validity, diagnostics
+  and MLflow run identity when tracking exists.
+- [ ] One fold commit is transactional and idempotent under the same fold/profile/source identity.
+- [ ] Failed or interrupted fold writes leave no partial committed fold result.
+- [ ] No PostgreSQL schema mutation and no mandatory MLflow dependency is introduced.
 
-### PR-479 — QA: raw-history filtering and common-support invariants
+### PR-479 — QA: DuckDB durability, idempotency and schema contract
 
 **Type:** QA only  
 **Depends on:** PR-478
 
 #### Acceptance
 
-- [ ] A late-listed synthetic feature has its pre-listing rows represented as missing against the
-  full TRAIN denominator and is rejected when coverage is below the threshold.
-- [ ] Shortening the denominator to the feature's own lifespan fails QA.
-- [ ] Features with adequate individual coverage but insufficient joint complete-case support make
-  the PCA preflight invalid.
-- [ ] Removing the sparse offender can make a later independent fixture valid only through the
-  documented raw-quality rule; no hidden adaptive pruning is permitted.
-- [ ] Internal gaps remain missing and are never forward/back-filled/interpolated.
-- [ ] NaN/Inf causes source-contract failure rather than ordinary feature rejection.
-- [ ] Row ordering and feature ordering mutations change/fail the expected clock/hash deterministically.
-- [ ] QA introduces no production selection logic.
+- [ ] Fresh-state bootstrap creates exactly the six tables and one view declared by PR-478.
+- [ ] Reopening the same state root preserves byte-equivalent logical rows.
+- [ ] Replaying the same fold is idempotent and creates no duplicate logical records.
+- [ ] Injected failure before transaction commit leaves zero partial fold rows.
+- [ ] Conflicting immutable feature identity fails closed.
+- [ ] Concurrent readers observe only committed fold states.
+- [ ] feature_global_stats is reproduced independently from base tables.
+- [ ] DuckDB state contains no raw time-series vectors or credentials.
+- [ ] QA uses a temporary local state root only.
 
-### PR-480 — Implement fold-local standardization and deterministic PCA
+### PR-480 — Make feature provenance and family membership canonical
 
-**Type:** implementation / numerical transform  
+**Type:** implementation / provenance  
 **Depends on:** PR-479
 
 #### Acceptance
 
-- [ ] Fit column means/scales on complete TRAIN rows only.
-- [ ] Use the repository-pinned population-variance convention for scaling and reject zero/non-finite
-  scale after quality filtering.
-- [ ] Transform TRAIN and TEST with the frozen TRAIN scaler; TEST cannot refit or update moments.
-- [ ] Fit exactly `D_ref` PCA components on standardized complete TRAIN rows.
-- [ ] Use one source-controlled PCA/SVD solver configuration suitable for thousands of columns;
-  all solver parameters and seed are profile identity.
-- [ ] `whiten=False`; HMM receives ordinary PCA scores, not whitened scores.
-- [ ] Canonicalize each component sign: the loading with largest absolute magnitude is positive;
-  ties use the smallest canonical raw-feature ordinal.
-- [ ] Component order is descending explained variance with deterministic tie handling.
-- [ ] TEST PC scores are emitted only for timestamps where every frozen PCA-input raw feature is
-  finite; missing TEST vectors remain gap evidence.
-- [ ] Persist scaler parameters, PCA loadings, singular/eigen values, explained-variance ratios,
-  component-sign evidence and transform identity hashes.
-- [ ] Raw feature values are never emitted as HMM observation columns.
+- [ ] Every discovered candidate receives one immutable role: core or transformation.
+- [ ] Every transformation receives one immutable source family and structured transformation
+  provenance from the existing generated-feature provenance contract.
+- [ ] Feature role/family may not be inferred from ad-hoc string heuristics inside selection code.
+- [ ] Missing or conflicting provenance fails closed with the exact feature identity.
+- [ ] Core features preserve their source column identity.
+- [ ] Transformation provenance includes source family, transform name and normalized parameters
+  sufficient to distinguish windows/variants.
+- [ ] Canonical feature identity is independent of discovery order and process completion order.
+- [ ] The same source snapshot and provenance produce the same feature-registry rows and hashes.
+- [ ] No statistical filtering or HMM fitting is added in this PR.
 
-### PR-481 — QA: PCA leakage, sign and numerical-reference matrix
+### PR-481 — QA: provenance, family and identity matrix
 
 **Type:** QA only  
 **Depends on:** PR-480
 
 #### Acceptance
 
-- [ ] Mutating future TEST rows cannot alter TRAIN means/scales/loadings/component ordering.
-- [ ] A deliberate TEST-refit implementation fails QA.
-- [ ] Independently standardize a small fixture and reproduce its covariance/SVD PCA subspace
-  without calling the production PCA helper.
-- [ ] Component sign flips are canonicalized to identical stored loadings/scores.
-- [ ] Exact/near loading-magnitude ties exercise the canonical raw-ordinal sign rule.
-- [ ] Repeat runs with the pinned solver seed/config produce the same canonical transform identity.
-- [ ] Raw-feature column rescaling before TRAIN standardization leaves the PCA result equivalent
-  within the repository's numerical tolerance.
-- [ ] Missing TEST input yields no PC observation for that timestamp and never triggers imputation.
-- [ ] QA adds no production behavior.
+- [ ] Fixtures cover core features and multiple transformation families with multiple windows.
+- [ ] Missing role, missing family, conflicting family and conflicting transformation provenance all
+  fail closed.
+- [ ] Discovery-order reversal preserves registry identities and hashes.
+- [ ] Equivalent normalized transformation parameters map to one canonical identity.
+- [ ] Distinct windows/parameters cannot collide.
+- [ ] No name-pattern-only fallback is accepted.
+- [ ] Production statistical behavior is unchanged.
 
-### PR-482 — Derive the safe PCA reference dimension and nested prefix plan
+### PR-482 — Implement TRAIN-only high-dimensional quality filtering
 
-**Type:** implementation / dimension planning  
+**Type:** implementation / statistical preprocessing  
 **Depends on:** PR-481
 
 #### Acceptance
 
-- [ ] Compute the largest common `D_ref` that satisfies parameter-safety bounds for every retained
-  final family and K=2,3,4,5 at the canonical minimum TRAIN support.
-- [ ] For the current Gaussian/GMM-HMM(m=2)/Student-t full-covariance universe, independently assert
-  that the derived bound resolves to the expected current value.
-- [ ] If a future model-family contract changes the bound, profile identity changes.
-- [ ] Candidate prefixes are exactly `PC1..PC2`, ..., `PC1..PC_D_ref`.
-- [ ] Prefixes are nested and share one fold-local PCA basis; PCA is never refit separately per L.
-- [ ] Every prefix preserves canonical PC order.
-- [ ] If a fold cannot produce `D_ref` valid components it is statistically invalid before HMM fit.
-- [ ] Raw PLL/AIC/BIC are not compared across different L dimensions.
-- [ ] Persist `D_ref`, its parameter-count proof, candidate L tuple and prefix hashes.
+- [ ] Reuse the current canonical v4 feature-quality thresholds exactly; this PR does not change
+  their numeric values.
+- [ ] Compute quality statistics from the current fold TRAIN partition only.
+- [ ] Evaluate coverage, finite-value validity and variance in vectorized/chunked form suitable for
+  several thousand columns.
+- [ ] No pairwise NxN matrix is allocated in the quality stage.
+- [ ] Every rejected feature receives one deterministic reason code.
+- [ ] Every accepted feature remains traceable to feature_registry.
+- [ ] No fill, interpolation, forward carry or synthetic observation is permitted.
+- [ ] Outer TEST values cannot change any quality decision or quality statistic.
+- [ ] Quality results are persisted to fold_feature_stats.
+- [ ] Serial and process-enabled execution produce the same ordered result.
 
-### PR-483 — QA: parameter-safety and prefix-plan oracle
+### PR-483 — QA: quality-filter leakage and high-dimensional parity
 
 **Type:** QA only  
 **Depends on:** PR-482
 
 #### Acceptance
 
-- [ ] Independent formulas recompute Gaussian and GMM-HMM free-parameter counts for every K/L.
-- [ ] The strictest family/K combination determines `D_ref`.
-- [ ] Mutation allowing an unsafe L fails QA.
-- [ ] Mutation refitting PCA independently per prefix fails QA.
-- [ ] Every L prefix is a literal prefix of the same component identity tuple.
-- [ ] Candidate order is deterministic under randomized task completion.
-- [ ] A rank-deficient fold is rejected before any HMM fit.
+- [ ] Independent reference statistics reproduce coverage/finite/variance decisions exactly.
+- [ ] Mutating any Outer-TEST value cannot alter TRAIN quality results.
+- [ ] Fixtures cover all-null, near-constant, non-finite, short-history and fully valid columns.
+- [ ] A synthetic matrix with at least 5,000 candidate features completes without an NxN quality
+  allocation.
+- [ ] Input-column order reversal preserves accepted identities and reasons.
+- [ ] Serial/process results and hashes are identical.
 - [ ] QA adds no production behavior.
 
-### PR-484 — Build causal full-PCA K=2..5 reference evidence
+### PR-484 — Implement family-local standardization and PCA for transformations
 
-**Type:** implementation / inner walk-forward HMM evidence  
+**Type:** implementation / dimensionality reduction  
 **Depends on:** PR-483
 
 #### Acceptance
 
-- [ ] For every monthly inner fold, run raw-quality/common-support/scaler/PCA strictly on the
-  expanding inner TRAIN through that fold's closed month-end boundary.
-- [ ] Evaluate the frozen inner model only on the immediately following complete calendar month.
-- [ ] Fit Gaussian full-covariance HMM K=2,3,4,5 on `PC1..PC_D_ref`.
-- [ ] All K values in one fold consume the same scaler/PCA identity and component order.
-- [ ] Reuse deterministic multistart, covariance, occupancy and validity gates.
-- [ ] Persist only causal inner-TEST filtered probabilities as reference arrays.
-- [ ] Smoothed probabilities and full-sample Viterbi labels are forbidden.
-- [ ] Persist K, fold, transformed timestamps, PCA identity, component tuple, source identity and
-  posterior-evidence hash.
-- [ ] Reference HMMs do not select raw features or alter the PCA basis.
-- [ ] Serial/process execution produces equivalent canonical reference evidence.
+- [ ] PCA is applied separately to each transformation family; no global PCA is used.
+- [ ] Core features bypass PCA unchanged.
+- [ ] Each family uses its own TRAIN-only complete-case model clock; no cross-family complete-case
+  intersection is required.
+- [ ] Standardization parameters are fitted from that family TRAIN clock only using the repository
+  population-variance convention.
+- [ ] Retain PC1 through PCm where m=min(8, numerical rank); explained variance does not choose m.
+- [ ] PC order is descending explained variance with deterministic tie handling.
+- [ ] Canonicalize every PC sign by making its largest-absolute loading positive; loading ties use
+  canonical source-feature identity.
+- [ ] PC semantic identity is family plus ordinal, independent of fold-specific loading values.
+- [ ] TEST and later timestamps are transformed only with frozen TRAIN scaler/loadings.
+- [ ] Persist scaler/PCA identities, explained-variance diagnostics and all loadings needed for
+  feature-credit attribution.
+- [ ] A family with zero usable numerical rank is statistically invalid for that family only; it
+  does not crash unrelated families.
 
-### PR-485 — QA: causal full-PCA reference isolation
+### PR-485 — QA: family-PCA math, leakage and deterministic identity
 
 **Type:** QA only  
 **Depends on:** PR-484
 
 #### Acceptance
 
-- [ ] Future inner-TEST mutation cannot alter earlier filtered probabilities.
-- [ ] Inner folds are month-aligned and no fixed-row TEST/STEP plan can satisfy QA.
-- [ ] Smoothed-posterior substitution fails QA.
-- [ ] Viterbi-label substitution fails QA.
-- [ ] K2-K5 bind the exact same fold-local PCA identity.
-- [ ] Raw feature order/eligible-set/PCA identity mutation invalidates stale reference reuse.
-- [ ] Timestamp mismatch fails closed.
-- [ ] Real-HMM serial/process fixtures produce equivalent reference evidence under canonical
-  numerical tolerances.
-- [ ] QA introduces no new selection rule.
+- [ ] Independent NumPy/SVD reference reproduces scaling, rank, PC scores and loadings on fixtures.
+- [ ] Mutation of Outer-TEST rows cannot alter TRAIN scaler, rank, loading or PC identity.
+- [ ] Families with 1, 2, 8, 9 and more than 100 transformation features cover the rank/cap
+  boundaries.
+- [ ] No family emits more than eight PCs.
+- [ ] Explained-variance threshold mutations cannot change retained PC count.
+- [ ] Column-order and SVD sign reversals preserve canonical PC identities and hashes.
+- [ ] Two independent families never share a complete-case mask or PCA fit.
+- [ ] Core features are byte-identical before and after the PCA stage.
+- [ ] QA adds no production behavior.
 
-### PR-486 — Score PCA prefixes by causal same-K regime preservation
+### PR-486 — Implement global stable correlation-leader pruning
 
-**Type:** implementation / L-search evidence  
+**Type:** implementation / redundancy reduction  
 **Depends on:** PR-485
 
-For each L and K within the same inner fold:
-
-```text
-nmi(K,f,L) =
-    soft_NMI(
-        full_PC1..PC_Dref filtered posterior,
-        PC1..PC_L filtered posterior
-    )
-
-q_K(L) = median over valid monthly inner folds f of nmi(K,f,L)
-Q_L    = min over K in {2,3,4,5} q_K(L)
-```
+The input universe is exactly quality-eligible core features plus family PCs.
 
 #### Acceptance
 
-- [ ] Fit each reduced prefix L=2..D_ref-1 with Gaussian K2-K5 on the same fold-local PCA scores.
-- [ ] `L=D_ref` is the reference and has `Q_Dref=1.0` by identity.
-- [ ] Compare only same-K full-vs-prefix filtered posteriors on exact shared timestamps.
-- [ ] Reuse canonical soft NMI with finite/entropy/shared-support gates.
-- [ ] Shared support must satisfy the canonical minimum.
-- [ ] Every K must satisfy the canonical inner valid-fold-rate hard gate for L to be eligible.
-- [ ] `q_K(L)` is the median of valid month-local inner-OOS NMI values.
-- [ ] `Q_L` is the minimum across K2-K5; mean/max aggregation is forbidden.
-- [ ] Raw likelihood/AIC/BIC are never used for cross-L ranking.
-- [ ] Persist every per-fold/per-K NMI, validity reason, `q_K`, `Q_L`, L and PCA-prefix hash.
-- [ ] Independent L/K tasks may run in processes, but completion order cannot alter evidence.
+- [ ] Compute pairwise absolute Pearson correlations from TRAIN rows only.
+- [ ] Use blockwise/vectorized correlation work and retain only threshold-relevant edges/support
+  metadata; do not require a persistent dense NxN artifact.
+- [ ] A pair is redundant only when full-TRAIN absolute correlation is at least 0.95, pair support
+  is at least 30, median absolute correlation across the three chronological TRAIN thirds is at
+  least 0.90, and each third has at least 10 paired finite rows.
+- [ ] If support is insufficient, the pair is not treated as redundant.
+- [ ] Leader selection is lexicographic: largest number of directly redundant unassigned neighbors;
+  then highest median full absolute correlation to those neighbors; then higher TRAIN coverage;
+  then core before PC; then canonical candidate identity.
+- [ ] After selecting a leader, remove only candidates directly redundant with that leader.
+- [ ] Transitive graph connectivity alone never removes a candidate: A-B and B-C cannot remove C
+  through A when A-C fails the redundancy rule.
+- [ ] Negative and positive correlation use the same absolute threshold.
+- [ ] Repeat until no unassigned candidate remains; every input maps to exactly one retained leader.
+- [ ] Persist the full candidate-to-leader mapping and all supporting correlations/counts.
+- [ ] No HMM fit, target variable or future/OOS information is used.
 
-### PR-487 — QA: independent PCA-prefix preservation oracle
+### PR-487 — QA: independent correlation-leader oracle and adversarial chains
 
 **Type:** QA only  
 **Depends on:** PR-486
 
 #### Acceptance
 
-- [ ] Independent soft-NMI math reproduces every golden full-vs-prefix value.
-- [ ] Independent aggregation reproduces each `q_K` median and `Q_L=min_K(q_K)`.
-- [ ] Mutation from minimum-K aggregation to mean/maximum fails QA.
-- [ ] One K below the validity gate makes that L ineligible.
-- [ ] State-label permutations leave NMI, `q_K` and `Q_L` unchanged.
-- [ ] Moving/reference-per-L PCA bases fail QA; comparisons require one common fold-local basis.
-- [ ] Randomized worker completion produces identical evidence hashes.
+- [ ] Independent implementation reproduces all retained leaders and mappings.
+- [ ] Cover +0.95, -0.95, just-below-threshold and insufficient-support boundaries.
+- [ ] Cover a chain where A-B and B-C pass but A-C fails; C must survive when A is leader.
+- [ ] Cover a case with high crisis-only full-sample correlation but unstable thirds; both features
+  must survive.
+- [ ] Cover exact leader tie-breaks including core-versus-PC and canonical-name fallback.
+- [ ] Row/column/process completion order cannot alter the result or hash.
+- [ ] Outer-TEST mutation cannot alter any correlation result.
 - [ ] QA adds no production behavior.
 
-### PR-488 — Select L* with a deterministic PCA-prefix elbow
+### PR-488 — Add MLflow audit artifacts for quality, PCA and correlation stages
 
-**Type:** implementation / model-dimension selection  
+**Type:** implementation / observability  
 **Depends on:** PR-487
 
 #### Acceptance
 
-- [ ] Build the raw preservation curve `Q_L` for L=2..D_ref with `Q_Dref=1.0`.
-- [ ] Persist the raw curve unchanged for audit.
-- [ ] Build monotone decision curve `Qhat_L=max(Q_j for j<=L)`.
-- [ ] If the smallest eligible L is already 1.0 within `1e-12`, select the smallest such L.
-- [ ] Otherwise normalize eligible L and `Qhat_L` endpoints to x,y in [0,1].
-- [ ] Compute the interior elbow score `E_L=(y_L-x_L)/sqrt(2)`.
-- [ ] Maximum E wins; ties within `1e-12` choose the smaller L.
-- [ ] If fewer than three eligible L values exist and no exact lower-L identity exists, choose the
-  largest eligible L conservatively.
-- [ ] Persist raw/monotone curves, normalized coordinates, E values, selected L* and final PC tuple.
-- [ ] Outer TEST data cannot influence the curve or elbow.
-- [ ] One L* is shared by K2-K5 and all retained final model families.
+- [ ] Log one feature_funnel plot with counts for discovered, quality-eligible, family-PC/core,
+  correlation-representative and later final stages when available.
+- [ ] Log one family_survival plot with source count, quality count, retained PCs and representative
+  count per family.
+- [ ] Log one explained-variance curve per PCA family under a deterministic pca/ artifact path.
+- [ ] Log top-loading plots for every family PC that survives correlation pruning; top 20 absolute
+  loadings are shown, with the full loading table persisted separately.
+- [ ] Log correlation group-size ranking for every retained leader.
+- [ ] Log representative correlation heatmap for at most 80 representatives, chosen by descending
+  covered-group size then canonical identity; the complete correlation mapping remains available
+  as a table artifact regardless of plot truncation.
+- [ ] Log exact profile/source/fold hashes beside every artifact bundle.
+- [ ] Plot generation never changes selection results.
+- [ ] QA/local tests use MLflow FileStore; production runs use the configured external tracking URI.
+- [ ] DuckDB remains the metadata source of truth if MLflow logging is disabled or fails before an
+  authorized external run.
 
-### PR-489 — QA: PCA-elbow boundary and mutation matrix
+### PR-489 — QA: MLflow preprocessing evidence completeness and plot determinism
 
 **Type:** QA only  
 **Depends on:** PR-488
 
 #### Acceptance
 
-- [ ] Golden curves cover clear elbow, flat curve, noisy/non-monotone raw curve and insufficient
-  eligible-L cases.
-- [ ] Independently recompute the monotone envelope and normalized elbow score.
-- [ ] Exact lower-L identity selects the smallest equivalent L.
-- [ ] Tie within `1e-12` selects the smaller L.
-- [ ] Removing the monotone envelope fails QA.
-- [ ] Replacing the deterministic elbow with a visual/manual/nondeterministic choice fails QA.
-- [ ] Future Outer-TEST mutation leaves L* unchanged.
-- [ ] QA adds no production behavior.
+- [ ] A hermetic FileStore run contains every required plot/table for a multi-family fixture.
+- [ ] Artifact names and payload hashes are deterministic under process completion-order reversal.
+- [ ] Full loading and correlation tables contain every underlying row even when plots show top-N.
+- [ ] Heatmap selection obeys the exact 80-representative rule.
+- [ ] Missing required preprocessing artifacts fail the completeness verifier.
+- [ ] Plot rendering failures cannot silently alter statistical results.
+- [ ] No NAS MLflow write occurs in this QA PR.
 
----
+### PR-490 — Implement process-parallel HMM SFFS on correlation representatives
 
-## Phase 3 — Integrate PCA-only selection, evidence and cutover
-
-### PR-490 — Integrate PCA-only selection into outer validation and deployment
-
-**Type:** implementation / orchestration  
+**Type:** implementation / feature subset search  
 **Depends on:** PR-489
 
 #### Acceptance
 
-- [ ] Each month-end Outer-TRAIN selection uses monthly inner folds that independently run raw
-  quality -> common-support preflight -> scaler -> PCA -> L-prefix evaluation.
-- [ ] Freeze L* and all fitted transform/model parameters before the next calendar-month Outer TEST.
-- [ ] Outer TEST is exactly the immediately following complete calendar month; there is no
-  intramonth refit or parameter update.
-- [ ] Refit raw quality/scaler/PCA from scratch on complete Outer TRAIN after L* is selected.
-- [ ] Fit every final K/family candidate only on `PC1..PC_L*`.
-- [ ] K2-K5 and Gaussian/GMM-HMM/Student-t candidates for one selection identity bind the same
-  Outer-TRAIN scaler/PCA identity and final PC tuple.
-- [ ] No final candidate receives raw source columns.
-- [ ] Transform Outer TEST using the frozen Outer-TRAIN scaler/PCA only.
-- [ ] Missing Outer-TEST raw vector -> no PC observation at that timestamp; preserve gap semantics.
-- [ ] Deployment selection resolves its usable cutoff to the latest **closed calendar month** at or
-  before the deployment request time and reruns the full TRAIN-only procedure through that
-  month-end cutoff; partial current-month observations are excluded from refit.
-- [ ] The resulting package is effective for the immediately following calendar month and remains
-  frozen for that whole month unless an explicit non-canonical emergency procedure is introduced
-  in a future contract.
-- [ ] Repeated canonical deployment requests within the same open calendar month resolve to the
-  same month-end training cutoff for the same source snapshot/lineage.
-- [ ] Deployment never copies the last Outer-fold PCA or L*.
-- [ ] Final package identity binds source build, raw eligible set, scaler, PCA loadings, L*, PC tuple,
-  K, family, `train_through_month`, exact month-end cutoff and `effective_calendar_month`.
-- [ ] Serial/process orchestration yields equivalent canonical selection identities.
+- [ ] SFFS input is exactly the retained correlation representatives for the current outer TRAIN
+  fold; no removed candidate may re-enter directly.
+- [ ] Run SFFS independently for each configured K slot; current legal K values remain 2,3,4,5.
+- [ ] Use the Gaussian full-covariance HMM as the feature selector for each K; the selected tuple is
+  then reused by all configured emission families at that K.
+- [ ] Candidate subset scoring uses a new immutable feature_subset_score.v1 built from the existing
+  dimension-independent forecast, calibration, stability, support and valid-fold components used
+  by cross_k_score.v1, but with no K-complexity penalty.
+- [ ] feature_subset_score.v1 uses only monthly inner folds contained inside outer TRAIN and applies
+  the same eligibility gates: valid-fold rate at least 0.80, at least three valid inner folds and a
+  valid latest inner fold.
+- [ ] The score is tuning evidence only; Outer TEST remains the sole unbiased fold performance
+  evidence.
+- [ ] Start from the best eligible singleton; after every forward add, perform backward removals
+  while the canonical score strictly improves by more than 1e-12.
+- [ ] Stop when no forward addition improves the score by more than 1e-12 or 10 features are
+  selected.
+- [ ] Ranking ties use total score, forecast score, worst-fold forecast, calibration, stability,
+  robustness, fewer features and finally canonical tuple identity.
+- [ ] All candidate additions/removals within one SFFS step run in bounded process workers with
+  deterministic result assembly.
+- [ ] Reuse existing affinity/cgroup-aware worker sizing; cap native BLAS/OpenMP threads to one per
+  worker and forbid nested process-pool oversubscription.
+- [ ] Persist every evaluated SFFS step/action/score to sffs_steps.
+- [ ] Raw HMM likelihood, AIC and BIC are logged only as diagnostics and never choose between
+  different feature dimensions.
 
-### PR-491 — QA: orchestration leakage and raw-input exclusion
+### PR-491 — QA: SFFS score, floating search and CPU determinism
 
 **Type:** QA only  
 **Depends on:** PR-490
 
 #### Acceptance
 
-- [ ] Mutating Outer TEST raw rows cannot alter Outer-TRAIN raw eligibility, scaler, PCA or L*.
-- [ ] A model selected at month-end remains byte-identical throughout its effective TEST month;
-  adding observations within that month cannot trigger a refit.
-- [ ] A spy proves final HMM fit calls receive only PC columns.
-- [ ] Any raw-feature HMM input in the new profile fails QA.
-- [ ] K2-K5/family candidates bind one identical final PC tuple/hash.
-- [ ] Model-family changes cannot trigger PCA or L reselection.
-- [ ] Deployment selection executes anew only against the resolved latest closed-month cutoff;
-  a midmonth request cannot consume partial current-month data.
-- [ ] Serial/process runs yield equivalent selection/package identities.
-- [ ] Injected recoverable vs unexpected failures follow PR-453 semantics.
+- [ ] Independently recompute feature_subset_score.v1 component by component.
+- [ ] Cover no-winner, eligibility-boundary, singleton, forward-add and backward-remove paths.
+- [ ] A synthetic example proves floating backward removal can remove an earlier selected feature.
+- [ ] No result may exceed the 10-feature cap.
+- [ ] Raw PLL/AIC/BIC improvements cannot override a worse dimension-independent score.
+- [ ] Worker counts 1, 8, 32 and auto produce identical selected tuples, steps and hashes.
+- [ ] Native thread-pool inspection proves one BLAS/OpenMP thread per process during the QA run.
+- [ ] Outer-TEST mutation cannot alter SFFS selection.
 - [ ] QA adds no production behavior.
 
-### PR-492 — Project PCA-only lineage and L-selection evidence into MLflow
+### PR-492 — Implement final one-at-a-time feature ablation
 
-**Type:** implementation / observability  
+**Type:** implementation / marginal contribution  
 **Depends on:** PR-491
 
 #### Acceptance
 
-- [ ] Log raw catalog/eligible counts and quality exclusion summaries.
-- [ ] Log the canonical month-clock identity, `train_through_month`, exact refit cutoff,
-  `effective_calendar_month`, TEST month and per-month source/transformed observation counts.
-- [ ] Store the complete raw eligible tuple/hash as an artifact rather than exploding thousands of
-  feature names into MLflow parameters.
-- [ ] Store scaler means/scales and PCA loadings/component metadata as immutable artifacts with
-  hashes and dimensions.
-- [ ] Log explained-variance ratio and cumulative explained variance per PC as diagnostics only.
-- [ ] Log `D_ref`, parameter-safety proof, per-K/per-fold prefix NMI, `q_K(L)`, `Q_L`,
-  monotone curve, elbow score and L*.
-- [ ] Log one common final PC tuple/hash and cross-check it across K2-K5.
-- [ ] New-profile runs emit no clustering/silhouette/medoid/teacher/raw-feature-regime-score
-  decision artifacts.
-- [ ] Metric/artifact catalog versioning distinguishes the PCA-only profile from historical v4.
-- [ ] Evidence serialization remains deterministic and completion-order independent.
-- [ ] Hermetic tests require no NAS MLflow endpoint.
+- [ ] For each final SFFS tuple, refit/re-evaluate exactly one model per selected feature removed.
+- [ ] Use the same K, selector family, inner-fold plan, seeds and feature_subset_score.v1 contract as
+  the final SFFS model.
+- [ ] Define ablation_loss as final_total_score minus removed_feature_total_score.
+- [ ] Persist negative, zero and positive ablation_loss values without clipping.
+- [ ] An invalid ablated model receives an explicit invalid reason and cannot fabricate a numeric
+  total score.
+- [ ] Ablations run in bounded process workers and assemble results in canonical feature order.
+- [ ] Persist every result in fold_feature_stats.
+- [ ] Do not automatically remove an SFFS-selected feature merely because its measured ablation
+  loss is non-positive in one fold.
 
-### PR-493 — QA: PCA/MLflow evidence completeness
+### PR-493 — QA: ablation completeness and independent marginal-loss oracle
 
 **Type:** QA only  
 **Depends on:** PR-492
 
 #### Acceptance
 
-- [ ] Independently enumerate every mandatory PCA/L/K evidence domain.
-- [ ] Missing month-clock/scaler/PCA/eligible-set/L evidence makes a run incomplete.
-- [ ] K2-K5 final PC hashes must be identical for one selection identity.
-- [ ] Historical clustering/teacher artifacts cannot satisfy new-profile completeness.
-- [ ] New-profile runs containing clustering/medoid/teacher decision artifacts fail QA.
-- [ ] Metric values and artifact hashes are independent of emission order.
-- [ ] Local FileStore fixtures reproduce the complete evidence matrix without network access.
-- [ ] QA adds no production selection behavior.
+- [ ] Exactly N ablation evaluations exist for an N-feature final tuple.
+- [ ] Independent recomputation reproduces every finite ablation_loss.
+- [ ] Cover positive, zero, negative and invalid-ablation cases.
+- [ ] Completion-order reversal preserves rows and hashes.
+- [ ] Outer-TEST mutation cannot alter ablation results.
+- [ ] QA adds no production behavior.
 
-### PR-494 — Cut over canonical Xetra evaluation to PCA-only HMM inputs
+### PR-494 — Persist PCA credit and cumulative cross-fold feature statistics
 
-**Type:** implementation / controlled migration  
+**Type:** implementation / cumulative metadata  
 **Depends on:** PR-493
 
 #### Acceptance
 
-- [ ] Promote the PCA-only profile/evaluation version to the sole canonical Xetra selection path.
-- [ ] Retire canonical runtime use of absolute-Spearman clustering, silhouette M*, medoids,
-  provisional teacher, raw-feature regime scoring and teacher/medoid prefix selection.
-- [ ] No compatibility flag or silent fallback can reactivate the old statistical architecture.
-- [ ] Historical v4 runs/packages remain historical evidence and are never relabelled.
-- [ ] Update README, EVALUATION, lifecycle/source documentation and public identity constants.
-- [ ] Canonical documentation shows month-end refit -> raw quality -> scaler/PCA -> PC-prefix L*
-  -> HMM K2-K5 -> frozen next-calendar-month inference.
-- [ ] Remove fixed 1260/63/63 and 756/63/63 TEST/STEP semantics from the new profile documentation;
-  minimum TRAIN history may remain observation-count based, while TEST/STEP are calendar-month based.
-- [ ] Existing source lineage, no-imputation, non-resumable full-run, external service and manual
-  champion-promotion boundaries remain explicit.
-- [ ] No production alias mutation occurs in this cutover PR.
+- [ ] For each selected family PC, attribute its fold contribution to source transformations by
+  squared loading weight.
+- [ ] Define source_feature_pca_credit as the sum over selected PCs of
+  abs(selected_pc_ablation_loss) multiplied by loading_squared.
+- [ ] Directly selected core features receive direct_selection_count and their own ablation_loss;
+  they do not receive synthetic PCA credit.
+- [ ] feature_global_stats exposes eligible_folds, quality_pass_folds, representative_folds,
+  selected_folds, selection_rate, mean/median ablation_loss, total/mean PCA credit,
+  last_selected_fold and consecutive_unused_folds.
+- [ ] Aggregation is deterministic and derived only from committed fold rows.
+- [ ] Replaying a fold replaces/reuses the same logical fold contribution and never double counts.
+- [ ] MLflow logs cumulative selection-frequency, mean-ablation and PCA-credit plots after each
+  completed fold.
+- [ ] DuckDB remains authoritative; MLflow plots are projections of committed local statistics.
 
-### PR-495 — QA: zero-legacy PCA-only cutover proof
+### PR-495 — QA: cumulative statistics and PCA-credit conservation
 
 **Type:** QA only  
 **Depends on:** PR-494
 
 #### Acceptance
 
-- [ ] Public Xetra entry points resolve only the PCA-only profile/evaluation identity.
-- [ ] Static/runtime scans reject canonical calls to clustering/medoid/teacher/raw-feature-scoring
-  modules.
-- [ ] HMM input schemas in the new profile contain only canonical PC names.
-- [ ] Historical v4 package/evidence readers remain distinguishable and read-only where required.
-- [ ] Documentation and runtime constants agree on the new canonical version.
-- [ ] K2-K5 enforce one final PC tuple per selection identity.
-- [ ] Static/runtime checks reject fixed-row monthly approximations and canonical intramonth refits.
-- [ ] No external service is mutated.
-- [ ] QA/documentation corrections only; no new selection behavior.
+- [ ] Independent SQL/Python aggregation reproduces feature_global_stats exactly.
+- [ ] Squared loadings for each normalized selected PC distribute exactly its absolute ablation
+  contribution within numerical tolerance.
+- [ ] Fold replay cannot change cumulative counts.
+- [ ] Failed/uncommitted folds contribute zero cumulative statistics.
+- [ ] Selection-frequency, ablation and PCA-credit MLflow plots match DuckDB source rows exactly.
+- [ ] Process/order reversal preserves cumulative hashes.
+- [ ] QA adds no production behavior.
 
----
+### PR-496 — Add semiautomatic feature lifecycle recommendations
 
-## Phase 4 — Full local/system acceptance after implementation is complete
-
-No PR in this phase is acceptance evidence until PR-495 is green.
-
-### PR-496 — Full hermetic PCA-only end-to-end acceptance
-
-**Type:** QA / complete-system acceptance  
+**Type:** implementation / governance  
 **Depends on:** PR-495
+
+No production PostgreSQL column is dropped by this PR.
 
 #### Acceptance
 
-- [ ] Run a complete hermetic evaluation with real PCA and real HMM fits from immutable source
-  snapshot through multiple consecutive month-end refits, raw quality, scaler/PCA, L search,
-  final K/family grids and full next-calendar-month Outer TEST blocks.
-- [ ] Independently reproduce the raw eligible set, complete-case clock, scaler moments, PCA
-  loadings/subspace, prefix preservation curve, elbow and L*.
-- [ ] Prove future Outer-TEST mutation cannot alter any TRAIN-side decision.
-- [ ] Prove every final K2-K5 slot uses the exact same PCA identity and PC tuple/hash.
-- [ ] Prove deployment reruns raw quality/scaler/PCA/L selection at the latest closed month-end
-  cutoff and ignores partial current-month rows.
-- [ ] Verify serial/process canonical parity for selection/model/evidence identities.
-- [ ] Verify no clustering/medoid/teacher decision path is executed.
-- [ ] Run lint, format, strict mypy, unit and hermetic integration gates.
-- [ ] No external PostgreSQL/MLflow mutation.
+- [ ] Lifecycle states are ACTIVE, DEPRECATED_CANDIDATE, DEPRECATED and DROPPABLE.
+- [ ] Raw/core source features are never automatically advanced beyond DEPRECATED_CANDIDATE.
+- [ ] Generated transformations may become DEPRECATED_CANDIDATE only after at least 20 eligible
+  folds, zero final selections in the last 20 eligible folds, zero representative selections in the
+  last 20 eligible folds, and cumulative PCA credit below the versioned lifecycle epsilon.
+- [ ] The lifecycle epsilon is explicit in configuration and stored in the profile hash.
+- [ ] DEPRECATED and DROPPABLE transitions require explicit operator approval; the pipeline only
+  recommends them.
+- [ ] Emit a deterministic lifecycle report with the exact evidence supporting every recommendation.
+- [ ] PostgreSQL DROP/ALTER statements are never executed by the automated selection pipeline.
+- [ ] Re-activated evidence automatically returns an unapproved candidate to ACTIVE.
 
-### PR-497 — High-dimensional PCA scale and resource acceptance
+### PR-497 — QA: lifecycle safety and no-automatic-drop proof
 
-**Type:** QA / performance and bounded-resource acceptance  
+**Type:** QA only  
 **Depends on:** PR-496
 
 #### Acceptance
 
-- [ ] Exercise synthetic universes of at least 2,000 and 5,000 raw features across multiple
-  month-end refit cycles with the canonical minimum TRAIN history.
-- [ ] Prove no NxN raw-feature distance/correlation matrix is allocated by the PCA-only path.
-- [ ] Record wall time, peak parent/child RSS, effective worker count and PCA solver timing.
-- [ ] Prove memory grows with the source matrix/PCA workspace rather than O(N_raw^2) clustering
-  artifacts.
-- [ ] Verify PCA produces exactly D_ref components and identical L* semantics at scale.
-- [ ] Repeat the same fixture and prove canonical statistical identity is stable.
-- [ ] Explicit one-worker and adaptive-worker runs are statistically equivalent.
-- [ ] No OOM fallback, feature truncation or silent sampling is permitted.
-- [ ] This PR may tune only non-statistical scheduling/resource defaults; any statistical change
-  requires a new implementation PR.
+- [ ] Boundary fixtures cover 19 versus 20 eligible folds and every lifecycle predicate.
+- [ ] Any recent selection, representative use or material PCA credit blocks deprecation candidacy.
+- [ ] Core/raw features cannot become automatically DROPPABLE.
+- [ ] Search the production feature-selection path and prove no PostgreSQL DROP/ALTER action exists.
+- [ ] Operator-approved state changes are explicit, auditable and reversible before physical DB
+  maintenance occurs outside this pipeline.
+- [ ] QA adds no production behavior.
 
-### PR-498 — Production K-slot callback acceptance on PCA-only inputs
+---
 
-**Type:** QA / integration acceptance  
+## Phase 4 — Integrate, visualize and cut over the canonical pipeline
+
+### PR-498 — Integrate the complete feature-selection pipeline into monthly outer refit
+
+**Type:** implementation / orchestration  
 **Depends on:** PR-497
 
 #### Acceptance
 
-- [ ] Exercise K2,K3,K4,K5 through the real production outer-validation callback.
-- [ ] All four slots consume the exact same final PC tuple/hash.
-- [ ] Preserve per-K eligibility gates and deterministic process assembly.
-- [ ] Prove serial/process parity through the production callback.
-- [ ] One ineligible K cannot contaminate another K slot.
-- [ ] No callback can rerun raw quality/PCA/L selection after the tuple is frozen.
-- [ ] No external service is required.
+- [ ] The monthly fold flow is exactly quality -> provenance split -> family PCA -> global
+  correlation leaders -> per-K SFFS -> ablation -> final HMM fit -> Outer TEST.
+- [ ] Every stage consumes only rows at or before the outer TRAIN cutoff.
+- [ ] The entire feature-selection pipeline is rerun after each closed calendar month; no intramonth
+  feature reselection occurs.
+- [ ] The resulting feature/PCA/HMM package is frozen for the complete following calendar month.
+- [ ] Final package identity contains source, month clock, feature-selection profile, provenance,
+  PCA, representative mapping, selected tuple, K/family and model hashes.
+- [ ] Failed selection yields explicit invalid fold evidence and no partial package.
+- [ ] DuckDB fold transaction commits only after the fold's statistical artifacts are complete.
+- [ ] MLflow parent/child runs link every stage artifact to the same fold/package identity.
+- [ ] Deployment/refit uses the latest closed-month TRAIN cutoff and the same pipeline implementation.
+- [ ] No historical PCA-only-prefix selector remains on this new profile.
 
-### PR-499 — Deployment/refit/package acceptance for every K slot
+### PR-499 — QA: orchestration leakage, month cadence and stage parity
 
-**Type:** QA / lifecycle acceptance  
+**Type:** QA only  
 **Depends on:** PR-498
 
 #### Acceptance
 
-- [ ] Exercise real deployment selection through final scaler/PCA refit and package assembly.
-- [ ] Every eligible K package binds the same deployment PCA identity and final PC tuple/hash.
-- [ ] Bind source build, train-through month, exact month-end deployment cutoff,
-  effective calendar month, raw eligible hash, scaler/PCA hashes, L*, K and family.
-- [ ] Prove deployment reruns selection at month-end rather than copying the last validation-fold
-  transform, and that midmonth requests do not consume partial-month observations.
-- [ ] Prove package round-trip restores scaler, PCA loadings, PC order and HMM exactly.
-- [ ] Ineligible K creates no package.
-- [ ] No external publication occurs.
+- [ ] Golden test exercises two consecutive month-end refits and two complete OOS months.
+- [ ] Mutating month m+1 cannot alter the package fitted through month m.
+- [ ] A midmonth request resolves to the latest closed-month package without refitting.
+- [ ] Stage identities in DuckDB, package metadata and MLflow are mutually consistent.
+- [ ] Inject failure after each stage and prove no later stage is presented as complete.
+- [ ] Serial/process orchestration produces identical canonical package/statistical hashes.
+- [ ] No generated raw transformation column reaches the HMM directly.
 
-### PR-500 — Model Metrics and diagnostic projection acceptance
+### PR-500 — Cut over Xetra v4 and remove superseded active selectors
 
-**Type:** QA / observability acceptance  
+**Type:** implementation / controlled cutover  
 **Depends on:** PR-499
 
 #### Acceptance
 
-- [ ] Project the complete metric/artifact/plot matrix for every eligible K slot.
-- [ ] Include raw-quality, PCA explained-variance/loadings, L-curve/elbow and final PC lineage.
-- [ ] Fail closed on incomplete lineage or missing required projection domains.
-- [ ] Preserve serial/process completion-order parity.
-- [ ] Unavailable K slots are explicit and have no alias/package artifact.
-- [ ] Historical v4 clustering/teacher evidence cannot satisfy PCA-only completeness.
-- [ ] No external publication occurs.
+- [ ] Promote the scalable feature-selection profile to the sole canonical Xetra v4 evaluation path.
+- [ ] Remove the active PCA-only-prefix L* selector and old clustering/medoid/teacher selector from
+  public Xetra entry points.
+- [ ] Historical artifact readers may remain only where required to inspect old runs; they cannot
+  construct a new canonical evaluation.
+- [ ] Public evaluation/refit/serving package schema requires the new feature-selection profile hash.
+- [ ] Missing DuckDB is allowed for inference from an already frozen package, but new evaluation/refit
+  creates/uses the local metadata store.
+- [ ] No compatibility fallback silently re-enables a superseded selector.
+- [ ] Documentation and examples show only the canonical new pipeline.
 
-### PR-501 — Final independent mathematical acceptance closure
+### PR-501 — QA: zero-legacy and full hermetic multi-fold pipeline proof
 
-**Type:** QA / independent oracle  
+**Type:** QA only / full local acceptance  
 **Depends on:** PR-500
 
 #### Acceptance
 
-- [ ] Independent math code recomputes scaling, PCA reference quantities on small golden fixtures,
-  same-K soft NMI aggregation and elbow selection without production selection helpers.
-- [ ] Cover calendar-month boundary construction, sign permutations, state-label permutations,
-  rank deficiency, missing-row clocks, L ties and invalid K cases.
-- [ ] Recompute every final PC tuple and K-slot identity for the golden fixture.
-- [ ] Mutation tests fail when common-PC, min-over-K, no-imputation, elbow or TRAIN-only rules change.
-- [ ] Prove serial/process canonical parity.
-- [ ] No external service is required.
+- [ ] Static import/config scan proves no canonical entry point can select the old PCA-only-prefix,
+  clustering, medoid or teacher selector.
+- [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
+  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation.
+- [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
+- [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
+  final selected tuple and ablation losses.
+- [ ] Repeat the same pinned source and prove identical canonical statistical hashes.
+- [ ] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
+- [ ] No network service or production mutation is required.
 
-### PR-502 — Production-shaped full PCA-only E2E closure
+### PR-502 — QA: 10,000-feature scale, CPU and memory acceptance
 
-**Type:** QA / final local production-lineage acceptance  
+**Type:** QA only / resource acceptance  
 **Depends on:** PR-501
+
+Target host class: approximately 86 vCPUs and 256 GiB RAM.
 
 #### Acceptance
 
-- [ ] Run the complete Gaussian/GMM-HMM/Student-t K2-K5 path across multiple month-end refits
-  against a production-shaped immutable source fixture with thousands of raw features.
-- [ ] Preserve one common PC prefix across K and families.
-- [ ] Produce deployment packages, metrics and plots for eligible slots.
-- [ ] Prove ineligible-slot fail-closed behavior and future-row invariance.
-- [ ] Prove process/serial and independent-process identity parity.
-- [ ] Preserve champion/challenger semantics without touching an external registry.
-- [ ] This is the final local gate before current-source/external work.
+- [ ] Run a production-shaped synthetic fixture with at least 10,000 discovered features across
+  multiple core and transformation families.
+- [ ] Quality filtering and family PCA complete without materializing a global 10,000x10,000
+  correlation matrix.
+- [ ] Global correlation work is blockwise and persists only required edge/mapping evidence.
+- [ ] HMM SFFS receives only post-PCA/post-correlation representatives, never the original
+  10,000-feature matrix as an HMM observation vector.
+- [ ] Candidate HMM fits parallelize through the existing process backend; worker counts 1, 8, 32
+  and auto remain statistically identical.
+- [ ] Native numerical thread pools remain one thread per worker.
+- [ ] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
+  otherwise copy them.
+- [ ] Peak resident memory for the acceptance run stays below 64 GiB.
+- [ ] The run records wall time, peak RSS, candidate counts per stage and effective worker count in
+  MLflow and the local fold metadata.
+- [ ] No Spark, Ray or external distributed-compute dependency is introduced.
 
 ---
 
-## Phase 5 — Current-source and external acceptance
+## Phase 5 — External/current-source acceptance and publication
 
-### PR-503 — Full current-Xetra PCA-only computation and independent audit
+### PR-503 — Run the current-Xetra read-only feature-selection audit
 
-**Type:** external acceptance  
+**Type:** external QA / read-only  
 **Depends on:** PR-502 and a production-eligible upstream source snapshot
 
 #### Acceptance
 
-- [ ] Capture one immutable current source snapshot and record exact catalog/data lineage.
-- [ ] Run the complete canonical PCA-only evaluation over consecutive calendar-month refit/test
-  cycles from raw quality through Outer OOS.
-- [ ] Record exact month-clock/refit cutoffs, raw-eligible, complete-clock, scaler, PCA, L*,
-  final-PC and K-slot identities.
-- [ ] Produce the complete independent math/audit dossier for every required fold.
-- [ ] Independently reproduce all required small-matrix PCA and L-selection checks from persisted
-  artifacts without trusting production helper results.
-- [ ] Prove K2-K5 share the same final PC hash within each selection identity.
-- [ ] Reconcile source rows, timestamps, package/model identities and audit hashes exactly.
-- [ ] Record zero unexplained numerical-audit errors under the new contract.
-- [ ] Historical v4/raw+PCA/teacher runs are not accepted as evidence.
-- [ ] No model publication occurs in this PR.
+- [ ] Query the current PostgreSQL source read-only and capture exact source/catalog identities.
+- [ ] Report discovered feature count, core/transformation counts, quality survivors, PCs by family,
+  correlation representatives and planned SFFS candidate counts.
+- [ ] Prove every feature used by the run has canonical provenance.
+- [ ] Run at least three consecutive closed-month outer folds when the source history permits.
+- [ ] Do not mutate PostgreSQL, MLflow registry aliases or production model versions.
+- [ ] Archive exact DuckDB local-state digest and feature-selection profile hash.
 
-### PR-504 — External MLflow PCA-only evidence completeness proof
+### PR-504 — Verify external MLflow feature-selection evidence completeness
 
-**Type:** external QA  
-**Depends on:** PR-503 and explicit namespace decision
+**Type:** external QA / tracking  
+**Depends on:** PR-503 and explicit MLflow namespace authorization
 
 #### Acceptance
 
-- [ ] Resolve historical experiment namespace handling by explicit operator decision; no silent
-  deletion.
-- [ ] Verify the fresh PR-503 run against the PCA-only metric/artifact catalog.
-- [ ] Verify month-clock/refit, eligible-set, scaler, loadings, explained-variance, L/elbow,
-  K-slot and plot artifacts.
-- [ ] Verify exact dataset/model/PC lineage and metric identity.
-- [ ] Verify artifact hashes, sizes and freshness against the same evaluation identity.
-- [ ] Prove historical clustering/teacher runs cannot satisfy PCA-only completeness.
-- [ ] No production alias promotion occurs.
+- [ ] Run the canonical pipeline in the explicitly authorized MLflow experiment/namespace.
+- [ ] Verify every preprocessing, correlation, SFFS, ablation, cumulative-statistics and HMM
+  diagnostic artifact required by the contract.
+- [ ] Read back all metric/table/plot artifact hashes and bind them to source/fold/package identity.
+- [ ] Compare MLflow cumulative plots against the authoritative local DuckDB statistics.
+- [ ] Historical runs from superseded selectors cannot satisfy new-profile completeness.
+- [ ] No registry alias mutation occurs.
 
-### PR-505 — External registry and compare-and-swap durability
+### PR-505 — External package, registry and compare-and-swap durability
 
-**Type:** external QA / registry safety  
+**Type:** external QA / lifecycle  
 **Depends on:** PR-504
 
 #### Acceptance
 
-- [ ] Verify the complete registry naming/version matrix for every eligible K slot.
-- [ ] Every K version binds the same PCA-only final PC hash for its selection identity.
-- [ ] Preserve immutable registration and audited compare-and-swap promotion semantics.
-- [ ] Failed registration/promotion cannot mutate existing aliases.
-- [ ] Process-kill/retry leaves no partial alias/version state.
-- [ ] Retry is idempotent for the same immutable package identity.
-- [ ] Conflicting package identity is rejected rather than overwritten.
-- [ ] Ineligible K creates no version or alias.
-- [ ] Historical v4 versions cannot masquerade as PCA-only versions.
+- [ ] Package each eligible K/family slot with its exact selected semantic feature tuple,
+  fold-fitted core scalers/family PCA state and profile hash.
+- [ ] Readback reconstructs the same observation vector order and package digest.
+- [ ] Registry writes are idempotent for identical package identity.
+- [ ] Failed compare-and-swap leaves all existing aliases unchanged.
+- [ ] Lifecycle recommendations remain metadata only and cannot trigger PostgreSQL feature drops.
+- [ ] Historical package versions cannot masquerade as the new profile.
 
-### PR-506 — Authorized external publication and readback
+### PR-506 — Authorized publication and independent readback
 
-**Type:** final external gate  
-**Depends on:** PR-505
+**Type:** external publication / final acceptance  
+**Depends on:** PR-505  
+**Requires:** explicit operator authorization
 
 #### Acceptance
 
 - [ ] PR-503, PR-504 and PR-505 are green first.
-- [ ] Publish only explicitly authorized PCA-only packages.
-- [ ] Read back registered model names, versions, aliases, source lineage, train-through month,
-  exact month-end cutoff, effective calendar month, scaler/PCA hashes, final PC tuple/hash, L*,
-  K, family and package digest from NAS MLflow.
-- [ ] Verify every published K slot binds the expected common final PC tuple/hash.
+- [ ] Publish only explicitly authorized packages produced by the canonical new pipeline.
+- [ ] Independently read back model version, aliases, source identity, closed-month cutoff,
+  feature-selection profile, selected tuple, PCA state, representative evidence, K/family and
+  package digest.
 - [ ] Verify publication is idempotent for the same package identity.
 - [ ] Failed readback/promotion leaves prior alias state unchanged.
 - [ ] Champion promotion remains an explicit operator action.
@@ -914,41 +931,59 @@ No PR in this phase is acceptance evidence until PR-495 is green.
 
 ### Active dependency graph
 
-```text
+~~~text
 PR-448
   -> 449 -> 450 -> 451 -> 452 -> 453 -> 454
   -> 507 -> 508
   -> 476 -> 477 -> 478 -> 479 -> 480 -> 481 -> 482 -> 483
   -> 484 -> 485 -> 486 -> 487 -> 488 -> 489
-  -> 490 -> 491 -> 492 -> 493 -> 494 -> 495
-  -> 496 -> 497 -> 498 -> 499 -> 500 -> 501 -> 502
+  -> 490 -> 491 -> 492 -> 493 -> 494 -> 495 -> 496 -> 497
+  -> 498 -> 499 -> 500 -> 501 -> 502
   -> 503 -> 504 -> 505 -> 506
-```
+~~~
 
-Planning PRs PR-232, PR-250, PR-423..PR-430, PR-455..PR-475 are superseded by the PCA-only
-plan and are not active execution items.
+Planning PRs PR-232, PR-250, PR-423..PR-430, PR-455..PR-475 and the previous contents
+of PR-476..PR-506 describing the PCA-only-prefix architecture are superseded and are not active
+execution items.
 
 ---
 
 ## Current architectural decisions and non-goals
 
-- **Target selection redesign:** PR-507/PR-508 plus PR-476–PR-506 replace the raw+PCA/clustering/medoid/teacher architecture with a PCA-only HMM input path. Raw features are quality-filtered on TRAIN, standardized on TRAIN, compressed into a fixed safe reference PCA basis, and only PC prefixes may enter HMMs. L* is selected from causal same-K OOS regime-preservation evidence; K=2..5 share one final PC prefix. The current v4 runtime remains historical/current only until the controlled cutover in PR-494.
-- **Canonical live/evaluation cadence:** the target profile refits the complete adaptive pipeline once after each `Europe/Berlin` calendar month closes. The fitted scaler/PCA/L*/HMM package is frozen for the immediately following calendar month. Inner and Outer walk-forward use the same month-aligned cadence; partial final months are excluded from OOS evidence and midmonth deployment requests resolve to the latest closed-month cutoff.
-- Only **Xetra v4** is active. Legacy v1-v3 evaluation/package/serving compatibility is
-  retired; Git history is the archive.
-- Current v4 still uses the historical raw-plus-generated-PCA universe until PR-494. The target profile is PCA-only at the HMM boundary: raw features are PCA inputs, never HMM inputs.
-- The target path runs raw TRAIN quality/common-support checks before scaler/PCA fit, retains strict no-imputation semantics, and treats insufficient joint complete-case support as typed statistical invalidity.
+- **Target selection redesign:** PR-507/PR-508 plus the rewritten PR-476–PR-506 define the
+  canonical scalable feature pipeline: TRAIN-only quality -> provenance split -> family PCA for
+  transformations -> global stable absolute-Pearson correlation leaders across core+PCs -> per-K
+  HMM SFFS -> final ablation -> frozen next-month package.
+- **Core vs transformations:** core features remain direct interpretable candidates. Generated
+  transformations never enter the HMM directly; they are represented only by family PCs.
+- **PCA semantics:** PCA is family-local, TRAIN-only, rank-limited and capped at eight PCs per
+  family. Explained variance is diagnostic only.
+- **Correlation semantics:** correlation pruning removes redundancy only. It is global across all
+  surviving core features and family PCs, uses absolute Pearson 0.95 plus three-subwindow stability
+  0.90, and uses direct leader-neighbor removal rather than transitive connected components.
+- **HMM feature search:** SFFS is the only combinatorial feature-subset search. It is capped at ten
+  inputs per K, uses process-parallel candidate fits and a dimension-independent score; raw PLL/AIC/
+  BIC never compare different feature dimensions.
+- **Metadata:** local DuckDB under the configured state root is the durable feature-selection memory.
+  MLflow is the visual/metric audit trail and may be reconstructed from committed metadata.
+- **Feature cleanup:** the automated pipeline only recommends lifecycle states. It never drops or
+  alters PostgreSQL feature columns. Physical deletion remains a separate operator-approved
+  maintenance action.
+- **Canonical live/evaluation cadence:** the complete pipeline refits once after each Europe/Berlin
+  calendar month closes and is frozen for the immediately following complete calendar month.
+- Only **Xetra v4** is active. Legacy v1-v3 evaluation/package/serving compatibility is retired;
+  Git history is the archive.
 - Production packages are published to the external NAS MLflow service at
-  `http://10.10.1.3:5000`; local FileStore registration is not a production fallback.
-- Feature PostgreSQL and MLflow are external dependencies; Docker/Compose services do
-  not belong to this repository.
-- CPU-bound production work uses available affinity/cgroup-aware capacity by default;
-  explicit worker counts are operator/test overrides.
-- The full Xetra v4 evaluator is intentionally **non-resumable**. Interrupted full runs
-  restart from the beginning. Retry/resume semantics remain limited to the dedicated
-  metric-export harness.
-- State identities are fold/model-version local according to the v4 contract; semantic
-  labels must not leak into discovery or statistical ranking.
+  http://10.10.1.3:5000; local FileStore is used for hermetic QA.
+- Feature PostgreSQL and MLflow are external dependencies; Docker/Compose services do not belong to
+  this repository.
+- CPU-bound production work uses the existing affinity/cgroup-aware process backend. Native
+  BLAS/OpenMP threads remain capped at one per worker. No Spark/Ray layer is introduced.
+- The full Xetra v4 evaluator remains intentionally non-resumable. Interrupted full runs restart
+  from the beginning; local DuckDB fold metadata is committed transactionally only for completed
+  fold-selection results.
+- State identities are fold/model-version local; semantic labels must not leak into discovery,
+  correlation pruning or statistical ranking.
 
 ## Current external state snapshot
 
@@ -1004,7 +1039,7 @@ dominate the active backlog.
 
 ### Closed without merge / superseded
 
-- Active planning PRs PR-232, PR-250, PR-423–PR-430 and PR-455–PR-475 were superseded by the PCA-only architecture plan PR-476–PR-506; they are retained only in Git/GitHub history and must not be implemented from this backlog.
+- Planning PRs PR-232, PR-250, PR-423–PR-430, PR-455–PR-475 and the former PCA-only-prefix contents of PR-476–PR-506 are superseded by the rewritten scalable feature-selection plan; superseded definitions survive only in Git/GitHub history and must not be implemented from old text.
 - GitHub #277, #284 and #317 were closed without merge and are superseded by later
   merged work.
 - Draft planning IDs PR-186–PR-206 are superseded and must not be implemented.
