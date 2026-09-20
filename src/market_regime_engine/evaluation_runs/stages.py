@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import TypeVar, cast
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation_runs.contracts import (
     EvaluationRunIdentity,
     WorkUnitIdentity,
@@ -31,7 +32,7 @@ class StageCheckpoint:
     scope: str
 
     @staticmethod
-    def _domain_invalid_payload(exc: ValueError | TypeError) -> bytes:
+    def _domain_invalid_payload(exc: RecoverableEvaluationInvalidity) -> bytes:
         return canonical_json(
             {
                 "status": WorkUnitStatus.DOMAIN_INVALID.value,
@@ -52,7 +53,7 @@ class StageCheckpoint:
             or not record["reason"]
         ):
             raise ValueError("cached domain-invalid stage payload is incompatible")
-        raise ValueError(record["reason"])
+        raise RecoverableEvaluationInvalidity(record["reason"])
 
     def _unit(
         self,
@@ -91,7 +92,7 @@ class StageCheckpoint:
             raise RuntimeError(f"stage work unit is currently claimed: {unit.key}")
         try:
             value = compute()
-        except (ValueError, TypeError) as exc:
+        except RecoverableEvaluationInvalidity as exc:
             self.store.complete_work_unit(
                 self.identity,
                 unit,

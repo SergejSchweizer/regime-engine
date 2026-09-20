@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 import market_regime_engine.evaluations.k_feature_selection as module
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 
 
 def test_k_feature_selection_rejects_invalid_task_contracts() -> None:
@@ -45,7 +46,7 @@ def test_k_feature_selection_rejects_invalid_task_contracts() -> None:
         )
 
 
-def test_k_feature_selection_runs_ordered_tasks_and_captures_failures() -> None:
+def test_k_feature_selection_preserves_unexpected_failures() -> None:
     cutoff = datetime(2024, 1, 1, tzinfo=UTC)
     frame = pd.DataFrame({"timestamp_m1": [cutoff], "f0": [1.0]})
 
@@ -55,18 +56,37 @@ def test_k_feature_selection_runs_ordered_tasks_and_captures_failures() -> None:
             raise RuntimeError("synthetic failure")
         return None
 
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        module.run_k_feature_selection(
+            frame,
+            source_snapshot_id="snapshot",
+            validation_cutoff=cutoff,
+            selector=selector,
+            requested_state_counts=(2, 3),
+            max_workers=1,
+        )
+
+
+def test_k_feature_selection_captures_only_typed_invalidity() -> None:
+    cutoff = datetime(2024, 1, 1, tzinfo=UTC)
+    frame = pd.DataFrame({"timestamp_m1": [cutoff], "f0": [1.0]})
+
+    def selector(_rows: pd.DataFrame, **_: object) -> None:
+        raise RecoverableEvaluationInvalidity("no eligible statistical result")
+
     results = module.run_k_feature_selection(
         frame,
         source_snapshot_id="snapshot",
         validation_cutoff=cutoff,
         selector=selector,
-        requested_state_counts=(2, 3),
+        requested_state_counts=(2,),
         max_workers=1,
     )
-    assert tuple(result.state_count for result in results) == (2, 3)
     assert results[0].eligible is False
-    assert "no eligible" in (results[0].rejection_reason or "")
-    assert results[1].rejection_reason == "RuntimeError: synthetic failure"
+    assert (
+        results[0].rejection_reason
+        == "RecoverableEvaluationInvalidity: no eligible statistical result"
+    )
 
 
 def test_k_feature_selection_real_wrapper_validates_and_delegates(

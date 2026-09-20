@@ -9,6 +9,7 @@ from math import isclose, isfinite
 import numpy as np
 import numpy.typing as npt
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact, fit_standard_scaler
 
 ArrayF64 = npt.NDArray[np.float64]
@@ -70,7 +71,9 @@ class PCAArtifact:
             raise ValueError("explained variance ratios must be finite, nonnegative and sum to one")
         cumulative = float(sum(self.explained_variance_ratio[: self.retained_component_count]))
         if cumulative + _ORTHONORMAL_TOLERANCE < self.variance_threshold:
-            raise ValueError("retained PCA components do not meet the variance threshold")
+            raise RecoverableEvaluationInvalidity(
+                "retained PCA components do not meet the variance threshold"
+            )
         matrix = np.asarray(self.components, dtype=np.float64)
         if not np.allclose(
             matrix @ matrix.T,

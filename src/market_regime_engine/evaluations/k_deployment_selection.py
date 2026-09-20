@@ -10,6 +10,7 @@ from itertools import pairwise
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.contracts.core import K_CHAMPION_POLICY_VERSION
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluations.k_champion_contract import (
     KChampionSelection,
     feature_order_hash,
@@ -197,28 +198,42 @@ def _run_slot(
     try:
         selection = selector(source_rows, slot_id=slot_id, deployment_cutoff=cutoff)
         if selection is None:
-            raise ValueError("deployment selector returned no configuration")
+            raise RecoverableEvaluationInvalidity("deployment selector returned no configuration")
         if selection.slot_id != slot_id:
-            raise ValueError("deployment selector returned a different K slot")
+            raise RecoverableEvaluationInvalidity("deployment selector returned a different K slot")
         if selection.source_snapshot_id != source_snapshot_id:
-            raise ValueError("deployment selection source identity differs from validation")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection source identity differs from validation"
+            )
         if selection.validation_cutoff != validation_cutoff:
-            raise ValueError("deployment selection validation cutoff differs from validation")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection validation cutoff differs from validation"
+            )
         if selection.deployment_cutoff != cutoff:
-            raise ValueError("deployment selection cutoff differs from source maximum")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection cutoff differs from source maximum"
+            )
         if not selection.source_build_id or not selection.source_catalog_hash:
-            raise ValueError("deployment selection is missing source build/catalog identity")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection is missing source build/catalog identity"
+            )
         if selection.source_build_id != source_build_id:
-            raise ValueError("deployment selection source build differs from deployment source")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection source build differs from deployment source"
+            )
         if selection.source_catalog_hash != source_catalog_hash:
-            raise ValueError("deployment selection source catalog differs from deployment source")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection source catalog differs from deployment source"
+            )
         if selection.policy_id != "k_champion_portfolio":
-            raise ValueError("deployment selection policy identifier is unsupported")
+            raise RecoverableEvaluationInvalidity(
+                "deployment selection policy identifier is unsupported"
+            )
         missing_features = tuple(
             feature for feature in selection.feature_order if feature not in source_rows.columns
         )
         if missing_features:
-            raise ValueError(
+            raise RecoverableEvaluationInvalidity(
                 "deployment selection features are absent from the source: "
                 + ", ".join(missing_features)
             )
@@ -226,11 +241,15 @@ def _run_slot(
         if not isinstance(artifact, KDeploymentArtifact):
             raise TypeError("K deployment refitter must return KDeploymentArtifact")
         if artifact.source_snapshot_id != source_snapshot_id:
-            raise ValueError("deployment artifact source identity differs from validation")
+            raise RecoverableEvaluationInvalidity(
+                "deployment artifact source identity differs from validation"
+            )
         if artifact.deployment_cutoff != cutoff:
-            raise ValueError("deployment artifact cutoff differs from source maximum")
+            raise RecoverableEvaluationInvalidity(
+                "deployment artifact cutoff differs from source maximum"
+            )
         return KDeploymentSlotResult(slot_id, True, selection, artifact)
-    except Exception as exc:
+    except RecoverableEvaluationInvalidity as exc:
         return KDeploymentSlotResult(
             slot_id=slot_id,
             eligible=False,

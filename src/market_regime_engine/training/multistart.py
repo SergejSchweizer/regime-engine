@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
@@ -127,17 +128,13 @@ def _evaluate_start(
         if not isfinite(result.train_log_likelihood):
             return _failure(seed, "non-finite TRAIN log likelihood", converged=True), None
         return _successful_diagnostic(result), result
-    except (ValueError, TypeError) as exc:
-        # These are deterministic domain/contract failures.  They are safe
-        # to cache and make the same seed terminally invalid on a restart.
+    except RecoverableEvaluationInvalidity as exc:
+        # Only an explicitly typed statistical invalidity is safe to cache.
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
-    except Exception as exc:
-        # An adapter/backend failure is not a statistical result.  With a
-        # checkpoint it must remain retryable; without one retain the
-        # historical no-checkpoint behavior of counting it as a failed start.
-        if retryable_technical_failure:
-            raise
-        return _failure(seed, f"{type(exc).__name__}: {exc}"), None
+    except Exception:
+        # An unexpected adapter/backend failure is never statistical evidence.
+        # It must reach the parent unchanged, regardless of checkpoint mode.
+        raise
 
 
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
@@ -300,7 +297,7 @@ def run_multistart(
     valid_count = len(valid_results)
     success_rate = valid_count / len(MULTISTART_SEEDS)
     if valid_count < MINIMUM_VALID_STARTS or success_rate < MINIMUM_SUCCESS_RATE:
-        raise ValueError(
+        raise RecoverableEvaluationInvalidity(
             "multistart gate failed: "
             f"valid_starts={valid_count}/8 success_rate={success_rate:.6f}; "
             f"failures={[item.failure_reason for item in diagnostics if not item.success]}"

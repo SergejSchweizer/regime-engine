@@ -17,6 +17,7 @@ from typing import cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.model_clock import (
     build_model_clock_preflight,
     require_model_clock_eligible,
@@ -129,7 +130,9 @@ def _fixed_k_teacher_reference(
             if not fold.valid and fold.failure_reason
         )
         detail = "; ".join(reasons[:3]) if reasons else "no valid fold diagnostics"
-        raise ValueError(f"fixed-K teacher has no valid inner-fold support: {detail}")
+        raise RecoverableEvaluationInvalidity(
+            f"fixed-K teacher has no valid inner-fold support: {detail}"
+        )
     return ProvisionalTeacherReference(
         candidate_id=evaluation.candidate_id,
         state_count=evaluation.state_count,
@@ -187,7 +190,7 @@ def select_k_specific_feature_configuration(
         raise ValueError("source_build_id differs from catalog lineage")
     timestamps = tuple(row.timestamp for row in snapshot.rows)
     if not timestamps or timestamps[-1] != validation_cutoff:
-        raise ValueError("TRAIN rows must end exactly at validation_cutoff")
+        raise RecoverableEvaluationInvalidity("TRAIN rows must end exactly at validation_cutoff")
     definition_hash = feature_selection_definition_hash or content_hash(
         (K_FEATURE_SELECTION_VERSION, profile.profile_hash, state_count, "definition")
     )
@@ -260,7 +263,7 @@ def select_k_specific_feature_configuration(
     )
     selected_prefix = prefixes.evaluations[prefixes.selected_prefix_length - 2]
     if not selected_prefix.valid:
-        raise ValueError("fixed-K prefix selection returned an invalid prefix")
+        raise RecoverableEvaluationInvalidity("fixed-K prefix selection returned an invalid prefix")
     discovery_hash = content_hash(
         (
             catalog.catalog_hash,
@@ -390,7 +393,7 @@ def _run_task(
             payload.prefix_evidence_hash,
             True,
         )
-    except Exception as exc:
+    except RecoverableEvaluationInvalidity as exc:
         return KFeatureSelectionResult(
             state_count,
             source_snapshot_id,

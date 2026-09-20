@@ -8,6 +8,7 @@ from math import nan
 import pytest
 
 import market_regime_engine.training.multistart as multistart_module
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.training.multistart import (
@@ -91,7 +92,7 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     outcomes: dict[int, FitResult | Exception] = {
         seed: fit_result(seed, float(index)) for index, seed in enumerate(MULTISTART_SEEDS)
     }
-    outcomes[107] = RuntimeError("numerical failure")
+    outcomes[107] = RecoverableEvaluationInvalidity("numerical failure")
     outcomes[131] = fit_result(131, 100.0, converged=False)
 
     result = run_multistart(
@@ -102,7 +103,9 @@ def test_exact_seed_set_gates_and_train_loglik_winner() -> None:
     assert result.winner.seed == 89
     assert result.winner.em_log_likelihood_history == tuple(float(index) for index in range(17))
     assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS
-    assert result.diagnostics[6].failure_reason == "RuntimeError: numerical failure"
+    assert result.diagnostics[6].failure_reason == (
+        "RecoverableEvaluationInvalidity: numerical failure"
+    )
     assert result.diagnostics[7].failure_reason == "not converged"
 
 
@@ -152,7 +155,7 @@ def test_anchored_winner_requires_successful_starts() -> None:
 
 def test_fewer_than_six_valid_starts_fails_with_failure_evidence() -> None:
     outcomes: dict[int, FitResult | Exception] = {
-        seed: RuntimeError(f"fail-{seed}") for seed in MULTISTART_SEEDS
+        seed: RecoverableEvaluationInvalidity(f"fail-{seed}") for seed in MULTISTART_SEEDS
     }
     for seed in MULTISTART_SEEDS[:5]:
         outcomes[seed] = fit_result(seed, float(seed))
@@ -167,7 +170,7 @@ def test_invalid_result_paths_are_counted_as_failed_starts() -> None:
     }
     outcomes[11] = replace(outcomes[11], iterations=0, em_log_likelihood_history=())  # type: ignore[arg-type]
     outcomes[23] = replace(outcomes[23], train_log_likelihood=nan)  # type: ignore[arg-type]
-    outcomes[37] = replace(outcomes[37], seed=999)  # type: ignore[arg-type]
+    outcomes[37] = replace(outcomes[37], converged=False)
     with pytest.raises(ValueError, match="valid_starts=5/8"):
         run_multistart([[0.0]], state_count=4, adapter_factory=factory(outcomes), max_workers=1)
 
@@ -279,13 +282,12 @@ def test_multistart_cpu_slot_reservation_is_bounded() -> None:
         assert reserved <= multistart_module._CPU_SLOT_COUNT
 
 
-def test_evaluate_start_rejects_deterministic_adapter_contract_failures() -> None:
+def test_evaluate_start_does_not_hide_unexpected_adapter_contract_failures() -> None:
     mismatch = fit_result(23, 1.0)
-    diagnostic, result = _evaluate_start(
-        [[0.0]],
-        state_count=2,
-        adapter_factory=factory({11: mismatch}),
-        seed=11,
-    )
-    assert result is None
-    assert diagnostic.failure_reason == "ValueError: adapter returned a mismatched seed"
+    with pytest.raises(ValueError, match="mismatched seed"):
+        _evaluate_start(
+            [[0.0]],
+            state_count=2,
+            adapter_factory=factory({11: mismatch}),
+            seed=11,
+        )

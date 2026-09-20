@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.contracts.core import K_CHAMPION_POLICY_VERSION
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
 from market_regime_engine.evaluations.k_champion_contract import (
@@ -405,18 +406,24 @@ def _run_outer_task(
                 reason="K-slot selector returned no champion",
             )
         if selection.slot_id != slot_id:
-            raise ValueError("selector returned a different K slot")
+            raise RecoverableEvaluationInvalidity("selector returned a different K slot")
         if selection.source_snapshot_id != source_snapshot_id:
-            raise ValueError("selection source snapshot differs from outer policy")
+            raise RecoverableEvaluationInvalidity(
+                "selection source snapshot differs from outer policy"
+            )
         if (
             selection.profile_id != profile_id
             or selection.profile_config_version != profile_config_version
         ):
-            raise ValueError("selection profile differs from outer policy")
+            raise RecoverableEvaluationInvalidity("selection profile differs from outer policy")
         if selection.policy_version != K_CHAMPION_POLICY_VERSION:
-            raise ValueError("selection policy version differs from outer policy")
+            raise RecoverableEvaluationInvalidity(
+                "selection policy version differs from outer policy"
+            )
         if selection.validation_cutoff != fold.train_end:
-            raise ValueError("selection validation cutoff must equal the Outer-TRAIN cutoff")
+            raise RecoverableEvaluationInvalidity(
+                "selection validation cutoff must equal the Outer-TRAIN cutoff"
+            )
         evaluation = evaluator(
             train_rows,
             test_rows,
@@ -465,7 +472,7 @@ def _run_outer_task(
             stability=float(evaluation.stability),
             valid=True,
         )
-    except Exception as exc:
+    except RecoverableEvaluationInvalidity as exc:
         return _invalid_evidence(
             slot_id=slot_id,
             fold=fold,

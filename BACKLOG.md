@@ -68,8 +68,8 @@ PR-448
 
 ### Current repository and external state
 
-- `origin/main` is `758c5a7`; local working branch is
-  `pr/PR-452-integration-gating-qa`, based on it.
+- `origin/main` is `026b3a2`; local working branch is
+  `pr/PR-453-evaluation-invalidity-boundary`, based on it.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
@@ -83,14 +83,13 @@ PR-448
   schema is provisioned and its lineage is revalidated.
 - PR-449 is merged as GitHub PR #448 at `56885cb`; PR-450 is merged as
   GitHub PR #449 at `b0856c7`; PR-451 is merged as GitHub PR #450 at
-  `758c5a7`. Their implementation branches are retained
+  `758c5a7`; PR-452 is merged as GitHub PR #451 at `026b3a2`. Their
+  implementation branches are retained
   only as rebased pointers to `origin/main` for the current branch-retention
   policy.
-- **Current active implementation:** PR-452 is branch
-  `pr/PR-452-integration-gating-qa`; focused QA is green locally and the
-  GitHub PR is pending. Both authoritative workflows contain a dedicated
-  hermetic integration lane and require its success in the terminal gate.
-  Full evaluation is intentionally not run.
+- **Current active implementation:** PR-453 is branch
+  `pr/PR-453-evaluation-invalidity-boundary`; focused unit tests are green
+  locally. Full evaluation is intentionally not run.
 
 ---
 
@@ -177,7 +176,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-452 — QA: prove integration gating is mandatory and hermetic
 
-**Status:** IMPLEMENTATION COMPLETE — focused QA green locally; GitHub PR pending
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #451 at `026b3a2`; all gates green
 
 **Branch:** `pr/PR-452-integration-gating-qa`
 
@@ -196,22 +195,26 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-453 — Separate statistical invalidity from unexpected software failures
 
+**Status:** IMPLEMENTATION COMPLETE — branch `pr/PR-453-evaluation-invalidity-boundary`; focused unit/integration tests and the local hermetic gate are green; GitHub PR pending
+
+**Branch:** `pr/PR-453-evaluation-invalidity-boundary`
+
 **Type:** implementation / correctness
 **Depends on:** PR-452
 
 #### Acceptance
 
-- [ ] Introduce one explicit recoverable evaluation-invalidity base exception.
-- [ ] Only that typed family may become invalid fold/L/K evidence.
-- [ ] Generic `RuntimeError`, `KeyError`, `AssertionError`, `TypeError`, unrelated
+- [x] Introduce one explicit recoverable evaluation-invalidity base exception.
+- [x] Only that typed family may become invalid fold/L/K evidence.
+- [x] Generic `RuntimeError`, `KeyError`, `AssertionError`, `TypeError`, unrelated
   `ValueError`, `KeyboardInterrupt` and `SystemExit` cannot become statistical invalidity.
-- [ ] Expected data/statistical gates translate to the typed exception at their owning boundary.
-- [ ] Process workers preserve failure classification in the parent.
-- [ ] Unexpected failures can never merely reduce a valid-fold rate.
-- [ ] Persisted recoverable reasons are deterministic and contain no traceback, address,
+- [x] Expected data/statistical gates translate to the typed exception at their owning boundary.
+- [x] Process workers preserve failure classification in the parent.
+- [x] Unexpected failures can never merely reduce a valid-fold rate.
+- [x] Persisted recoverable reasons are deterministic and contain no traceback, address,
   credential or raw vector.
-- [ ] Statistical thresholds/seeds/ranking semantics are otherwise unchanged.
-- [ ] No blanket `except Exception` emits eligibility evidence.
+- [x] Statistical thresholds/seeds/ranking semantics are otherwise unchanged.
+- [x] No blanket `except Exception` emits eligibility evidence.
 
 ### PR-454 — QA: adversarial failure-classification matrix
 

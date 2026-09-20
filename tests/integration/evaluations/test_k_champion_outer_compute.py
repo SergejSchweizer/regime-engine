@@ -9,6 +9,7 @@ import pytest
 
 import market_regime_engine.evaluation.walk_forward as walk_forward
 from market_regime_engine.contracts import SourceLineage
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import (
     WalkForwardFold,
@@ -148,6 +149,12 @@ def _real_train_only_selector(train_rows, *, slot_id, fold):
         requested_state_counts=(state_count,),
         max_workers=1,
     )[0]
+    if selected.rejection_reason and selected.rejection_reason.startswith(
+        "RecoverableEvaluationInvalidity: "
+    ):
+        raise RecoverableEvaluationInvalidity(
+            selected.rejection_reason.removeprefix("RecoverableEvaluationInvalidity: ")
+        )
     return selected.selection
 
 
@@ -239,7 +246,12 @@ def _real_outer_refit(
     )
     fold_result = evaluation.folds[0]
     if not fold_result.valid:
-        raise ValueError(fold_result.failure_reason or "real HMM outer refit failed")
+        reason = fold_result.failure_reason or "real HMM outer refit failed"
+        if reason.startswith("RecoverableEvaluationInvalidity: "):
+            raise RecoverableEvaluationInvalidity(
+                reason.removeprefix("RecoverableEvaluationInvalidity: ")
+            )
+        raise ValueError(reason)
     return KChampionFoldEvaluation(
         oos_timestamps=fold_result.oos_timestamps,
         oos_filtered_probabilities=fold_result.oos_filtered_probabilities,

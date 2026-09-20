@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import monotonic, sleep
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation_runs.contracts import (
     EvaluationRunIdentity,
     canonical_json,
@@ -21,9 +22,7 @@ from market_regime_engine.evaluation_runs.store import (
 )
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 
-
-class DomainInvalid(Exception):
-    """Raised by a compute callback for a deterministic terminal invalid result."""
+DomainInvalid = RecoverableEvaluationInvalidity
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +190,7 @@ class ResumableEvaluationExecutor:
                 if key in _terminal_keys:
                     return
                 if error is not None:
-                    if isinstance(error, DomainInvalid):
+                    if isinstance(error, RecoverableEvaluationInvalidity):
                         invalid_payload = canonical_json(
                             {"status": "DOMAIN_INVALID", "reason": str(error)}
                         )
@@ -328,5 +327,6 @@ class ResumableEvaluationExecutor:
 __all__ = [
     "DomainInvalid",
     "EvaluationExecutionResult",
+    "RecoverableEvaluationInvalidity",
     "ResumableEvaluationExecutor",
 ]

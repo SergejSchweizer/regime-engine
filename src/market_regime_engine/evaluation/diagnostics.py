@@ -10,6 +10,7 @@ from math import isfinite, log
 import numpy as np
 import numpy.typing as npt
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 
 MINIMUM_TRAIN_HARD_OCCUPANCY = 0.03
@@ -118,9 +119,9 @@ def occupancy(filtered_probabilities: npt.ArrayLike) -> OccupancyDiagnostics:
 def validate_train_occupancy(filtered_probabilities: npt.ArrayLike) -> OccupancyDiagnostics:
     result = occupancy(filtered_probabilities)
     if any(value < MINIMUM_TRAIN_HARD_OCCUPANCY for value in result.hard):
-        raise ValueError("TRAIN hard occupancy is below 0.03")
+        raise RecoverableEvaluationInvalidity("TRAIN hard occupancy is below 0.03")
     if any(value < MINIMUM_TRAIN_SOFT_OCCUPANCY for value in result.soft):
-        raise ValueError("TRAIN soft occupancy is below 0.05")
+        raise RecoverableEvaluationInvalidity("TRAIN soft occupancy is below 0.05")
     return result
 
 
@@ -181,18 +182,24 @@ def validate_full_covariances(artifact: GaussianHMMArtifact) -> CovarianceDiagno
     for covariance_rows in artifact.full_covariances:
         covariance = np.asarray(covariance_rows, dtype=np.float64)
         if covariance.shape != (dimension, dimension) or not np.all(np.isfinite(covariance)):
-            raise ValueError("full covariance must have exact finite d x d shape")
+            raise RecoverableEvaluationInvalidity(
+                "full covariance must have exact finite d x d shape"
+            )
         asymmetry = float(np.max(np.abs(covariance - covariance.T)))
         if asymmetry > COVARIANCE_ASYMMETRY_TOLERANCE:
-            raise ValueError("full covariance asymmetry exceeds 1e-10")
+            raise RecoverableEvaluationInvalidity("full covariance asymmetry exceeds 1e-10")
         diagonal_minimum = float(np.min(np.diag(covariance)))
         if diagonal_minimum < MINIMUM_COVARIANCE_DIAGONAL_VARIANCE:
-            raise ValueError("full covariance diagonal variance is below 1e-12")
+            raise RecoverableEvaluationInvalidity(
+                "full covariance diagonal variance is below 1e-12"
+            )
         symmetric = (covariance + covariance.T) / 2.0
         try:
             np.linalg.cholesky(symmetric)
         except np.linalg.LinAlgError as exc:
-            raise ValueError("full covariance must pass Cholesky without jitter") from exc
+            raise RecoverableEvaluationInvalidity(
+                "full covariance must pass Cholesky without jitter"
+            ) from exc
         asymmetries.append(asymmetry)
         minimum_variances.append(diagonal_minimum)
     return CovarianceDiagnostics(tuple(asymmetries), tuple(minimum_variances))

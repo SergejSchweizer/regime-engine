@@ -7,6 +7,8 @@ from math import isclose, isfinite
 
 import numpy as np
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
+
 _PROB_TOL = 1e-10
 _ASYMMETRY_TOL = 1e-10
 _MIN_VARIANCE = 1e-12
@@ -42,7 +44,7 @@ def _full_covariance(covariance: tuple[tuple[float, ...], ...], dimension: int, 
         matrix = np.asarray(covariance, dtype=np.float64)
         np.linalg.cholesky((matrix + matrix.T) / 2.0)
     except np.linalg.LinAlgError as exc:
-        raise ValueError(f"{name} must pass Cholesky without jitter") from exc
+        raise RecoverableEvaluationInvalidity(f"{name} must pass Cholesky without jitter") from exc
 
 
 @dataclass(frozen=True, slots=True)
