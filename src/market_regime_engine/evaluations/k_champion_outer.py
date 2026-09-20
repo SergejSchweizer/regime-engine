@@ -377,7 +377,6 @@ def _run_outer_task(
         str,
         int,
         str,
-        datetime,
         KSelectionCallback,
         KFoldEvaluationCallback,
     ],
@@ -391,7 +390,6 @@ def _run_outer_task(
         profile_id,
         profile_config_version,
         outer_plan_hash,
-        validation_cutoff,
         selector,
         evaluator,
     ) = task
@@ -417,8 +415,8 @@ def _run_outer_task(
             raise ValueError("selection profile differs from outer policy")
         if selection.policy_version != K_CHAMPION_POLICY_VERSION:
             raise ValueError("selection policy version differs from outer policy")
-        if selection.validation_cutoff != validation_cutoff:
-            raise ValueError("selection validation cutoff differs from outer policy")
+        if selection.validation_cutoff != fold.train_end:
+            raise ValueError("selection validation cutoff must equal the Outer-TRAIN cutoff")
         evaluation = evaluator(
             train_rows,
             test_rows,
@@ -602,7 +600,6 @@ def run_k_champion_outer_policy(
                     profile_id,
                     profile_config_version,
                     plan.plan_hash,
-                    validation_cutoff,
                     selector,
                     evaluator,
                 )
