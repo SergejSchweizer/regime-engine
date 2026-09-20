@@ -182,3 +182,68 @@ def test_k_plot_inputs_are_canonical_across_order_and_process_count() -> None:
         item.canonical_payload_hash for item in parallel
     )
     assert tuple(item.slot_id for item in serial) == ("k2", "k3", "k4", "k5")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"state_count": 1},
+        {"state_count": True},
+        {"slot_id": "k3", "state_count": 2},
+        {"feature_order": ()},
+        {"feature_order": ("f0", "f0")},
+        {"feature_order": ("f0", "")},
+        {"policy_version": "old"},
+        {"comparison_domain_id": "old"},
+        {"source_data_sha256": "not-a-hash"},
+        {"evaluation_plan_hash": "B" * 64},
+    ],
+)
+def test_k_slot_metadata_rejects_invalid_identity(changes: dict[str, object]) -> None:
+    values = {
+        "slot_id": "k2",
+        "state_count": 2,
+        "feature_order": ("f0", "f1"),
+        "policy_version": "k_champion_policy.v1",
+        "comparison_domain_id": "k_specific_shared_feature_vector.v1",
+        "source_build_id": "source-1",
+        "source_data_sha256": "a" * 64,
+        "evaluation_plan_hash": "b" * 64,
+    }
+    values.update(changes)
+    with pytest.raises(ValueError):
+        KSlotMetadata(**values)
+
+
+def test_k_slot_projection_rejects_selection_and_candidate_contract_violations() -> None:
+    candidates = tuple(
+        KCandidateMetricProjection(
+            logged_model_id=f"model-{family}",
+            model_family=family,
+            metadata=metadata(2),
+            metric_points=(MetricPoint("valid_fold_rate", 1.0, 0, 1),),
+        )
+        for family in ("gaussian_hmm", "gmm_hmm", "student_t_hmm")
+    )
+    with pytest.raises(ValueError, match="selected K LoggedModel"):
+        build_k_slot_projection(
+            candidates,
+            eligible=True,
+            selected_logged_model_id="missing",
+            selected_metric_points=candidates[0].metric_points,
+        )
+    with pytest.raises(ValueError, match="unavailable reason"):
+        build_k_slot_projection(
+            candidates,
+            eligible=True,
+            selected_logged_model_id=candidates[0].logged_model_id,
+            selected_metric_points=candidates[0].metric_points,
+            unavailable_reason="not eligible",
+        )
+    with pytest.raises(ValueError, match="ineligible"):
+        build_k_slot_projection(
+            candidates,
+            eligible=False,
+            selected_logged_model_id=candidates[0].logged_model_id,
+            selected_metric_points=candidates[0].metric_points,
+        )

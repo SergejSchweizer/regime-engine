@@ -81,6 +81,15 @@ PR-448
 - No production PostgreSQL, MLflow, model, registry or alias mutation has been
   performed. Full evaluation remains externally blocked until the source
   schema is provisioned and its lineage is revalidated.
+- **Current active implementation:** branch
+  `pr/PR-449-coverage-authority`, GitHub PR #448, current HEAD `d60c2a2`; workflow
+  thresholds and the CI contract now require 85%. Hermetic deployment,
+  executor, profile-resolution, MLflow-publishing, walk-forward tracking, and
+  K-deployment/K-family and snapshot-contract tests were added. The latest full local non-integration unit
+  lane measures 86% (`16212` statements; `1646` missing; 1015 tests passed); the tracking module
+  now measures 91% after its hermetic contract/error-path tests. The PR remains
+  open and ready to merge; the 85% gate is satisfied, while the repository remains below the
+  former 90% target by explicit user direction.
 
 ---
 
@@ -108,32 +117,34 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ## Phase 1 — Repository and failure-semantics foundations
 
-### PR-449 — Make 90% coverage the single CI authority
+### PR-449 — Make 85% coverage the single CI authority
+
+**Status:** ACCEPTANCE COMPLETE — verified locally and by GitHub CI on commit `d60c2a2`
 
 **Type:** implementation / CI correctness
 **Depends on:** PR-448
 
 #### Acceptance
 
-- [ ] `tool.coverage.report.fail_under = 90` remains the sole canonical coverage threshold.
-- [ ] Merge and push workflows contain no lower command-line override.
-- [ ] Merge and push use equivalent coverage commands and data-file handling.
-- [ ] Existing multiprocessing coverage combine behavior is preserved.
-- [ ] No cross-job coverage artifact plumbing is introduced.
-- [ ] Test selection is unchanged in this PR.
-- [ ] A local threshold mutation below 90 fails before merge.
-- [ ] Ruff, formatting, strict mypy and the unit lane pass.
+- [x] `tool.coverage.report.fail_under = 85` remains the sole canonical coverage threshold.
+- [x] Merge and push workflows contain no lower command-line override.
+- [x] Merge and push use equivalent coverage commands and data-file handling.
+- [x] Existing multiprocessing coverage combine behavior is preserved.
+- [x] No cross-job coverage artifact plumbing is introduced.
+- [x] Test selection is unchanged in this PR.
+- [x] The CI contract asserts that a threshold mutation below 85 fails before merge.
+- [x] Ruff, formatting, strict mypy and the unit lane pass; GitHub Merge Gate is green.
 
-### PR-450 — QA: regression-proof the 90% coverage contract
+### PR-450 — QA: regression-proof the 85% coverage contract
 
 **Type:** QA only
 **Depends on:** PR-449
 
 #### Acceptance
 
-- [ ] Read `pyproject.toml` and prove the threshold is exactly 90.
-- [ ] Reject any explicit merge/push `--fail-under` lower than 90.
-- [ ] Mutations to 89 and 80 fail QA.
+- [ ] Read `pyproject.toml` and prove the threshold is exactly 85.
+- [ ] Reject any explicit merge/push `--fail-under` lower than 85.
+- [ ] Mutations to 84 and 80 fail QA.
 - [ ] Prove merge/push coverage commands are semantically equivalent.
 - [ ] Prove no cross-job coverage artifact transfer is required.
 - [ ] QA is hermetic and uses no network service or secret.
@@ -1391,7 +1402,7 @@ behavior.
 - [ ] Shared parallel-execution, DuckDB and MLflow abstractions remain single-source and are not
   duplicated during refactor.
 - [ ] Refactor produces identical canonical statistical/package hashes on pinned fixtures.
-- [ ] Ruff, formatting, strict mypy and required unit/integration tests pass at 90% coverage.
+- [ ] Ruff, formatting, strict mypy and required unit/integration tests pass at 85% coverage.
 
 ### PR-531 — QA: canonical-only import graph, dead-code and refactor proof
 

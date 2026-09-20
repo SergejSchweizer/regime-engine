@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 
+import market_regime_engine.evaluations.teacher_reference as module
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluations.teacher_reference import (
     FrozenTeacherRefit,
@@ -77,6 +79,94 @@ def test_reference_contains_only_aligned_causal_valid_inner_test_rows() -> None:
     assert reference.valid_inner_fold_ids == ("fold_001",)
     assert reference.prototype_features == FEATURES
     assert reference.reference_hash != ""
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda evaluation: setattr(evaluation, "selection", None), "without a selected"),
+        (
+            lambda evaluation: setattr(
+                evaluation.candidate_evaluations[0].valid_folds[0],
+                "oos_filtered_probabilities",
+                ((0.8, 0.2),),
+            ),
+            "equal length",
+        ),
+        (
+            lambda evaluation: setattr(
+                evaluation.candidate_evaluations[0].valid_folds[0],
+                "oos_timestamps",
+                (datetime(2020, 1, 1), datetime(2020, 1, 2, tzinfo=UTC)),
+            ),
+            "timezone-aware",
+        ),
+        (
+            lambda evaluation: setattr(
+                evaluation.candidate_evaluations[0].valid_folds[0],
+                "oos_timestamps",
+                (START, START),
+            ),
+            "strictly increasing",
+        ),
+        (
+            lambda evaluation: setattr(
+                evaluation.candidate_evaluations[0].valid_folds[0],
+                "oos_filtered_probabilities",
+                ((1.2, -0.2), (0.1, 0.9)),
+            ),
+            "finite and normalized",
+        ),
+    ],
+)
+def test_reference_evaluation_rejects_invalid_evidence(mutate, message: str) -> None:
+    evaluation = teacher_evaluation()
+    mutate(evaluation)
+    with pytest.raises(ValueError, match=message):
+        build_provisional_teacher_reference(evaluation)
+
+
+def test_reference_evaluation_rejects_missing_winner_rows_and_artifact() -> None:
+    evaluation = teacher_evaluation()
+    evaluation.selection.champion_candidate_id = "missing"
+    with pytest.raises(ValueError, match="missing from evaluations"):
+        build_provisional_teacher_reference(evaluation)
+
+    evaluation = teacher_evaluation()
+    evaluation.candidate_evaluations[0].valid_folds = ()
+    with pytest.raises(ValueError, match="no valid inner TEST"):
+        build_provisional_teacher_reference(evaluation)
+
+    evaluation = teacher_evaluation()
+    evaluation.candidate_evaluations[0].valid_folds[0].model_artifact = None
+    with pytest.raises(ValueError, match="missing model artifact"):
+        build_provisional_teacher_reference(evaluation)
+
+
+def test_complete_case_validation_is_fail_closed() -> None:
+    timestamps = [START, START + timedelta(days=1)]
+    with pytest.raises(ValueError, match="contain timestamp"):
+        module._complete_case(pd.DataFrame({FEATURES[0]: [1.0]}), FEATURES, "TRAIN")
+    with pytest.raises(ValueError, match="missing frozen"):
+        module._complete_case(pd.DataFrame({"timestamp_m1": timestamps}), FEATURES, "TRAIN")
+    with pytest.raises(ValueError, match="strictly increasing"):
+        module._complete_case(
+            pd.DataFrame({"timestamp_m1": timestamps[::-1], FEATURES[0]: [1.0, 2.0]}),
+            FEATURES,
+            "TRAIN",
+        )
+    with pytest.raises(ValueError, match="numeric"):
+        module._complete_case(
+            pd.DataFrame({"timestamp_m1": timestamps, FEATURES[0]: ["bad", "value"]}),
+            FEATURES,
+            "TRAIN",
+        )
+    with pytest.raises(ValueError, match="finite"):
+        module._complete_case(
+            pd.DataFrame({"timestamp_m1": timestamps, FEATURES[0]: [1.0, np.inf]}),
+            FEATURES,
+            "TRAIN",
+        )
 
 
 class DeterministicAdapter:

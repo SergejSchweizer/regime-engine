@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -136,3 +138,105 @@ def test_snapshot_filesystem_boundary_never_exposes_partial_snapshot(
         store.finalize(identity, snapshot)
     with pytest.raises(ValueError, match="incomplete"):
         store.load(identity)
+
+
+def test_snapshot_identity_and_lineage_contracts_reject_drift(tmp_path: Path) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    with pytest.raises(ValueError, match="lineage does not match"):
+        store.finalize(replace(identity, source_build_id="other"), snapshot)
+    with pytest.raises(ValueError, match="matrix hash"):
+        store.finalize(replace(identity, materialized_feature_data_sha256="f" * 64), snapshot)
+    with pytest.raises(ValueError, match="row count"):
+        store.finalize(replace(identity, materialized_row_count=3), snapshot)
+    with pytest.raises(ValueError, match="dataset_snapshot_key"):
+        store.load_identity("short")
+
+
+def test_snapshot_manifest_and_catalog_fail_closed_on_schema_drift(tmp_path: Path) -> None:
+    snapshot, identity = snapshot_and_identity()
+    catalog = FeatureCatalogSnapshot.from_entries(
+        snapshot.lineage,
+        "timestamp_m1",
+        (FeatureCatalogEntry("f0", 1), FeatureCatalogEntry("f1", 2)),
+    ).with_materialization(snapshot)
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    store.finalize(identity, snapshot, catalog=catalog)
+    manifest_path = tmp_path / identity.key / "manifest.json"
+    original = manifest_path.read_bytes()
+
+    manifest_path.write_bytes(b"not json")
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        store.load(identity)
+    manifest_path.write_bytes(original)
+    payload = json.loads(original)
+    payload["catalog"] = None
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="catalog is missing"):
+        store.load_catalog(identity)
+    manifest_path.write_bytes(original)
+    payload = json.loads(original)
+    payload["catalog"]["entries"] = ["invalid"]
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="catalog is invalid"):
+        store.load_catalog(identity)
+
+
+def test_snapshot_load_identity_rejects_manifest_identity_and_arrow_hash_drift(
+    tmp_path: Path,
+) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    store.finalize(identity, snapshot)
+    manifest_path = tmp_path / identity.key / "manifest.json"
+    original = manifest_path.read_bytes()
+    payload = json.loads(original)
+    payload["dataset_snapshot_key"] = "b" * 64
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="key does not match manifest"):
+        store.load_identity(identity.key)
+    manifest_path.write_bytes(original)
+    payload = json.loads(original)
+    payload["arrow_sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="Arrow hash does not match"):
+        store.load_identity(identity.key)
+
+
+@pytest.mark.parametrize(
+    ("value", "field", "message"),
+    [
+        (None, "timestamp", "must be an ISO timestamp"),
+        ("not-a-timestamp", "timestamp", "not a valid ISO timestamp"),
+        ("2026-01-01T00:00:00", "timestamp", "timezone-aware UTC"),
+        ("2026-01-01T01:00:00+01:00", "timestamp", "timezone-aware UTC"),
+    ],
+)
+def test_snapshot_timestamp_parser_rejects_non_utc_values(
+    value: object, field: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        snapshot_module._parse_timestamp(value, field)
+
+
+def test_snapshot_lineage_parser_rejects_missing_or_malformed_payload() -> None:
+    with pytest.raises(ValueError, match="lineage is missing"):
+        snapshot_module._lineage_from_payload(None)
+    with pytest.raises(ValueError, match="lineage is invalid"):
+        snapshot_module._lineage_from_payload({"source_dataset": "only-field"})
+
+
+def test_snapshot_finalize_rejects_catalog_and_timestamp_identity_drift(tmp_path: Path) -> None:
+    snapshot, identity = snapshot_and_identity()
+    store = ArrowDatasetSnapshotStore(tmp_path)
+    catalog = FeatureCatalogSnapshot.from_entries(
+        snapshot.lineage,
+        "timestamp_m1",
+        (FeatureCatalogEntry("f0", 1), FeatureCatalogEntry("f1", 2)),
+    ).with_materialization(snapshot)
+    with pytest.raises(ValueError, match="minimum timestamp"):
+        store.finalize(
+            replace(identity, materialized_min_timestamp=START + timedelta(days=1)), snapshot
+        )
+    with pytest.raises(ValueError, match="timestamp column must be timestamp_m1"):
+        store.finalize(identity, snapshot, catalog=replace(catalog, timestamp_column="other"))

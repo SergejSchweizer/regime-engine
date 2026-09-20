@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -13,7 +14,8 @@ from mlflow.tracking import MlflowClient
 
 import market_regime_engine.mlflow_support.evaluation_tracking as module
 import market_regime_engine.mlflow_support.tracking as tracking_module
-from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence
+from market_regime_engine.contracts import SourceLineage
+from market_regime_engine.evaluation_statistics.contracts import GlobalV4Evidence, RunType, Status
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
@@ -26,6 +28,12 @@ from market_regime_engine.mlflow_support.tracking import (
     FileMlflowTrackingPort,
     _safe_logged_model_name,
 )
+from tests.unit.mlflow_support.test_all_plotting_functions import (
+    _evaluation as plotting_evaluation,
+)
+from tests.unit.mlflow_support.test_all_plotting_functions import (
+    _plan as plotting_plan,
+)
 
 HASH = "a" * 64
 START = datetime(2024, 1, 1, tzinfo=UTC)
@@ -37,6 +45,291 @@ def test_logged_model_name_encoding_preserves_logical_key_without_mlflow_delimit
 
     assert encoded == "global_regime_v4_x3a_run_x2f_outer_fold_001_x2e_candidate"
     assert all(character.isalnum() or character in "_-" for character in encoded)
+
+
+@pytest.mark.parametrize("logical_name", ["", " candidate", "candidate ", " "])
+def test_logged_model_name_rejects_empty_or_untrimmed_keys(logical_name: str) -> None:
+    with pytest.raises(ValueError, match="non-empty and trimmed"):
+        _safe_logged_model_name(logical_name)
+
+
+def test_file_tracking_port_rejects_duplicate_models_and_missing_model_source_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    duplicate = SimpleNamespace(model_id="model-1", name="candidate", model_type="hmm", tags={})
+    client = SimpleNamespace(
+        get_experiment_by_name=lambda name: SimpleNamespace(
+            experiment_id="exp-1", lifecycle_stage="active"
+        ),
+        search_logged_models=lambda ids: [duplicate, duplicate],
+        get_logged_model=lambda model_id: SimpleNamespace(source_run_id=None, metrics=()),
+    )
+    monkeypatch.setattr(tracking_module, "MlflowClient", lambda tracking_uri: client)
+    port = FileMlflowTrackingPort("file:///tmp/mlflow")
+    with pytest.raises(ValueError, match="multiple LoggedModels"):
+        port.create_logged_model(name="candidate", source_run_id="run-1", model_type="hmm", tags={})
+
+    client.search_logged_models = lambda ids: []
+    with pytest.raises(ValueError, match="no source run"):
+        port.log_model_metric_points("unknown", (MetricPoint("score", 1.0, 0, 0),))
+
+
+def test_file_tracking_port_reads_model_metrics_from_client_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        model_id="model-1",
+        name="candidate",
+        model_type="hmm",
+        tags={},
+        source_run_id="run-1",
+        metrics=(SimpleNamespace(key="score", value=0.5, step=2, timestamp=3),),
+    )
+    client = SimpleNamespace(
+        get_experiment_by_name=lambda name: SimpleNamespace(
+            experiment_id="exp-1", lifecycle_stage="active"
+        ),
+        search_logged_models=lambda ids: [model],
+        get_logged_model=lambda model_id: model,
+        _tracking_client=SimpleNamespace(store=None),
+    )
+    monkeypatch.setattr(tracking_module, "MlflowClient", lambda tracking_uri: client)
+    port = FileMlflowTrackingPort("file:///tmp/mlflow")
+    assert port.get_model_metric_points("model-1") == (MetricPoint("score", 0.5, 2, 3),)
+
+
+def test_tracking_validation_rejects_empty_selection_and_identity_mismatches(
+    tmp_path: Path,
+) -> None:
+    evaluation = plotting_evaluation(valid_fold_count=1)
+    plan = plotting_plan()
+    lineage = SourceLineage(
+        source_dataset="macro_loader.macro_features_daily",
+        source_build_id="synthetic-build",
+        data_sha256=HASH,
+        schema_version=1,
+        feature_version=1,
+        source_table="macro_loader.macro_features_daily",
+        synced_at_utc=START,
+        row_count=1260,
+        min_timestamp=plan.folds[0].train_start,
+        max_timestamp=plan.folds[-1].test_end,
+    )
+    kwargs = dict(
+        port=RecordingPort(),
+        source_lineage=lineage,
+        plan=plan,
+        evaluations=(evaluation,),
+        statistical_selection_result="selected",
+        artifact_root=tmp_path,
+        max_workers=1,
+    )
+    with pytest.raises(ValueError, match="at least one candidate"):
+        tracking_module.track_walk_forward_evaluations(**{**kwargs, "evaluations": ()})
+    with pytest.raises(ValueError, match="non-empty trimmed"):
+        tracking_module.track_walk_forward_evaluations(
+            **{**kwargs, "statistical_selection_result": " selected"}
+        )
+    with pytest.raises(ValueError, match="source build"):
+        tracking_module.track_walk_forward_evaluations(
+            **{
+                **kwargs,
+                "evaluations": (replace(evaluation, source_build_id="other-build"),),
+            }
+        )
+    with pytest.raises(ValueError, match="dataset_snapshot_key"):
+        tracking_module.track_walk_forward_evaluations(
+            **{**kwargs, "dataset_snapshot_key": " invalid"}
+        )
+
+
+def test_file_tracking_port_exercises_run_batch_and_logged_model_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Client:
+        def __init__(self, tracking_uri: str) -> None:
+            assert tracking_uri == "file:///tmp/mlflow"
+            self.experiment = SimpleNamespace(experiment_id="exp-1", lifecycle_stage="deleted")
+            self.calls: list[tuple[str, object]] = []
+            self.models: list[object] = []
+            self._tracking_client = SimpleNamespace(store=None)
+
+        def get_experiment_by_name(self, name: str) -> object:
+            assert name == "macro-regime-evaluation"
+            return self.experiment
+
+        def restore_experiment(self, experiment_id: str) -> None:
+            self.calls.append(("restore", experiment_id))
+
+        def create_run(self, experiment_id: str, *, tags: dict[str, str]) -> object:
+            self.calls.append(("create_run", (experiment_id, tags)))
+            return SimpleNamespace(info=SimpleNamespace(run_id="run-1"))
+
+        def log_batch(self, run_id: str, **kwargs: object) -> None:
+            self.calls.append(("batch", (run_id, kwargs)))
+
+        def search_logged_models(self, experiment_ids: list[str]) -> list[object]:
+            self.calls.append(("search", experiment_ids))
+            return self.models
+
+        def create_logged_model(self, experiment_id: str, **kwargs: object) -> object:
+            self.calls.append(("create_model", (experiment_id, kwargs)))
+            model = SimpleNamespace(model_id="model-1", **kwargs)
+            self.models.append(model)
+            return model
+
+        def get_logged_model(self, model_id: str) -> object:
+            assert model_id == "model-1"
+            return SimpleNamespace(
+                source_run_id="run-1",
+                metrics=(SimpleNamespace(key="score", value=0.5, step=2, timestamp=3),),
+            )
+
+        def log_model_artifacts(self, model_id: str, local_dir: str) -> None:
+            self.calls.append(("model_artifacts", (model_id, local_dir)))
+
+        def finalize_logged_model(self, model_id: str, status: str) -> None:
+            self.calls.append(("finalize", (model_id, status)))
+
+        def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
+            self.calls.append(("artifact", (run_id, local_path, artifact_path)))
+
+        def set_terminated(self, run_id: str, *, status: str) -> None:
+            self.calls.append(("terminate", (run_id, status)))
+
+    client = Client("file:///tmp/mlflow")
+    monkeypatch.setattr(tracking_module, "MlflowClient", lambda tracking_uri: client)
+    port = FileMlflowTrackingPort("file:///tmp/mlflow")
+    assert port.start_run(run_name="parent") == "run-1"
+    assert port.start_run(run_name="child", parent_run_id="parent") == "run-1"
+    port.log_params("run-1", {"z": "2", "a": "1"})
+    points = tuple(MetricPoint("score", float(index), index, index) for index in range(1001))
+    port.log_metric_points("run-1", points)
+    model_id = port.create_logged_model(
+        name="candidate",
+        source_run_id="run-1",
+        model_type="hmm",
+        tags={"candidate": "k2"},
+    )
+    assert model_id == "model-1"
+    assert (
+        port.create_logged_model(
+            name="candidate",
+            source_run_id="run-2",
+            model_type="hmm",
+            tags={"candidate": "k2"},
+        )
+        == "model-1"
+    )
+    assert port.get_model_metric_points(model_id)[0].key == "score"
+    port.log_model_metric_points(model_id, (MetricPoint("score", 1.0, 0, 0),))
+    port.log_model_artifacts(model_id, "/tmp/model")
+    port.finalize_logged_model(model_id)
+    port.log_artifact("run-1", "/tmp/evidence", "evaluation")
+    port.end_run("run-1")
+    port.fail_run("run-1")
+    assert ("restore", "exp-1") in client.calls
+    assert sum(name == "batch" for name, _ in client.calls) >= 3
+
+
+def test_file_tracking_port_rejects_logged_model_identity_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = SimpleNamespace(
+        model_id="model-1", name="candidate", model_type="other", tags={"candidate": "k2"}
+    )
+    client = SimpleNamespace(
+        get_experiment_by_name=lambda name: SimpleNamespace(
+            experiment_id="exp-1", lifecycle_stage="active"
+        ),
+        create_run=lambda *args, **kwargs: SimpleNamespace(info=SimpleNamespace(run_id="run-1")),
+        search_logged_models=lambda ids: [existing],
+    )
+    monkeypatch.setattr(tracking_module, "MlflowClient", lambda tracking_uri: client)
+    port = FileMlflowTrackingPort("file:///tmp/mlflow")
+    with pytest.raises(ValueError, match="conflicting identity"):
+        port.create_logged_model(
+            name="candidate",
+            source_run_id="run-1",
+            model_type="hmm",
+            tags={"candidate": "k2"},
+        )
+
+
+def test_tracking_evidence_helpers_cover_valid_and_invalid_fold_payloads() -> None:
+    evaluation = plotting_evaluation(valid_fold_count=1)
+    plan = plotting_plan()
+    fold = evaluation.folds[0]
+
+    scalar = tracking_module._scalar_fold_metrics(fold)
+    assert scalar["fold_train_loglik"] == pytest.approx(-100.0 / 1260.0)
+    assert tracking_module._timestamp_ms(plan.folds[0]) > 0
+    candidate_points = tracking_module._candidate_metric_points(evaluation, plan)
+    aggregate_points = tracking_module._aggregate_metric_points(evaluation)
+    assert candidate_points
+    assert {point.key for point in aggregate_points} >= {
+        "candidate_valid_fold_rate",
+        "candidate_oos_predictive_loglik_mean",
+    }
+    tags = tracking_module._candidate_model_tags(
+        evaluation,
+        source_build_id="synthetic-build",
+        plan=plan,
+        dataset_snapshot_key="dataset-1",
+        evaluation_run_key="evaluation-1",
+        outer_fold_id="fold_001",
+    )
+    assert tags["regime_engine.pca_mandatory"] == "true"
+    assert tags["regime_engine.outer_fold_id"] == "fold_001"
+    assert tracking_module._timeline_rows(evaluation, plan)[1]["valid"] is False
+    assert tracking_module._metric_rows(evaluation, plan)[0]["fold_aic"] == 100.0
+    assert tracking_module._aligned_parameter_payload(evaluation, fold)["candidate_id"] == (
+        evaluation.candidate_id
+    )
+    candidate_id, evidence = tracking_module._prepare_candidate_tracking_evidence(evaluation, plan)
+    assert candidate_id == evaluation.candidate_id
+    assert evidence.candidate_points == candidate_points
+
+    invalid = evaluation.folds[1]
+    with pytest.raises(ValueError, match="aligned model evidence"):
+        tracking_module._aligned_parameter_payload(evaluation, invalid)
+
+
+def test_walk_forward_tracking_orchestrator_is_hermetic_and_complete(tmp_path: Path) -> None:
+    evaluation = plotting_evaluation(valid_fold_count=1)
+    plan = plotting_plan()
+    lineage = SourceLineage(
+        source_dataset="macro_loader.macro_features_daily",
+        source_build_id="synthetic-build",
+        data_sha256=HASH,
+        schema_version=1,
+        feature_version=1,
+        source_table="macro_loader.macro_features_daily",
+        synced_at_utc=START,
+        row_count=1260,
+        min_timestamp=plan.folds[0].train_start,
+        max_timestamp=plan.folds[-1].test_end,
+    )
+    port = RecordingPort()
+
+    result = tracking_module.track_walk_forward_evaluations(
+        port,
+        source_lineage=lineage,
+        plan=plan,
+        evaluations=(evaluation,),
+        statistical_selection_result="gaussian_hmm_k2_full",
+        artifact_root=tmp_path,
+        max_workers=1,
+    )
+
+    assert result.parent_run_id == "run-1"
+    assert result.candidate_run_ids == ((evaluation.candidate_id, "run-2"),)
+    assert result.parent_manifest_path == str(tmp_path / "parent" / "plot_manifest.json")
+    assert port.params["run-1"]["source_build_id"] == lineage.source_build_id
+    assert port.params["run-1"]["evaluation_plan_hash"] == plan.plan_hash
+    assert (tmp_path / evaluation.candidate_id / "fold_timeline.parquet").is_file()
+    assert (tmp_path / evaluation.candidate_id / "fold_metrics.parquet").is_file()
+    assert port.finished == ["run-3", "run-4", "run-2", "run-1"]
 
 
 class RecordingPort:
@@ -599,3 +892,227 @@ def test_global_v4_tracking_persists_file_store_parent_child_and_artifacts(
     assert [item.path for item in client.list_artifacts(child_id, "statistics")] == [
         "statistics/statistics.json"
     ]
+
+
+def test_tracking_helpers_cover_failed_folds_and_validation_contracts(tmp_path: Path) -> None:
+    fold = replace(_result().outer_folds[0], valid=False, failure_reason="synthetic failure")
+    failed = module._failed_fold_evidence(fold)
+    assert failed["validity"] == {"valid": False, "failure_reason": "synthetic failure"}
+    prepared = module._prepare_global_v4_fold_tracking(fold, None)
+    assert prepared.final_grid_plan is None
+    assert prepared.candidates == ()
+    assert module._json_bytes({"b": 1, "a": 2}).decode().startswith('{"a":2')
+
+    with pytest.raises(ValueError, match="non-empty memberships"):
+        module._cluster_membership_jaccard(
+            SimpleNamespace(memberships=()), SimpleNamespace(memberships=(("cluster", ("f0",)),))
+        )
+    with pytest.raises(ValueError, match="every valid outer fold"):
+        module._validate_inputs(_evidence(), _result(), {})
+    with pytest.raises(ValueError, match="source build"):
+        module._validate_inputs(
+            _evidence(),
+            replace(_result(), source_build_id="different-build"),
+            {},
+        )
+
+    statistics = module._running_statistics("failed", RunType.PARENT, {"identity": {}})
+    with pytest.raises(RuntimeError, match="emitter failure"):
+        module.track_statistics_run(
+            RecordingPort(),
+            StatisticsWriter(tmp_path / "failed"),
+            run_name="failed",
+            statistics=statistics,
+            payload_emitter=lambda *_args: (_ for _ in ()).throw(RuntimeError("emitter failure")),
+        )
+    with pytest.raises(ValueError, match="ended_at"):
+        module.track_statistics_run(
+            RecordingPort(),
+            StatisticsWriter(tmp_path / "invalid"),
+            run_name="invalid",
+            statistics=replace(statistics, status=Status.FINISHED),
+        )
+
+
+def test_statistics_tracking_writes_runtime_metadata_and_finalizes(tmp_path: Path) -> None:
+    port = RecordingPort()
+    statistics = module._running_statistics("successful", RunType.PARENT, {"identity": {}})
+    run_id, digest = module.track_statistics_run(
+        port,
+        StatisticsWriter(tmp_path / "successful"),
+        run_name="successful",
+        statistics=statistics,
+        runtime_started_at=START,
+        runtime_start_monotonic=0.0,
+    )
+    assert run_id == "run-1"
+    assert len(digest) == 64
+    assert port.finished == [run_id]
+    assert port.params[run_id]["regime_engine.runtime_scope"] == "tracking_run"
+    assert float(port.params[run_id]["regime_engine.runtime_seconds"]) >= 0.0
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "source_build_id",
+        "catalog_hash",
+    ],
+)
+def test_tracking_validation_rejects_unknown_and_mismatched_selections(
+    field: str,
+) -> None:
+    evidence = _evidence()
+    result = _result()
+    selection = _selection()
+    if field == "source_build_id":
+        selection = SimpleNamespace(**{**vars(selection), "source_build_id": "other"})
+    else:
+        selection = SimpleNamespace(**{**vars(selection), "catalog_hash": "other"})
+    with pytest.raises(ValueError, match="lineage"):
+        module._validate_inputs(evidence, result, {1: selection})
+    with pytest.raises(ValueError, match="unknown outer folds"):
+        module._validate_inputs(evidence, result, {99: selection})
+
+
+def test_candidate_tracking_preparation_builds_canonical_payload_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = SimpleNamespace(
+        candidate_id="gaussian_hmm_k2_full",
+        feature_order=("f0",),
+        source_build_id="build-1",
+        evaluation_plan_hash=HASH,
+        folds=(),
+    )
+    aggregate = SimpleNamespace(candidate_id=candidate.candidate_id)
+    selection = SimpleNamespace(
+        final_grid=SimpleNamespace(
+            candidate_grid=SimpleNamespace(evaluations=(candidate,), aggregates=(aggregate,))
+        ),
+        feature_discovery_hash=HASH,
+    )
+    fold = SimpleNamespace(fold_index=1, final_configuration=candidate)
+    plan = SimpleNamespace(folds=(SimpleNamespace(test_end=START),))
+    monkeypatch.setattr(module, "require_pca_artifacts", lambda value: ())
+    monkeypatch.setattr(
+        module, "_aggregate_record", lambda value: {"candidate_id": value.candidate_id}
+    )
+    monkeypatch.setattr(
+        module,
+        "_candidate_metric_points",
+        lambda *args: (MetricPoint("metric", 1.0, 1, 0),),
+    )
+    monkeypatch.setattr(module, "_aggregate_metric_points", lambda *args: ())
+    monkeypatch.setattr(module, "model_metric_points", lambda *args, **kwargs: ())
+    monkeypatch.setattr(module, "outer_selection_metric_points", lambda *args: ())
+    monkeypatch.setattr(module, "validate_metric_points", lambda points: None)
+
+    prepared = module._prepare_global_v4_candidate_tracking(
+        fold,
+        selection,
+        {"identity": {"fold_index": 1}},
+        candidate,
+        plan,
+    )
+    payload = json.loads(prepared.evidence_json)
+    assert payload["candidate_id"] == candidate.candidate_id
+    assert payload["aggregate"] == {"candidate_id": candidate.candidate_id}
+    assert payload["selection_context"] == {"identity": {"fold_index": 1}}
+    assert len(prepared.metric_points) == 1
+
+
+def test_tracking_prepares_candidates_and_artifacts_in_worker_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _selection()
+    candidate = SimpleNamespace(candidate_id="gaussian_hmm_k2_full")
+    grid = SimpleNamespace(
+        candidate_grid=SimpleNamespace(evaluations=(candidate,)),
+    )
+    selection = SimpleNamespace(
+        **{**vars(base), "final_grid": grid, "final_grid_plan": SimpleNamespace()}
+    )
+    submissions: list[str] = []
+    materialized: list[str] = []
+
+    class ImmediateFuture:
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def result(self) -> object:
+            return self.value
+
+    class RecordingExecutor:
+        def submit(self, function: Any, *args: object) -> ImmediateFuture:
+            return ImmediateFuture(function(*args))
+
+    @contextmanager
+    def recording_pool(max_workers: int):
+        assert max_workers == 2
+        yield RecordingExecutor()
+
+    def prepare(*args: object) -> module._PreparedCandidateTracking:
+        submissions.append(str(args[3].candidate_id))
+        return module._PreparedCandidateTracking(candidate, b"{}", ())
+
+    def materialize(*args: object) -> None:
+        materialized.append(str(args[0].candidate_id))
+
+    monkeypatch.setattr(module, "cpu_worker_count", lambda *_args, **_kwargs: 2)
+    monkeypatch.setattr(module, "cpu_process_pool", recording_pool)
+    monkeypatch.setattr(module, "_build_fold_evidence", lambda *_args: {"fold": 1})
+    monkeypatch.setattr(module, "_prepare_global_v4_candidate_tracking", prepare)
+    monkeypatch.setattr(module, "_materialize_candidate_tracking_artifacts", materialize)
+    monkeypatch.setattr(
+        module, "_track_global_v4_fold", lambda *args, **kwargs: (("fold", "child"), ())
+    )
+    monkeypatch.setattr(module, "render_global_v4_diagnostics", lambda *args, **kwargs: ())
+
+    tracked = module.track_global_v4_evaluation(
+        RecordingPort(),
+        StatisticsWriter(tmp_path),
+        evidence=_evidence(),
+        result=_result(),
+        selections={1: selection},
+    )
+    assert submissions == [candidate.candidate_id]
+    assert materialized == [candidate.candidate_id]
+    assert tracked.outer_fold_run_ids == (("fold", "child"),)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ("source_build_id", "source build differs"),
+        ("catalog_hash", "catalog differs"),
+        ("snapshot_lineage", "snapshot lineage"),
+        ("feature_names", "snapshot columns"),
+        ("repository_commit_sha", "non-empty and trimmed"),
+    ],
+)
+def test_global_evidence_rejects_lineage_and_repository_identity_drift(
+    change: str, message: str
+) -> None:
+    result = SimpleNamespace(source_build_id="build-1", catalog_hash=HASH, outer_folds=())
+    lineage = SimpleNamespace(source_build_id="build-1")
+    catalog = SimpleNamespace(lineage=lineage, catalog_hash=HASH, feature_names=("f0",))
+    snapshot = SimpleNamespace(lineage=lineage, feature_names=("f0",), rows=())
+    if change == "source_build_id":
+        result.source_build_id = "other"
+    elif change == "catalog_hash":
+        result.catalog_hash = "other"
+    elif change == "snapshot_lineage":
+        snapshot.lineage = SimpleNamespace(source_build_id="other")
+    elif change == "feature_names":
+        snapshot.feature_names = ("other",)
+    commit = " " if change == "repository_commit_sha" else "f" * 40
+    with pytest.raises(ValueError, match=message):
+        module.build_global_v4_evidence(
+            result,
+            catalog=catalog,
+            snapshot=snapshot,
+            profile=SimpleNamespace(walk_forward=SimpleNamespace()),
+            selections={},
+            repository_commit_sha=commit,
+        )

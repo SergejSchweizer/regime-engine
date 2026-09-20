@@ -253,3 +253,33 @@ def test_fixed_k_invalid_sink_evidence_keeps_the_requested_k_identity() -> None:
     invalid = next(item for item in result.evaluations if item.prefix_length == 3)
     assert not invalid.valid
     assert invalid.candidate_id == "gaussian_hmm_k3_full"
+
+
+def test_prefix_ranking_uses_nmi_then_support_then_shortest_prefix() -> None:
+    def make(length: int, nmi: float, support: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            prefix_length=length,
+            soft_regime_nmi=nmi,
+            shared_timestamp_count=support,
+            valid=True,
+        )
+
+    winner = module._rank_prefixes(
+        (make(4, 0.8, 10), make(3, 0.8, 12), make(2, 0.8, 12), make(1, 0.8, 1))
+    )
+    assert winner.prefix_length == 2
+    with pytest.raises(ValueError, match="no eligible prefix"):
+        module._rank_prefixes((SimpleNamespace(**{**vars(make(2, 0.0, 0)), "valid": False}),))
+
+
+def test_prefix_validation_and_support_fail_closed() -> None:
+    with pytest.raises(ValueError, match="exactly once"):
+        module._validate_features(("f0", "f1"), ("f0", "f0"))
+    with pytest.raises(ValueError, match="timezone-aware UTC"):
+        module._utc(datetime(2026, 1, 1), "timestamp")
+    invalid_fold = SimpleNamespace(
+        oos_timestamps=(datetime(2026, 1, 1, tzinfo=UTC),),
+        oos_filtered_probabilities=(),
+    )
+    with pytest.raises(ValueError, match="must align"):
+        module._evaluation_support(SimpleNamespace(valid_folds=(invalid_fold,)))

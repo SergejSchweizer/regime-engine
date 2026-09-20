@@ -95,3 +95,42 @@ def test_work_unit_coordinates_and_parameters_must_be_sorted() -> None:
             unit_type="unit",
             parent_payload_hashes=("not-a-hash",),
         )
+
+
+def test_identity_manifests_round_trip_and_reject_unknown_fields() -> None:
+    dataset = dataset_identity()
+    assert DatasetSnapshotIdentity.from_dict(dataset.as_dict()) == dataset
+    run = run_identity()
+    assert EvaluationRunIdentity.from_dict(run.as_dict()) == run
+    with pytest.raises(ValueError, match="incomplete or unknown"):
+        DatasetSnapshotIdentity.from_dict({**dataset.as_dict(), "extra": True})
+    with pytest.raises(ValueError, match="incomplete or unknown"):
+        EvaluationRunIdentity.from_dict({**run.as_dict(), "extra": True})
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"schema_version": 0},
+        {"feature_version": 0},
+        {"row_count": -1},
+        {"materialized_row_count": -1},
+        {"data_time_semantics": "legacy"},
+        {"min_timestamp": NOW.replace(tzinfo=None)},
+        {"max_timestamp": NOW.replace(tzinfo=None)},
+        {"min_timestamp": NOW.replace(day=2)},
+    ],
+)
+def test_dataset_identity_rejects_invalid_bounds_and_versions(changes: dict[str, object]) -> None:
+    identity = dataset_identity()
+    values = {field: getattr(identity, field) for field in identity.__dataclass_fields__}
+    values.update(changes)
+    with pytest.raises(ValueError):
+        DatasetSnapshotIdentity(**values)
+
+
+def test_run_identity_rejects_naive_cutoff_and_invalid_git_sha() -> None:
+    with pytest.raises(ValueError, match="timezone-aware UTC"):
+        replace_run(run_identity(), evaluation_cutoff=NOW.replace(tzinfo=None))
+    with pytest.raises(ValueError, match="Git commit SHA"):
+        replace_run(run_identity(), repository_commit_sha="not-a-sha")

@@ -5,13 +5,17 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
+import pytest
 
+import market_regime_engine.evaluation_runs.math_audit as module
 from market_regime_engine.evaluation_runs.math_audit import (
     _likelihood_item,
     build_math_expectations,
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
+
+HASH = "a" * 64
 
 
 def test_math_audit_serializes_independent_primitives_and_likelihoods() -> None:
@@ -225,3 +229,52 @@ def test_math_audit_transforms_raw_rows_with_fold_local_pca_artifact() -> None:
 
     assert all(item["feature_order"] == ["f0", "pca_pc_001"] for item in items)
     assert all(len(cast(list[list[float]], item["observations"])[0]) == 2 for item in items)
+
+
+def test_math_audit_low_level_contracts_fail_closed() -> None:
+    timestamps = (datetime(2026, 1, 1, tzinfo=UTC),)
+    assert module._complete_rows(pd.DataFrame({"f0": [1.0]}), ("f0",)).shape == (1, 1)
+    with pytest.raises(KeyError):
+        module._complete_rows(pd.DataFrame({"timestamp_m1": timestamps}), ("f0",))
+    with pytest.raises((TypeError, ValueError)):
+        module._complete_rows(pd.DataFrame({"timestamp_m1": timestamps, "f0": ["bad"]}), ("f0",))
+    assert (
+        module._complete_rows(
+            pd.DataFrame({"timestamp_m1": timestamps, "f0": [float("inf")]}), ("f0",)
+        ).size
+        == 0
+    )
+    with pytest.raises(ValueError, match="cluster membership"):
+        module._labels(("f0",), (()))
+
+
+def test_math_audit_requires_valid_outer_support_and_agreement_evidence() -> None:
+    invalid = SimpleNamespace(
+        fold_index=1,
+        valid=False,
+        failure_reason="invalid",
+        result_hash=HASH,
+    )
+    with pytest.raises(ValueError, match="valid outer-fold"):
+        module._audited_outer_folds(SimpleNamespace(outer_folds=(invalid,)), {})
+    with pytest.raises(ValueError, match="valid outer fold"):
+        module._outer_agreement_item(invalid)
+
+    valid = SimpleNamespace(
+        fold_index=1,
+        valid=True,
+        result_hash=HASH,
+        oos_timestamps=(),
+        oos_filtered_probabilities=(),
+        teacher_oos_timestamps=(),
+        teacher_oos_filtered_probabilities=(),
+        outer_teacher_final_soft_nmi=None,
+        outer_shared_timestamp_count=0,
+    )
+    with pytest.raises(ValueError, match="missing persisted teacher"):
+        module._outer_agreement_item(valid)
+    valid.teacher_oos_timestamps = (datetime(2026, 1, 1, tzinfo=UTC),)
+    with pytest.raises(ValueError, match="missing the expected"):
+        module._outer_agreement_item(valid)
+    with pytest.raises(ValueError, match="at least one outer fold"):
+        build_math_expectations(pd.DataFrame(), SimpleNamespace(outer_folds=()), {})

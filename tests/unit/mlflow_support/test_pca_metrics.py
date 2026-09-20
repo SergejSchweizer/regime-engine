@@ -68,3 +68,34 @@ def test_pca_comparison_rejects_different_source_plans() -> None:
     changed = replace(matched.raw_plus_pca, evaluation_plan_hash="c" * 64)
     with pytest.raises(ValueError, match="identical evaluation plan"):
         PCAMetricComparison(raw_only=matched.raw_only, raw_plus_pca=changed)
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("source_build_id", "identical source build"),
+        ("state_count", "same state count"),
+        ("candidate_id", "same model candidate"),
+    ],
+)
+def test_pca_comparison_rejects_identity_mismatches(field: str, message: str) -> None:
+    matched = comparison()
+    if field == "state_count":
+        changed = replace(
+            matched.raw_plus_pca,
+            state_count=3,
+            candidate_id="gaussian_hmm_k3_full",
+        )
+    else:
+        changed = replace(
+            matched.raw_plus_pca,
+            **{field: ("other-build" if field == "source_build_id" else "student_t_hmm_k2_full")},
+        )
+    with pytest.raises(ValueError, match=message):
+        PCAMetricComparison(raw_only=matched.raw_only, raw_plus_pca=changed)
+
+
+def test_pca_projection_rejects_timestamp_count_contract() -> None:
+    matched = comparison()
+    with pytest.raises(ValueError, match="fold_timestamps"):
+        pca_metric_points(matched.raw_plus_pca, fold_timestamps=())
