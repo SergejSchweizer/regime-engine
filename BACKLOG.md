@@ -17,8 +17,9 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-452-k-specific-selection-math-qa-closure`, based directly on
-  current `origin/main`; PR-427 closes the remaining independent math QA
+- **Active worktree:** `pr/PR-453-k-slot-hermetic-qa-closure`, based directly on
+  current `origin/main`; PR-428 and PR-429 close the remaining local registry
+  and four-slot hermetic QA.
   and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
@@ -437,8 +438,8 @@ still required.
 | PR-425 | ACCEPTANCE COMPLETE | K-slot aliases, immutable registration, exact promotion tuple, audited CAS promotion, idempotency, rollback and concurrent-winner behavior are covered by the file-backed MLflow QA matrix; closure follows in PR-450 |
 | PR-426 | ACCEPTANCE COMPLETE | Per-K Model Metrics and plot payload contracts fail closed on incomplete lineage and prove serial/process-order canonical parity; all four K slots, three families, dimension-independent Cross-K projection, unavailable-slot manifests and no-recomputation manifests are covered locally; closure follows in PR-451 |
 | PR-427 | ACCEPTANCE COMPLETE | Independent stdlib math oracle and expanded 47-test QA matrix cover formulas, adversarial inputs, invariance, mutation/provenance links and import isolation; closure follows in PR-452 |
-| PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
-| PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427; single-champion QA #444) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and explicit preservation of the default `champion` alias; production lineage gaps remain |
+| PR-428 | ACCEPTANCE COMPLETE | Four-slot registry/CAS QA covers matching aliases, immutable/idempotent versions, first/better/worse/tie/stale/incompatible outcomes, rollback, provenance tags, injected side-effect failures, cross-process retry and concurrent linearizable winners; closure follows in PR-453 |
+| PR-429 | ACCEPTANCE COMPLETE | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and default `champion` preservation; CPU/thread/worker/exit evidence recorded; closure follows in PR-453 |
 | PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Formula, independent eligibility-gate, non-finite-input, canonical-hash and full K=2..5 projection QA is covered by merged follow-up PR-442 (GitHub #430). Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
@@ -2100,26 +2101,29 @@ QA:
 - **Allowed:** `tests/unit/mlflow_support/test_k_slot_registry_qa.py`,
   `tests/integration/mlflow_support/test_k_slot_promotion.py`,
   `docs/qa/k_slot_mlflow.md`
-- **Status:** implementation and four-slot matrix QA merged through GitHub PR #418; process-kill/retry and concurrent race QA merged in GitHub #421 and #423; external side-effect acceptance remains
+- **Status:** acceptance complete; implementation and four-slot matrix QA merged
+  through GitHub PR #418, process-kill/retry and concurrent race QA merged in
+  GitHub #421 and #423, and the complete local closure matrix is verified;
+  closure follows in PR-453. External production durability remains scoped to PR-430.
 
 Acceptance:
 
-- [ ] Verify the four aliases map only to matching K values and never
+- [x] Verify the four aliases map only to matching K values and never
   cross-promote.
-- [ ] Verify each new artifact creates one immutable version and retries are
+- [x] Verify each new artifact creates one immutable version and retries are
   idempotent.
-- [ ] Verify better/worse/tied candidates, stale incumbents, incompatible
+- [x] Verify better/worse/tied candidates, stale incumbents, incompatible
   comparison domains, failed registration and failed CAS behavior.
-- [ ] Verify rollback restores one K slot without changing the other three or
+- [x] Verify rollback restores one K slot without changing the other three or
   the default `champion` alias.
-- [ ] Verify registered-version tags exactly match package provenance and
+- [x] Verify registered-version tags exactly match package provenance and
   selection evidence.
 
 QA:
 
-- [ ] Run the full matrix of four slots × first/better/worse/tie/stale/CAS
+- [x] Run the full matrix of four slots × first/better/worse/tie/stale/CAS
   outcomes against a disposable file-backed MLflow registry.
-- [ ] Run deterministic concurrent promotion races with at least two workers
+- [x] Run deterministic concurrent promotion races with at least two workers
   per slot and prove one linearizable winner.
 - [x] Run independent concurrent MLflow clients against a persistent SQLite
   registry; prove one immutable version and one linearizable alias winner.
@@ -2127,9 +2131,9 @@ QA:
   retry leaves one immutable version and a consistent alias target; a separate
   SQLite-backed process-kill test now proves the same invariant across process
   boundaries.
-- [ ] Kill/retry publication at each side-effect boundary and prove no alias
+- [x] Kill/retry publication at each side-effect boundary and prove no alias
   points to a missing or mismatched artifact.
-- [ ] Verify the external NAS path is not contacted by required CI tests.
+- [x] Verify the external NAS path is not contacted by required CI tests.
 
 ### PR-429 — Hermetic four-slot end-to-end QA
 
@@ -2138,7 +2142,10 @@ QA:
 - **Parallel group:** Q3; final local hermetic acceptance
 - **Allowed:** `tests/e2e/test_k_champion_portfolio.py`,
   `tests/fixtures/k_champion/*`, `docs/qa/k_champion_e2e.md`
-- **Status:** implementation and local hermetic acceptance merged through GitHub PR #418; independent expectation-manifest QA merged in GitHub #420; production lineage acceptance remains
+- **Status:** acceptance complete; implementation and local hermetic acceptance
+  merged through GitHub PR #418, independent expectation-manifest QA merged in
+  GitHub #420, and full CPU/thread/worker/exit evidence recorded locally;
+  closure follows in PR-453. External production lineage remains scoped to PR-430.
 
 Acceptance:
 
@@ -2161,7 +2168,7 @@ Acceptance:
 
 QA:
 
-- [ ] Run the full fixture with native numerical thread pools capped at one
+- [x] Run the full fixture with native numerical thread pools capped at one
   and record CPU topology, worker budget, wall time, exit code and hashes.
 - [x] Compare process-parallel and serial results byte-for-byte after removing
   operational IDs/timestamps.
