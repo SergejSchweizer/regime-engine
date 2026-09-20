@@ -68,9 +68,8 @@ PR-448
 
 ### Current repository and external state
 
-- `origin/main` is `b0856c7`; local and remote working branches are rebased
-  onto it. The current worktree is `pr/PR-451-hermetic-integration-gates`
-  at `ee63f82`, tracking the same remote branch.
+- `origin/main` is `758c5a7`; local working branch is
+  `pr/PR-452-integration-gating-qa`, based on it.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
@@ -83,15 +82,15 @@ PR-448
   performed. Full evaluation remains externally blocked until the source
   schema is provisioned and its lineage is revalidated.
 - PR-449 is merged as GitHub PR #448 at `56885cb`; PR-450 is merged as
-  GitHub PR #449 at `b0856c7`. Their implementation branches are retained
+  GitHub PR #449 at `b0856c7`; PR-451 is merged as GitHub PR #450 at
+  `758c5a7`. Their implementation branches are retained
   only as rebased pointers to `origin/main` for the current branch-retention
   policy.
-- **Current active implementation:** PR-451 is branch
-  `pr/PR-451-hermetic-integration-gates`, GitHub PR #450, current HEAD
-  `ee63f82`. Both authoritative workflows now contain a dedicated hermetic
-  integration lane and require its success in the terminal gate. The local
-  selected integration run passed 83 tests; full evaluation is intentionally
-  not run.
+- **Current active implementation:** PR-452 is branch
+  `pr/PR-452-integration-gating-qa`; focused QA is green locally and the
+  GitHub PR is pending. Both authoritative workflows contain a dedicated
+  hermetic integration lane and require its success in the terminal gate.
+  Full evaluation is intentionally not run.
 
 ---
 
@@ -121,7 +120,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-449 — Make 85% coverage the single CI authority
 
-**Status:** ACCEPTANCE COMPLETE — verified locally and by GitHub CI on commit `d60c2a2`
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #448 at `56885cb`; GitHub CI green
 
 **Type:** implementation / CI correctness
 **Depends on:** PR-448
@@ -139,7 +138,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-450 — QA: regression-proof the 85% coverage contract
 
-**Status:** ACCEPTANCE COMPLETE — GitHub PR #449, commit `11e2513`, all required gates green
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #449 at `b0856c7`; all required gates green
 
 **Branch:** `pr/PR-450-coverage-contract-qa`
 
@@ -158,7 +157,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-451 — Add hermetic integration lanes to merge and push gates
 
-**Status:** IMPLEMENTATION COMPLETE — GitHub PR #450, current HEAD `ee63f82`; acceptance pending GitHub gates
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #450 at `758c5a7`; all gates green
 
 **Branch:** `pr/PR-451-hermetic-integration-gates`
 
@@ -178,18 +177,22 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-452 — QA: prove integration gating is mandatory and hermetic
 
+**Status:** IMPLEMENTATION COMPLETE — focused QA green locally; GitHub PR pending
+
+**Branch:** `pr/PR-452-integration-gating-qa`
+
 **Type:** QA only
 **Depends on:** PR-451
 
 #### Acceptance
 
-- [ ] Static QA proves both workflows declare the integration job.
-- [ ] Terminal gates must depend on and inspect integration status.
-- [ ] Selector must include `integration` and exclude `slow` and `external`.
-- [ ] Removing integration from either terminal gate fails QA.
-- [ ] Replacing the selector with bare `integration` fails QA.
-- [ ] The selected integration suite completes without network/secrets.
-- [ ] Production code is unchanged.
+- [x] Static QA proves both workflows declare the integration job.
+- [x] Terminal gates must depend on and inspect integration status.
+- [x] Selector must include `integration` and exclude `slow` and `external`.
+- [x] Removing integration from either terminal gate fails QA.
+- [x] Replacing the selector with bare `integration` fails QA.
+- [x] The selected integration suite completes without network/secrets.
+- [x] Production code is unchanged.
 
 ### PR-453 — Separate statistical invalidity from unexpected software failures
 
