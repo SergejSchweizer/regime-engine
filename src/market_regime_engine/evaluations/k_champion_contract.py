@@ -108,6 +108,8 @@ class KChampionSelection:
     promotion_score_version: str
     reference_teacher_id: str
     artifact_hash: str
+    source_build_id: str = ""
+    source_catalog_hash: str = ""
 
     def __post_init__(self) -> None:
         slot = _slot(self.slot_id)
@@ -138,6 +140,10 @@ class KChampionSelection:
             raise ValueError("unsupported K-slot promotion score version")
         _text(self.reference_teacher_id, "reference_teacher_id")
         _sha(self.artifact_hash, "artifact_hash")
+        if self.source_build_id:
+            _text(self.source_build_id, "source_build_id")
+        if self.source_catalog_hash:
+            _sha(self.source_catalog_hash, "source_catalog_hash")
 
     @property
     def slot(self) -> KChampionSlot:
