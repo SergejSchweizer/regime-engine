@@ -17,9 +17,9 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-447-fixed-k-family-acceptance-closure`, based
-  directly on current `origin/main`; PR-447 closes the remaining hermetic
-  PR-422 acceptance gaps and has not run a full evaluation or external write.
+- **Active worktree:** `pr/PR-448-k-outer-production-integration-closure`, based
+  directly on current `origin/main`; PR-448 closes the remaining hermetic
+  PR-423 acceptance gaps and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -142,6 +142,12 @@ Status date: 2026-09-16
   bounded CPU budget, and real-HMM serial/process results plus independent
   adversarial ranking evidence are canonical for K=2,3,4,5. Closure is tracked
   by PR-447.
+  PR-423 acceptance is now complete locally: the real fixed-K TRAIN selector
+  runs inside every Outer-TRAIN, real HMM refits use each frozen selection and
+  access each Outer-TEST once, four slot dossiers retain fold hashes and
+  provenance, independent eligibility/aggregation gates fail closed, future
+  TEST mutations do not alter selection identity, and process/serial outer
+  execution is canonical. Closure is tracked by PR-448.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -420,7 +426,7 @@ still required.
 | PR-420 | ACCEPTANCE COMPLETE | K-specific champion-slot contract, strict canonical selection serialization, single-source slot aliases, dimension-independent promotion ranking, immutable/idempotent registry behavior and legacy `champion` preservation are covered locally; implementation merged in #418 and contract closure follows in PR-445 |
 | PR-421 | ACCEPTANCE COMPLETE | TRAIN-only process-parallel K orchestration, real fixed-K discovery/teacher/scoring/prefix evidence, distinct K feature tuples, label invariance, validation-cutoff isolation, independent prefix/NMI oracle and serial/process canonical parity are covered; implementation merged in #418 and closure follows in PR-446 |
 | PR-422 | ACCEPTANCE COMPLETE | Exact fixed-K Gaussian/GMM/Student-t ranking, strict same-K comparison domain, real-HMM K=2..5 serial/process parity, four-K GIL-free orchestration, canonical completion-order assembly, adversarial independent oracle and lineage/feature-tuple invariants are covered; implementation merged in #418 and closure follows in PR-447 |
-| PR-423 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Four-slot outer validation orchestration with per-K gates and deterministic process execution implemented; real-adapter hermetic four-slot integration passes, while production callback integration QA remains |
+| PR-423 | ACCEPTANCE COMPLETE | Real fixed-K TRAIN selection and real HMM Outer-TRAIN refit/Outer-TEST evaluation are covered across three folds and K2..K5; per-slot gates, independent aggregation, exact test-call coverage, future-row invariance and process/serial hash parity are verified; implementation merged in #418 and closure follows in PR-448 |
 | PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422/#427) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
@@ -1868,40 +1874,40 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_champion_outer.py`,
   `src/market_regime_engine/evaluations/global_regime_v4.py`,
   `src/market_regime_engine/evaluation_statistics/*`, corresponding tests
-- **Status:** implementation merged through GitHub PR #418; full integration QA remains
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and closure follows in PR-448
 
 Acceptance:
 
-- [ ] Run the complete K-specific selection procedure independently for each
+- [x] Run the complete K-specific selection procedure independently for each
   K inside every Outer-TRAIN.
-- [ ] Freeze `L*_K`, feature tuple, family and K before the corresponding
+- [x] Freeze `L*_K`, feature tuple, family and K before the corresponding
   Outer-TEST is opened.
-- [ ] Refit each selected K-slot model on complete Outer-TRAIN and evaluate it
+- [x] Refit each selected K-slot model on complete Outer-TRAIN and evaluate it
   exactly once on that fold's Outer-TEST.
-- [ ] Record per-slot/per-fold OOS predictions, soft-regime agreement, support,
+- [x] Record per-slot/per-fold OOS predictions, soft-regime agreement, support,
   validity, stability and all provenance hashes.
-- [ ] Apply eligibility independently per K: valid-fold rate >=0.80, at least
+- [x] Apply eligibility independently per K: valid-fold rate >=0.80, at least
   three valid folds and a valid latest complete fold.
-- [ ] Mark an ineligible K explicitly and prohibit later refit or alias
+- [x] Mark an ineligible K explicitly and prohibit later refit or alias
   promotion for that slot.
-- [ ] Aggregate only dimension-independent per-K policy evidence across folds;
+- [x] Aggregate only dimension-independent per-K policy evidence across folds;
   never pool adaptive-fold raw PLL/AIC/BIC.
-- [ ] Do not choose one K over another; all four slots remain independently
+- [x] Do not choose one K over another; all four slots remain independently
   reportable.
-- [ ] Provide deterministic process-parallel execution with canonical outer-fold
+- [x] Provide deterministic process-parallel execution with canonical outer-fold
   and K ordering.
 
 QA:
 
-- [ ] Three-or-more-fold real-HMM fixture produces four independent slot
+- [x] Three-or-more-fold real-HMM fixture produces four independent slot
   dossiers and verifies every Outer-TEST is accessed once per eligible slot.
-- [ ] Future-TEST mutation cannot change any pre-TEST selection, feature hash
+- [x] Future-TEST mutation cannot change any pre-TEST selection, feature hash
   or selected family.
-- [ ] Per-K valid-fold gates reject exactly the intended invalid-slot cases.
-- [ ] Independent aggregation oracle reproduces validity, soft-NMI support and
+- [x] Per-K valid-fold gates reject exactly the intended invalid-slot cases.
+- [x] Independent aggregation oracle reproduces validity, soft-NMI support and
   stability summaries without importing the production aggregator.
-- [ ] Parallel and serial outer execution produce identical slot/fold hashes.
-- [ ] Tests prove the system never copies the last Outer-Fold configuration
+- [x] Parallel and serial outer execution produce identical slot/fold hashes.
+- [x] Tests prove the system never copies the last Outer-Fold configuration
   into another slot or into deployment selection.
 
 ### PR-424 — Perform full-history deployment selection and one refit per K
