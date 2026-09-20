@@ -40,8 +40,14 @@ def test_quality_contract_and_gate_workflows_cannot_diverge() -> None:
     project, workflows = _coverage_contract_inputs()
     _assert_coverage_contract(project, workflows)
     for workflow in workflows:
-        assert "integration:" not in workflow
-        assert "needs: [lint, type, unit, integration]" not in workflow
+        assert "integration:" in workflow
+        assert (
+            '.venv/bin/pytest -n auto tests -m "integration and not slow and not external"'
+            in workflow
+        )
+        assert "needs: [lint, type, unit, integration]" in workflow
+        assert "INTEGRATION: ${{ needs.integration.result }}" in workflow
+        assert 'test "${INTEGRATION}" = success' in workflow
 
 
 @pytest.mark.parametrize("mutated_threshold", (84, 80))
