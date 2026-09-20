@@ -137,18 +137,22 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-450 — QA: regression-proof the 85% coverage contract
 
+**Status:** ACCEPTANCE COMPLETE — GitHub PR #449, commit `11e2513`, all required gates green
+
+**Branch:** `pr/PR-450-coverage-contract-qa`
+
 **Type:** QA only
 **Depends on:** PR-449
 
 #### Acceptance
 
-- [ ] Read `pyproject.toml` and prove the threshold is exactly 85.
-- [ ] Reject any explicit merge/push `--fail-under` lower than 85.
-- [ ] Mutations to 84 and 80 fail QA.
-- [ ] Prove merge/push coverage commands are semantically equivalent.
-- [ ] Prove no cross-job coverage artifact transfer is required.
-- [ ] QA is hermetic and uses no network service or secret.
-- [ ] Production code is unchanged.
+- [x] Read `pyproject.toml` and prove the threshold is exactly 85.
+- [x] Reject any explicit merge/push `--fail-under` lower than 85.
+- [x] Mutations to 84 and 80 fail QA.
+- [x] Prove merge/push coverage commands are semantically equivalent.
+- [x] Prove no cross-job coverage artifact transfer is required.
+- [x] QA is hermetic and uses no network service or secret.
+- [x] Production code is unchanged.
 
 ### PR-451 — Add hermetic integration lanes to merge and push gates
 
