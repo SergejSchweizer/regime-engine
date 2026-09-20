@@ -300,6 +300,8 @@ def select_k_specific_feature_configuration(
                 selected_prefix.feature_order,
             )
         ),
+        source_build_id=source_build_id,
+        source_catalog_hash=catalog.catalog_hash,
     )
     return KFeatureSelectionPayload(
         selection=selection,

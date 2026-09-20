@@ -11,6 +11,9 @@ from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
 
 from market_regime_engine.contracts.core import K_CHAMPION_ALIASES
 from market_regime_engine.evaluations.k_champion_outer import KChampionSlotValidation
+from market_regime_engine.evaluations.k_deployment_selection import (
+    select_k_deployment_packages,
+)
 from market_regime_engine.mlflow_support.k_slot_plots import (
     build_cross_k_plot_payload,
     build_k_plot_payload,
@@ -140,11 +143,38 @@ def test_real_four_slot_portfolio_is_canonical_and_parallel(
     assert parallel.result_hash == serial.result_hash
 
     deployment = portfolio.deployment(parallel, tmp_path / "packages", max_workers=None)
+    deployment_serial = portfolio.deployment(
+        parallel,
+        tmp_path / "packages-serial",
+        max_workers=1,
+    )
     assert len(deployment.eligible_artifacts) == manifest["deployment_packages"]
+    assert tuple(
+        (item.slot_id, item.selection_hash, item.artifact_hash)
+        for item in deployment.eligible_artifacts
+    ) == tuple(
+        (item.slot_id, item.selection_hash, item.artifact_hash)
+        for item in deployment_serial.eligible_artifacts
+    )
     assert all(
         (Path(item.package_directory) / "model.json").is_file()
         for item in deployment.eligible_artifacts
     )
+    for item in deployment.eligible_artifacts:
+        package_payload = json.loads(
+            (Path(item.package_directory) / "model.json").read_text(encoding="utf-8")
+        )
+        assert package_payload["artifact_hash"] == item.artifact_hash
+        assert package_payload["selection_hash"] == item.selection_hash
+        assert package_payload["state_count"] == item.state_count
+        assert package_payload["model_family"] == item.model_family
+        assert tuple(package_payload["feature_order"]) == item.feature_order
+        assert package_payload["feature_order_hash"] == item.feature_order_hash
+        assert package_payload["policy_version"] == item.policy_version
+        assert len(package_payload["model_artifact_hash"]) == 64
+        assert len(package_payload["state_order"]) == item.state_count
+        assert package_payload["transition_matrix"]
+        assert package_payload["full_covariances"]
     assert tuple(item.slot_id for item in deployment.slots) == ("k2", "k3", "k4", "k5")
 
     slots = metric_slots(portfolio, parallel, deployment)
@@ -286,6 +316,49 @@ def test_ineligible_slot_has_no_selected_model_package_or_alias(
         ("regime-xetra", "champion-k4"),
     }
     assert ("regime-xetra", "champion-k5") not in registry_client.aliases
+
+
+def test_deployment_rejects_outer_fold_cutoff_as_source_maximum(
+    portfolio: HermeticPortfolio,
+) -> None:
+    validation = portfolio.outer(max_workers=1)
+    latest = {
+        slot.slot_id: next(
+            item.selection
+            for item in reversed(validation.outer_folds)
+            if item.slot_id == slot.slot_id and item.selection is not None
+        )
+        for slot in validation.slots
+        if slot.eligible
+    }
+    calls: list[str] = []
+
+    def stale_selector(source_rows, *, slot_id, deployment_cutoff):
+        del source_rows, deployment_cutoff
+        return latest[slot_id]
+
+    def should_not_refit(source_rows, *, selection, slot_id):
+        del source_rows, selection
+        calls.append(slot_id)
+        raise AssertionError("stale deployment selection reached the refitter")
+
+    result = select_k_deployment_packages(
+        portfolio.rows,
+        validation=validation,
+        deployment_cutoff=portfolio.deployment_cutoff,
+        source_build_id="hermetic-k-champion-e2e-v1",
+        source_catalog_hash="c" * 64,
+        selector=stale_selector,
+        refitter=should_not_refit,
+        max_workers=1,
+    )
+    assert not calls
+    assert all(not item.eligible for item in result.slots)
+    assert all(
+        item.reason == "ValueError: deployment selection validation cutoff differs from validation"
+        for item in result.slots
+        if item.slot_id in latest
+    )
 
 
 def test_future_rows_do_not_change_completed_outer_evidence(portfolio: HermeticPortfolio) -> None:

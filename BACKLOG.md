@@ -17,9 +17,9 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-448-k-outer-production-integration-closure`, based
-  directly on current `origin/main`; PR-448 closes the remaining hermetic
-  PR-423 acceptance gaps and has not run a full evaluation or external write.
+- **Active worktree:** `pr/PR-449-k-deployment-refit-acceptance-closure`, based
+  directly on current `origin/main`; PR-449 closes the remaining hermetic
+  PR-424 acceptance gaps and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -148,6 +148,12 @@ Status date: 2026-09-16
   provenance, independent eligibility/aggregation gates fail closed, future
   TEST mutations do not alter selection identity, and process/serial outer
   execution is canonical. Closure is tracked by PR-448.
+  PR-424 acceptance is now complete locally: eligible-only full-history
+  deployment selection requires explicit source build/catalog identity and
+  separate validation/source cutoffs, refits exactly once per eligible K in
+  bounded processes, emits immutable model-parameter/state-order manifests,
+  and rejects stale/mutated selections before fitting. Closure is tracked by
+  PR-449.
 - **Current CPU implementation:** the runtime uses affinity/cgroup-aware
   worker sizing, process-backed CPU work, bounded nested numerical lanes and
   deterministic result-order assembly. Later CPU, stage-resume, tracking and
@@ -427,7 +433,7 @@ still required.
 | PR-421 | ACCEPTANCE COMPLETE | TRAIN-only process-parallel K orchestration, real fixed-K discovery/teacher/scoring/prefix evidence, distinct K feature tuples, label invariance, validation-cutoff isolation, independent prefix/NMI oracle and serial/process canonical parity are covered; implementation merged in #418 and closure follows in PR-446 |
 | PR-422 | ACCEPTANCE COMPLETE | Exact fixed-K Gaussian/GMM/Student-t ranking, strict same-K comparison domain, real-HMM K=2..5 serial/process parity, four-K GIL-free orchestration, canonical completion-order assembly, adversarial independent oracle and lineage/feature-tuple invariants are covered; implementation merged in #418 and closure follows in PR-447 |
 | PR-423 | ACCEPTANCE COMPLETE | Real fixed-K TRAIN selection and real HMM Outer-TRAIN refit/Outer-TEST evaluation are covered across three folds and K2..K5; per-slot gates, independent aggregation, exact test-call coverage, future-row invariance and process/serial hash parity are verified; implementation merged in #418 and closure follows in PR-448 |
-| PR-424 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Per-K deployment/refit orchestration with cutoff/source binding implemented; hermetic real-refit package QA passes, while production artifact integration remains |
+| PR-424 | ACCEPTANCE COMPLETE | Full-history eligible-only deployment selection, separate validation/source cutoffs, real per-K refits, immutable package metadata/model-parameter manifests, ineligible-slot suppression, source-lineage fail-closed checks and process/serial package-hash parity are covered; implementation merged in #418 and closure follows in PR-449 |
 | PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422/#427) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
@@ -1918,37 +1924,37 @@ QA:
 - **Allowed:** `src/market_regime_engine/evaluations/k_deployment_selection.py`,
   `src/market_regime_engine/training/final_refit.py`,
   `src/market_regime_engine/mlflow_support/model_package.py`, corresponding tests
-- **Status:** implementation merged through GitHub PR #418; production artifact integration QA remains
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and closure follows in PR-449
 
 Acceptance:
 
-- [ ] Require completed four-slot outer validation and independently check
+- [x] Require completed four-slot outer validation and independently check
   eligibility before starting deployment selection.
-- [ ] Rerun the exact K-specific TRAIN-only selection function for every
+- [x] Rerun the exact K-specific TRAIN-only selection function for every
   eligible K on all source rows through `source.max_timestamp`.
-- [ ] Never copy the last Outer-Fold feature tuple, family or model state.
-- [ ] Refit exactly one selected model per eligible K on complete deployment
+- [x] Never copy the last Outer-Fold feature tuple, family or model state.
+- [x] Refit exactly one selected model per eligible K on complete deployment
   data through the source cutoff.
-- [ ] Produce one immutable package per eligible slot containing selected
+- [x] Produce one immutable package per eligible slot containing selected
   feature tuple, family, K, scaling, model parameters, state ordering and all
   lineage hashes.
-- [ ] Produce no package for an ineligible K slot and record the reason.
-- [ ] Keep validation and deployment-selection cutoffs distinct and enforce
+- [x] Produce no package for an ineligible K slot and record the reason.
+- [x] Keep validation and deployment-selection cutoffs distinct and enforce
   source/build/catalog identity.
-- [ ] Do not mutate MLflow registry aliases in this PR.
-- [ ] Assemble independent refits with deterministic ordering and bounded
+- [x] Do not mutate MLflow registry aliases in this PR.
+- [x] Assemble independent refits with deterministic ordering and bounded
   process workers where the backend is pickle-safe.
 
 QA:
 
-- [ ] Full-history synthetic fixture proves exactly one final package per
+- [x] Full-history synthetic fixture proves exactly one final package per
   eligible K and no package for an ineligible K.
-- [ ] Appending data changes deployment selection only when the TRAIN-only
+- [x] Appending data changes deployment selection only when the TRAIN-only
   evidence justifies that change.
-- [ ] Source cutoff, catalog, feature-order and policy-hash mutations fail
+- [x] Source cutoff, catalog, feature-order and policy-hash mutations fail
   closed before fitting.
-- [ ] Package round-trip reproduces all selected models and feature tuples.
-- [ ] Spawned-process and serial refits produce identical model/evidence hashes
+- [x] Package round-trip reproduces all selected models and feature tuples.
+- [x] Spawned-process and serial refits produce identical model/evidence hashes
   with native numerical threads capped at one.
 
 ### PR-425 — Register K-slot models and promote better candidates by alias

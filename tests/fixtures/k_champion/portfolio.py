@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -66,6 +66,7 @@ FEATURE_ORDER_BY_K = {
     5: ("f0", "f3"),
 }
 SOURCE_BUILD_ID = "hermetic-k-champion-e2e-v1"
+SOURCE_CATALOG_HASH = "c" * 64
 SOURCE_SNAPSHOT_ID = "hermetic-k-champion-snapshot-v1"
 PROFILE_ID = "xetra"
 PROFILE_CONFIG_VERSION = 4
@@ -348,6 +349,8 @@ def _selection_from_record(
         promotion_score_version="k_slot_promotion.v1",
         reference_teacher_id=f"teacher-{record.slot_id}",
         artifact_hash=_artifact_hash(record.artifact),
+        source_build_id=SOURCE_BUILD_ID,
+        source_catalog_hash=SOURCE_CATALOG_HASH,
     )
 
 
@@ -375,8 +378,8 @@ class RealFoldSelector:
             return None
         return _selection_from_record(
             winner,
-            validation_cutoff=self.validation_cutoff,
-            deployment_cutoff=self.deployment_cutoff,
+            validation_cutoff=fold.train_end,
+            deployment_cutoff=fold.test_end,
         )
 
 
@@ -440,6 +443,7 @@ class RealFoldEvaluator:
 @dataclass(frozen=True, slots=True)
 class RefitDeploymentSelector:
     selection_by_slot: Mapping[str, KChampionSelection]
+    validation_cutoff: datetime
 
     def __call__(
         self,
@@ -450,7 +454,11 @@ class RefitDeploymentSelector:
     ) -> KChampionSelection:
         if tuple(source_rows["timestamp_m1"])[-1] != deployment_cutoff:
             raise ValueError("deployment selector did not receive the full source maximum")
-        return self.selection_by_slot[slot_id]
+        return replace(
+            self.selection_by_slot[slot_id],
+            validation_cutoff=self.validation_cutoff,
+            deployment_cutoff=deployment_cutoff,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,8 +486,19 @@ class RealDeploymentRefitter:
             json.dumps(
                 {
                     "candidate_id": candidate.candidate_id,
-                    "artifact_hash": _artifact_hash(fit.artifact),
+                    "artifact_hash": selection.artifact_hash,
+                    "model_artifact_hash": _artifact_hash(fit.artifact),
                     "feature_order": list(selection.feature_order),
+                    "feature_order_hash": selection.feature_order_hash,
+                    "model_family": fit.artifact.model_family,
+                    "state_count": fit.artifact.state_count,
+                    "state_order": list(range(fit.artifact.state_count)),
+                    "start_probabilities": fit.artifact.start_probabilities,
+                    "transition_matrix": fit.artifact.transition_matrix,
+                    "means": fit.artifact.means,
+                    "full_covariances": fit.artifact.full_covariances,
+                    "selection_hash": selection.selection_hash,
+                    "policy_version": selection.policy_version,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -494,6 +513,13 @@ class RealDeploymentRefitter:
             package_directory=str(directory),
             source_snapshot_id=selection.source_snapshot_id,
             deployment_cutoff=selection.deployment_cutoff,
+            state_count=selection.state_count,
+            model_family=selection.model_family,
+            feature_order=selection.feature_order,
+            feature_order_hash=selection.feature_order_hash,
+            policy_version=selection.policy_version,
+            source_build_id=selection.source_build_id,
+            source_catalog_hash=selection.source_catalog_hash,
         )
 
 
@@ -545,12 +571,14 @@ class HermeticPortfolio:
             for slot in validation.slots
             if slot.eligible and slot.slot_id not in ineligible_slots
         }
-        selector = RefitDeploymentSelector(latest)
+        selector = RefitDeploymentSelector(latest, validation.validation_cutoff)
         refitter = RealDeploymentRefitter(self.profile, output_directory)
         return select_k_deployment_packages(
             self.rows,
             validation=validation,
             deployment_cutoff=self.deployment_cutoff,
+            source_build_id=SOURCE_BUILD_ID,
+            source_catalog_hash=SOURCE_CATALOG_HASH,
             selector=selector,
             refitter=refitter,
             max_workers=max_workers,
