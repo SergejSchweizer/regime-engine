@@ -195,7 +195,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-453 — Separate statistical invalidity from unexpected software failures
 
-**Status:** IMPLEMENTATION COMPLETE — branch `pr/PR-453-evaluation-invalidity-boundary`; focused unit/integration tests and the local hermetic gate are green; GitHub PR pending
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #452 at `dd882fc`; all required local and GitHub gates green
 
 **Branch:** `pr/PR-453-evaluation-invalidity-boundary`
 
@@ -217,6 +217,10 @@ with the dependency-ordered scalable feature-selection plan below.
 - [x] No blanket `except Exception` emits eligibility evidence.
 
 ### PR-454 — QA: adversarial failure-classification matrix
+
+**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-454-adversarial-failure-classification`; QA-only; GitHub PR pending
+
+**Branch:** `pr/PR-454-adversarial-failure-classification`
 
 **Type:** QA only
 **Depends on:** PR-453
