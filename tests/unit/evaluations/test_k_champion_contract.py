@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,9 @@ from market_regime_engine.evaluations.k_champion_contract import (
 )
 from market_regime_engine.evaluations.k_feature_selection import (
     KFeatureSelectionPayload,
+    KFeatureSelectionResult,
+    _fixed_k_teacher_reference,
+    _run_task,
     run_k_feature_selection,
 )
 from market_regime_engine.mlflow_support.k_champion_contract import (
@@ -277,6 +281,129 @@ def test_selection_deserialization_rejects_missing_unknown_and_operational_field
     payload["validation_cutoff"] = BASE.isoformat()
     with pytest.raises(ValueError, match="UTC Z"):
         KChampionSelection.from_canonical_json(json.dumps(payload))
+
+
+def test_k_selection_payload_and_result_contracts_fail_closed() -> None:
+    item = selection()
+    payload = KFeatureSelectionPayload(item, "b" * 64, item.reference_teacher_id, "c" * 64)
+    assert payload.teacher_identity == payload.selection.reference_teacher_id
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        KFeatureSelectionPayload(payload.selection, "A" * 64, payload.teacher_identity, "c" * 64)
+    with pytest.raises(ValueError, match="teacher_identity must match"):
+        KFeatureSelectionPayload(payload.selection, "b" * 64, "other", "c" * 64)
+
+    valid = KFeatureSelectionResult(
+        2,
+        "snapshot-1",
+        BASE,
+        payload.selection,
+        "b" * 64,
+        payload.teacher_identity,
+        "c" * 64,
+        True,
+    )
+    assert valid.selection_hash == payload.selection.selection_hash
+    with pytest.raises(ValueError, match="eligibility"):
+        KFeatureSelectionResult(2, "snapshot-1", BASE, None, None, None, None, True)
+    with pytest.raises(ValueError, match="trimmed rejection"):
+        KFeatureSelectionResult(2, "snapshot-1", BASE, None, None, None, None, False, " bad")
+
+
+def test_fixed_k_teacher_reference_validates_probabilities_and_support() -> None:
+    fold = SimpleNamespace(
+        valid=True,
+        fold_id="inner-001",
+        failure_reason=None,
+        oos_timestamps=(BASE, BASE + timedelta(days=1)),
+        oos_filtered_probabilities=((0.75, 0.25), (0.2, 0.8)),
+    )
+    evaluation = SimpleNamespace(
+        candidate_id="gaussian_hmm_k2_full",
+        state_count=2,
+        valid_folds=(fold,),
+        folds=(fold,),
+        evaluation_plan_hash="d" * 64,
+    )
+    reference = _fixed_k_teacher_reference(
+        evaluation,
+        source_build_id="build-1",
+        prototype_features=("f0",),
+    )
+    assert reference.dominant_states == (0, 1)
+    assert reference.reference_hash
+
+    invalid = SimpleNamespace(
+        **{
+            **vars(fold),
+            "oos_filtered_probabilities": ((0.5,), (0.5,)),
+        }
+    )
+    with pytest.raises(ValueError, match="wrong dimension"):
+        _fixed_k_teacher_reference(
+            SimpleNamespace(**{**vars(evaluation), "valid_folds": (invalid,)}),
+            source_build_id="build-1",
+            prototype_features=("f0",),
+        )
+    with pytest.raises(ValueError, match="no valid inner-fold support"):
+        _fixed_k_teacher_reference(
+            SimpleNamespace(
+                **{
+                    **vars(evaluation),
+                    "valid_folds": (),
+                    "folds": (SimpleNamespace(valid=False, failure_reason="no support"),),
+                }
+            ),
+            source_build_id="build-1",
+            prototype_features=("f0",),
+        )
+
+
+def test_k_selection_task_outcomes_and_input_validation() -> None:
+    frame = __import__("pandas").DataFrame({"f0": (1.0,)})
+    task = (frame, 2, "snapshot-1", BASE, lambda *_args, **_kwargs: None)
+    no_result = _run_task(task)
+    assert not no_result.eligible and "no eligible" in (no_result.rejection_reason or "")
+
+    bad_type = _run_task((frame, 2, "snapshot-1", BASE, lambda *_args, **_kwargs: object()))
+    assert not bad_type.eligible and "TypeError" in (bad_type.rejection_reason or "")
+    raised = _run_task(
+        (
+            frame,
+            2,
+            "snapshot-1",
+            BASE,
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+        )
+    )
+    assert not raised.eligible and "RuntimeError" in (raised.rejection_reason or "")
+
+    with pytest.raises(TypeError, match="pandas DataFrame"):
+        run_k_feature_selection(
+            object(),
+            source_snapshot_id="snapshot-1",
+            validation_cutoff=BASE,
+            selector=_train_selector,
+        )
+    with pytest.raises(ValueError, match="source_snapshot_id"):
+        run_k_feature_selection(
+            frame, source_snapshot_id=" ", validation_cutoff=BASE, selector=_train_selector
+        )
+    with pytest.raises(ValueError, match="unique ordered"):
+        run_k_feature_selection(
+            frame,
+            source_snapshot_id="snapshot-1",
+            validation_cutoff=BASE,
+            selector=_train_selector,
+            requested_state_counts=(3, 2),
+        )
+    with pytest.raises(ValueError, match="at least one"):
+        run_k_feature_selection(
+            frame,
+            source_snapshot_id="snapshot-1",
+            validation_cutoff=BASE,
+            selector=_train_selector,
+            requested_state_counts=(),
+        )
 
 
 def test_policy_slots_aliases_and_model_families_are_exact_and_single_source() -> None:

@@ -5,6 +5,7 @@ from math import log
 
 import pytest
 
+import market_regime_engine.evaluations.agreement_v4 as module
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
 
 
@@ -98,3 +99,22 @@ def test_zero_shared_support_and_degenerate_entropy_fail_explicitly() -> None:
         compute_soft_regime_nmi(
             times(2), ((1.0, 0.0), (1.0, 0.0)), times(2), ((0.5, 0.5), (0.5, 0.5))
         )
+
+
+@pytest.mark.parametrize(
+    ("timestamps", "probabilities", "message"),
+    [
+        ((), (), "non-empty"),
+        ((times(1)[0],), ((1.0, 0.0), (0.0, 1.0)), "align"),
+        ((datetime(2026, 1, 1),), ((1.0, 0.0),), "timezone-aware"),
+        ((times(2)[0], times(2)[0]), ((1.0, 0.0), (0.0, 1.0)), "unique"),
+        (times(2), ((1.0,), (0.0, 1.0)), "one state dimension"),
+        (times(1), ((True, False),), "numeric"),
+        (times(1), (("bad", 1.0),), "numeric"),
+    ],
+)
+def test_probability_matrix_rejects_malformed_inputs(
+    timestamps, probabilities, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        module._probability_matrix(timestamps, probabilities, "left")

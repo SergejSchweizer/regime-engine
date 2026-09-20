@@ -5,11 +5,13 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 
+from market_regime_engine.mlflow_support import model_publishing
 from market_regime_engine.mlflow_support.model_package import (
     MLMODEL_FILE,
     PACKAGE_DATA_FILE,
@@ -204,6 +206,168 @@ def test_package_fails_closed_on_metadata_and_payload_drift(tmp_path: Path) -> N
     data_path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="unknown or missing"):
         production_artifact_from_json(data_path.read_text(encoding="utf-8"))
+
+
+def test_model_publishing_resolves_or_creates_experiment() -> None:
+    class Client:
+        def __init__(self, existing: object | None) -> None:
+            self.existing = existing
+            self.created: list[str] = []
+
+        def get_experiment_by_name(self, name: str) -> object | None:
+            return self.existing
+
+        def create_experiment(self, name: str) -> str:
+            self.created.append(name)
+            return "42"
+
+    existing = Client(type("Experiment", (), {"experiment_id": "7"})())
+    assert model_publishing._experiment_id(existing, "exp") == "7"
+    created = Client(None)
+    assert model_publishing._experiment_id(created, "exp") == "42"
+    assert created.created == ["exp"]
+
+
+def test_model_publishing_rejects_wrong_artifact_type(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="ProductionModelArtifact"):
+        model_publishing.publish_production_package(object(), tmp_path)
+
+
+def test_model_publishing_uploads_package_and_registers_remote_uri(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = artifact()
+    package = save_production_package(original, tmp_path / "model")
+    calls: list[tuple[str, object]] = []
+
+    class Client:
+        def __init__(self, *, tracking_uri: str, registry_uri: str) -> None:
+            assert tracking_uri == registry_uri == "http://10.10.1.3:5000"
+
+        def get_experiment_by_name(self, name: str) -> None:
+            assert name == "regime-engine-production"
+            return None
+
+        def create_experiment(self, name: str) -> str:
+            calls.append(("experiment", name))
+            return "experiment-1"
+
+        def create_run(self, experiment_id: str, *, tags: dict[str, str]) -> object:
+            calls.append(("run", (experiment_id, tags)))
+            return SimpleNamespace(info=SimpleNamespace(run_id="run-1"))
+
+        def log_artifacts(self, run_id: str, path: str, artifact_path: str) -> None:
+            calls.append(("artifacts", (run_id, path, artifact_path)))
+
+        def set_tag(self, run_id: str, key: str, value: str) -> None:
+            calls.append(("tag", (run_id, key, value)))
+
+        def set_terminated(self, run_id: str, *, status: str) -> None:
+            calls.append(("terminated", (run_id, status)))
+
+    registered = SimpleNamespace(version="1", source="runs:/run-1/production-package")
+    monkeypatch.setattr(
+        model_publishing,
+        "MLflowSettings",
+        SimpleNamespace(
+            from_environment=lambda: SimpleNamespace(
+                tracking_uri="http://10.10.1.3:5000", registry_uri="http://10.10.1.3:5000"
+            )
+        ),
+    )
+    monkeypatch.setattr(model_publishing, "MlflowClient", Client)
+    monkeypatch.setattr(
+        model_publishing.MlflowModelRegistry,
+        "register_production_model",
+        lambda self, artifact, path, *, package_source_uri: (
+            calls.append(("register", package_source_uri)) or registered
+        ),
+    )
+
+    result = model_publishing.publish_production_package(original, package)
+
+    assert result.tracking_uri == "http://10.10.1.3:5000"
+    assert result.run_id == "run-1"
+    assert result.registered is registered
+    assert ("terminated", ("run-1", "FINISHED")) in calls
+    assert ("register", "runs:/run-1/production-package") in calls
+
+
+def test_model_publishing_marks_failed_run_when_registry_rejects_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = artifact()
+    package = save_production_package(original, tmp_path / "model")
+    statuses: list[str] = []
+
+    class Client:
+        def __init__(self, *, tracking_uri: str, registry_uri: str) -> None:
+            assert tracking_uri == registry_uri == "http://10.10.1.3:5000"
+
+        def get_experiment_by_name(self, name: str) -> object:
+            return SimpleNamespace(experiment_id="experiment-1")
+
+        def create_run(self, experiment_id: str, *, tags: dict[str, str]) -> object:
+            return SimpleNamespace(info=SimpleNamespace(run_id="run-1"))
+
+        def log_artifacts(self, run_id: str, path: str, artifact_path: str) -> None:
+            pass
+
+        def set_tag(self, run_id: str, key: str, value: str) -> None:
+            pass
+
+        def set_terminated(self, run_id: str, *, status: str) -> None:
+            statuses.append(status)
+
+    monkeypatch.setattr(
+        model_publishing,
+        "MLflowSettings",
+        SimpleNamespace(
+            from_environment=lambda: SimpleNamespace(
+                tracking_uri="http://10.10.1.3:5000", registry_uri="http://10.10.1.3:5000"
+            )
+        ),
+    )
+    monkeypatch.setattr(model_publishing, "MlflowClient", Client)
+
+    def reject(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(model_publishing.MlflowModelRegistry, "register_production_model", reject)
+    with pytest.raises(RuntimeError, match="registry unavailable"):
+        model_publishing.publish_production_package(original, package)
+    assert statuses == ["FAILED"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("profile_id", "other", "Xetra v4"),
+        ("profile_config_version", 3, "Xetra v4"),
+        ("registered_model", "other", "registered model"),
+        ("state_count", 1, "K2/K3/K4/K5"),
+        ("candidate_id", "unknown", "candidate identity"),
+        ("source_build_id", "", "source identity"),
+        ("source_data_sha256", "x", "SHA-256"),
+        ("source_schema_version", 0, "versions must be positive"),
+        ("data_time_semantics", "historical", "data_time_semantics"),
+        ("validation_evaluation_cutoff", datetime(2026, 8, 20), "UTC"),
+        ("state_identity_scope", "global", "model_version_local"),
+        ("retained_observation_count", 503, "504 retained"),
+        ("skipped_incomplete_observation_count", -1, "cannot be negative"),
+        ("terminal_filtered_probabilities", (1.0,), "dimension"),
+        ("winning_seed", 17, "pinned eight-seed"),
+    ],
+)
+def test_production_artifact_rejects_invalid_identity_fields(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(artifact(), **{field: value})
 
 
 def test_json_loader_rejects_root_shape_fields_and_schema() -> None:

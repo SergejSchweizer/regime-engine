@@ -94,3 +94,26 @@ def test_student_t_artifact_requires_one_valid_degree_of_freedom_per_state() -> 
         replace(base, model_family="student_t_hmm")
     with pytest.raises(ValueError, match="greater than two"):
         replace(base, model_family="student_t_hmm", degrees_of_freedom=(2.0, 5.0))
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"state_count": 1}, "state_count"),
+        ({"feature_order": ("a", "a")}, "duplicate-free"),
+        ({"start_probabilities": (1.0,)}, "dimension mismatch"),
+        ({"transition_matrix": ((1.0,), (1.0,))}, "square"),
+        ({"means": ((0.0,),)}, "mean state dimension"),
+        ({"full_covariances": (((1.0,),),)}, "covariance state dimension"),
+        ({"full_covariances": (((1.0, 2.0), (2.0, 1.0)),) * 2}, "Cholesky"),
+        ({"model_family": "unsupported"}, "model_family"),
+        ({"degrees_of_freedom": (4.0, 5.0)}, "only Student-t"),
+    ],
+)
+def test_gaussian_artifact_rejects_structural_contract_drift(
+    changes: dict[str, object], message: str
+) -> None:
+    base = artifact()
+    values = {field: getattr(base, field) for field in base.__dataclass_fields__}
+    with pytest.raises(ValueError, match=message):
+        GaussianHMMArtifact(**{**values, **changes})

@@ -15,7 +15,11 @@ from market_regime_engine.training.multistart import (
     MINIMUM_VALID_STARTS,
     MULTISTART_SEEDS,
     TRAIN_LOGLIK_TIE_ABS_TOLERANCE,
+    MultistartResult,
+    StartDiagnostic,
     _anchored_winner,
+    _evaluate_start,
+    _reserve_cpu_slots,
     run_multistart,
 )
 
@@ -245,3 +249,43 @@ def test_checkpointed_technical_start_failure_remains_retryable() -> None:
             seed=MULTISTART_SEEDS[0],
             retryable_technical_failure=True,
         )
+
+
+def test_multistart_contracts_reject_invalid_diagnostics_and_results() -> None:
+    with pytest.raises(ValueError, match="outside"):
+        StartDiagnostic(999, False, False, None, None, None, "bad")
+    with pytest.raises(ValueError, match="successful start"):
+        StartDiagnostic(11, True, False, 1, 1.0, artifact(), None)
+    with pytest.raises(ValueError, match="positive iterations"):
+        StartDiagnostic(11, True, True, 0, 1.0, artifact(), None)
+    with pytest.raises(ValueError, match="finite"):
+        StartDiagnostic(11, True, True, 1, nan, artifact(), None)
+    with pytest.raises(ValueError, match="failure reason"):
+        StartDiagnostic(11, False, False, None, None, None, None)
+
+    diagnostics = tuple(
+        StartDiagnostic(seed, True, True, 1, 1.0, artifact(), None) for seed in MULTISTART_SEEDS
+    )
+    winner = fit_result(11, 1.0)
+    with pytest.raises(ValueError, match="state_count"):
+        MultistartResult(1, winner, diagnostics)
+    with pytest.raises(ValueError, match="winner"):
+        MultistartResult(2, fit_result(999, 1.0), diagnostics)  # type: ignore[arg-type]
+
+
+def test_multistart_cpu_slot_reservation_is_bounded() -> None:
+    with _reserve_cpu_slots(10_000) as reserved:
+        assert reserved >= 1
+        assert reserved <= multistart_module._CPU_SLOT_COUNT
+
+
+def test_evaluate_start_rejects_deterministic_adapter_contract_failures() -> None:
+    mismatch = fit_result(23, 1.0)
+    diagnostic, result = _evaluate_start(
+        [[0.0]],
+        state_count=2,
+        adapter_factory=factory({11: mismatch}),
+        seed=11,
+    )
+    assert result is None
+    assert diagnostic.failure_reason == "ValueError: adapter returned a mismatched seed"

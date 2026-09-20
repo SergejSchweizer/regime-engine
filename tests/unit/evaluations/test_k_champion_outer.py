@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
+import pytest
 
+import market_regime_engine.evaluations.k_champion_outer as outer_module
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluations.k_champion_contract import (
     KChampionSelection,
@@ -222,4 +224,40 @@ def test_slot_gates_and_independent_aggregation_reconcile_exactly() -> None:
             assert summary.mean_stability == sum(
                 item.stability for item in valid if item.stability is not None
             ) / len(valid)
-        assert summary.fold_result_hashes == tuple(item.result_hash for item in evidence)
+            assert summary.fold_result_hashes == tuple(item.result_hash for item in evidence)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [(None, "timezone-aware UTC"), (BASE.replace(tzinfo=None), "timezone-aware UTC")],
+)
+def test_outer_contract_scalar_helpers_reject_invalid_values(value: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        outer_module._utc(value, "timestamp")
+    with pytest.raises(ValueError, match="non-empty trimmed"):
+        outer_module._text(" ", "identity")
+    with pytest.raises(ValueError, match="finite and in"):
+        outer_module._unit(value if value is not None else True, "score")
+
+
+def test_outer_contract_timestamp_and_probability_helpers_are_strict() -> None:
+    with pytest.raises(ValueError, match="cannot be empty"):
+        outer_module._validate_timestamps((), "candidate OOS")
+    with pytest.raises(ValueError, match="strictly increasing"):
+        outer_module._validate_timestamps((BASE + timedelta(days=1), BASE), "candidate OOS")
+    assert outer_module._validate_timestamps((BASE,), "candidate OOS") == (BASE,)
+
+    with pytest.raises(ValueError, match="wrong state dimension"):
+        outer_module._validate_probabilities(((1.0,),), 2, "candidate OOS")
+    with pytest.raises(ValueError, match="finite and normalized"):
+        outer_module._validate_probabilities(((0.7, 0.7),), 2, "candidate OOS")
+    assert outer_module._validate_probabilities(((0.25, 0.75),), 2, "candidate OOS") == (
+        (0.25, 0.75),
+    )
+
+
+def test_fold_evaluation_contract_rejects_alignment_and_stability_drift() -> None:
+    with pytest.raises(ValueError, match="do not align"):
+        outer_module.KChampionFoldEvaluation((BASE,), (), (BASE,), (), 0.5)
+    with pytest.raises(ValueError, match="stability"):
+        outer_module.KChampionFoldEvaluation((BASE,), ((0.5, 0.5),), (BASE,), ((0.5, 0.5),), 2.0)

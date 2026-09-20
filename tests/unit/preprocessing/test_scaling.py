@@ -41,3 +41,23 @@ def test_nonfinite_and_wrong_order_dimension_fail() -> None:
     scaler = fit_standard_scaler(np.array([[1.0], [2.0], [3.0]]), ("x",))
     with pytest.raises(ValueError, match="exact feature order"):
         scaler.transform(np.array([[1.0, 2.0]]))
+
+
+def test_scaler_contract_rejects_empty_or_malformed_artifacts() -> None:
+    with pytest.raises(ValueError, match="cannot be empty"):
+        fit_standard_scaler(np.empty((0, 2)), ("a", "b"))
+    with pytest.raises(ValueError, match="duplicate-free"):
+        fit_standard_scaler(np.array([[1.0, 2.0], [2.0, 4.0]]), ("a", "a"))
+    scaler = fit_standard_scaler(np.array([[1.0], [2.0], [3.0]]), ("x",))
+    with pytest.raises(ValueError, match="unknown/missing"):
+        StandardScalerArtifact.from_canonical_json(
+            scaler.to_canonical_json().replace('"means_hex"', '"other"')
+        )
+
+
+def test_scaler_artifact_rejects_nonfinite_and_nonpositive_parameters() -> None:
+    base = fit_standard_scaler(np.array([[1.0], [2.0], [3.0]]), ("x",))
+    with pytest.raises(ValueError, match="finite"):
+        StandardScalerArtifact(base.feature_order, (float("nan"),), base.variances, base.scales)
+    with pytest.raises(ValueError, match="positive"):
+        StandardScalerArtifact(base.feature_order, base.means, base.variances, (0.0,))

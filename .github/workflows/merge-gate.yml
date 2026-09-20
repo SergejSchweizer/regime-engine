@@ -89,7 +89,7 @@ jobs:
             .venv/bin/coverage combine --append --data-file=.coverage.unit .coverage.unit.*
           fi
           test -f .coverage.unit
-          .venv/bin/coverage report --data-file=.coverage.unit --fail-under=80
+          .venv/bin/coverage report --data-file=.coverage.unit --fail-under=85
   merge-gate:
     if: always()
     needs: [lint, type, unit]

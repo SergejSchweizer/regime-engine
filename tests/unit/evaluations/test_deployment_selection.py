@@ -123,6 +123,21 @@ def _selector_result(catalog_hash: str = HASH) -> SimpleNamespace:
     )
 
 
+def _valid_deployment_inputs() -> tuple[
+    pd.DataFrame, FeatureCatalogSnapshot, AdaptiveEvaluationResult
+]:
+    rows = pd.DataFrame(
+        {
+            "timestamp_m1": [START + timedelta(days=index) for index in range(7)],
+            "f0": range(7),
+            "f1": range(7),
+            "f2": range(7),
+        }
+    )
+    catalog = _catalog(rows)
+    return rows, catalog, _validation(catalog.catalog_hash)
+
+
 def test_deployment_selection_calls_shared_policy_through_source_maximum() -> None:
     rows = pd.DataFrame(
         {
@@ -305,4 +320,85 @@ def test_deployment_selection_rejects_non_monotonic_source_rows() -> None:
             profile=PROFILE,
             validation=validation,
             selector=lambda **_: _selector_result(),
+        )
+
+
+def test_deployment_selection_rejects_input_and_cutoff_contract_drift() -> None:
+    rows, catalog, validation = _valid_deployment_inputs()
+
+    def selector(**_kwargs: object) -> SimpleNamespace:
+        return _selector_result(catalog.catalog_hash)
+
+    with pytest.raises(TypeError, match="pandas DataFrame"):
+        select_deployment_configuration(
+            object(), catalog=catalog, profile=PROFILE, validation=validation, selector=selector
+        )
+    with pytest.raises(TypeError, match="feature catalog"):
+        select_deployment_configuration(
+            rows, catalog=object(), profile=PROFILE, validation=validation, selector=selector
+        )
+    with pytest.raises(ValueError, match="Xetra public profile"):
+        select_deployment_configuration(
+            rows,
+            catalog=catalog,
+            profile=replace(PROFILE, profile_id="other"),
+            validation=validation,
+            selector=selector,
+        )
+    with pytest.raises(TypeError, match="completed v4"):
+        select_deployment_configuration(
+            rows, catalog=catalog, profile=PROFILE, validation=object(), selector=selector
+        )
+    not_eligible = replace(
+        validation,
+        outer_folds=(
+            *validation.outer_folds[:-1],
+            replace(validation.outer_folds[-1], valid=False, failure_reason="failed"),
+        ),
+        valid_fold_count=2,
+        valid_fold_rate=2 / 3,
+        latest_complete_fold_valid=False,
+        production_eligible=False,
+    )
+    with pytest.raises(ValueError, match="production-eligible"):
+        select_deployment_configuration(
+            rows,
+            catalog=catalog,
+            profile=PROFILE,
+            validation=not_eligible,
+            selector=selector,
+        )
+    with pytest.raises(ValueError, match="source build"):
+        select_deployment_configuration(
+            rows,
+            catalog=catalog,
+            profile=PROFILE,
+            validation=replace(validation, source_build_id="other"),
+            selector=selector,
+        )
+    with pytest.raises(ValueError, match="timestamp bounds"):
+        select_deployment_configuration(
+            rows,
+            catalog=replace(catalog, materialized_max_timestamp=None),
+            profile=PROFILE,
+            validation=validation,
+            selector=selector,
+        )
+    with pytest.raises(ValueError, match="after validation cutoff"):
+        select_deployment_configuration(
+            rows,
+            catalog=catalog,
+            profile=PROFILE,
+            validation=replace(
+                validation, validation_evaluation_cutoff=catalog.materialized_max_timestamp
+            ),
+            selector=selector,
+        )
+    with pytest.raises(ValueError, match="require timestamp_m1"):
+        select_deployment_configuration(
+            rows.drop(columns=["timestamp_m1"]),
+            catalog=catalog,
+            profile=PROFILE,
+            validation=validation,
+            selector=selector,
         )
