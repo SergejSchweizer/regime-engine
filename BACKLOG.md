@@ -1,6 +1,6 @@
 # Regime Engine — Global Regime Discovery Implementation Backlog
 
-Status date: 2026-09-16
+Status date: 2026-09-20
 
 ## Current execution state
 
@@ -17,12 +17,11 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-453-k-slot-hermetic-qa-closure`, based directly on
-  current `origin/main`; PR-428 and PR-429 close the remaining local registry
-  and four-slot hermetic QA.
-  and has not run a full evaluation or external write.
-- **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
-  aligned with the remote reference branch before PR-447 was created.
+- **Active worktree:** `main`, aligned with `origin/main` at `8aa07aa`; PR-428
+  and PR-429 closure is merged in GitHub #445. No full evaluation has completed
+  and no external MLflow/model write has occurred.
+- **Reference base:** `origin/main` as checked on 2026-09-20; the only open
+  GitHub PR is #439, a planning-only backlog cutover requiring rebase review.
 - **Latest implementation:** the parallel audit dossier handoff is complete
   on top of the merged resumability, MLflow Model Metrics, PCA and
   process-parallel work. Follow-up PRs #333–#354 are also merged: global
@@ -440,7 +439,7 @@ still required.
 | PR-427 | ACCEPTANCE COMPLETE | Independent stdlib math oracle and expanded 47-test QA matrix cover formulas, adversarial inputs, invariance, mutation/provenance links and import isolation; closure follows in PR-452 |
 | PR-428 | ACCEPTANCE COMPLETE | Four-slot registry/CAS QA covers matching aliases, immutable/idempotent versions, first/better/worse/tie/stale/incompatible outcomes, rollback, provenance tags, injected side-effect failures, cross-process retry and concurrent linearizable winners; closure follows in PR-453 |
 | PR-429 | ACCEPTANCE COMPLETE | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and default `champion` preservation; CPU/thread/worker/exit evidence recorded; closure follows in PR-453 |
-| PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
+| PR-430 | BLOCKED BY EXTERNAL SOURCE (readback QA #424; preflight 2026-09-20) | Read-only verifier is implemented; NAS MLflow health is OK and has no `regime-xetra` model, while NAS PostgreSQL login succeeds as `macro-loader` but both `macro_loader` and `macro_loader_sync` currently expose no tables; full evaluation fails at missing `macro_loader_sync.gold_sync_state` before HMM/PCA/MLflow writes |
 | PR-431 | IMPLEMENTATION MERGED | Dimension-independent `cross_k_score.v1`, complete K=2..5 Model Metrics projection, strict evidence reconciliation and bounded process-parallel K scoring with serial/process canonical parity; merged in GitHub #415 after rebase and all gates. Formula, independent eligibility-gate, non-finite-input, canonical-hash and full K=2..5 projection QA is covered by merged follow-up PR-442 (GitHub #430). Later four-slot integration is tracked by PR-420 through PR-429; branch deleted |
 | PCA PR-255 (#303) | IMPLEMENTED | Closed |
 | PCA PR-256 (#304) | IMPLEMENTED | Closed |
