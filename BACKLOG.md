@@ -17,9 +17,9 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-449-k-deployment-refit-acceptance-closure`, based
-  directly on current `origin/main`; PR-449 closes the remaining hermetic
-  PR-424 acceptance gaps and has not run a full evaluation or external write.
+- **Active worktree:** `pr/PR-450-k-slot-mlflow-promotion-qa-closure`, based directly on
+  current `origin/main`; PR-425 closes the remaining hermetic registry/CAS QA
+  and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
 - **Latest implementation:** the parallel audit dossier handoff is complete
@@ -434,7 +434,7 @@ still required.
 | PR-422 | ACCEPTANCE COMPLETE | Exact fixed-K Gaussian/GMM/Student-t ranking, strict same-K comparison domain, real-HMM K=2..5 serial/process parity, four-K GIL-free orchestration, canonical completion-order assembly, adversarial independent oracle and lineage/feature-tuple invariants are covered; implementation merged in #418 and closure follows in PR-447 |
 | PR-423 | ACCEPTANCE COMPLETE | Real fixed-K TRAIN selection and real HMM Outer-TRAIN refit/Outer-TEST evaluation are covered across three folds and K2..K5; per-slot gates, independent aggregation, exact test-call coverage, future-row invariance and process/serial hash parity are verified; implementation merged in #418 and closure follows in PR-448 |
 | PR-424 | ACCEPTANCE COMPLETE | Full-history eligible-only deployment selection, separate validation/source cutoffs, real per-K refits, immutable package metadata/model-parameter manifests, ineligible-slot suppression, source-lineage fail-closed checks and process/serial package-hash parity are covered; implementation merged in #418 and closure follows in PR-449 |
-| PR-425 | IN PROGRESS (IMPLEMENTATION MERGED #418; process race QA #423) | K-slot aliases, immutable registration and audited CAS promotion implemented; production registry matrix remains |
+| PR-425 | ACCEPTANCE COMPLETE | K-slot aliases, immutable registration, exact promotion tuple, audited CAS promotion, idempotency, rollback and concurrent-winner behavior are covered by the file-backed MLflow QA matrix; closure follows in PR-450 |
 | PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422/#427) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
@@ -1967,44 +1967,45 @@ QA:
   `src/market_regime_engine/mlflow_support/model_publishing.py`,
   `src/market_regime_engine/commands/lifecycle.py`, corresponding tests and
   registry documentation
-- **Status:** implementation merged through GitHub PR #418; concurrency/rollback QA remains
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and
+  the concurrency/rollback QA matrix is complete; closure follows in PR-450
 
 Acceptance:
 
-- [ ] Register every eligible final package under `regime-xetra` with a
+- [x] Register every eligible final package under `regime-xetra` with a
   matching `champion-k2`/`champion-k3`/`champion-k4`/`champion-k5` alias.
-- [ ] Create a new immutable MLflow model version for a new artifact; never
+- [x] Create a new immutable MLflow model version for a new artifact; never
   overwrite model-version contents.
-- [ ] Compare a new candidate only with the incumbent in the same K slot and
+- [x] Compare a new candidate only with the incumbent in the same K slot and
   only when source, policy, score version, validation window and reference
   teacher identity are compatible.
-- [ ] Use the exact PR-420 promotion tuple; do not use raw PLL/AIC/BIC when
+- [x] Use the exact PR-420 promotion tuple; do not use raw PLL/AIC/BIC when
   candidate feature dimensions differ.
-- [ ] Move a K alias only for a strictly better score or explicitly versioned
+- [x] Move a K alias only for a strictly better score or explicitly versioned
   first promotion; deterministic ties leave the incumbent unchanged.
-- [ ] Implement compare-and-swap so concurrent promotions cannot overwrite a
+- [x] Implement compare-and-swap so concurrent promotions cannot overwrite a
   newer incumbent.
-- [ ] Reject stale candidates whose expected incumbent version no longer
+- [x] Reject stale candidates whose expected incumbent version no longer
   matches the registry.
-- [ ] Make repeated publication idempotent and prevent duplicate versions for
+- [x] Make repeated publication idempotent and prevent duplicate versions for
   one idempotency key.
-- [ ] Preserve the previous alias target for rollback and never delete it as
+- [x] Preserve the previous alias target for rollback and never delete it as
   part of promotion.
-- [ ] Leave the existing default `champion` alias unchanged.
-- [ ] Emit a machine-readable promotion decision with old/new versions, K,
+- [x] Leave the existing default `champion` alias unchanged.
+- [x] Emit a machine-readable promotion decision with old/new versions, K,
   score tuple, comparison-domain ID, reason and repository SHA.
 
 QA:
 
-- [ ] File-backed MLflow tests cover first promotion, better, worse, exact tie,
+- [x] File-backed MLflow tests cover first promotion, better, worse, exact tie,
   stale candidate, incompatible domain and failed CAS.
-- [ ] Concurrent promotion tests prove only one winner can move a K alias.
-- [ ] Idempotency tests prove retries do not create duplicate versions or alias
+- [x] Concurrent promotion tests prove only one winner can move a K alias.
+- [x] Idempotency tests prove retries do not create duplicate versions or alias
   history entries.
-- [ ] Rollback tests restore one K slot without affecting the other slots or
+- [x] Rollback tests restore one K slot without affecting the other slots or
   the default `champion` alias.
-- [ ] Tests prove model-version artifacts are immutable after registration.
-- [ ] Registry inventory tests verify every alias target has matching K,
+- [x] Tests prove model-version artifacts are immutable after registration.
+- [x] Registry inventory tests verify every alias target has matching K,
   feature and provenance tags.
 
 ### PR-426 — Emit per-K Model Metrics and comparison plots
