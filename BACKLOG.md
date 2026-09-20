@@ -1,6 +1,6 @@
 # Regime Engine — Canonical Backlog
 
-Status date: 2026-09-19
+Status date: 2026-09-20
 
 This file is the **single authoritative backlog** for `regime-engine`.
 Open and acceptance-pending work is kept at the top. Completed implementation and
@@ -16,9 +16,9 @@ commit names. They do not need to equal the numeric GitHub pull-request number.
 
 The target architecture is now a **scalable fold-local HMM feature-selection pipeline** for a
 potentially multi-thousand-feature universe. Core features remain directly interpretable candidates;
-generated transformations are compressed by family-local PCA; all surviving core features and family
-PCs then pass deterministic global correlation-leader pruning before HMM-based SFFS selection and
-final ablation. Feature-selection metadata is persisted locally in DuckDB, while every major stage is
+generated transformations first pass conservative family-internal near-duplicate pruning and are
+then compressed by family-local PCA; all surviving core features and family PCs pass deterministic
+global correlation-leader pruning before HMM-based SFFS selection and final ablation. Feature-selection metadata is persisted locally in DuckDB, while every major stage is
 auditable in MLflow through deterministic metrics, tables and plots. The plan is ordered so that small
 implementation changes land first, focused QA PRs immediately falsify each risky step, and only after
 the canonical cutover do expensive full-system and external tests run.
@@ -32,8 +32,9 @@ Global rules for every active planning PR:
   before opening/updating its GitHub PR;
 - every stochastic/numerical primitive has a source-controlled seed/configuration and canonical
   ordering/sign rules where relevant;
-- no Outer-TEST row may influence quality filtering, provenance classification, standardization,
-  family PCA, correlation pruning, SFFS, ablation, model-family selection or K-slot fitting;
+- no Outer-TEST row may influence quality filtering, provenance classification, family
+  near-duplicate pruning, standardization, family PCA, global correlation pruning, SFFS, ablation,
+  model-family selection or K-slot fitting;
 - external PostgreSQL/MLflow writes are forbidden unless the PR is explicitly marked external;
 - complete end-to-end acceptance starts only after all implementation and focused QA work is green.
 
@@ -43,12 +44,20 @@ The intended order is:
 PR-448
   -> repository/CI correctness + focused QA
   -> calendar-month refit/model-clock implementation + focused QA
-  -> canonical feature-selection contract + local metadata foundation
-  -> provenance + TRAIN-only quality + family PCA + focused QA
-  -> global correlation-leader pruning + MLflow auditability + focused QA
-  -> parallel HMM SFFS + ablation + cumulative statistics + focused QA
-  -> outer/deployment integration -> cutover -> zero-legacy QA
-  -> complete hermetic/high-dimensional/system tests
+  -> canonical feature-selection contract
+  -> exact macro_loader.macro_features materialized-view source + QA
+  -> local DuckDB metadata + provenance + TRAIN-only quality
+  -> unified parallel runtime for the 86-vCPU / 256-GiB host + QA
+  -> family near-duplicate pruning -> family PCA -> family-stage parallelism + QA
+  -> global correlation leaders -> parallel correlation tiling + QA
+  -> MLflow preprocessing evidence + QA
+  -> HMM SFFS -> ablation -> flattened HMM task frontier + QA
+  -> cumulative statistics -> parallel outer-fold coordinator + QA
+  -> lifecycle recommendations
+  -> monthly orchestration -> cutover
+  -> documentation consolidation/onboarding + documentation QA
+  -> full hermetic/high-dimensional/system tests
+  -> target-host parallel benchmark
   -> current-source external audit
   -> external MLflow/registry durability
   -> authorized publication/readback
@@ -261,31 +270,38 @@ month is never used as TEST evidence.
 
 ## Phase 3 — Canonical scalable feature-selection architecture
 
-The target feature-selection path is intentionally simple and must remain auditable:
+The target feature-selection path is intentionally simple and must remain auditable.
 
-~~~text
-PostgreSQL candidate universe: potentially thousands of features
-    -> TRAIN-only quality filter
-    -> canonical provenance split
-         core features ------------------------------+
-         generated transformations                   |
-              -> family-local standardization        |
-              -> family-local PCA, max 8 PCs/family  |
-                                                     v
-    -> core candidates + family PCs
-    -> global absolute-Pearson correlation-leader pruning
-    -> small representative universe
-    -> HMM SFFS per configured K
-    -> final one-feature-at-a-time ablation
-    -> final HMM candidate tuple
-    -> strict Outer OOS
+The sole production feature relation for this profile is the macro-loader materialized view
+`macro_loader.macro_features`. The candidate universe is every non-`timestamp_m1`
+`DOUBLE PRECISION` column in that one validated view. The historical
+`macro_loader.macro_features_daily` relation and schema-wide wildcard discovery are not valid
+sources for the new profile.
+
+~~~mermaid
+flowchart TD
+    A[macro_loader.macro_features<br/>thousands of columns] --> B[TRAIN-only quality filter]
+    B --> C{Canonical role}
+    C -->|Core| D[Core candidates]
+    C -->|Transformation| E[Family-internal near-duplicate pruning]
+    E --> F[Family-local scaling + PCA<br/>max 8 PCs/family]
+    D --> G[Core + family PCs]
+    F --> G
+    G --> H[Global stable absolute-Pearson<br/>correlation-leader pruning]
+    H --> I[Small representative universe]
+    I --> J[HMM SFFS per K]
+    J --> K[One-at-a-time ablation]
+    K --> L[Final HMM tuple]
+    L --> M[Strict Outer OOS month]
 ~~~
 
 Canonical separation of responsibilities:
 
 - quality filtering removes invalid data, not weak HMM predictors;
+- family near-duplicate pruning removes only effectively duplicated transformations before PCA;
 - family PCA compresses generated transformations only; core features bypass PCA;
-- global correlation pruning removes redundancy only; it does not score HMM usefulness;
+- global correlation pruning removes redundancy among core features and family PCs only; it does not
+  score HMM usefulness;
 - SFFS is the only feature-combination search;
 - ablation measures marginal contribution of the selected final tuple;
 - local DuckDB is the durable feature-selection memory;
@@ -296,19 +312,21 @@ Canonical defaults for this profile are fixed in PR-476 and may change only thro
 versioned contract:
 
 ~~~text
-family_pca_max_components          = 8
-correlation_abs_threshold          = 0.95
-correlation_subwindow_abs_threshold= 0.90
-correlation_subwindows             = 3
-correlation_min_pair_rows          = 30
-correlation_min_subwindow_rows     = 10
-sffs_max_features                  = 10
+family_near_duplicate_abs_threshold           = 0.995
+family_near_duplicate_subwindow_abs_threshold = 0.99
+family_pca_max_components                     = 8
+correlation_abs_threshold                     = 0.95
+correlation_subwindow_abs_threshold           = 0.90
+correlation_subwindows                        = 3
+correlation_min_pair_rows                     = 30
+correlation_min_subwindow_rows                = 10
+sffs_max_features                             = 10
 ~~~
 
-The correlation step uses absolute Pearson correlation. Negative and positive correlations are
-therefore equally eligible for redundancy removal. Correlation is computed from TRAIN rows only.
-The three stability subwindows are contiguous chronological thirds of the TRAIN row positions;
-their sizes may differ by at most one row.
+Both correlation stages use absolute Pearson correlation and TRAIN rows only. The three stability
+subwindows are contiguous chronological thirds of TRAIN row positions; their sizes may differ by at
+most one row. Family near-duplicate pruning is deliberately much stricter than global redundancy
+pruning so PCA still receives economically meaningful within-family covariance structure.
 
 ### PR-476 — Define the canonical scalable feature-selection contract
 
@@ -318,10 +336,12 @@ their sizes may differ by at most one row.
 #### Acceptance
 
 - [ ] Introduce one versioned feature-selection profile for the pipeline defined above.
-- [ ] Persist the exact canonical defaults listed above; no hidden environment-specific threshold
-  changes are allowed.
+- [ ] Persist the exact canonical defaults listed above, including the 0.995/0.99 family
+  near-duplicate thresholds; no hidden environment-specific threshold changes are allowed.
 - [ ] Core features are direct HMM candidates and never forced through PCA.
 - [ ] Generated transformation features may reach the HMM only through a family PC.
+- [ ] Family near-duplicate pruning occurs before family PCA and may remove only direct stable
+  near-duplicates under the canonical 0.995/0.99 rule.
 - [ ] Family PCA retains at most the first 8 non-zero-rank PCs; explained variance is diagnostic
   only and never decides the retained count.
 - [ ] Global correlation pruning operates only on quality-eligible core features plus retained
@@ -346,8 +366,9 @@ their sizes may differ by at most one row.
 
 #### Acceptance
 
-- [ ] Assert every canonical default exactly, including 8 PCA components, 0.95/0.90 correlation
-  thresholds, three subwindows, 30/10 support minima and 10-feature SFFS cap.
+- [ ] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
+  8 PCA components, 0.95/0.90 global-correlation thresholds, three subwindows, 30/10 support minima
+  and the 10-feature SFFS cap.
 - [ ] Mutation of any default changes the profile hash.
 - [ ] Reject a profile that routes a generated transformation directly to the HMM.
 - [ ] Reject a profile that forces all core features through PCA.
@@ -357,10 +378,57 @@ their sizes may differ by at most one row.
 - [ ] Prove Outer-TEST access is absent from the feature-selection contract.
 - [ ] QA is hermetic and changes no production behavior.
 
+### PR-509 — Cut the canonical feature source over to macro_loader.macro_features
+
+**Type:** implementation / data-source contract  
+**Depends on:** PR-477
+
+The source is the exact PostgreSQL materialized view `macro_loader.macro_features`, produced and
+versioned by `macro-loader`.
+
+#### Acceptance
+
+- [ ] Replace the canonical Xetra-v4 candidate source with exactly
+  `macro_loader.macro_features`.
+- [ ] Reject `macro_loader.macro_features_daily`, `macro_loader.macro_raw`, arbitrary tables,
+  schema-wide relation discovery and caller-supplied feature-table overrides on the new profile.
+- [ ] Read `timestamp_m1` plus every non-timestamp `DOUBLE PRECISION` column in PostgreSQL ordinal
+  order from the one materialized view.
+- [ ] Validate relation kind is materialized view and fail closed on missing view, wrong timestamp
+  type, wrong feature type, duplicate column identity or unsupported extra column type.
+- [ ] Capture the upstream macro-feature view version/fingerprint exposed by macro-loader and bind
+  it into source/evaluation identity.
+- [ ] Keep `macro_loader_sync.gold_sync_state` as lineage/control evidence only; it is not a
+  candidate-feature relation.
+- [ ] Snapshot acquisition remains REPEATABLE READ / READ ONLY and closes before PCA/HMM work.
+- [ ] No feature-name allowlist narrows valid materialized-view columns before TRAIN-only quality.
+- [ ] Production inference from an already frozen package continues to request only that package's
+  exact feature dependencies.
+
+### PR-510 — QA: macro_features source, lineage and zero-legacy relation proof
+
+**Type:** QA only  
+**Depends on:** PR-509
+
+#### Acceptance
+
+- [ ] Real-PostgreSQL-shaped fixture proves only `macro_loader.macro_features` is accepted.
+- [ ] A fixture exposing both `macro_features` and historical `macro_features_daily` proves the
+  latter is ignored/rejected as a candidate source.
+- [ ] Add a valid `DOUBLE PRECISION` column to the materialized-view fixture with no regime-engine
+  feature-list change; the next snapshot includes it before quality filtering.
+- [ ] Wrong relation kind, wrong timestamp type and non-double feature columns fail closed.
+- [ ] View-version/fingerprint mutation changes dataset/evaluation identity.
+- [ ] Catalog column order reversal at the database layer is reflected only through PostgreSQL
+  ordinal order and produces the expected identity change.
+- [ ] Static search proves the new canonical path contains no
+  `macro_loader.macro_features_daily` or schema-wide wildcard source fallback.
+- [ ] QA performs no external write.
+
 ### PR-478 — Add the local DuckDB feature-selection metadata store
 
 **Type:** implementation / local metadata  
-**Depends on:** PR-477
+**Depends on:** PR-510
 
 The store lives under the existing configured local evaluation state root as
 feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow remains tracking.
@@ -475,10 +543,94 @@ feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow re
 - [ ] Serial/process results and hashes are identical.
 - [ ] QA adds no production behavior.
 
+### PR-513 — Add one shared fold-local parallel execution planner
+
+**Type:** implementation / performance infrastructure  
+**Depends on:** PR-483
+
+The goal is maximum useful CPU concurrency on the target host class (86 vCPUs, 256 GiB RAM)
+without nested process pools, oversubscribed BLAS threads or repeated matrix copies.
+
+#### Acceptance
+
+- [ ] Introduce one immutable ParallelExecutionPlan derived from process affinity, cgroup CPU quota,
+  runnable task count and explicit operator override.
+- [ ] `auto` has no arbitrary worker cap below the available CPU budget; effective workers are
+  `min(available_cpu_budget, runnable_tasks)` unless a measured memory-safety bound is lower.
+- [ ] Create at most one CPU process pool per evaluation process and reuse it across eligible stages.
+- [ ] Process workers may never create child process pools.
+- [ ] Set/verify OMP, MKL, OpenBLAS and NumExpr native thread pools to one thread per worker for
+  process-parallel numerical stages.
+- [ ] Materialize each fold's numeric candidate matrix once as immutable shared/read-only memory or
+  memory-mapped storage; worker tasks receive column/row indices and small metadata, not full
+  DataFrame copies.
+- [ ] Centralize bounded task submission/backpressure and deterministic result reordering.
+- [ ] Preserve explicit serial mode for reference tests and debugging.
+- [ ] Parallel runtime policy changes no statistical formula, seed, ordering rule or threshold.
+- [ ] Persist effective CPU budget, worker count, task count and shared-matrix identity in fold
+  runtime metadata and MLflow runtime metrics.
+
+### PR-514 — QA: parallel planner, shared-memory and thread-cap determinism
+
+**Type:** QA only  
+**Depends on:** PR-513
+
+#### Acceptance
+
+- [ ] Worker counts 1, 8, 32, 64 and auto yield identical canonical results for deterministic test
+  tasks.
+- [ ] On a host exposing at least 64 CPUs and at least 64 runnable tasks, auto schedules more than
+  32 workers unless an explicit tested resource bound applies.
+- [ ] Inspect child environments/native thread pools and prove one numerical native thread per
+  process.
+- [ ] Instrument serialization/copies and prove the large fold matrix is not serialized once per
+  task.
+- [ ] Process completion-order reversal preserves canonical result order and hashes.
+- [ ] Worker failure, cancellation and KeyboardInterrupt propagate through the existing typed failure
+  semantics without deadlock or orphan workers.
+- [ ] Serial mode remains functional and statistically identical.
+- [ ] QA adds no production statistical behavior.
+
+### PR-515 — Implement family-internal stable near-duplicate pruning
+
+**Type:** implementation / redundancy preprocessing  
+**Depends on:** PR-514
+
+#### Acceptance
+
+- [ ] Run only within one transformation family and only on outer-TRAIN data.
+- [ ] A pair is a family near-duplicate only when full-TRAIN absolute Pearson correlation is at
+  least 0.995, full pair support is at least 30, median absolute correlation across the three TRAIN
+  thirds is at least 0.99, and every third has at least 10 paired finite rows.
+- [ ] Insufficient support never removes a pair.
+- [ ] Use direct-leader removal, not transitive connected components.
+- [ ] Family leader ranking is deterministic: largest direct near-duplicate neighborhood, then
+  highest median full absolute correlation, then higher TRAIN coverage, then canonical feature
+  identity.
+- [ ] Persist every source-feature-to-family-leader mapping and support/correlation evidence.
+- [ ] No HMM, target, explained variance, semantic score or future/OOS row influences this stage.
+- [ ] Core features bypass this stage unchanged.
+
+### PR-516 — QA: family near-duplicate oracle and PCA-input preservation
+
+**Type:** QA only  
+**Depends on:** PR-515
+
+#### Acceptance
+
+- [ ] Independent reference implementation reproduces every family leader/mapping.
+- [ ] Cover +0.995, -0.995, 0.994999..., 0.99 subwindow and support boundaries.
+- [ ] Cover an A-B-C chain where A-B and B-C pass but A-C fails; A and C cannot be collapsed through
+  B.
+- [ ] Prove a 0.95-correlated but not near-duplicate transformation pair remains available to PCA.
+- [ ] Outer-TEST mutation cannot change any family mapping.
+- [ ] Row/column/process order cannot alter result or hash.
+- [ ] QA adds no production behavior.
+
 ### PR-484 — Implement family-local standardization and PCA for transformations
 
 **Type:** implementation / dimensionality reduction  
-**Depends on:** PR-483
+**Depends on:** PR-516
 
 #### Acceptance
 
@@ -517,10 +669,45 @@ feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow re
 - [ ] Core features are byte-identical before and after the PCA stage.
 - [ ] QA adds no production behavior.
 
+### PR-517 — Parallelize independent family pruning/scaling/PCA work
+
+**Type:** implementation / performance  
+**Depends on:** PR-485
+
+#### Acceptance
+
+- [ ] Execute independent transformation families concurrently through the shared PR-513 process
+  pool.
+- [ ] One family task owns near-duplicate pruning, scaler fit/transform and PCA for that family only;
+  core candidates remain coordinator data.
+- [ ] Submit all eligible family tasks before blocking for completion.
+- [ ] Reassemble family outputs strictly by canonical family identity, never completion order.
+- [ ] Reuse the shared fold matrix and pass only family column indices/metadata to workers.
+- [ ] No nested process/native-thread parallelism is introduced.
+- [ ] Families with typed statistical invalidity do not cancel unrelated family tasks; unexpected
+  software failures abort the stage.
+- [ ] Serial execution remains available and byte/canonical-hash equivalent.
+
+### PR-518 — QA: family-stage concurrency, utilization and deterministic parity
+
+**Type:** QA only  
+**Depends on:** PR-517
+
+#### Acceptance
+
+- [ ] A fixture with at least 32 independent families proves concurrent task execution when CPU
+  capacity is available.
+- [ ] Worker counts 1, 8, 32, 64 and auto produce identical family mappings, scaler/PCA outputs and
+  hashes.
+- [ ] Deliberately delay random family tasks and prove completion order cannot alter output order.
+- [ ] Prove family matrices are read from shared/memory-mapped storage rather than copied per task.
+- [ ] Typed invalid family and unexpected-failure fixtures follow the required isolation semantics.
+- [ ] QA adds no new statistical behavior.
+
 ### PR-486 — Implement global stable correlation-leader pruning
 
 **Type:** implementation / redundancy reduction  
-**Depends on:** PR-485
+**Depends on:** PR-518
 
 The input universe is exactly quality-eligible core features plus family PCs.
 
@@ -561,10 +748,45 @@ The input universe is exactly quality-eligible core features plus family PCs.
 - [ ] Outer-TEST mutation cannot alter any correlation result.
 - [ ] QA adds no production behavior.
 
+### PR-519 — Parallelize global correlation as upper-triangle tiles
+
+**Type:** implementation / performance  
+**Depends on:** PR-487
+
+#### Acceptance
+
+- [ ] Partition the representative-candidate upper triangle into independent pair tiles using the
+  shared PR-513 executor.
+- [ ] Tile planning creates enough runnable work to consume the available CPU budget when pair count
+  permits; no fixed low worker ceiling is introduced.
+- [ ] Workers receive shared-matrix row/column indices and emit only threshold-relevant edges plus
+  support/subwindow statistics.
+- [ ] The coordinator deterministically merges tile outputs before leader selection.
+- [ ] No persistent dense NxN correlation artifact is required for production selection.
+- [ ] Global leader results are bit/canonical-hash equivalent to the serial PR-486 algorithm.
+- [ ] Native numerical threads remain one per process and workers never create child pools.
+- [ ] Task backpressure bounds in-flight result memory.
+
+### PR-520 — QA: tiled-correlation scale, parity and failure isolation
+
+**Type:** QA only  
+**Depends on:** PR-519
+
+#### Acceptance
+
+- [ ] Independent serial oracle reproduces every qualifying edge and final leader on fixtures.
+- [ ] Worker counts 1, 8, 32, 64 and auto produce identical mappings/hashes.
+- [ ] A high-dimensional fixture generates at least four times as many tiles as available workers
+  when pair count permits, proving the pool can stay fed.
+- [ ] Delayed/reordered tile completion cannot alter leader selection.
+- [ ] Peak correlation-stage memory stays bounded without a dense persisted 10,000x10,000 matrix.
+- [ ] Injected worker failure aborts unexpected-error runs and leaves no partial committed mapping.
+- [ ] QA adds no production statistical behavior.
+
 ### PR-488 — Add MLflow audit artifacts for quality, PCA and correlation stages
 
 **Type:** implementation / observability  
-**Depends on:** PR-487
+**Depends on:** PR-520
 
 #### Acceptance
 
@@ -684,10 +906,54 @@ The input universe is exactly quality-eligible core features plus family PCs.
 - [ ] Outer-TEST mutation cannot alter ablation results.
 - [ ] QA adds no production behavior.
 
+### PR-521 — Flatten HMM selection work into one shared parallel task frontier
+
+**Type:** implementation / performance  
+**Depends on:** PR-493
+
+SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
+that control boundary is flattened onto the one shared process pool.
+
+#### Acceptance
+
+- [ ] Decompose candidate scoring into independent fit tasks over the ready
+  `K x inner-fold x candidate-subset x seed/start` frontier.
+- [ ] Keep SFFS add/remove decisions in the deterministic coordinator; process workers return fit
+  evidence only.
+- [ ] Reuse persistent workers across SFFS steps, K slots and final ablations.
+- [ ] Never create candidate-local or multistart-local child pools.
+- [ ] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work.
+- [ ] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
+  independent of task completion order.
+- [ ] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
+  preprocessing identities rather than copied feature arrays where backend contracts permit.
+- [ ] Cache only immutable fit-independent slices/indices; never cache a model result across a
+  different feature tuple, fold, seed, K or profile identity.
+- [ ] Serial reference mode remains statistically identical.
+- [ ] Record queue depth, runnable tasks, worker utilization proxy, fit count and stage wall time.
+
+### PR-522 — QA: HMM frontier saturation, nested-pool prohibition and parity
+
+**Type:** QA only  
+**Depends on:** PR-521
+
+#### Acceptance
+
+- [ ] A synthetic selection fixture exposes at least 2x the available CPU count of independent HMM
+  fit tasks and proves auto keeps the shared pool supplied until the frontier contracts.
+- [ ] Worker counts 1, 8, 32, 64 and auto produce identical SFFS paths, selected tuples, ablations
+  and canonical hashes.
+- [ ] Static/runtime inspection proves no HMM worker creates a child process pool or >1 native
+  numerical thread.
+- [ ] Randomized task delays and completion order cannot alter selected tuples.
+- [ ] Unexpected worker failure aborts the run; typed invalid fits remain candidate evidence only.
+- [ ] Matrix-transfer instrumentation proves task fan-out does not copy the full fold matrix per fit.
+- [ ] QA adds no new statistical behavior.
+
 ### PR-494 — Persist PCA credit and cumulative cross-fold feature statistics
 
 **Type:** implementation / cumulative metadata  
-**Depends on:** PR-493
+**Depends on:** PR-522
 
 #### Acceptance
 
@@ -722,10 +988,49 @@ The input universe is exactly quality-eligible core features plus family PCs.
 - [ ] Process/order reversal preserves cumulative hashes.
 - [ ] QA adds no production behavior.
 
+### PR-524 — Parallelize independent outer-fold controllers over the shared executor
+
+**Type:** implementation / performance orchestration  
+**Depends on:** PR-495
+
+#### Acceptance
+
+- [ ] Permit multiple independent historical outer-fold state machines to advance concurrently while
+  all CPU-heavy work still uses the single shared PR-513 process pool.
+- [ ] Outer-fold controllers themselves are lightweight coordinator tasks and may not spawn process
+  pools.
+- [ ] Ready work from different folds shares one global task frontier with fair scheduling.
+- [ ] Each fold writes an isolated in-memory/local result bundle; DuckDB commits and cumulative
+  aggregation occur in canonical fold order.
+- [ ] Out-of-order fold completion cannot change cumulative statistics, MLflow identities or hashes.
+- [ ] An unexpected software failure in any fold aborts the full evaluation; typed statistical
+  invalidity remains fold-local evidence.
+- [ ] Production single-month refit can execute one fold without paying multi-fold orchestration
+  overhead.
+- [ ] Serial outer-fold mode remains available and canonical-hash equivalent.
+
+### PR-525 — QA: multi-fold concurrency, ordered commit and failure semantics
+
+**Type:** QA only  
+**Depends on:** PR-524
+
+#### Acceptance
+
+- [ ] At least eight outer folds with deliberately varied runtimes execute concurrently when CPU
+  capacity is available.
+- [ ] Force reverse completion order and prove DuckDB/cumulative outputs equal canonical serial fold
+  order.
+- [ ] Worker counts 1, 8, 32, 64 and auto produce identical final statistical results.
+- [ ] Unexpected fold failure prevents later committed aggregate state; typed invalid fold does not.
+- [ ] Single-month deployment/refit path remains unchanged and does not create unnecessary fold
+  controllers.
+- [ ] No nested process pool exists at fold, K, candidate or seed level.
+- [ ] QA adds no new statistical behavior.
+
 ### PR-496 — Add semiautomatic feature lifecycle recommendations
 
 **Type:** implementation / governance  
-**Depends on:** PR-495
+**Depends on:** PR-525
 
 No production PostgreSQL column is dropped by this PR.
 
@@ -769,8 +1074,9 @@ No production PostgreSQL column is dropped by this PR.
 
 #### Acceptance
 
-- [ ] The monthly fold flow is exactly quality -> provenance split -> family PCA -> global
-  correlation leaders -> per-K SFFS -> ablation -> final HMM fit -> Outer TEST.
+- [ ] The monthly fold flow is exactly quality -> provenance split -> family near-duplicate
+  pruning -> family PCA -> global correlation leaders -> per-K SFFS -> ablation -> final HMM fit
+  -> Outer TEST.
 - [ ] Every stage consumes only rows at or before the outer TRAIN cutoff.
 - [ ] The entire feature-selection pipeline is rerun after each closed calendar month; no intramonth
   feature reselection occurs.
@@ -780,6 +1086,8 @@ No production PostgreSQL column is dropped by this PR.
 - [ ] Failed selection yields explicit invalid fold evidence and no partial package.
 - [ ] DuckDB fold transaction commits only after the fold's statistical artifacts are complete.
 - [ ] MLflow parent/child runs link every stage artifact to the same fold/package identity.
+- [ ] Historical multi-fold evaluation uses the shared parallel executor/frontier; production
+  single-month refit uses the same statistical stages without nested parallelism.
 - [ ] Deployment/refit uses the latest closed-month TRAIN cutoff and the same pipeline implementation.
 - [ ] No historical PCA-only-prefix selector remains on this new profile.
 
@@ -816,10 +1124,85 @@ No production PostgreSQL column is dropped by this PR.
 - [ ] No compatibility fallback silently re-enables a superseded selector.
 - [ ] Documentation and examples show only the canonical new pipeline.
 
+### PR-511 — Consolidate repository documentation into one guided onboarding path
+
+**Type:** documentation / architecture cleanup  
+**Depends on:** PR-500
+
+The final repository-authored contract/onboarding Markdown set is intentionally small:
+
+~~~text
+README.md
+ARCHITECTURE.md
+EVALUATION.md
+OPERATIONS.md
+CONTRIBUTING.md
+BACKLOG.md
+~~~
+
+Other legal/license files are unaffected.
+
+#### Acceptance
+
+- [ ] README.md is the single entry point and onboards a new user step by step: purpose -> data source
+  -> bootstrap -> local test -> evaluation -> MLflow inspection -> production/refit -> where to read
+  next.
+- [ ] ARCHITECTURE.md owns system boundaries, package/component structure, data flow, local DuckDB,
+  MLflow ownership and the shared parallel-execution architecture; it does not restate statistical
+  formulas.
+- [ ] EVALUATION.md owns monthly fold semantics, core/transformation roles, family near-duplicate
+  pruning, family PCA, global correlation leaders, SFFS, ablation, HMM/K/family evaluation and
+  statistical acceptance rules; it does not restate deployment commands.
+- [ ] OPERATIONS.md is created and owns the exact `macro_loader.macro_features` materialized-view
+  source contract, configuration/secrets, dataset pinning, one-shot execution, MLflow/registry
+  operations, deployment/refit/readback and failure/recovery runbooks.
+- [ ] CONTRIBUTING.md owns only developer setup, PR naming, tests/gates, code-quality rules and
+  atomic-PR workflow.
+- [ ] BACKLOG.md remains the only planning/acceptance document and does not duplicate normative
+  prose from the five user/developer docs.
+- [ ] Migrate still-valid content from DATA_SOURCE.md and EVALUATION_EXECUTION.md into OPERATIONS.md,
+  then delete those two files.
+- [ ] Migrate still-valid rendering/MLflow plot rules from PLOT_STYLE.md into the diagnostics section
+  of EVALUATION.md or ARCHITECTURE.md as appropriate, then delete PLOT_STYLE.md.
+- [ ] Remove stale/superseded architecture text rather than retaining compatibility notes in the
+  onboarding docs; Git history is the archive.
+- [ ] Every structural/process explanation uses Mermaid where a diagram is clearer than prose:
+  README onboarding, system architecture, feature-selection flow, monthly evaluation flow,
+  parallel task graph, operations/deployment flow and contributing/CI flow.
+- [ ] Mermaid diagrams render with valid GitHub Mermaid syntax and contain no secrets/internal
+  credentials.
+- [ ] Cross-links form one acyclic reading path from README to the specialized owner document; no
+  two files claim authority for the same contract.
+- [ ] Documentation explicitly names `macro_loader.macro_features`; no active documentation names
+  `macro_features_daily` as the feature source.
+
+### PR-512 — QA: documentation completeness, uniqueness and Mermaid validation
+
+**Type:** QA only / documentation  
+**Depends on:** PR-511
+
+#### Acceptance
+
+- [ ] Repository contract/onboarding Markdown inventory is exactly README.md, ARCHITECTURE.md,
+  EVALUATION.md, OPERATIONS.md, CONTRIBUTING.md and BACKLOG.md, excluding legal/license metadata.
+- [ ] DATA_SOURCE.md, EVALUATION_EXECUTION.md and PLOT_STYLE.md no longer exist.
+- [ ] Link checker resolves every internal documentation link.
+- [ ] Static owner-keyword checks prove source/operations, statistical evaluation, architecture,
+  contributing and backlog contracts have exactly one owning document.
+- [ ] Active docs contain no `macro_loader.macro_features_daily`, old PCA-only-prefix selector,
+  clustering/medoid/teacher canonical path or contradictory monthly cadence.
+- [ ] Parse every Mermaid fenced block with the repository's pinned Mermaid validation tool or a
+  deterministic syntax validator.
+- [ ] README walkthrough commands are executed in a hermetic smoke test where possible and clearly
+  mark external-only commands.
+- [ ] No required information disappears when the retired docs are removed; a migration checklist
+  maps every retained old section to its new owner or marks it intentionally superseded.
+- [ ] QA changes no production behavior.
+
 ### PR-501 — QA: zero-legacy and full hermetic multi-fold pipeline proof
 
 **Type:** QA only / full local acceptance  
-**Depends on:** PR-500
+**Depends on:** PR-512
 
 #### Acceptance
 
@@ -850,8 +1233,10 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 - [ ] Global correlation work is blockwise and persists only required edge/mapping evidence.
 - [ ] HMM SFFS receives only post-PCA/post-correlation representatives, never the original
   10,000-feature matrix as an HMM observation vector.
-- [ ] Candidate HMM fits parallelize through the existing process backend; worker counts 1, 8, 32
-  and auto remain statistically identical.
+- [ ] Candidate HMM fits use the shared process frontier; worker counts 1, 8, 32, 64 and auto
+  remain statistically identical.
+- [ ] Multi-fold evaluation uses concurrent fold controllers and the same global worker pool; no
+  nested process pools are created.
 - [ ] Native numerical thread pools remain one thread per worker.
 - [ ] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
   otherwise copy them.
@@ -862,16 +1247,43 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 
 ---
 
+### PR-523 — Benchmark and tune parallel throughput on the target 86-vCPU host
+
+**Type:** manual/performance QA  
+**Depends on:** PR-502  
+**Runs on:** authorized target host class with approximately 86 vCPUs and 256 GiB RAM
+
+#### Acceptance
+
+- [ ] Run the same fixed production-shaped workload with worker budgets 1, 8, 16, 32, 48, 64, 80
+  and auto, bounded by the host's actual affinity/cgroup capacity.
+- [ ] Benchmark family preprocessing, global correlation tiles, HMM task frontier and complete
+  multi-fold evaluation separately.
+- [ ] Prove every worker-budget run produces identical canonical statistical hashes.
+- [ ] Record wall time, CPU time, peak RSS, task throughput, queue starvation time and effective
+  worker count for each stage.
+- [ ] During stages with at least 2x as many runnable tasks as available CPUs, explain any sustained
+  worker idleness greater than 10%; eliminate scheduler starvation before acceptance.
+- [ ] Verify no native-thread oversubscription and no nested process pools on the real host.
+- [ ] Select/document the fastest statistically identical safe runtime setting for this host; do not
+  assume that the numerically largest worker count is fastest.
+- [ ] Peak RSS remains below the PR-502 resource bound and the host remains responsive.
+- [ ] Store the benchmark report in MLflow/local acceptance artifacts; do not mutate registry aliases
+  or PostgreSQL features.
+
+---
+
 ## Phase 5 — External/current-source acceptance and publication
 
 ### PR-503 — Run the current-Xetra read-only feature-selection audit
 
 **Type:** external QA / read-only  
-**Depends on:** PR-502 and a production-eligible upstream source snapshot
+**Depends on:** PR-523 and a production-eligible upstream source snapshot
 
 #### Acceptance
 
-- [ ] Query the current PostgreSQL source read-only and capture exact source/catalog identities.
+- [ ] Query exactly `macro_loader.macro_features` read-only and capture materialized-view
+  version/fingerprint plus exact source/catalog identities.
 - [ ] Report discovered feature count, core/transformation counts, quality survivors, PCs by family,
   correlation representatives and planned SFFS candidate counts.
 - [ ] Prove every feature used by the run has canonical provenance.
@@ -931,33 +1343,85 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 
 ### Active dependency graph
 
-~~~text
-PR-448
-  -> 449 -> 450 -> 451 -> 452 -> 453 -> 454
-  -> 507 -> 508
-  -> 476 -> 477 -> 478 -> 479 -> 480 -> 481 -> 482 -> 483
-  -> 484 -> 485 -> 486 -> 487 -> 488 -> 489
-  -> 490 -> 491 -> 492 -> 493 -> 494 -> 495 -> 496 -> 497
-  -> 498 -> 499 -> 500 -> 501 -> 502
-  -> 503 -> 504 -> 505 -> 506
+~~~mermaid
+flowchart TD
+    P448[448 backlog consolidation] --> P449[449 CI coverage]
+    P449 --> P450[450 coverage QA]
+    P450 --> P451[451 integration gates]
+    P451 --> P452[452 gate QA]
+    P452 --> P453[453 failure semantics]
+    P453 --> P454[454 failure QA]
+    P454 --> P507[507 monthly clock]
+    P507 --> P508[508 clock QA]
+    P508 --> P476[476 feature-selection contract]
+    P476 --> P477[477 contract QA]
+    P477 --> P509[509 macro_features source]
+    P509 --> P510[510 source QA]
+    P510 --> P478[478 DuckDB metadata]
+    P478 --> P479[479 metadata QA]
+    P479 --> P480[480 provenance]
+    P480 --> P481[481 provenance QA]
+    P481 --> P482[482 quality filter]
+    P482 --> P483[483 quality QA]
+    P483 --> P513[513 shared parallel planner]
+    P513 --> P514[514 planner QA]
+    P514 --> P515[515 family near-duplicates]
+    P515 --> P516[516 family duplicate QA]
+    P516 --> P484[484 family PCA]
+    P484 --> P485[485 PCA QA]
+    P485 --> P517[517 parallel family stages]
+    P517 --> P518[518 family parallel QA]
+    P518 --> P486[486 global correlation leaders]
+    P486 --> P487[487 correlation oracle QA]
+    P487 --> P519[519 parallel correlation tiles]
+    P519 --> P520[520 correlation parallel QA]
+    P520 --> P488[488 MLflow preprocessing evidence]
+    P488 --> P489[489 MLflow QA]
+    P489 --> P490[490 HMM SFFS]
+    P490 --> P491[491 SFFS QA]
+    P491 --> P492[492 ablation]
+    P492 --> P493[493 ablation QA]
+    P493 --> P521[521 flattened HMM frontier]
+    P521 --> P522[522 HMM parallel QA]
+    P522 --> P494[494 cumulative statistics]
+    P494 --> P495[495 cumulative QA]
+    P495 --> P524[524 concurrent outer folds]
+    P524 --> P525[525 outer-fold parallel QA]
+    P525 --> P496[496 lifecycle]
+    P496 --> P497[497 lifecycle QA]
+    P497 --> P498[498 monthly orchestration]
+    P498 --> P499[499 orchestration QA]
+    P499 --> P500[500 canonical cutover]
+    P500 --> P511[511 docs consolidation]
+    P511 --> P512[512 docs QA]
+    P512 --> P501[501 full hermetic proof]
+    P501 --> P502[502 10k resource QA]
+    P502 --> P523[523 target-host benchmark]
+    P523 --> P503[503 current-source audit]
+    P503 --> P504[504 external MLflow QA]
+    P504 --> P505[505 registry durability]
+    P505 --> P506[506 authorized publication]
 ~~~
 
 Planning PRs PR-232, PR-250, PR-423..PR-430, PR-455..PR-475 and the previous contents
 of PR-476..PR-506 describing the PCA-only-prefix architecture are superseded and are not active
-execution items.
+execution items. PR-509..PR-525 are new planning identities introduced by the scalable-source,
+documentation and parallel-runtime redesign.
 
 ---
 
 ## Current architectural decisions and non-goals
 
 - **Target selection redesign:** PR-507/PR-508 plus the rewritten PR-476–PR-506 define the
-  canonical scalable feature pipeline: TRAIN-only quality -> provenance split -> family PCA for
-  transformations -> global stable absolute-Pearson correlation leaders across core+PCs -> per-K
-  HMM SFFS -> final ablation -> frozen next-month package.
+  canonical scalable feature pipeline: exact `macro_loader.macro_features` source -> TRAIN-only
+  quality -> provenance split -> family near-duplicate pruning -> family PCA for transformations ->
+  global stable absolute-Pearson correlation leaders across core+PCs -> per-K HMM SFFS -> final
+  ablation -> frozen next-month package.
 - **Core vs transformations:** core features remain direct interpretable candidates. Generated
   transformations never enter the HMM directly; they are represented only by family PCs.
-- **PCA semantics:** PCA is family-local, TRAIN-only, rank-limited and capped at eight PCs per
-  family. Explained variance is diagnostic only.
+- **Family preprocessing:** transformations first pass stable near-duplicate pruning at 0.995/0.99,
+  then family-local TRAIN-only rank-limited PCA capped at eight PCs. Explained variance is diagnostic
+  only.
 - **Correlation semantics:** correlation pruning removes redundancy only. It is global across all
   surviving core features and family PCs, uses absolute Pearson 0.95 plus three-subwindow stability
   0.90, and uses direct leader-neighbor removal rather than transitive connected components.
@@ -977,31 +1441,29 @@ execution items.
   http://10.10.1.3:5000; local FileStore is used for hermetic QA.
 - Feature PostgreSQL and MLflow are external dependencies; Docker/Compose services do not belong to
   this repository.
-- CPU-bound production work uses the existing affinity/cgroup-aware process backend. Native
-  BLAS/OpenMP threads remain capped at one per worker. No Spark/Ray layer is introduced.
+- **Parallel runtime:** one shared affinity/cgroup-aware process pool is reused across family work,
+  correlation tiles and flattened HMM fit tasks; historical outer folds advance concurrently through
+  coordinator state machines. Workers never spawn child pools, native BLAS/OpenMP/NumExpr threads are
+  one per process, large fold matrices are shared/read-only or memory-mapped, and no Spark/Ray layer
+  is introduced.
 - The full Xetra v4 evaluator remains intentionally non-resumable. Interrupted full runs restart
   from the beginning; local DuckDB fold metadata is committed transactionally only for completed
   fold-selection results.
 - State identities are fold/model-version local; semantic labels must not leak into discovery,
   correlation pruning or statistical ranking.
 
-## Current external state snapshot
+## Current external dependency state
 
-As observed on 2026-09-16:
+As of the 2026-09-20 planning cutover:
 
-- source relation: `macro_loader.macro_features_daily`
-- source build: `20260915T212921Z`
-- schema version: 6
-- feature version: 5
-- source rows: 16,768 through 2026-09-04
-- external feature read-only smoke: passing
-- MLflow health: `200 OK`
-- experiment `macro-regime-evaluation`: 768 historical runs
-- visible LoggedModels: 0
-- registered model versions: 0
-- deleted-LoggedModel inventory: unavailable through HTTP RestStore
-- no current full evaluation running
-- no production publication/alias mutation was performed by the failed 2026-09-16 run
+- canonical feature relation for the new profile: `macro_loader.macro_features` materialized view;
+- historical `macro_loader.macro_features_daily` counts/build evidence are superseded and are not
+  valid acceptance evidence for this pipeline;
+- exact live row count, feature count, materialized-view version/fingerprint and source lineage must
+  be re-read by PR-503 before external acceptance;
+- production MLflow remains the external service at `http://10.10.1.3:5000`;
+- no production feature deletion, model publication or alias mutation is authorized by this backlog
+  rewrite.
 
 ---
 
@@ -1039,7 +1501,7 @@ dominate the active backlog.
 
 ### Closed without merge / superseded
 
-- Planning PRs PR-232, PR-250, PR-423–PR-430, PR-455–PR-475 and the former PCA-only-prefix contents of PR-476–PR-506 are superseded by the rewritten scalable feature-selection plan; superseded definitions survive only in Git/GitHub history and must not be implemented from old text.
+- Planning PRs PR-232, PR-250, PR-423–PR-430, PR-455–PR-475 and the former PCA-only-prefix contents of PR-476–PR-506 are superseded by the rewritten scalable feature-selection plan plus PR-509–PR-525; superseded definitions survive only in Git/GitHub history and must not be implemented from old text.
 - GitHub #277, #284 and #317 were closed without merge and are superseded by later
   merged work.
 - Draft planning IDs PR-186–PR-206 are superseded and must not be implemented.
