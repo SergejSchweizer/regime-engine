@@ -68,8 +68,9 @@ PR-448
 
 ### Current repository and external state
 
-- Rebased cutover candidate is based on `origin/main` commit `d0cbd2e`; the
-  current worktree is the single-file planning merge for PR-455.
+- `origin/main` is `b0856c7`; local and remote working branches are rebased
+  onto it. The current worktree is `pr/PR-451-hermetic-integration-gates`
+  at `ee63f82`, tracking the same remote branch.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
@@ -81,15 +82,16 @@ PR-448
 - No production PostgreSQL, MLflow, model, registry or alias mutation has been
   performed. Full evaluation remains externally blocked until the source
   schema is provisioned and its lineage is revalidated.
-- **Current active implementation:** branch
-  `pr/PR-449-coverage-authority`, GitHub PR #448, current HEAD `d60c2a2`; workflow
-  thresholds and the CI contract now require 85%. Hermetic deployment,
-  executor, profile-resolution, MLflow-publishing, walk-forward tracking, and
-  K-deployment/K-family and snapshot-contract tests were added. The latest full local non-integration unit
-  lane measures 86% (`16212` statements; `1646` missing; 1015 tests passed); the tracking module
-  now measures 91% after its hermetic contract/error-path tests. The PR remains
-  open and ready to merge; the 85% gate is satisfied, while the repository remains below the
-  former 90% target by explicit user direction.
+- PR-449 is merged as GitHub PR #448 at `56885cb`; PR-450 is merged as
+  GitHub PR #449 at `b0856c7`. Their implementation branches are retained
+  only as rebased pointers to `origin/main` for the current branch-retention
+  policy.
+- **Current active implementation:** PR-451 is branch
+  `pr/PR-451-hermetic-integration-gates`, GitHub PR #450, current HEAD
+  `ee63f82`. Both authoritative workflows now contain a dedicated hermetic
+  integration lane and require its success in the terminal gate. The local
+  selected integration run passed 83 tests; full evaluation is intentionally
+  not run.
 
 ---
 
@@ -156,19 +158,23 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-451 — Add hermetic integration lanes to merge and push gates
 
+**Status:** IMPLEMENTATION COMPLETE — GitHub PR #450, current HEAD `ee63f82`; acceptance pending GitHub gates
+
+**Branch:** `pr/PR-451-hermetic-integration-gates`
+
 **Type:** implementation / CI completeness
 **Depends on:** PR-450
 
 #### Acceptance
 
-- [ ] Both workflows contain a dedicated integration job parallel to lint/type/unit.
-- [ ] Selector is exactly `pytest -n auto tests -m "integration and not slow and not external"`.
-- [ ] Python 3.14.7 and the repository-locked dependency bootstrap are used.
-- [ ] Terminal gates require lint, type, unit and integration.
-- [ ] Failed/cancelled integration makes the terminal gate fail.
-- [ ] Slow/external/unrelated E2E tests remain excluded.
-- [ ] No NAS PostgreSQL/MLflow credential or alias mutation is used.
-- [ ] Unit coverage semantics remain unchanged.
+- [x] Both workflows contain a dedicated integration job parallel to lint/type/unit.
+- [x] Selector is exactly `pytest -n auto tests -m "integration and not slow and not external"`.
+- [x] Python 3.14.7 and the repository-locked dependency bootstrap are used.
+- [x] Terminal gates require lint, type, unit and integration.
+- [x] Failed/cancelled integration makes the terminal gate fail.
+- [x] Slow/external/unrelated E2E tests remain excluded.
+- [x] No NAS PostgreSQL/MLflow credential or alias mutation is used.
+- [x] Unit coverage semantics remain unchanged.
 
 ### PR-452 — QA: prove integration gating is mandatory and hermetic
 
