@@ -218,7 +218,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-454 — QA: adversarial failure-classification matrix
 
-**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-454-adversarial-failure-classification`; QA-only; GitHub PR pending
+**Status:** QA COMPLETE LOCALLY — branch `pr/PR-454-adversarial-failure-classification`; 952 unit tests, Ruff and local hermetic gate green; GitHub PR #453 pending
 
 **Branch:** `pr/PR-454-adversarial-failure-classification`
 
