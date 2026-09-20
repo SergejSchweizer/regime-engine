@@ -17,8 +17,8 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-450-k-slot-mlflow-promotion-qa-closure`, based directly on
-  current `origin/main`; PR-425 closes the remaining hermetic registry/CAS QA
+- **Active worktree:** `pr/PR-451-k-slot-model-metrics-plots-qa-closure`, based directly on
+  current `origin/main`; PR-426 closes the remaining hermetic Model Metrics/plot QA
   and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
@@ -435,7 +435,7 @@ still required.
 | PR-423 | ACCEPTANCE COMPLETE | Real fixed-K TRAIN selection and real HMM Outer-TRAIN refit/Outer-TEST evaluation are covered across three folds and K2..K5; per-slot gates, independent aggregation, exact test-call coverage, future-row invariance and process/serial hash parity are verified; implementation merged in #418 and closure follows in PR-448 |
 | PR-424 | ACCEPTANCE COMPLETE | Full-history eligible-only deployment selection, separate validation/source cutoffs, real per-K refits, immutable package metadata/model-parameter manifests, ineligible-slot suppression, source-lineage fail-closed checks and process/serial package-hash parity are covered; implementation merged in #418 and closure follows in PR-449 |
 | PR-425 | ACCEPTANCE COMPLETE | K-slot aliases, immutable registration, exact promotion tuple, audited CAS promotion, idempotency, rollback and concurrent-winner behavior are covered by the file-backed MLflow QA matrix; closure follows in PR-450 |
-| PR-426 | IN PROGRESS (IMPLEMENTATION MERGED #418; projection QA #422/#427) | Per-K Model Metrics and plot payload contracts now fail closed on incomplete lineage and prove serial/process-order canonical parity; positive dimension-independent Cross-K projection, unavailable-slot manifest behavior and exact alias absence are now covered locally; the full artifact projection matrix remains |
+| PR-426 | ACCEPTANCE COMPLETE | Per-K Model Metrics and plot payload contracts fail closed on incomplete lineage and prove serial/process-order canonical parity; all four K slots, three families, dimension-independent Cross-K projection, unavailable-slot manifests and no-recomputation manifests are covered locally; closure follows in PR-451 |
 | PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427; single-champion QA #444) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and explicit preservation of the default `champion` alias; production lineage gaps remain |
@@ -2019,43 +2019,45 @@ QA:
   `src/market_regime_engine/mlflow_support/plot_data.py`,
   `src/market_regime_engine/evaluations/plots.py`, corresponding tests and
   `MLFLOW_MODEL_METRICS.md`
-- **Status:** implementation merged through GitHub PR #418; lineage/order/process parity QA merged in GitHub #422; full artifact projection QA remains
+- **Status:** acceptance complete; implementation merged through GitHub PR #418,
+  lineage/order/process parity QA merged in GitHub #422, and full artifact
+  projection QA is covered locally; closure follows in PR-451
 
 Acceptance:
 
-- [ ] Add slot metadata (`slot_id`, K, feature-order hash, policy version and
+- [x] Add slot metadata (`slot_id`, K, feature-order hash, policy version and
   comparison-domain ID) to every K-specific candidate LoggedModel.
-- [ ] Emit candidate Model Metrics for Gaussian/GMM/Student-t at each K on
+- [x] Emit candidate Model Metrics for Gaussian/GMM/Student-t at each K on
   that K's shared feature tuple.
-- [ ] Emit one selected/final Model Metrics projection per eligible K and no
+- [x] Emit one selected/final Model Metrics projection per eligible K and no
   selected projection for an ineligible slot.
-- [ ] Preserve raw fold/seed histories and aggregates; no chart-only metric
+- [x] Preserve raw fold/seed histories and aggregates; no chart-only metric
   may be invented from a summary value.
-- [ ] Generate separate compatible comparison plots for K=2, K=3, K=4 and
+- [x] Generate separate compatible comparison plots for K=2, K=3, K=4 and
   K=5, with the three families visible within each K.
-- [ ] Reject a single raw PLL/AIC/BIC plot combining different K-specific
+- [x] Reject a single raw PLL/AIC/BIC plot combining different K-specific
   feature dimensions.
-- [ ] Allow cross-K plots only for explicitly dimension-independent catalogued
+- [x] Allow cross-K plots only for explicitly dimension-independent catalogued
   metrics whose comparison domain permits it.
-- [ ] Include exact LoggedModel IDs, feature hashes, source hashes, metric
+- [x] Include exact LoggedModel IDs, feature hashes, source hashes, metric
   catalog version and canonical payload hash in every plot manifest.
-- [ ] Build plot data from Model Metrics/catalogued artifacts only; plotting
+- [x] Build plot data from Model Metrics/catalogued artifacts only; plotting
   must not refit models or reread source data.
-- [ ] Make metric and plot payload preparation process-parallelizable while
+- [x] Make metric and plot payload preparation process-parallelizable while
   keeping MLflow side effects ordered and idempotent.
 
 QA:
 
-- [ ] File-backed fixture contains all four K slots and all three families;
+- [x] File-backed fixture contains all four K slots and all three families;
   every supported per-K plot regenerates exactly from Model Metrics.
-- [ ] Tests reject mixed feature dimensions for raw likelihood/AIC/BIC plots.
-- [ ] Completion-order, LoggedModel-ID and process-count permutations produce
+- [x] Tests reject mixed feature dimensions for raw likelihood/AIC/BIC plots.
+- [x] Completion-order, LoggedModel-ID and process-count permutations produce
   identical canonical metric/plot payload hashes.
 - [x] Missing lineage, duplicate, conflicting and unknown metric points fail
   closed; order/process-count permutations preserve canonical payload hashes.
-- [ ] Ineligible K slots produce explicit unavailable status rather than an
+- [x] Ineligible K slots produce explicit unavailable status rather than an
   empty or fabricated plot.
-- [ ] Plot manifests prove no evaluation recomputation occurred.
+- [x] Plot manifests prove no evaluation recomputation occurred.
 
 ### PR-427 — Independent mathematical QA for K-specific selection
 
