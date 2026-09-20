@@ -328,14 +328,109 @@ subwindows are contiguous chronological thirds of TRAIN row positions; their siz
 most one row. Family near-duplicate pruning is deliberately much stricter than global redundancy
 pruning so PCA still receives economically meaningful within-family covariance structure.
 
-### PR-476 — Define the canonical scalable feature-selection contract
+### PR-476 — Define canonical feature roles and the scalable selection contract
 
 **Type:** contract / configuration  
 **Depends on:** PR-508
 
+This is the first statistical implementation contract. Feature roles are fixed before source
+integration, quality filtering, PCA, correlation pruning or any HMM fit so later stages cannot
+silently reinterpret the same PostgreSQL column.
+
+The canonical source-view role split is:
+
+~~~mermaid
+flowchart TD
+    A[macro_loader.macro_features] --> T[timestamp_m1]
+    A --> C[20 CORE candidates]
+    A --> X[all remaining feature columns = TRANSFORMATIONS]
+    T --> TK[temporal key only]
+    C --> CG[global correlation pruning]
+    X --> F[13 source-series families]
+    F --> ND[family near-duplicate pruning]
+    ND --> P[family PCA]
+    P --> CG
+    CG --> S[HMM SFFS]
+~~~
+
+The exact 20 CORE candidates are:
+
+~~~text
+vix_log_level
+vix9d_log_level
+vix3m_log_level
+vix6m_log_level
+vix1y_log_level
+vstoxx_log_level
+move_log_level
+ciss_log_level
+euro_hy_oas_log_level
+us_2y_log_level
+us_10y_log_level
+estr_log_level
+usd_broad_log_level
+vix9d_vix_ratio
+vix_vix3m_ratio
+vix9d_vix3m_log_ratio
+vix3m_minus_vix
+vix6m_minus_vix
+vix1y_minus_vix
+us_10y_minus_us_2y
+~~~
+
+Semantics are intentional:
+
+- the 13 `*_log_level` columns are current-state level descriptors;
+- the six VIX same-timestamp ratios/spreads are current volatility-curve structure;
+- `us_10y_minus_us_2y` is current yield-curve structure;
+- `timestamp_m1` is never a feature;
+- every current `delta`, `zscore`, momentum-autocorrelation, geometric-return and
+  `usd_broad_log_return_20obs` column is a TRANSFORMATION;
+- unchanged source values in `macro_loader.macro_raw` are outside the regime-engine feature
+  universe and are never substituted for the canonical log-level columns.
+
+Current TRANSFORMATION families are exactly the 13 source series:
+
+~~~text
+vix
+vix9d
+vix3m
+vix6m
+vix1y
+vstoxx
+move
+ciss
+euro_hy_oas
+us_2y
+us_10y
+estr
+usd_broad
+~~~
+
+A transformation belongs to exactly one source family. The role/family mapping must be represented
+as canonical structured provenance; downstream statistical code may not make ad-hoc role decisions
+from suffix tests. Future materialized-view columns are still discovered from PostgreSQL, but a new
+column may proceed beyond discovery only if the versioned provenance contract can classify it
+unambiguously as CORE or as exactly one transformation family. Otherwise the new profile fails
+closed and requires an explicit contract update.
+
 #### Acceptance
 
 - [ ] Introduce one versioned feature-selection profile for the pipeline defined above.
+- [ ] Encode the exact 20 CORE identities above in one canonical role contract; there is no second
+  core allowlist elsewhere in the codebase.
+- [ ] Classify `timestamp_m1` as temporal key only and prove it can never enter quality ranking,
+  family PCA, correlation candidates, SFFS or an HMM observation vector.
+- [ ] Classify every currently catalogued non-core feature in `macro_loader.macro_features` as a
+  TRANSFORMATION assigned to exactly one of the 13 source families above.
+- [ ] Explicitly classify `usd_broad_log_return_20obs` as a USD_BROAD transformation, not as CORE.
+- [ ] Treat all `*_delta_*`, `*_zscore_*`, `*_momentum_autocorr_*` and
+  `*_return_geom_*` columns in the current view as transformations, never direct HMM candidates.
+- [ ] Do not read or substitute unchanged raw source levels from `macro_loader.macro_raw`; the
+  canonical current-state level inputs are the 13 log-level columns listed above.
+- [ ] Role classification is semantic only and does not waive later TRAIN-only finite/coverage/
+  variance validation; in particular, no assumption about how an upstream log-level was constructed
+  is invented by regime-engine.
 - [ ] Persist the exact canonical defaults listed above, including the 0.995/0.99 family
   near-duplicate thresholds; no hidden environment-specific threshold changes are allowed.
 - [ ] Core features are direct HMM candidates and never forced through PCA.
@@ -357,19 +452,29 @@ pruning so PCA still receives economically meaningful within-family covariance s
 - [ ] Final ablation removes exactly one selected feature at a time and refits/re-evaluates the
   same HMM selector contract.
 - [ ] Outer TEST is evaluation-only and never influences any feature-selection step.
-- [ ] The complete feature-selection profile hash is part of fold/model evidence.
+- [ ] The complete feature-role/family contract and feature-selection profile hash are part of
+  fold/model evidence.
 
-### PR-477 — QA: static feature-selection contract consistency
+### PR-477 — QA: static feature-role and selection-contract consistency
 
 **Type:** QA only  
 **Depends on:** PR-476
 
 #### Acceptance
 
+- [ ] Assert the CORE set contains exactly the 20 identities declared by PR-476 and no additional
+  column.
+- [ ] Assert `timestamp_m1` has only the temporal-key role.
+- [ ] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
+  `usd_broad_log_return_20obs` feature is a transformation in exactly one of the 13 families.
+- [ ] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
+  temporal-key, CORE or TRANSFORMATION classification with no overlap.
+- [ ] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
+  or an arbitrary family.
+- [ ] Mutation of a role, family, CORE identity or canonical default changes the profile hash.
 - [ ] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
   8 PCA components, 0.95/0.90 global-correlation thresholds, three subwindows, 30/10 support minima
   and the 10-feature SFFS cap.
-- [ ] Mutation of any default changes the profile hash.
 - [ ] Reject a profile that routes a generated transformation directly to the HMM.
 - [ ] Reject a profile that forces all core features through PCA.
 - [ ] Reject Spearman, signed-only correlation or target-aware representative selection.
@@ -472,14 +577,17 @@ feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow re
 - [ ] DuckDB state contains no raw time-series vectors or credentials.
 - [ ] QA uses a temporary local state root only.
 
-### PR-480 — Make feature provenance and family membership canonical
+### PR-480 — Materialize the PR-476 role/family contract as canonical provenance
 
 **Type:** implementation / provenance  
 **Depends on:** PR-479
 
+This PR implements provenance transport/storage for the already-fixed PR-476 classification; it
+must not redefine which features are CORE or which transformation family owns a feature.
+
 #### Acceptance
 
-- [ ] Every discovered candidate receives one immutable role: core or transformation.
+- [ ] Every discovered candidate receives the immutable PR-476 role: core or transformation.
 - [ ] Every transformation receives one immutable source family and structured transformation
   provenance from the existing generated-feature provenance contract.
 - [ ] Feature role/family may not be inferred from ad-hoc string heuristics inside selection code.
