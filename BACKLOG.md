@@ -17,8 +17,8 @@ Status date: 2026-09-16
   feature orders: they derive the raw source order from the validated catalog
   and always send raw plus generated PCA columns through the same pipeline.
 
-- **Active worktree:** `pr/PR-451-k-slot-model-metrics-plots-qa-closure`, based directly on
-  current `origin/main`; PR-426 closes the remaining hermetic Model Metrics/plot QA
+- **Active worktree:** `pr/PR-452-k-specific-selection-math-qa-closure`, based directly on
+  current `origin/main`; PR-427 closes the remaining independent math QA
   and has not run a full evaluation or external write.
 - **Reference base:** `origin/main` as checked on 2026-09-16; local `main` was
   aligned with the remote reference branch before PR-447 was created.
@@ -436,7 +436,7 @@ still required.
 | PR-424 | ACCEPTANCE COMPLETE | Full-history eligible-only deployment selection, separate validation/source cutoffs, real per-K refits, immutable package metadata/model-parameter manifests, ineligible-slot suppression, source-lineage fail-closed checks and process/serial package-hash parity are covered; implementation merged in #418 and closure follows in PR-449 |
 | PR-425 | ACCEPTANCE COMPLETE | K-slot aliases, immutable registration, exact promotion tuple, audited CAS promotion, idempotency, rollback and concurrent-winner behavior are covered by the file-backed MLflow QA matrix; closure follows in PR-450 |
 | PR-426 | ACCEPTANCE COMPLETE | Per-K Model Metrics and plot payload contracts fail closed on incomplete lineage and prove serial/process-order canonical parity; all four K slots, three families, dimension-independent Cross-K projection, unavailable-slot manifests and no-recomputation manifests are covered locally; closure follows in PR-451 |
-| PR-427 | IN PROGRESS (IMPLEMENTATION MERGED #418) | Independent stdlib math oracle and expanded 41-test QA matrix implemented for K=2..5, prefixes, ties, invariance, adversarial inputs and provenance mutations; final acceptance closure remains |
+| PR-427 | ACCEPTANCE COMPLETE | Independent stdlib math oracle and expanded 47-test QA matrix cover formulas, adversarial inputs, invariance, mutation/provenance links and import isolation; closure follows in PR-452 |
 | PR-428 | IN PROGRESS (IMPLEMENTATION MERGED #418; kill/race QA #421/#423) | Four-slot registry/CAS QA includes injected, cross-process kill/retry, and concurrent process race boundaries; external production durability remains |
 | PR-429 | IN PROGRESS (IMPLEMENTATION MERGED #418; manifest QA #420; projection/alias QA #427; single-champion QA #444) | Real Gaussian/GMM/Student-t K=2..5 four-slot E2E proof passes with process/serial parity, independent-process hash parity, deployment packages, metrics/plots, ineligible-slot fail-closed behavior, future-row invariance and explicit preservation of the default `champion` alias; production lineage gaps remain |
 | PR-430 | IN PROGRESS (readback QA #424; external preflight 2026-09-15) | Read-only verifier is implemented; NAS MLflow correctly reports that Registered Model `regime-xetra` does not exist, so no publication or alias mutation was attempted. Full-source/audit prerequisites and authorized publication/readback evidence remain |
@@ -2066,30 +2066,31 @@ QA:
 - **Parallel group:** Q1; independent of MLflow registry implementation
 - **Allowed:** `scripts/verify_k_champion_math.py`,
   `tests/qa/test_k_champion_math.py`, `docs/qa/k_champion_math.md`
-- **Status:** implementation merged through GitHub PR #418; dossier breadth and acceptance closure remain
+- **Status:** acceptance complete; implementation merged through GitHub PR #418 and
+  the independent 47-test dossier QA matrix is complete; closure follows in PR-452
 
 Acceptance:
 
-- [ ] Implement an independent reference for K-specific prefix selection,
+- [x] Implement an independent reference for K-specific prefix selection,
   soft-regime-NMI, support, valid-fold aggregation and same-vector family
   ranking without importing production selection functions.
-- [ ] Verify K=2,3,4,5, every permitted prefix, all three families and all
+- [x] Verify K=2,3,4,5, every permitted prefix, all three families and all
   deterministic tie rules.
-- [ ] Verify feature-order, state-label and completion-order invariance where
+- [x] Verify feature-order, state-label and completion-order invariance where
   the contract claims invariance.
-- [ ] Verify raw PLL/AIC/BIC cross-dimension comparisons are rejected.
-- [ ] Verify exact provenance/hash cross-links for every K slot and fold.
+- [x] Verify raw PLL/AIC/BIC cross-dimension comparisons are rejected.
+- [x] Verify exact provenance/hash cross-links for every K slot and fold.
 
 QA:
 
-- [ ] Hand-calculated small fixtures reproduce all reference formulas exactly.
-- [ ] Adversarial fixtures cover tied ranks, missingness, singleton clusters,
+- [x] Hand-calculated small fixtures reproduce all reference formulas exactly.
+- [x] Adversarial fixtures cover tied ranks, missingness, singleton clusters,
   invalid support, non-finite values, tied scores and state permutations.
-- [ ] Mutation tests change one primitive input at a time and identify the
+- [x] Mutation tests change one primitive input at a time and identify the
   expected changed evidence/hash.
-- [ ] The production reference code is not imported by the independent oracle,
+- [x] The production reference code is not imported by the independent oracle,
   except for shared typed input contracts.
-- [ ] The QA report records commands, versions, seeds, hashes and exit codes.
+- [x] The QA report records commands, versions, seeds, hashes and exit codes.
 
 ### PR-428 — MLflow registry, alias and replacement QA
 
