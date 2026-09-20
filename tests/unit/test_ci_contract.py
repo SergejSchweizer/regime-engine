@@ -1,24 +1,93 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
+WORKFLOW_NAMES = ("merge-gate.yml", "push-gate.yml")
+CANONICAL_COVERAGE = 85
+
+
+def _coverage_contract_inputs() -> tuple[dict[str, object], tuple[str, ...]]:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    workflows = tuple(
+        (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        for name in WORKFLOW_NAMES
+    )
+    return project, workflows
+
+
+def _assert_coverage_contract(project: dict[str, object], workflows: tuple[str, ...]) -> None:
+    assert project["tool"]["coverage"]["report"]["fail_under"] == CANONICAL_COVERAGE  # type: ignore[index]
+    command_pattern = re.compile(r"coverage report --data-file=\.coverage\.unit --fail-under=(\d+)")
+    commands = tuple(command_pattern.search(workflow) for workflow in workflows)
+    assert all(commands)
+    thresholds = tuple(int(match.group(1)) for match in commands if match is not None)
+    assert thresholds == (CANONICAL_COVERAGE, CANONICAL_COVERAGE)
+    assert len(set(workflows)) == 2
+    for workflow in workflows:
+        assert 'pytest -n auto tests -m "not integration and not external"' in workflow
+        assert "actions/download-artifact" not in workflow
+        assert "actions/upload-artifact" not in workflow
+        assert "coverage-integration" not in workflow
+        assert "test_global_regime_v4_full_compute.py" not in workflow
 
 
 def test_quality_contract_and_gate_workflows_cannot_diverge() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["tool"]["coverage"]["report"]["fail_under"] == 85
-    for name in ("merge-gate.yml", "push-gate.yml"):
-        workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        assert 'pytest -n auto tests -m "not integration and not external"' in workflow
+    project, workflows = _coverage_contract_inputs()
+    _assert_coverage_contract(project, workflows)
+    for workflow in workflows:
         assert "integration:" not in workflow
         assert "needs: [lint, type, unit, integration]" not in workflow
-        assert "coverage-integration" not in workflow
-        assert "coverage report --data-file=.coverage.unit --fail-under=85" in workflow
-        assert "actions/download-artifact" not in workflow
-        assert "actions/upload-artifact" not in workflow
-        assert "test_global_regime_v4_full_compute.py" not in workflow
+
+
+@pytest.mark.parametrize("mutated_threshold", (84, 80))
+def test_lower_threshold_mutations_fail_the_qa_contract(mutated_threshold: int) -> None:
+    project, workflows = _coverage_contract_inputs()
+    mutated_project = {
+        **project,
+        "tool": {
+            **project["tool"],  # type: ignore[dict-item]
+            "coverage": {
+                **project["tool"]["coverage"],  # type: ignore[index]
+                "report": {
+                    **project["tool"]["coverage"]["report"],  # type: ignore[index]
+                    "fail_under": mutated_threshold,
+                },
+            },
+        },
+    }
+    with pytest.raises(AssertionError):
+        _assert_coverage_contract(mutated_project, workflows)
+
+    mutated_workflow = re.sub(
+        r"(--fail-under=)85",
+        rf"\g<1>{mutated_threshold}",
+        workflows[0],
+        count=1,
+    )
+    with pytest.raises(AssertionError):
+        _assert_coverage_contract(project, (mutated_workflow, workflows[1]))
+
+
+def test_merge_and_push_coverage_commands_are_semantically_identical() -> None:
+    _project, workflows = _coverage_contract_inputs()
+    report_lines = tuple(
+        line.strip()
+        for workflow in workflows
+        for line in workflow.splitlines()
+        if "coverage report --data-file=.coverage.unit" in line
+    )
+    assert len(report_lines) == 2
+    assert report_lines[0] == report_lines[1]
+
+
+def test_qa_contract_covers_only_the_two_authoritative_gate_workflows() -> None:
+    assert WORKFLOW_NAMES == ("merge-gate.yml", "push-gate.yml")
+    assert all((ROOT / ".github" / "workflows" / name).is_file() for name in WORKFLOW_NAMES)
 
 
 def test_long_hermetic_proof_is_local_only() -> None:
