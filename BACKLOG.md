@@ -54,7 +54,10 @@ PR-448
   -> HMM SFFS -> ablation -> flattened HMM task frontier + QA
   -> cumulative statistics -> parallel outer-fold coordinator + QA
   -> lifecycle recommendations
-  -> monthly orchestration -> cutover
+  -> monthly orchestration -> canonical cutover
+  -> remove legacy statistical/source code + QA
+  -> remove compatibility/package/serving code + QA
+  -> refactor the canonical-only codebase + QA
   -> documentation consolidation/onboarding + documentation QA
   -> full hermetic/high-dimensional/system tests
   -> target-host parallel benchmark
@@ -1214,28 +1217,191 @@ No production PostgreSQL column is dropped by this PR.
 - [ ] Serial/process orchestration produces identical canonical package/statistical hashes.
 - [ ] No generated raw transformation column reaches the HMM directly.
 
-### PR-500 — Cut over Xetra v4 and remove superseded active selectors
+### PR-500 — Cut over Xetra to the scalable canonical pipeline
 
 **Type:** implementation / controlled cutover  
 **Depends on:** PR-499
 
+This PR changes authority, not repository cleanup. It makes the new pipeline the only supported
+runtime path first; the following PRs then delete now-unreachable legacy and compatibility code.
+
 #### Acceptance
 
-- [ ] Promote the scalable feature-selection profile to the sole canonical Xetra v4 evaluation path.
-- [ ] Remove the active PCA-only-prefix L* selector and old clustering/medoid/teacher selector from
-  public Xetra entry points.
-- [ ] Historical artifact readers may remain only where required to inspect old runs; they cannot
-  construct a new canonical evaluation.
-- [ ] Public evaluation/refit/serving package schema requires the new feature-selection profile hash.
-- [ ] Missing DuckDB is allowed for inference from an already frozen package, but new evaluation/refit
-  creates/uses the local metadata store.
-- [ ] No compatibility fallback silently re-enables a superseded selector.
-- [ ] Documentation and examples show only the canonical new pipeline.
+- [ ] Promote the scalable feature-selection profile to the sole canonical Xetra evaluation/refit
+  path.
+- [ ] Public evaluation, refit and serving package creation require the new feature-selection profile
+  hash and the exact selected semantic feature tuple.
+- [ ] Public entry points call only the new monthly quality -> family duplicate pruning -> family PCA
+  -> global correlation -> SFFS -> ablation pipeline.
+- [ ] Missing DuckDB is allowed for inference from an already frozen canonical package, but every new
+  evaluation/refit creates or uses the local metadata store.
+- [ ] Legacy selectors/readers may still physically exist only until PR-526/PR-528, but no public or
+  production path may invoke them after this cutover.
+- [ ] No fallback, feature flag, environment toggle, config key or exception path can reactivate a
+  superseded selector/source/package builder.
+- [ ] A production-path call graph captured in QA evidence contains only canonical implementations.
+- [ ] This PR does not perform broad file/module deletion or structural refactoring; those are owned
+  by PR-526 through PR-531.
+
+### PR-526 — Delete legacy statistical, discovery and source runtime code
+
+**Type:** implementation / legacy removal  
+**Depends on:** PR-500
+
+Git history is the archive. The repository must not retain executable implementations for
+superseded statistical/source paths merely to preserve backwards compatibility.
+
+#### Acceptance
+
+- [ ] Delete the superseded PCA-only-prefix/L* selector implementation and every production wrapper,
+  adapter, registry entry and feature flag used only by it.
+- [ ] Delete the old clustering, hierarchy-cut, medoid, teacher-HMM and backward-elimination
+  discovery/selection implementations when they have no canonical use after PR-500.
+- [ ] Delete raw-plus-generated-PCA and caller-supplied PCA-switch compatibility paths that are not
+  part of the new family-PCA pipeline.
+- [ ] Delete canonical-source fallbacks for `macro_loader.macro_features_daily`,
+  `macro_loader.macro_raw`, schema-wide relation enumeration and caller-selected feature relations.
+- [ ] Delete fixed-row/fixed-step walk-forward constructors that are superseded by the canonical
+  calendar-month clock and are not used by generic test utilities with an explicit nonproduction
+  purpose.
+- [ ] Delete deprecated computation-position/resume/checkpoint compatibility code from the full
+  Xetra evaluator where the canonical contract is one-shot/non-resumable; keep only infrastructure
+  that is still used by an explicitly current component.
+- [ ] Remove production imports, exports, dependency-injection bindings, factories, registries and
+  CLI/config switches that reference any deleted implementation.
+- [ ] Remove tests and fixtures whose sole purpose is to validate deleted behavior; do not weaken
+  tests for shared/current primitives.
+- [ ] Do not leave forwarding stubs, deprecation shims, aliases or `NotImplemented` placeholders for
+  removed runtime paths.
+- [ ] Package import and bootstrap succeed after deletion with no optional import of deleted modules.
+- [ ] Canonical statistical behavior and hashes from PR-500 remain unchanged.
+
+### PR-527 — QA: prove zero legacy statistical/source runtime remains
+
+**Type:** QA only  
+**Depends on:** PR-526
+
+#### Acceptance
+
+- [ ] Static repository scan finds no production symbol/import/config key for PCA-only-prefix/L*,
+  medoid, teacher-HMM, clustering selector, raw-plus-PCA selector or old source fallbacks.
+- [ ] Static import-graph traversal proves no canonical module has an optional/dynamic import path to
+  a deleted implementation.
+- [ ] CLI/config mutation tests prove historical selector/source switches are rejected as unknown
+  rather than silently ignored.
+- [ ] A fixture exposing `macro_features_daily`, `macro_raw` and `macro_features` proves only
+  `macro_loader.macro_features` can be used.
+- [ ] Month-clock tests prove no fixed 63-row, 42-row or 21-trading-day production constructor remains
+  reachable.
+- [ ] One canonical evaluation fixture reproduces the pre-deletion PR-500 statistical hashes.
+- [ ] Python package build/import, Ruff, strict mypy, unit and hermetic integration suites pass.
+- [ ] QA adds no production behavior.
+
+### PR-528 — Delete compatibility-only profile, package, artifact and serving code
+
+**Type:** implementation / compatibility removal  
+**Depends on:** PR-527
+
+The current canonical profile/package/serving contract is the only supported contract. Historical
+model packages and run artifacts remain available in MLflow/Git history as data, but this repository
+does not keep compatibility code to execute or reinterpret superseded contracts.
+
+#### Acceptance
+
+- [ ] Delete v1-v3 Xetra profile/config compatibility models, parsers, upgrade adapters and runtime
+  branches that are not part of the sole current profile.
+- [ ] Delete legacy feature-order/package schema readers, deserializers, migration adapters and
+  fallback package loaders that accept packages lacking the canonical feature-selection profile
+  hash, selected semantic tuple or required current lineage.
+- [ ] Delete historical artifact readers whose only purpose is to normalize superseded evaluation
+  evidence into current structures.
+- [ ] Delete deprecated CLI arguments, config aliases, environment-variable aliases and API request
+  fields retained only for backwards compatibility.
+- [ ] Delete serving/refit fallback branches that infer missing current package fields or reconstruct
+  historical feature-selection state.
+- [ ] Reject an old package/config/API payload explicitly at the current validation boundary; do not
+  auto-upgrade it.
+- [ ] Do not mutate, delete or rewrite historical MLflow runs, registered model versions, artifacts
+  or PostgreSQL data as part of compatibility-code removal.
+- [ ] Keep only current public API/profile/package types and their exact validators/serializers.
+- [ ] Remove tests/fixtures that assert acceptance of historical contracts and replace them with
+  rejection tests at the current boundary.
+- [ ] No compatibility layer remains solely because an old artifact exists remotely.
+
+### PR-529 — QA: current-contract-only package and serving boundary
+
+**Type:** QA only  
+**Depends on:** PR-528
+
+#### Acceptance
+
+- [ ] Historical v1-v3 profile/config fixtures are rejected.
+- [ ] Historical package fixtures missing current profile hash, semantic feature tuple, PCA state or
+  required lineage are rejected without migration.
+- [ ] Deprecated CLI/config/environment/API names fail closed as unknown/invalid.
+- [ ] Static scan finds no `legacy`, `compat`, `deprecated`, old-schema upgrader or historical
+  package-reader module on a production import path; legitimate terminology in migration/history
+  comments is excluded by an explicit allowlist.
+- [ ] Current package round-trip, registry readback and serving invocation remain byte/canonical-hash
+  stable.
+- [ ] No test depends on a historical artifact to make current code import or execute.
+- [ ] QA adds no production behavior.
+
+### PR-530 — Refactor the canonical-only implementation after legacy deletion
+
+**Type:** implementation / structural refactor  
+**Depends on:** PR-529
+
+Legacy deletion is expected to expose abstractions, wrappers and version-specific names that no
+longer serve a second implementation. This PR simplifies them without changing statistical
+behavior.
+
+#### Acceptance
+
+- [ ] Remove interfaces, adapters, factories, strategy branches and dependency-injection bindings
+  that have only one implementation and no independently useful test seam after PR-528.
+- [ ] Collapse duplicate canonical orchestration helpers so evaluation and deployment/refit call the
+  same stage implementations rather than parallel copies.
+- [ ] Remove dead configuration fields, unused dataclasses, unreachable branches, stale metrics and
+  unused serialization fields revealed by legacy deletion.
+- [ ] Rename internal modules/functions whose names describe superseded mechanics rather than their
+  canonical responsibility; update all imports atomically.
+- [ ] Keep externally intentional identities such as repository/package name, `profile_id=xetra`,
+  registered model identity and current API contract unchanged unless another active backlog item
+  explicitly owns that change.
+- [ ] Establish one directional dependency flow:
+  source/contracts -> preprocessing/selection -> HMM evaluation -> packaging/lifecycle -> serving.
+- [ ] No circular imports are introduced; package import must not execute network/database work.
+- [ ] Shared parallel-execution, DuckDB and MLflow abstractions remain single-source and are not
+  duplicated during refactor.
+- [ ] Refactor produces identical canonical statistical/package hashes on pinned fixtures.
+- [ ] Ruff, formatting, strict mypy and required unit/integration tests pass at 90% coverage.
+
+### PR-531 — QA: canonical-only import graph, dead-code and refactor proof
+
+**Type:** QA only / structural acceptance  
+**Depends on:** PR-530
+
+#### Acceptance
+
+- [ ] Build an import/dependency graph and prove the canonical layer direction required by PR-530.
+- [ ] Reject circular imports and forbidden reverse dependencies.
+- [ ] Static dead-code scan plus explicit import/export inventory finds no orphan production modules,
+  public exports or configuration fields left by removed legacy paths.
+- [ ] Repository-wide search verifies no compatibility shim, forwarding alias or deprecated runtime
+  switch can recreate deleted behavior.
+- [ ] Canonical CLI/evaluation/refit/serving smoke tests all exercise the same source and stage
+  implementations.
+- [ ] Pre-refactor pinned canonical fixtures reproduce identical statistical, package and evidence
+  hashes.
+- [ ] Clean environment package build/install/import succeeds without historical modules.
+- [ ] Required lint/type/unit/integration/coverage gates pass.
+- [ ] QA adds no production behavior.
 
 ### PR-511 — Consolidate repository documentation into one guided onboarding path
 
 **Type:** documentation / architecture cleanup  
-**Depends on:** PR-500
+**Depends on:** PR-531
 
 The final repository-authored contract/onboarding Markdown set is intentionally small:
 
@@ -1272,8 +1438,8 @@ Other legal/license files are unaffected.
   then delete those two files.
 - [ ] Migrate still-valid rendering/MLflow plot rules from PLOT_STYLE.md into the diagnostics section
   of EVALUATION.md or ARCHITECTURE.md as appropriate, then delete PLOT_STYLE.md.
-- [ ] Remove stale/superseded architecture text rather than retaining compatibility notes in the
-  onboarding docs; Git history is the archive.
+- [ ] Remove stale/superseded architecture text and all compatibility instructions rather than
+  documenting removed code paths; Git history and the condensed historical backlog are the archive.
 - [ ] Every structural/process explanation uses Mermaid where a diagram is clearer than prose:
   README onboarding, system architecture, feature-selection flow, monthly evaluation flow,
   parallel task graph, operations/deployment flow and contributing/CI flow.
@@ -1314,8 +1480,9 @@ Other legal/license files are unaffected.
 
 #### Acceptance
 
-- [ ] Static import/config scan proves no canonical entry point can select the old PCA-only-prefix,
-  clustering, medoid or teacher selector.
+- [ ] Static import/config/package scan proves no canonical entry point can select or load the old
+  PCA-only-prefix, clustering, medoid, teacher, legacy-source, historical-profile or compatibility
+  package paths.
 - [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
   and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation.
 - [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
@@ -1500,7 +1667,13 @@ flowchart TD
     P497 --> P498[498 monthly orchestration]
     P498 --> P499[499 orchestration QA]
     P499 --> P500[500 canonical cutover]
-    P500 --> P511[511 docs consolidation]
+    P500 --> P526[526 delete legacy stats/source]
+    P526 --> P527[527 zero-legacy QA]
+    P527 --> P528[528 delete compatibility code]
+    P528 --> P529[529 current-contract QA]
+    P529 --> P530[530 canonical-only refactor]
+    P530 --> P531[531 refactor/dead-code QA]
+    P531 --> P511[511 docs consolidation]
     P511 --> P512[512 docs QA]
     P512 --> P501[501 full hermetic proof]
     P501 --> P502[502 10k resource QA]
@@ -1513,8 +1686,8 @@ flowchart TD
 
 Planning PRs PR-232, PR-250, PR-423..PR-430, PR-455..PR-475 and the previous contents
 of PR-476..PR-506 describing the PCA-only-prefix architecture are superseded and are not active
-execution items. PR-509..PR-525 are new planning identities introduced by the scalable-source,
-documentation and parallel-runtime redesign.
+execution items. PR-509..PR-531 are new planning identities introduced by the scalable-source,
+parallel-runtime, zero-legacy/compatibility, refactor and documentation redesign.
 
 ---
 
@@ -1543,8 +1716,11 @@ documentation and parallel-runtime redesign.
   maintenance action.
 - **Canonical live/evaluation cadence:** the complete pipeline refits once after each Europe/Berlin
   calendar month closes and is frozen for the immediately following complete calendar month.
-- Only **Xetra v4** is active. Legacy v1-v3 evaluation/package/serving compatibility is retired;
-  Git history is the archive.
+- **Zero legacy/compatibility policy:** after PR-526–PR-531, only the current Xetra pipeline,
+  source contract, package schema and serving contract exist in executable code. v1-v3 compatibility,
+  old selectors, old source adapters, historical package readers and deprecated flags are deleted,
+  not hidden behind shims. Historical artifacts remain immutable external data; Git history is the
+  code archive.
 - Production packages are published to the external NAS MLflow service at
   http://10.10.1.3:5000; local FileStore is used for hermetic QA.
 - Feature PostgreSQL and MLflow are external dependencies; Docker/Compose services do not belong to
@@ -1609,7 +1785,7 @@ dominate the active backlog.
 
 ### Closed without merge / superseded
 
-- Planning PRs PR-232, PR-250, PR-423–PR-430, PR-455–PR-475 and the former PCA-only-prefix contents of PR-476–PR-506 are superseded by the rewritten scalable feature-selection plan plus PR-509–PR-525; superseded definitions survive only in Git/GitHub history and must not be implemented from old text.
+- Planning PRs PR-232, PR-250, PR-423–PR-430, PR-455–PR-475 and the former PCA-only-prefix contents of PR-476–PR-506 are superseded by the rewritten scalable feature-selection plan plus PR-509–PR-531; superseded definitions survive only in Git/GitHub history and must not be implemented from old text.
 - GitHub #277, #284 and #317 were closed without merge and are superseded by later
   merged work.
 - Draft planning IDs PR-186–PR-206 are superseded and must not be implemented.
