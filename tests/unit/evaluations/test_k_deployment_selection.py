@@ -241,7 +241,7 @@ def test_deployment_slot_and_result_contracts_reconcile_every_identity() -> None
         KDeploymentSelectionResult("snapshot-1", START, cutoff, tuple(reversed(slots)))
 
 
-def test_run_slot_converts_selector_and_refitter_contract_errors_to_rejections() -> None:
+def test_run_slot_converts_selection_invalidity_but_escapes_refitter_contract_errors() -> None:
     rows = _rows()
     cutoff = rows["timestamp_m1"].iloc[-1]
     validation = _validation().slots[0]
@@ -265,14 +265,14 @@ def test_run_slot_converts_selector_and_refitter_contract_errors_to_rejections()
         )
     )
     assert "different K slot" in (wrong_slot.reason or "")
-    bad_refit = _run_slot(
-        (
-            *base,
-            lambda *args, **kwargs: _selection("k2", cutoff),
-            lambda *args, **kwargs: object(),
+    with pytest.raises(TypeError, match="K deployment refitter"):
+        _run_slot(
+            (
+                *base,
+                lambda *args, **kwargs: _selection("k2", cutoff),
+                lambda *args, **kwargs: object(),
+            )
         )
-    )
-    assert "K deployment refitter" in (bad_refit.reason or "")
 
 
 def test_deployment_input_identity_validation_is_fail_closed() -> None:

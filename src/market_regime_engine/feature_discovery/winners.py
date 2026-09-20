@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.feature_discovery.contracts import (
     ClusterSolution,
     ClusterWinner,
@@ -182,7 +183,9 @@ def select_cluster_winners(
         candidates = tuple(by_name[feature] for feature in members)
         eligible = tuple(score for score in candidates if score.eligible)
         if not eligible:
-            raise ValueError(f"{cluster_id} has no eligible regime feature score")
+            raise RecoverableEvaluationInvalidity(
+                f"{cluster_id} has no eligible regime feature score"
+            )
         ranked, tiers = _rank_scores(eligible)
         winner = ranked[0]
         decisions.append(

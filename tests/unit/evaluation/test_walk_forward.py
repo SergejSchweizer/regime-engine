@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import market_regime_engine.evaluation.walk_forward as walk_forward
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.inference.filtering import causal_filter
@@ -234,6 +235,43 @@ def test_nonfinite_nonnull_selected_value_is_not_silently_dropped() -> None:
     assert fold.valid is False
     assert fold.failure_reason is not None
     assert "must be finite" in fold.failure_reason
+
+
+@pytest.mark.parametrize(
+    "unexpected",
+    (
+        RuntimeError("backend failure"),
+        KeyError("missing"),
+        AssertionError("broken invariant"),
+        TypeError("wrong callback value"),
+        ValueError("unrelated value error"),
+    ),
+    ids=("runtime", "key", "assertion", "type", "value"),
+)
+def test_unexpected_fold_failures_escape_the_invalidity_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    unexpected: Exception,
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise unexpected
+
+    monkeypatch.setattr(walk_forward, "run_multistart", fail)
+    with pytest.raises(type(unexpected), match=str(unexpected)):
+        evaluate(source_rows(1323))
+
+
+def test_typed_fold_invalidity_becomes_deterministic_invalid_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RecoverableEvaluationInvalidity("statistical gate rejected fold")
+
+    monkeypatch.setattr(walk_forward, "run_multistart", fail)
+    fold = evaluate(source_rows(1323)).folds[0]
+    assert fold.valid is False
+    assert fold.failure_reason == (
+        "RecoverableEvaluationInvalidity: statistical gate rejected fold"
+    )
 
 
 def test_future_source_mutation_cannot_change_earlier_fold_evidence() -> None:

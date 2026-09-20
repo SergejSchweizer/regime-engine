@@ -364,18 +364,18 @@ def test_k_selection_task_outcomes_and_input_validation() -> None:
     no_result = _run_task(task)
     assert not no_result.eligible and "no eligible" in (no_result.rejection_reason or "")
 
-    bad_type = _run_task((frame, 2, "snapshot-1", BASE, lambda *_args, **_kwargs: object()))
-    assert not bad_type.eligible and "TypeError" in (bad_type.rejection_reason or "")
-    raised = _run_task(
-        (
-            frame,
-            2,
-            "snapshot-1",
-            BASE,
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+    with pytest.raises(TypeError, match="K-specific selector"):
+        _run_task((frame, 2, "snapshot-1", BASE, lambda *_args, **_kwargs: object()))
+    with pytest.raises(RuntimeError, match="bad"):
+        _run_task(
+            (
+                frame,
+                2,
+                "snapshot-1",
+                BASE,
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+            )
         )
-    )
-    assert not raised.eligible and "RuntimeError" in (raised.rejection_reason or "")
 
     with pytest.raises(TypeError, match="pandas DataFrame"):
         run_k_feature_selection(

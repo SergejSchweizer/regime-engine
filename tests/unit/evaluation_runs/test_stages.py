@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
 from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
@@ -64,7 +65,7 @@ def test_stage_checkpoint_persists_and_rethrows_domain_invalid(tmp_path) -> None
     def compute() -> dict[str, int]:
         nonlocal calls
         calls += 1
-        raise ValueError("no eligible prefix")
+        raise RecoverableEvaluationInvalidity("no eligible prefix")
 
     with pytest.raises(ValueError, match="no eligible prefix"):
         checkpoint.run("prefix_search", compute)

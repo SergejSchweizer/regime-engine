@@ -23,6 +23,7 @@ from market_regime_engine.evaluation.diagnostics import (
     validate_full_covariances,
     validate_train_occupancy,
 )
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.inference.filtering import causal_filter
@@ -441,11 +442,15 @@ def _complete_case(
     try:
         matrix = complete.to_numpy(dtype=np.float64, copy=True)
     except (TypeError, ValueError) as exc:
-        raise ValueError("selected non-null feature values must be numeric") from exc
+        raise RecoverableEvaluationInvalidity(
+            "selected non-null feature values must be numeric"
+        ) from exc
     if matrix.ndim != 2 or matrix.shape[1] != len(feature_order):
-        raise ValueError("complete-case matrix must preserve exact resolved feature order")
+        raise RecoverableEvaluationInvalidity(
+            "complete-case matrix must preserve exact resolved feature order"
+        )
     if not np.all(np.isfinite(matrix)):
-        raise ValueError("selected non-null feature values must be finite")
+        raise RecoverableEvaluationInvalidity("selected non-null feature values must be finite")
     timestamps = tuple(
         _require_utc(value, "retained timestamp")
         for value in frame.loc[complete_mask, _TIMESTAMP_COLUMN]
@@ -780,11 +785,11 @@ def run_walk_forward_candidate(
             )
             test_model_count = int(test_rows.shape[0])
             if train_model_count < profile.walk_forward.minimum_model_train_observations:
-                raise ValueError(
+                raise RecoverableEvaluationInvalidity(
                     f"retained TRAIN observations are below pinned minimum 504: {train_model_count}"
                 )
             if test_model_count < profile.walk_forward.minimum_model_test_observations:
-                raise ValueError(
+                raise RecoverableEvaluationInvalidity(
                     f"retained TEST observations are below pinned minimum 42: {test_model_count}"
                 )
 
@@ -800,7 +805,7 @@ def run_walk_forward_candidate(
                 model_feature_order=candidate.feature_order,
             )
             if pca_scaler.model_feature_order != candidate.feature_order:
-                raise ValueError(
+                raise RecoverableEvaluationInvalidity(
                     "fold-local PCA generated feature order differs from candidate order"
                 )
             scaler = pca_scaler.hmm_scaler
@@ -844,7 +849,9 @@ def run_walk_forward_candidate(
                     )
             artifact = multistart.winner.artifact
             if artifact.feature_order != candidate.feature_order:
-                raise ValueError("fitted model feature order differs from frozen resolved order")
+                raise RecoverableEvaluationInvalidity(
+                    "fitted model feature order differs from frozen resolved order"
+                )
             validate_full_covariances(artifact)
 
             train_filter = causal_filter(scaled_train, artifact)
@@ -856,7 +863,7 @@ def run_walk_forward_candidate(
                 abs(filter_train_log_likelihood),
             )
             if abs(fit_train_log_likelihood - filter_train_log_likelihood) > parity_tolerance:
-                raise ValueError(
+                raise RecoverableEvaluationInvalidity(
                     "TRAIN likelihood parity failed: "
                     f"fit={fit_train_log_likelihood:.17g}, "
                     f"filter={filter_train_log_likelihood:.17g}, "
@@ -874,7 +881,9 @@ def run_walk_forward_candidate(
                 initial_filtered_probabilities=train_filter.terminal_probabilities,
             )
             if abs(test_filter.log_likelihood - continued.test_log_likelihood) > 1e-10:
-                raise ValueError("continued TEST likelihood/filter evidence disagree")
+                raise RecoverableEvaluationInvalidity(
+                    "continued TEST likelihood/filter evidence disagree"
+                )
 
             if reference_signatures is None:
                 alignment = align_first_fold(artifact, scaler, reference_scaler)
@@ -924,7 +933,7 @@ def run_walk_forward_candidate(
             )
             results.append(result)
             reference_signatures = alignment.aligned_signatures
-        except Exception as exc:
+        except RecoverableEvaluationInvalidity as exc:
             results.append(
                 _invalid_fold_result(
                     fold,

@@ -200,5 +200,5 @@ def test_fixed_k_selection_rejects_any_outer_test_row_before_discovery(monkeypat
     assert result[0].eligible is False
     assert result[0].selection is None
     assert result[0].rejection_reason == (
-        "ValueError: TRAIN rows must end exactly at validation_cutoff"
+        "RecoverableEvaluationInvalidity: TRAIN rows must end exactly at validation_cutoff"
     )

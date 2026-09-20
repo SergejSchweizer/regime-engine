@@ -14,6 +14,7 @@ import numpy.typing as npt
 from hmmlearn.hmm import GMMHMM, GaussianHMM  # type: ignore[import-untyped]
 from scipy.special import gammaln  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import ArrayF64, FilterResult, FitResult
 
@@ -103,7 +104,9 @@ def _validate_positive_definite(artifact: GaussianHMMArtifact) -> None:
         try:
             np.linalg.cholesky(symmetric)
         except np.linalg.LinAlgError as exc:
-            raise ValueError("full covariance must pass Cholesky without jitter") from exc
+            raise RecoverableEvaluationInvalidity(
+                "full covariance must pass Cholesky without jitter"
+            ) from exc
 
 
 def _validate_mixture_covariances(artifact: GaussianHMMArtifact) -> None:
@@ -124,7 +127,9 @@ def _validate_mixture_covariances(artifact: GaussianHMMArtifact) -> None:
             try:
                 np.linalg.cholesky((matrix + matrix.T) / 2.0)
             except np.linalg.LinAlgError as exc:
-                raise ValueError("mixture covariance must pass Cholesky without jitter") from exc
+                raise RecoverableEvaluationInvalidity(
+                    "mixture covariance must pass Cholesky without jitter"
+                ) from exc
 
 
 def gaussian_log_emissions(rows: npt.ArrayLike, artifact: GaussianHMMArtifact) -> ArrayF64:

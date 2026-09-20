@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import market_regime_engine.evaluations.k_champion_outer as outer_module
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluations.k_champion_contract import (
     KChampionSelection,
@@ -171,7 +172,7 @@ def test_slot_gates_and_independent_aggregation_reconcile_exactly() -> None:
     def selective_failure(train_rows, test_rows, *, selection, slot_id, fold):
         calls.append((slot_id, fold.fold_id))
         if (slot_id, fold.fold_index) in {("k2", 1), ("k3", 3)}:
-            raise ValueError(f"fixture failure {slot_id}/{fold.fold_id}")
+            raise RecoverableEvaluationInvalidity(f"fixture failure {slot_id}/{fold.fold_id}")
         return _evaluate(
             train_rows,
             test_rows,

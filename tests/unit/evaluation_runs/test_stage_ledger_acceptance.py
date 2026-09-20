@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation_runs.contracts import EvaluationRunIdentity
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluation_runs.store import (
@@ -85,7 +86,7 @@ def test_domain_invalid_terminal_payload_is_immutable_and_not_recomputed(tmp_pat
     def invalid() -> object:
         nonlocal calls
         calls += 1
-        raise ValueError("no eligible prefix")
+        raise RecoverableEvaluationInvalidity("no eligible prefix")
 
     with pytest.raises(ValueError, match="no eligible prefix"):
         checkpoint.run("prefix_search", invalid)
