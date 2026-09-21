@@ -610,20 +610,23 @@ versioned by `macro-loader`.
 **Type:** QA only
 **Depends on:** PR-509
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-510-macro-features-source-qa`; the
+hermetic QA matrix is independently implemented and passes without external writes.
+
 #### Acceptance
 
-- [ ] Real-PostgreSQL-shaped fixture proves only `macro_loader.macro_features` is accepted.
-- [ ] A fixture exposing both `macro_features` and historical `macro_features_daily` proves the
+- [x] Real-PostgreSQL-shaped fixture proves only `macro_loader.macro_features` is accepted.
+- [x] A fixture exposing both `macro_features` and historical `macro_features_daily` proves the
   latter is ignored/rejected as a candidate source.
-- [ ] Add a valid `DOUBLE PRECISION` column to the materialized-view fixture with no regime-engine
+- [x] Add a valid `DOUBLE PRECISION` column to the materialized-view fixture with no regime-engine
   feature-list change; the next snapshot includes it before quality filtering.
-- [ ] Wrong relation kind, wrong timestamp type and non-double feature columns fail closed.
-- [ ] View-version/fingerprint mutation changes dataset/evaluation identity.
-- [ ] Catalog column order reversal at the database layer is reflected only through PostgreSQL
+- [x] Wrong relation kind, wrong timestamp type and non-double feature columns fail closed.
+- [x] View-version/fingerprint mutation changes dataset/evaluation identity.
+- [x] Catalog column order reversal at the database layer is reflected only through PostgreSQL
   ordinal order and produces the expected identity change.
-- [ ] Static search proves the new canonical path contains no
+- [x] Static search proves the new canonical path contains no
   `macro_loader.macro_features_daily` or schema-wide wildcard source fallback.
-- [ ] QA performs no external write.
+- [x] QA performs no external write.
 
 ### PR-478 — Add the local DuckDB feature-selection metadata store
 
