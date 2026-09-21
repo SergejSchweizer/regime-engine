@@ -57,6 +57,32 @@ def test_generated_transformations_are_family_inputs_not_direct_hmm_features(nam
     assert assignment.family_pca_input
 
 
+@pytest.mark.parametrize(
+    ("family", "feature"),
+    (
+        ("vix", "vix_delta_1obs"),
+        ("vix9d", "vix9d_delta_1obs"),
+        ("vix3m", "vix3m_delta_1obs"),
+        ("vix6m", "vix6m_delta_1obs"),
+        ("vix1y", "vix1y_delta_1obs"),
+        ("vstoxx", "vstoxx_delta_1obs"),
+        ("move", "move_delta_1obs"),
+        ("ciss", "ciss_delta_1obs"),
+        ("euro_hy_oas", "euro_hy_oas_delta_1obs"),
+        ("us_2y", "us_2y_delta_1obs"),
+        ("us_10y", "us_10y_delta_1obs"),
+        ("estr", "estr_delta_1obs"),
+        ("usd_broad", "usd_broad_delta_1obs"),
+    ),
+)
+def test_every_transformation_family_has_one_unambiguous_assignment(
+    family: str, feature: str
+) -> None:
+    assignment = classify_feature_name(feature)
+    assert assignment.role is FeatureRole.TRANSFORMATION
+    assert assignment.family == family
+
+
 def test_temporal_key_is_neither_quality_or_model_input() -> None:
     assignment = classify_feature_name(TEMPORAL_KEY)
     assert assignment.role is FeatureRole.TEMPORAL_KEY
@@ -206,6 +232,28 @@ def test_profile_and_role_mutations_change_hash() -> None:
     changed_assignment = replace(baseline.assignments[0], role=FeatureRole.CORE)
     changed = replace(baseline, assignments=(changed_assignment, *baseline.assignments[1:]))
     assert changed.profile_hash != baseline.profile_hash
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("correlation_measure", "spearman", "absolute Pearson"),
+        ("correlation_selection", "target_aware", "redundancy-only"),
+        ("pc_count_policy", "explained_variance", "first non-zero-rank"),
+        ("sffs_score_policy", "raw_pll", "dimension-independent"),
+        ("outer_test_policy", "training", "evaluation-only"),
+    ),
+)
+def test_profile_rejects_noncanonical_selection_policies(
+    field: str, value: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(FeatureSelectionProfile(), **{field: value})
+
+
+def test_canonical_default_mutation_fails_closed() -> None:
+    with pytest.raises(ValueError, match=r"pinned to 0\.995"):
+        replace(FeatureSelectionProfile(), family_near_duplicate_abs_threshold=0.994)
 
 
 def test_contract_exposes_complete_evidence_identity() -> None:
