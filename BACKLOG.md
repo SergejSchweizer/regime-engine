@@ -711,16 +711,19 @@ must not redefine which features are CORE or which transformation family owns a 
 **Type:** QA only
 **Depends on:** PR-480
 
+**Status:** QA COMPLETE on branch `pr/PR-481-provenance-identity-qa`; provenance matrix and
+regression tests pass locally.
+
 #### Acceptance
 
-- [ ] Fixtures cover core features and multiple transformation families with multiple windows.
-- [ ] Missing role, missing family, conflicting family and conflicting transformation provenance all
+- [x] Fixtures cover core features and multiple transformation families with multiple windows.
+- [x] Missing role, missing family, conflicting family and conflicting transformation provenance all
   fail closed.
-- [ ] Discovery-order reversal preserves registry identities and hashes.
-- [ ] Equivalent normalized transformation parameters map to one canonical identity.
-- [ ] Distinct windows/parameters cannot collide.
-- [ ] No name-pattern-only fallback is accepted.
-- [ ] Production statistical behavior is unchanged.
+- [x] Discovery-order reversal preserves registry identities and hashes.
+- [x] Equivalent normalized transformation parameters map to one canonical identity.
+- [x] Distinct windows/parameters cannot collide.
+- [x] No name-pattern-only fallback is accepted.
+- [x] Production statistical behavior is unchanged.
 
 ### PR-482 — Implement TRAIN-only high-dimensional quality filtering
 
