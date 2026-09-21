@@ -410,8 +410,10 @@ would silently violate the dimension-independent SFFS semantics.
 `macro_loader`; `macro_loader.macro_features` is a materialized view with 168 columns and
 `macro-loader` has `SELECT` but no write privilege. `macro_loader_sync.gold_sync_state` now
 contains the canonical `dataset_id='macro_features'` row with the matching current view
-fingerprint and bounds; the legacy `macro_features_daily` row remains present but is never used
-as a fallback. `scripts/verify_feature_postgres.sh` passes 1/1.
+fingerprint (`4ceea44bd95232abd972b4af6f12dbc037f01a82cd6a6c04943e2136e614ba76`) and bounds;
+the real `MacroFeaturesPostgresSource` read reproduced 167 catalog entries and 4,426 rows with
+the same digest. The legacy `macro_features_daily` row remains present but is never used as a
+fallback. `scripts/verify_feature_postgres.sh` passes 1/1.
 
 **Type:** contract / configuration
 **Depends on:** PR-508
