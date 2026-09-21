@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_topology
+from market_regime_engine.runtime.parallel import ParallelExecutionPlan
 
 
 def _rss_mib() -> float | None:
@@ -120,6 +121,11 @@ class PerformanceRecorder:
 
     def update_metadata(self, values: Mapping[str, Any]) -> None:
         self._metadata.update(values)
+
+    def record_parallel_plan(self, plan: ParallelExecutionPlan) -> None:
+        """Persist the effective parallel resource decision in the report."""
+
+        self.update_metadata({"parallel_execution": plan.runtime_metadata()})
 
     def finish(
         self,

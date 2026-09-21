@@ -58,6 +58,7 @@ def _initialize_process_worker(
     initargs: tuple[object, ...],
     cpu_affinity: tuple[int, ...] | None,
 ) -> None:
+    os.environ["REGIME_CPU_PROCESS_WORKER"] = "1"
     _limit_native_numerical_threads()
     if cpu_affinity is not None and hasattr(os, "sched_setaffinity"):
         os.sched_setaffinity(0, cpu_affinity)
@@ -80,6 +81,8 @@ def cpu_process_pool(
     uses ``spawn`` so it cannot inherit a partially-held interpreter lock.
     """
 
+    if os.environ.get("REGIME_CPU_PROCESS_WORKER") == "1":
+        raise RuntimeError("process-pool workers may not create child process pools")
     worker_limit = cpu_worker_count(max_workers)
     methods = multiprocessing.get_all_start_methods()
     context: BaseContext

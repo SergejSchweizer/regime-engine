@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import fsum, isfinite
+from tempfile import TemporaryDirectory
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+import numpy as np
+
 from market_regime_engine.feature_discovery.contracts import (
     MIN_ELIGIBLE_FEATURES,
     MIN_FEATURE_COVERAGE,
@@ -22,7 +24,11 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
-from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.parallel import (
+    FoldParallelExecutor,
+    ParallelExecutionPlan,
+    ReadOnlyMatrix,
+)
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -52,14 +58,35 @@ class _QualityFeatureTask:
 
     feature_name: str
     source_position: int
-    values: tuple[float, ...]
     source_count: int
+    column_position: int
+    matrix_path: str | None = None
+    matrix_shape: tuple[int, int] | None = None
+    matrix_dtype: str | None = None
+    values: tuple[float, ...] | None = None
 
 
 def _quality_feature(task: _QualityFeatureTask) -> FeatureQuality:
-    finite_count = len(task.values)
+    if task.matrix_path is not None:
+        if task.matrix_shape is None or task.matrix_dtype is None:
+            raise ValueError("shared quality matrix metadata is incomplete")
+        mapped = np.memmap(
+            task.matrix_path,
+            dtype=np.dtype(task.matrix_dtype),
+            mode="r",
+            shape=task.matrix_shape,
+        )
+        values = tuple(
+            float(value) for value in mapped[:, task.column_position] if np.isfinite(value)
+        )
+        del mapped
+    elif task.values is not None:
+        values = task.values
+    else:
+        raise ValueError("quality task has no numeric values")
+    finite_count = len(values)
     coverage = finite_count / task.source_count
-    variance = _population_variance(task.values)
+    variance = _population_variance(values)
     if coverage < MIN_FEATURE_COVERAGE:
         eligible = False
         reason = "coverage_below_minimum"
@@ -143,9 +170,9 @@ def filter_outer_train_quality(
     _require_utc(train_end, "train_end")
     rows = _materialize_train_rows(snapshot, catalog, train_start, train_end)
     source_count = len(rows)
-    values_by_feature: list[list[float]] = [[] for _ in catalog.entries]
+    matrix = np.full((source_count, len(catalog.entries)), np.nan, dtype=np.float64)
 
-    for row in rows:
+    for row_index, row in enumerate(rows):
         for index, value in enumerate(row.values):
             if value is None:
                 continue
@@ -157,24 +184,34 @@ def filter_outer_train_quality(
                 # NaN/Inf is a source-contract failure for the whole
                 # invocation, never a feature-level rejection.
                 raise ValueError("non-null feature values must be finite")
-            values_by_feature[index].append(numeric)
+            matrix[row_index, index] = numeric
 
-    tasks = tuple(
-        _QualityFeatureTask(
-            entry.feature_name,
-            entry.canonical_ordinal,
-            tuple(values),
-            source_count,
+    with (
+        TemporaryDirectory(prefix="regime-quality-") as matrix_directory,
+        ReadOnlyMatrix.create(matrix, matrix_directory) as shared,
+    ):
+        tasks = tuple(
+            _QualityFeatureTask(
+                feature_name=entry.feature_name,
+                source_position=entry.canonical_ordinal,
+                source_count=source_count,
+                column_position=index,
+                matrix_path=str(shared.path),
+                matrix_shape=(source_count, len(catalog.entries)),
+                matrix_dtype=matrix.dtype.str,
+            )
+            for index, entry in enumerate(catalog.entries)
         )
-        for entry, values in zip(catalog.entries, values_by_feature, strict=True)
-    )
-    worker_limit = cpu_worker_count(max_workers, task_count=len(tasks))
-    if worker_limit == 1:
-        quality = tuple(_quality_feature(task) for task in tasks)
-    else:
-        with cpu_process_pool(worker_limit) as executor:
-            futures = tuple(executor.submit(_quality_feature, task) for task in tasks)
-            quality = tuple(future.result() for future in futures)
+        plan = ParallelExecutionPlan.create(
+            len(tasks),
+            requested_workers=max_workers,
+            shared_matrix_identity=shared.identity,
+        )
+        executor: FoldParallelExecutor[_QualityFeatureTask, FeatureQuality] = FoldParallelExecutor(
+            plan
+        )
+        with executor:
+            quality = executor.map_ordered(_quality_feature, tasks)
 
     features = tuple(quality)
     eligible_features = tuple(item.feature_name for item in features if item.eligible)

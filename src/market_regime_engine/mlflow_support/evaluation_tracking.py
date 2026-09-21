@@ -56,6 +56,7 @@ from market_regime_engine.mlflow_support.tracking import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.parallel import ParallelExecutionPlan
 
 PayloadEmitter = Callable[[str, Path], None]
 
@@ -932,13 +933,26 @@ def track_global_v4_evaluation(
                 ).lower(),
             },
         )
-        port.log_artifact(parent_run_id, str(evidence_path), "evidence")
         configured_workers = os.environ.get("REGIME_TRACKING_WORKERS")
         requested_workers = int(configured_workers) if configured_workers else None
         tracking_workers = cpu_worker_count(
             requested_workers,
             task_count=len(result.outer_folds),
         )
+        fold_plan = ParallelExecutionPlan.create(
+            len(result.outer_folds), requested_workers=tracking_workers
+        )
+        port.log_params(
+            parent_run_id,
+            {
+                "parallel.available_cpu_budget": str(fold_plan.available_cpu_budget),
+                "parallel.effective_worker_count": str(fold_plan.worker_count),
+                "parallel.runnable_task_count": str(fold_plan.runnable_task_count),
+                "parallel.native_thread_count_per_worker": str(fold_plan.native_thread_count),
+                "parallel.shared_matrix_identity": fold_plan.shared_matrix_identity or "",
+            },
+        )
+        port.log_artifact(parent_run_id, str(evidence_path), "evidence")
         preparation_tasks = tuple(
             (fold, selections.get(fold.fold_index)) for fold in result.outer_folds
         )
