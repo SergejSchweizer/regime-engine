@@ -250,15 +250,15 @@ def _evaluate_candidates(
         # worker per candidate instead.  The outer process pool remains the
         # GIL-independent parallel boundary.
         child_limits = _threaded_child_worker_limits(max(1, max_workers or 1), len(candidates))
-        evaluated: list[WalkForwardEvaluation] = []
+        nested_evaluated: list[WalkForwardEvaluation] = []
         with ThreadPoolExecutor(max_workers=len(child_limits)) as thread_executor:
             for offset in range(0, len(candidates), len(child_limits)):
                 batch = candidates[offset : offset + len(child_limits)]
                 batch_futures = [
                     thread_executor.submit(evaluate, candidate, 1) for candidate in batch
                 ]
-                evaluated.extend(future.result() for future in batch_futures)
-        return {evaluation.candidate_id: evaluation for evaluation in evaluated}
+                nested_evaluated.extend(future.result() for future in batch_futures)
+        return {evaluation.candidate_id: evaluation for evaluation in nested_evaluated}
 
     use_processes = seed_checkpoint_factory is None and worker_limit > 1 and is_pickleable(runner)
     if use_processes:
