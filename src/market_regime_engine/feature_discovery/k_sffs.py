@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
@@ -90,7 +91,7 @@ def select_k_slot_sffs(
         else SharedTaskFrontier(max_workers) if use_frontier else nullcontext(None)
     )
     with frontier_context as frontier:
-        for state_count in requested:
+        def select_one(state_count: int) -> KSlotSFFSResult:
             fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
             selected = select_sffs(
                 candidate_tuple,
@@ -100,7 +101,16 @@ def select_k_slot_sffs(
                 frontier=frontier,
                 frontier_state_count=state_count,
             )
-            results.append(KSlotSFFSResult(state_count, GAUSSIAN_HMM, selected))
+            return KSlotSFFSResult(state_count, GAUSSIAN_HMM, selected)
+
+        if frontier is not None and len(requested) > 1:
+            # K slots are independent coordinators.  Threads only submit and
+            # collect work; all CPU-bound fitting remains in the shared
+            # process frontier, while each slot's SFFS decisions stay ordered.
+            with ThreadPoolExecutor(max_workers=len(requested)) as coordinator:
+                results.extend(coordinator.map(select_one, requested))
+        else:
+            results.extend(select_one(state_count) for state_count in requested)
     return tuple(results)
 
 

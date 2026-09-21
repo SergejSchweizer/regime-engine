@@ -1230,7 +1230,8 @@ that control boundary is flattened onto the one shared process pool.
 - [x] Reuse persistent workers across SFFS steps, K slots and final ablations when the canonical
   evaluator seams are pickleable; the serial/non-pickleable reference path remains explicit.
 - [ ] Never create candidate-local or multistart-local child pools.
-- [ ] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work.
+- [x] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work;
+  independent K coordinators submit concurrently through the shared frontier.
 - [ ] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
   independent of task completion order.
 - [ ] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
