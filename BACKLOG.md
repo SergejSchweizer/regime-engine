@@ -955,27 +955,30 @@ concurrency/parity tests pass locally.
 **Type:** implementation / redundancy reduction
 **Depends on:** PR-518
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-486-global-correlation-leaders`; targeted
+global-reduction tests pass locally. PR-487 remains the independent oracle/adversarial-chain QA.
+
 The input universe is exactly quality-eligible core features plus family PCs.
 
 #### Acceptance
 
-- [ ] Compute pairwise absolute Pearson correlations from TRAIN rows only.
-- [ ] Use blockwise/vectorized correlation work and retain only threshold-relevant edges/support
+- [x] Compute pairwise absolute Pearson correlations from TRAIN rows only.
+- [x] Use blockwise/vectorized correlation work and retain only threshold-relevant edges/support
   metadata; do not require a persistent dense NxN artifact.
-- [ ] A pair is redundant only when full-TRAIN absolute correlation is at least 0.95, pair support
+- [x] A pair is redundant only when full-TRAIN absolute correlation is at least 0.95, pair support
   is at least 30, median absolute correlation across the three chronological TRAIN thirds is at
   least 0.90, and each third has at least 10 paired finite rows.
-- [ ] If support is insufficient, the pair is not treated as redundant.
-- [ ] Leader selection is lexicographic: largest number of directly redundant unassigned neighbors;
+- [x] If support is insufficient, the pair is not treated as redundant.
+- [x] Leader selection is lexicographic: largest number of directly redundant unassigned neighbors;
   then highest median full absolute correlation to those neighbors; then higher TRAIN coverage;
   then core before PC; then canonical candidate identity.
-- [ ] After selecting a leader, remove only candidates directly redundant with that leader.
-- [ ] Transitive graph connectivity alone never removes a candidate: A-B and B-C cannot remove C
+- [x] After selecting a leader, remove only candidates directly redundant with that leader.
+- [x] Transitive graph connectivity alone never removes a candidate: A-B and B-C cannot remove C
   through A when A-C fails the redundancy rule.
-- [ ] Negative and positive correlation use the same absolute threshold.
-- [ ] Repeat until no unassigned candidate remains; every input maps to exactly one retained leader.
-- [ ] Persist the full candidate-to-leader mapping and all supporting correlations/counts.
-- [ ] No HMM fit, target variable or future/OOS information is used.
+- [x] Negative and positive correlation use the same absolute threshold.
+- [x] Repeat until no unassigned candidate remains; every input maps to exactly one retained leader.
+- [x] Persist the full candidate-to-leader mapping and all supporting correlations/counts.
+- [x] No HMM fit, target variable or future/OOS information is used.
 
 ### PR-487 — QA: independent correlation-leader oracle and adversarial chains
 
