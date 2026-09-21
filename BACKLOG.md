@@ -1188,14 +1188,17 @@ persistence are implemented and under focused verification. No full evaluation w
 **Type:** QA only
 **Depends on:** PR-492
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-493-qa-ablation-oracle`; the independent
+oracle and completion-order QA are production-code-free. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Exactly N ablation evaluations exist for an N-feature final tuple.
-- [ ] Independent recomputation reproduces every finite ablation_loss.
-- [ ] Cover positive, zero, negative and invalid-ablation cases.
-- [ ] Completion-order reversal preserves rows and hashes.
-- [ ] Outer-TEST mutation cannot alter ablation results.
-- [ ] QA adds no production behavior.
+- [x] Exactly N ablation evaluations exist for an N-feature final tuple.
+- [x] Independent recomputation reproduces every finite ablation_loss.
+- [x] Cover positive, zero, negative and invalid-ablation cases.
+- [x] Completion-order reversal preserves rows and hashes.
+- [x] Outer-TEST mutation cannot alter ablation results.
+- [x] QA adds no production behavior.
 
 ### PR-521 — Flatten HMM selection work into one shared parallel task frontier
 
