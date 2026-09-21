@@ -260,7 +260,7 @@ month is never used as TEST evidence.
 
 ### PR-507 — Implement the canonical calendar-month model clock
 
-**Status:** IMPLEMENTATION COMPLETE — GitHub PR #454 open; branch `pr/PR-507-calendar-month-model-clock` pushed at current `HEAD`; worktree clean; 961 unit tests, Ruff, and 83 hermetic integration tests green; full evaluation not run
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #454 at `6eb1f6b`; PR branch rebased to `origin/main` and deleted; 961 unit tests, Ruff, and 83 hermetic integration tests green; full evaluation not run
 
 **Branch:** `pr/PR-507-calendar-month-model-clock`
 
@@ -299,26 +299,30 @@ month is never used as TEST evidence.
 
 ### PR-508 — QA: month-boundary, leakage and live-cadence clock matrix
 
+**Status:** QA COMPLETE LOCALLY — branch `pr/PR-508-calendar-month-qa`; 968 unit tests, Ruff, Mypy and targeted PR-508 QA green; GitHub PR pending
+
+**Branch:** `pr/PR-508-calendar-month-qa`
+
 **Type:** QA only
 **Depends on:** PR-507
 
 #### Acceptance
 
-- [ ] Golden fixtures cover 28-, 29-, 30- and 31-day months and year rollover December -> January.
-- [ ] Cover CET/CEST transitions and prove every timestamp belongs to exactly one local calendar
+- [x] Golden fixtures cover 28-, 29-, 30- and 31-day months and year rollover December -> January.
+- [x] Cover CET/CEST transitions and prove every timestamp belongs to exactly one local calendar
   month.
-- [ ] Prove a January refit uses data only through January month-end and February is the complete
+- [x] Prove a January refit uses data only through January month-end and February is the complete
   OOS TEST month.
-- [ ] Prove the next fold refits through February month-end and tests March.
-- [ ] A snapshot cut off in the middle of September may validate through August at most; partial
+- [x] Prove the next fold refits through February month-end and tests March.
+- [x] A snapshot cut off in the middle of September may validate through August at most; partial
   September is never emitted as a TEST fold.
-- [ ] Mutation of any future-month row cannot alter an earlier fold's TRAIN cutoff or membership.
-- [ ] A fixed 63-row/63-step implementation fails QA.
-- [ ] A 21-trading-day approximation to a calendar month fails QA.
-- [ ] Skipping an empty/absent immediately-following month and jumping to a later month fails QA.
-- [ ] Duplicate TEST timestamps across adjacent folds fail QA.
-- [ ] Serial/process clock construction yields byte-identical fold plans and hashes.
-- [ ] QA adds no production statistical behavior.
+- [x] Mutation of any future-month row cannot alter an earlier fold's TRAIN cutoff or membership.
+- [x] A fixed 63-row/63-step implementation fails QA.
+- [x] A 21-trading-day approximation to a calendar month fails QA.
+- [x] Skipping an empty/absent immediately-following month and jumping to a later month fails QA.
+- [x] Duplicate TEST timestamps across adjacent folds fail QA.
+- [x] Serial/process clock construction yields byte-identical fold plans and hashes.
+- [x] QA adds no production statistical behavior.
 
 ---
 
