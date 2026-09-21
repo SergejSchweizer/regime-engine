@@ -1093,6 +1093,11 @@ locally. No NAS MLflow write and no full evaluation were performed.
 **Type:** implementation / feature subset search
 **Depends on:** PR-489
 
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-490-process-parallel-hmm-sffs`; the
+existing process-parallel SFFS path now enforces the strict `1e-12` backward-improvement rule.
+K-slot HMM wiring, complete tie ranking and `sffs_steps` persistence remain open. No full
+evaluation was run.
+
 **Current implementation note:** the immutable `feature_subset_score.v1` data contract and pure
 scoring/ranking implementation now exist on the pushed PR-476 branch and are covered by 8 focused
 unit tests plus the 154-test feature-discovery/source regression slice. The SFFS coordinator now
@@ -1116,7 +1121,7 @@ acceptance completion.
   valid latest inner fold.
 - [ ] The score is tuning evidence only; Outer TEST remains the sole unbiased fold performance
   evidence.
-- [ ] Start from the best eligible singleton; after every forward add, perform backward removals
+- [x] Start from the best eligible singleton; after every forward add, perform backward removals
   while the canonical score strictly improves by more than 1e-12.
 - [ ] Stop when no forward addition improves the score by more than 1e-12 or 10 features are
   selected.

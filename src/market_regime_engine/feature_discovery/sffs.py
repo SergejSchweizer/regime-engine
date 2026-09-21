@@ -9,6 +9,7 @@ from math import isfinite
 
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
+from market_regime_engine.feature_discovery.feature_subset_score import SCORE_ABS_TOLERANCE
 from market_regime_engine.runtime.cpu import cpu_worker_count
 
 DIMENSION_INDEPENDENT_SCORE = "dimension_independent_feature_subset_score"
@@ -166,7 +167,7 @@ def select_sffs(
                 for proposal, evaluated in zip(backward_sets, backward_scores, strict=True):
                     if (
                         evaluated is not None
-                        and evaluated.value > selected_score.value
+                        and evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
                         and _better((proposal, evaluated), backward, candidate_order)
                     ):
                         backward = (proposal, evaluated)
