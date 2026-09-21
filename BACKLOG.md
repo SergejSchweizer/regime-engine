@@ -824,20 +824,23 @@ without nested process pools, oversubscribed BLAS threads or repeated matrix cop
 **Type:** implementation / redundancy preprocessing
 **Depends on:** PR-514
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-515-family-near-duplicate-pruning`; targeted
+family-reduction tests pass locally. PR-516 remains the independent oracle/edge-case QA proof.
+
 #### Acceptance
 
-- [ ] Run only within one transformation family and only on outer-TRAIN data.
-- [ ] A pair is a family near-duplicate only when full-TRAIN absolute Pearson correlation is at
+- [x] Run only within one transformation family and only on outer-TRAIN data.
+- [x] A pair is a family near-duplicate only when full-TRAIN absolute Pearson correlation is at
   least 0.995, full pair support is at least 30, median absolute correlation across the three TRAIN
   thirds is at least 0.99, and every third has at least 10 paired finite rows.
-- [ ] Insufficient support never removes a pair.
-- [ ] Use direct-leader removal, not transitive connected components.
-- [ ] Family leader ranking is deterministic: largest direct near-duplicate neighborhood, then
+- [x] Insufficient support never removes a pair.
+- [x] Use direct-leader removal, not transitive connected components.
+- [x] Family leader ranking is deterministic: largest direct near-duplicate neighborhood, then
   highest median full absolute correlation, then higher TRAIN coverage, then canonical feature
   identity.
-- [ ] Persist every source-feature-to-family-leader mapping and support/correlation evidence.
-- [ ] No HMM, target, explained variance, semantic score or future/OOS row influences this stage.
-- [ ] Core features bypass this stage unchanged.
+- [x] Persist every source-feature-to-family-leader mapping and support/correlation evidence.
+- [x] No HMM, target, explained variance, semantic score or future/OOS row influences this stage.
+- [x] Core features bypass this stage unchanged.
 
 ### PR-516 — QA: family near-duplicate oracle and PCA-input preservation
 
