@@ -7,6 +7,15 @@ from market_regime_engine.feature_discovery.sffs import (
 )
 
 
+def _picklable_score(features: tuple[str, ...]) -> FeatureSubsetScore:
+    values = {
+        ("a",): 1.0,
+        ("b",): 2.0,
+        ("b", "a"): 3.0,
+    }
+    return FeatureSubsetScore(features, values.get(features, 0.0))
+
+
 def test_sffs_starts_at_best_singleton_and_obeys_hard_cap() -> None:
     candidates = ("a", "b", "c", "d")
     values = {
@@ -61,3 +70,9 @@ def test_sffs_rejects_non_dimension_independent_scores_and_no_singletons() -> No
 def test_sffs_score_contract_uses_the_canonical_metric() -> None:
     score = FeatureSubsetScore(("a",), 1.0)
     assert score.metric == DIMENSION_INDEPENDENT_SCORE
+
+
+def test_sffs_uses_process_workers_for_picklable_score_and_preserves_order() -> None:
+    result = select_sffs(("a", "b"), _picklable_score, max_features=2, max_workers=2)
+    assert result.selected_features == ("b", "a")
+    assert tuple(step.action for step in result.steps) == ("start", "add")
