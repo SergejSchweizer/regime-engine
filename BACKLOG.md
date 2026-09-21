@@ -1005,19 +1005,22 @@ oracle and adversarial-chain tests pass locally. No full evaluation was run.
 **Type:** implementation / performance
 **Depends on:** PR-487
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-519-parallel-correlation-tiles`; targeted
+serial/process parity and global-correlation tests pass locally. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Partition the representative-candidate upper triangle into independent pair tiles using the
+- [x] Partition the representative-candidate upper triangle into independent pair tiles using the
   shared PR-513 executor.
-- [ ] Tile planning creates enough runnable work to consume the available CPU budget when pair count
+- [x] Tile planning creates enough runnable work to consume the available CPU budget when pair count
   permits; no fixed low worker ceiling is introduced.
-- [ ] Workers receive shared-matrix row/column indices and emit only threshold-relevant edges plus
+- [x] Workers receive shared-matrix row/column indices and emit only threshold-relevant edges plus
   support/subwindow statistics.
-- [ ] The coordinator deterministically merges tile outputs before leader selection.
-- [ ] No persistent dense NxN correlation artifact is required for production selection.
-- [ ] Global leader results are bit/canonical-hash equivalent to the serial PR-486 algorithm.
-- [ ] Native numerical threads remain one per process and workers never create child pools.
-- [ ] Task backpressure bounds in-flight result memory.
+- [x] The coordinator deterministically merges tile outputs before leader selection.
+- [x] No persistent dense NxN correlation artifact is required for production selection.
+- [x] Global leader results are bit/canonical-hash equivalent to the serial PR-486 algorithm.
+- [x] Native numerical threads remain one per process and workers never create child pools.
+- [x] Task backpressure bounds in-flight result memory.
 
 ### PR-520 — QA: tiled-correlation scale, parity and failure isolation
 
