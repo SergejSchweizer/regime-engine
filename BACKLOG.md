@@ -1093,8 +1093,8 @@ locally. No NAS MLflow write and no full evaluation were performed.
 **Type:** implementation / feature subset search
 **Depends on:** PR-489
 
-**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-490-process-parallel-hmm-sffs`; the
-branch is clean only after the pending commit/push and remains open. The SFFS coordinator now
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-490-process-parallel-hmm-sffs`; all acceptance
+criteria are checked and the pushed PR is awaiting merge after the green GitHub gates. The SFFS coordinator now
 enforces the strict `1e-12` forward and backward improvement rules, carries all canonical score
 tie-break components, forwards the configured worker budget, and exposes every evaluated
 candidate for durable metadata conversion. A fixed-K Gaussian selector boundary for K=2,3,4,5
