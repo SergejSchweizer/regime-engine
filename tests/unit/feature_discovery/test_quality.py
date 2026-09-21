@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from math import sqrt
@@ -8,9 +9,11 @@ import pytest
 
 import market_regime_engine.feature_discovery.quality as quality_module
 from market_regime_engine.contracts import SourceLineage
+from market_regime_engine.feature_discovery.feature_roles import build_feature_role_contract
 from market_regime_engine.feature_discovery.quality import (
     _population_variance,
     filter_outer_train_quality,
+    quality_to_fold_feature_stats,
 )
 from market_regime_engine.features.ports import (
     FeatureCatalogEntry,
@@ -226,7 +229,7 @@ def test_input_contract_rejects_empty_unsorted_and_malformed_rows() -> None:
     object.__setattr__(broken_snapshot, "rows", (malformed,))
     object.__setattr__(broken_snapshot, "skipped_incomplete_row_count", 0)
     with pytest.raises(ValueError, match="dimension"):
-        filter_outer_train_quality(catalog, broken_snapshot, BASE, BASE)  # type: ignore[arg-type]
+        filter_outer_train_quality(catalog, broken_snapshot, BASE, BASE)
 
 
 def test_non_numeric_values_and_overflowing_variance_fail_closed() -> None:
@@ -237,7 +240,7 @@ def test_non_numeric_values_and_overflowing_variance_fail_closed() -> None:
     with pytest.raises(ValueError, match="must be numeric"):
         filter_outer_train_quality(
             catalog,
-            _snapshot(catalog, tuple(broken)),  # type: ignore[arg-type]
+            _snapshot(catalog, tuple(broken)),
             BASE,
             BASE + timedelta(days=9),
         )
@@ -296,7 +299,7 @@ def test_quality_features_use_process_workers_when_budget_is_explicit(
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def submit(self, function, task: object) -> _CompletedFuture:
+        def submit(self, function: Callable[[object], object], task: object) -> _CompletedFuture:
             return _CompletedFuture(function(task))
 
     monkeypatch.setattr(quality_module, "cpu_process_pool", _InlineProcessPool)
@@ -310,3 +313,23 @@ def test_quality_features_use_process_workers_when_budget_is_explicit(
 
     assert worker_counts == [2]
     assert parallel == serial
+
+
+def test_quality_evidence_maps_to_fold_metadata_without_raw_values() -> None:
+    names = ("vix_log_level", "vix9d_log_level", "vix3m_log_level")
+    catalog = _catalog(names)
+    values = tuple(tuple(float(index + feature) for feature in range(3)) for index in range(10))
+    result = filter_outer_train_quality(
+        catalog, _snapshot(catalog, values), BASE, BASE + timedelta(days=9), max_workers=1
+    )
+    rows = quality_to_fold_feature_stats(
+        result,
+        fold_id="fold-001",
+        profile_hash="b" * 64,
+        role_contract=build_feature_role_contract(names),
+    )
+
+    assert tuple(row.feature_name for row in rows) == names
+    assert all(row.eligible for row in rows)
+    assert all(row.quality_reason is None for row in rows)
+    assert all(row.pca_credit is None and row.ablation_loss is None for row in rows)

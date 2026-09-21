@@ -15,6 +15,8 @@ from market_regime_engine.feature_discovery.contracts import (
     FeatureQuality,
     QualityFilterResult,
 )
+from market_regime_engine.feature_discovery.feature_roles import FeatureRoleContract
+from market_regime_engine.feature_discovery.metadata_store import FoldFeatureStat
 from market_regime_engine.features.ports import (
     FeatureCatalogSnapshot,
     FeatureRow,
@@ -196,4 +198,49 @@ def filter_outer_train_quality(
 filter_feature_quality = filter_outer_train_quality
 
 
-__all__ = ["filter_feature_quality", "filter_outer_train_quality"]
+def quality_to_fold_feature_stats(
+    result: QualityFilterResult,
+    *,
+    fold_id: str,
+    profile_hash: str,
+    role_contract: FeatureRoleContract,
+) -> tuple[FoldFeatureStat, ...]:
+    """Convert immutable TRAIN quality evidence to metadata-store rows.
+
+    This adapter carries no values or vectors. It only records the quality
+    decision and the role boundary for each catalog feature, leaving later PCA,
+    SFFS, and HMM participation fields unset until their own stages run.
+    """
+
+    if not fold_id or fold_id.strip() != fold_id:
+        raise ValueError("fold_id must be a non-empty trimmed string")
+    if len(profile_hash) != 64 or any(char not in "0123456789abcdef" for char in profile_hash):
+        raise ValueError("profile_hash must be a lowercase SHA-256")
+    rows: list[FoldFeatureStat] = []
+    for item in result.features:
+        assignment = role_contract.assignment(item.feature_name)
+        rows.append(
+            FoldFeatureStat(
+                fold_id=fold_id,
+                profile_hash=profile_hash,
+                source_build_id=result.source_build_id,
+                feature_name=item.feature_name,
+                eligible=item.eligible,
+                quality_reason=item.rejection_reason,
+                direct_participation=assignment.direct_hmm_candidate,
+                pc_participation=assignment.family_pca_input,
+                pca_credit=None,
+                representative=False,
+                sffs_participation=False,
+                final_selection=False,
+                ablation_loss=None,
+            )
+        )
+    return tuple(rows)
+
+
+__all__ = [
+    "filter_feature_quality",
+    "filter_outer_train_quality",
+    "quality_to_fold_feature_stats",
+]
