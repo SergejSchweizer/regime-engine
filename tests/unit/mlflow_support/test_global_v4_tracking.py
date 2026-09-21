@@ -104,12 +104,12 @@ def test_tracking_validation_rejects_empty_selection_and_identity_mismatches(
     evaluation = plotting_evaluation(valid_fold_count=1)
     plan = plotting_plan()
     lineage = SourceLineage(
-        source_dataset="macro_loader.macro_features_daily",
+        source_dataset="macro_loader.macro_features",
         source_build_id="synthetic-build",
         data_sha256=HASH,
         schema_version=1,
         feature_version=1,
-        source_table="macro_loader.macro_features_daily",
+        source_table="macro_loader.macro_features",
         synced_at_utc=START,
         row_count=1260,
         min_timestamp=plan.folds[0].train_start,
@@ -299,12 +299,12 @@ def test_walk_forward_tracking_orchestrator_is_hermetic_and_complete(tmp_path: P
     evaluation = plotting_evaluation(valid_fold_count=1)
     plan = plotting_plan()
     lineage = SourceLineage(
-        source_dataset="macro_loader.macro_features_daily",
+        source_dataset="macro_loader.macro_features",
         source_build_id="synthetic-build",
         data_sha256=HASH,
         schema_version=1,
         feature_version=1,
-        source_table="macro_loader.macro_features_daily",
+        source_table="macro_loader.macro_features",
         synced_at_utc=START,
         row_count=1260,
         min_timestamp=plan.folds[0].train_start,

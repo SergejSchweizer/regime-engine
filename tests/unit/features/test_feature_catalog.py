@@ -7,7 +7,7 @@ import pytest
 from psycopg import IsolationLevel
 
 from market_regime_engine.features import FeatureRequest, SourceMode
-from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
 
 NOW = datetime(2026, 9, 9, tzinfo=UTC)
 
@@ -69,7 +69,7 @@ def catalog() -> list[tuple[Any, ...]]:
 def test_dynamic_read_uses_one_snapshot_and_returns_catalog_lineage() -> None:
     cursor = DynamicCursor(catalog(), [(NOW, 1.0, 2.0), (NOW.replace(day=10), 2.0, 3.0)])
     connection = DynamicConnection(cursor)
-    source = PostgresFeatureSource(lambda: connection)
+    source = MacroFeaturesPostgresSource(lambda: connection)
     feature_catalog, snapshot = source.read_with_catalog(
         FeatureRequest(("feature_b", "feature_a"), None, None, SourceMode.SCHEMA_DISCOVERY)
     )
@@ -83,13 +83,13 @@ def test_dynamic_read_uses_one_snapshot_and_returns_catalog_lineage() -> None:
     assert connection.read_only is True
     assert connection.isolation_level is IsolationLevel.REPEATABLE_READ
     assert connection.committed and connection.closed and not connection.rolled_back
-    assert "information_schema.columns" in str(cursor.executed[1][0])
+    assert "pg_catalog.pg_class" in str(cursor.executed[1][0])
 
 
 def test_dynamic_read_validates_requested_names_against_same_catalog_snapshot() -> None:
     cursor = DynamicCursor(catalog(), [])
     connection = DynamicConnection(cursor)
-    source = PostgresFeatureSource(lambda: connection)
+    source = MacroFeaturesPostgresSource(lambda: connection)
     with pytest.raises(ValueError, match="unregistered"):
         source.read(FeatureRequest(("feature_missing",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
@@ -134,14 +134,14 @@ def test_dynamic_catalog_schema_failures_roll_back(
 ) -> None:
     cursor = DynamicCursor(bad_catalog, [])
     connection = DynamicConnection(cursor)
-    source = PostgresFeatureSource(lambda: connection)
+    source = MacroFeaturesPostgresSource(lambda: connection)
     with pytest.raises(ValueError, match=message):
         source.read(FeatureRequest(("feature_a",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
 
 
 def test_resolved_feature_mode_remains_explicit_and_catalog_method_is_rejected() -> None:
-    source = PostgresFeatureSource(
+    source = MacroFeaturesPostgresSource(
         lambda: pytest.fail("connection must not be used"), ("feature_a",)
     )
     with pytest.raises(ValueError, match="dynamic catalog mode"):

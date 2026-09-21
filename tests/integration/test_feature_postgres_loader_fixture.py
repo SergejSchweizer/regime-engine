@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from market_regime_engine.features.ports import FeatureRequest, SourceMode
-from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
 
 pytestmark = pytest.mark.integration
 
@@ -83,7 +83,7 @@ def loader_fixture() -> tuple[tuple[Any, ...], tuple[tuple[Any, ...], ...]]:
 def test_loader_shaped_fixture_preserves_lineage_nulls_and_read_only_snapshot_lifecycle() -> None:
     lineage, rows = loader_fixture()
     connection = LoaderFixtureConnection(lineage, rows)
-    source = PostgresFeatureSource(lambda: connection, ("feature_a", "feature_b"))
+    source = MacroFeaturesPostgresSource(lambda: connection, ("feature_a", "feature_b"))
     snapshot = source.read(
         FeatureRequest(
             feature_names=("feature_a", "feature_b"),
@@ -113,7 +113,7 @@ def test_loader_shaped_fixture_preserves_lineage_nulls_and_read_only_snapshot_li
 def test_loader_shaped_fixture_resolved_mode_excludes_null_row_without_fill() -> None:
     lineage, rows = loader_fixture()
     connection = LoaderFixtureConnection(lineage, rows)
-    source = PostgresFeatureSource(lambda: connection, ("feature_a", "feature_b"))
+    source = MacroFeaturesPostgresSource(lambda: connection, ("feature_a", "feature_b"))
     snapshot = source.read(
         FeatureRequest(
             feature_names=("feature_a", "feature_b"),

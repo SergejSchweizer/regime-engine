@@ -64,10 +64,10 @@ class _RecordingSource:
         self.catalog: Any | None = None
         self.snapshot: FeatureSnapshot | None = None
 
-    def read_schema_wide_with_catalog(self, request: FeatureRequest) -> Any:
+    def read_with_catalog(self, request: FeatureRequest) -> Any:
         if self.catalog is not None and self.snapshot is not None:
             return self.catalog, self.snapshot
-        catalog, snapshot = self._source.read_schema_wide_with_catalog(request)
+        catalog, snapshot = self._source.read_with_catalog(request)
         self.catalog = catalog
         self.snapshot = snapshot
         return catalog, snapshot
@@ -179,7 +179,7 @@ class V4LifecycleBackend:
 
     def _capture_source(self) -> tuple[Any, FeatureSnapshot]:
         recording = _RecordingSource(self.source)
-        recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
+        recording.read_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = recording.catalog, recording.snapshot
@@ -246,7 +246,7 @@ class V4LifecycleBackend:
                 ),
             )
         recording = _RecordingSource(self.source)
-        recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
+        recording.read_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = self._capture_source()

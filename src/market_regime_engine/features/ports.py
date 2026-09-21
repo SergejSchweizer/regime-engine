@@ -310,13 +310,6 @@ class DynamicFeatureSource(Protocol):
     ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]: ...
 
 
-class SchemaWideFeatureSource(Protocol):
-    def read_schema_wide_with_catalog(
-        self,
-        request: FeatureRequest,
-    ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]: ...
-
-
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 

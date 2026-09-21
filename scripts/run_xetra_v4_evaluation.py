@@ -33,7 +33,7 @@ from market_regime_engine.evaluations.global_regime_v4 import (
 from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
 from market_regime_engine.features.ports import FeatureRequest, SourceMode
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
-from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
 from market_regime_engine.mlflow_support.evaluation_tracking import (
     build_global_v4_evidence,
     track_global_v4_evaluation,
@@ -307,22 +307,22 @@ def _run(performance: PerformanceRecorder) -> None:
     profile = load_profile(root / "configs/profiles/xetra_v4.yaml")
     summary_path = _durable_evidence_path(root, "REGIME_EVALUATION_SUMMARY_PATH")
     performance_report_path = _durable_evidence_path(root, "REGIME_PERFORMANCE_REPORT_PATH")
-    source: PostgresFeatureSource | None = None
+    source: MacroFeaturesPostgresSource | None = None
     if arguments.snapshot_root is None:
         settings = FeaturePostgresSettings.from_env(os.environ)
-        source = PostgresFeatureSource(
+        source = MacroFeaturesPostgresSource(
             lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
         )
     observed: dict[str, Any] = {}
     run_identity: EvaluationRunIdentity | None = None
 
     class RecordingSource:
-        def read_schema_wide_with_catalog(self, request: Any) -> Any:
+        def read_with_catalog(self, request: Any) -> Any:
             if source is None:
                 raise RuntimeError("live source is not configured")
             observed["source_request"] = _source_request_evidence(request)
             with performance.stage("postgres_snapshot", worker_count=1, task_count=1):
-                catalog, snapshot = source.read_schema_wide_with_catalog(request)
+                catalog, snapshot = source.read_with_catalog(request)
             observed["catalog"] = catalog
             observed["snapshot"] = snapshot
             return catalog, snapshot
@@ -465,7 +465,7 @@ def _run(performance: PerformanceRecorder) -> None:
         assert source is not None
         audit_request_evidence = _source_request_evidence(FeatureRequest.all_features())
         with performance.stage("postgres_audit", worker_count=1, task_count=1):
-            audit_catalog, audit_snapshot = source.read_schema_wide_with_catalog(
+            audit_catalog, audit_snapshot = source.read_with_catalog(
                 FeatureRequest.all_features()
             )
         audit_source_identity = (

@@ -69,9 +69,9 @@ PR-448
 ### Current repository and external state
 
 - `origin/main` is `9165249`; local working branch is
-  `pr/PR-476-feature-role-selection-contract`, at `b8e8839`, ahead of its
-  remote branch by two commits. The working tree is clean before this backlog
-  update.
+  `pr/PR-476-feature-role-selection-contract`, with the canonical-source
+  cleanup staged locally for commit. The working tree is otherwise limited to
+  this PR's source, tests and backlog changes.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
@@ -391,13 +391,14 @@ pruning so PCA still receives economically meaningful within-family covariance s
 
 ### PR-476 — Define canonical feature roles and the scalable selection contract
 
-**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-476-feature-role-selection-contract` is at `b8e8839` and ahead of its remote by two commits; GitHub PR #456 remains open with Git-Policy, Lint, Type, Unit and Merge-Gate green. The canonical role/family module is publicly exported, validates the complete temporal/core catalog identity, and includes fail-closed stage boundaries for quality, family PCA, correlation, SFFS, and HMM inputs. Deterministic TRAIN-only family near-duplicate reduction, family-local standardization/PCA, global stable absolute-Pearson redundancy pruning, capped dimension-independent SFFS, one-feature-at-a-time ablation, explicit role/profile evidence metadata, a sequential composition pipeline, and `build_feature_role_contract_from_catalog()` for discovered source catalogs are implemented; PCA retains the first non-zero-rank components up to eight and stores explained variance diagnostically only. A read-only NAS catalog audit classified all 168 current `macro_loader.macro_features` columns (20 CORE, 147 transformations, 1 temporal key) with no unknowns; the resulting contract hash was `6483c8af7c3b676bade03add365be4eadc17584f5a8beb5d0a67e538cb9149a7`. The production composition now instantiates the canonical `macro_features` materialized-view adapter directly, with no composition alias or fallback to `macro_features_daily`; the adapter also rejects caller-selected schemas and feature allowlists. The pipeline runs quality boundary → family reduction → family PCA → global redundancy → SFFS → ablation without TEST inputs. Eager heavy-module exports were removed from the package initializer to keep multiprocessing spawn imports hermetic. The affected source/deployment/feature tests (184) and Ruff/Mypy pass; the local `-n auto` integration hook was stopped after hanging at excessive worker fan-out, and no full evaluation has run. Acceptance remains open for the external `macro_features` lineage publication, complete zero-legacy source API removal, fold/model evidence transport, HMM-backed ablation, and the independent QA/provenance proofs listed below.
+**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-476-feature-role-selection-contract` has the canonical-source cleanup locally after the previously pushed `3642b8f`; GitHub PR #456 remains open with Git-Policy, Lint, Type, Unit and Merge-Gate green at its last pushed revision. The canonical role/family module is publicly exported, validates the complete temporal/core catalog identity, and includes fail-closed stage boundaries for quality, family PCA, correlation, SFFS, and HMM inputs. Deterministic TRAIN-only family near-duplicate reduction, family-local standardization/PCA, global stable absolute-Pearson redundancy pruning, capped dimension-independent SFFS, one-feature-at-a-time ablation, explicit role/profile evidence metadata, a sequential composition pipeline, and `build_feature_role_contract_from_catalog()` for discovered source catalogs are implemented; PCA retains the first non-zero-rank components up to eight and stores explained variance diagnostically only. A read-only NAS catalog audit classified all 168 current `macro_loader.macro_features` columns (20 CORE, 147 transformations, 1 temporal key) with no unknowns; the resulting contract hash was `6483c8af7c3b676bade03add365be4eadc17584f5a8beb5d0a67e538cb9149a7`. The production composition and one-step evaluation script now instantiate the sole `macro_features` materialized-view adapter; schema-wide relation enumeration, `PostgresFeatureSource`, compatibility aliases, caller-selected schemas and legacy `macro_features_daily` test identities were removed. The source contract is `read_with_catalog()` only and rejects raw-source substitution. The pipeline runs quality boundary → family reduction → family PCA → global redundancy → SFFS → ablation without TEST inputs. Eager heavy-module exports were removed from the package initializer to keep multiprocessing spawn imports hermetic. Full unit tests (981), Ruff and Mypy pass; six affected HMM/source integration tests pass in 8:31 with 24 workers. No full evaluation has run. Acceptance remains open for the external `macro_features` lineage publication, fold/model evidence transport, HMM-backed ablation, and the independent QA/provenance proofs listed below.
 
 **Branch:** `pr/PR-476-feature-role-selection-contract`
 
-**Acceptance note:** Runtime source-universe integration, raw-source exclusion in the canonical
-source adapter, fold/model evidence transport, HMM-backed ablation, and independent QA/provenance
-proofs remain open; the statistical stage contracts marked below are implemented and tested.
+**Acceptance note:** Runtime source-universe integration and raw-source exclusion in the canonical
+adapter are implemented and tested. External lineage publication, fold/model evidence transport,
+HMM-backed ablation, and independent QA/provenance proofs remain open; the statistical stage
+contracts marked below are implemented and tested.
 
 **External source audit:** NAS exposes `macro_loader.macro_features` as a materialized view, but
 `macro_loader_sync.gold_sync_state` currently contains only the `macro_features_daily` lineage row.
@@ -500,7 +501,7 @@ closed and requires an explicit contract update.
 - [x] Explicitly classify `usd_broad_log_return_20obs` as a USD_BROAD transformation, not as CORE.
 - [x] Treat all `*_delta_*`, `*_zscore_*`, `*_momentum_autocorr_*` and
   `*_return_geom_*` columns in the current view as transformations, never direct HMM candidates.
-- [ ] Do not read or substitute unchanged raw source levels from `macro_loader.macro_raw`; the
+- [x] Do not read or substitute unchanged raw source levels from `macro_loader.macro_raw`; the
   canonical current-state level inputs are the 13 log-level columns listed above.
 - [x] Role classification is semantic only and does not waive later TRAIN-only finite/coverage/
   variance validation; in particular, no assumption about how an upstream log-level was constructed

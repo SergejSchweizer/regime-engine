@@ -150,7 +150,7 @@ def test_current_source_clock_preflight_fails_before_pca(
     catalog, snapshot = _production_clock_source(complete_row_count=400)
 
     class Source:
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             assert request == FeatureRequest.all_features()
             return catalog, snapshot
 
@@ -190,7 +190,7 @@ def test_v4_source_entrypoint_requests_the_complete_catalog(monkeypatch) -> None
         def __init__(self) -> None:
             self.request: FeatureRequest | None = None
 
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             self.request = request
             return bound_catalog, snapshot
 
@@ -243,7 +243,7 @@ def test_v4_source_entrypoint_can_persist_only_the_input_snapshot(monkeypatch) -
     profile = _raw_profile()
 
     class Source:
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             del request
             return bound_catalog, snapshot
 
@@ -293,7 +293,7 @@ def test_v4_source_entrypoint_fails_closed_for_invalid_snapshot_contracts() -> N
         def __init__(self, result) -> None:
             self.result = result
 
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             del request
             return self.result
 
@@ -374,7 +374,7 @@ def test_v4_source_entrypoint_finalizes_snapshot_and_run_identity(monkeypatch) -
     profile = _raw_profile()
 
     class Source:
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             assert request.feature_names == ()
             return bound_catalog, snapshot
 
@@ -483,7 +483,7 @@ def test_v4_source_entrypoint_returns_a_completed_durable_run(monkeypatch) -> No
     profile = _raw_profile()
 
     class Source:
-        def read_schema_wide_with_catalog(self, request: FeatureRequest):
+        def read_with_catalog(self, request: FeatureRequest):
             del request
             return bound_catalog, snapshot
 

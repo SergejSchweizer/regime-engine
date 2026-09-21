@@ -107,12 +107,12 @@ def _selection_rows() -> pd.DataFrame:
 def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
     names = tuple(column for column in rows.columns if column != "timestamp_m1")
     lineage = SourceLineage(
-        source_dataset="macro_features_daily",
+        source_dataset="macro_features",
         source_build_id=SOURCE_BUILD,
         data_sha256="d" * 64,
         schema_version=6,
         feature_version=5,
-        source_table="macro_loader.macro_features_daily",
+        source_table="macro_loader.macro_features",
         synced_at_utc=BASE,
         row_count=len(rows),
         min_timestamp=rows["timestamp_m1"].iloc[0],
@@ -124,7 +124,7 @@ def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
             ordinal,
             schema_name="macro_loader" if not name.startswith("pca_pc_") else "regime_engine",
             relation_name=(
-                "macro_features_daily"
+                "macro_features"
                 if not name.startswith("pca_pc_")
                 else "pca_generated_features"
             ),

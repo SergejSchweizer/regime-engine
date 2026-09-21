@@ -102,12 +102,12 @@ def test_complete_catalog_requires_temporal_key_and_all_twenty_core_features() -
 def test_catalog_builder_classifies_every_discovered_non_core_column() -> None:
     catalog = FeatureCatalogSnapshot.from_entries(
         SourceLineage(
-            source_dataset="macro_features_daily",
+            source_dataset="macro_features",
             source_build_id="build-1",
             data_sha256="a" * 64,
             schema_version=1,
             feature_version=1,
-            source_table="macro_loader.macro_features_daily",
+            source_table="macro_loader.macro_features",
             synced_at_utc=datetime(2026, 1, 1, tzinfo=UTC),
         ),
         TEMPORAL_KEY,
@@ -131,12 +131,12 @@ def test_catalog_builder_fails_closed_for_unknown_discovered_column() -> None:
         build_feature_role_contract_from_catalog(
             FeatureCatalogSnapshot.from_entries(
                 SourceLineage(
-                    source_dataset="macro_features_daily",
+                    source_dataset="macro_features",
                     source_build_id="build-1",
                     data_sha256="a" * 64,
                     schema_version=1,
                     feature_version=1,
-                    source_table="macro_loader.macro_features_daily",
+                    source_table="macro_loader.macro_features",
                     synced_at_utc=datetime(2026, 1, 1, tzinfo=UTC),
                 ),
                 TEMPORAL_KEY,
