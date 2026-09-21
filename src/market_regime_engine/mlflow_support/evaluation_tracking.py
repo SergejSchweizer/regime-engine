@@ -35,6 +35,7 @@ from market_regime_engine.feature_discovery.contracts import (
     FinalSelectedConfiguration,
     OuterFoldResult,
 )
+from market_regime_engine.feature_discovery.feature_roles import FeatureRoleContract
 from market_regime_engine.features.ports import FeatureCatalogSnapshot, FeatureSnapshot
 from market_regime_engine.mlflow_support.metric_catalog import (
     METRIC_CATALOG_VERSION,
@@ -605,6 +606,7 @@ def build_global_v4_evidence(
     selections: Mapping[int, V4ConfigurationSelection],
     repository_commit_sha: str,
     max_workers: int | None = None,
+    feature_role_contract: FeatureRoleContract | None = None,
 ) -> GlobalV4Evidence:
     """Build the complete model-binary-free evidence bundle for one v4 run."""
 
@@ -647,37 +649,47 @@ def build_global_v4_evidence(
         for fold in result.outer_folds
         if not fold.valid
     )
-    return GlobalV4Evidence(
-        source_build_id=result.source_build_id,
-        source_data_hash=catalog.lineage.data_sha256,
-        catalog_hash=catalog.catalog_hash,
-        profile_hash=profile.profile_hash,
-        repository_hash=sha256(repository_commit_sha.encode("utf-8")).hexdigest(),
-        outer_plan_hash=outer_plan.plan_hash,
-        evidence={
-            "identity": {
-                "evaluation_id": GLOBAL_V4_EVALUATION_ID,
-                "policy_id": "xetra_global_regime_v4",
-                "profile_id": profile.profile_id,
-                "profile_config_version": profile.profile_config_version,
-                "outer_fold_count": len(result.outer_folds),
-            },
-            "lineage": {
-                "source_build_id": result.source_build_id,
-                "source_dataset": catalog.lineage.source_dataset,
-                "source_table": catalog.lineage.source_table,
-                "source_data_sha256": catalog.lineage.data_sha256,
-                "source_catalog_hash": catalog.catalog_hash,
-                "materialized_feature_data_sha256": snapshot.materialized_feature_data_sha256,
-                "repository_commit_sha": repository_commit_sha,
-            },
-            "input": {
-                "feature_order": list(catalog.feature_names),
-                "source_row_count": len(snapshot.rows),
-                "source_min_timestamp": snapshot.rows[0].timestamp.isoformat(),
-                "source_max_timestamp": snapshot.rows[-1].timestamp.isoformat(),
-                "data_time_semantics": catalog.lineage.data_time_semantics,
-            },
+    contract_group = (
+        {
+            "profile_version": feature_role_contract.profile.version,
+            "feature_selection_profile_hash": feature_role_contract.profile.profile_hash,
+            "feature_role_contract_hash": feature_role_contract.contract_hash,
+            "metadata": feature_role_contract.evidence_metadata(),
+        }
+        if feature_role_contract is not None
+        else None
+    )
+    evidence_groups = {
+        "identity": {
+            "evaluation_id": GLOBAL_V4_EVALUATION_ID,
+            "policy_id": "xetra_global_regime_v4",
+            "profile_id": profile.profile_id,
+            "profile_config_version": profile.profile_config_version,
+            "outer_fold_count": len(result.outer_folds),
+        },
+        "lineage": {
+            "source_build_id": result.source_build_id,
+            "source_dataset": catalog.lineage.source_dataset,
+            "source_table": catalog.lineage.source_table,
+            "source_data_sha256": catalog.lineage.data_sha256,
+            "source_catalog_hash": catalog.catalog_hash,
+            "materialized_feature_data_sha256": snapshot.materialized_feature_data_sha256,
+            "repository_commit_sha": repository_commit_sha,
+        },
+        "input": {
+            "feature_order": list(catalog.feature_names),
+            "source_row_count": len(snapshot.rows),
+            "source_min_timestamp": snapshot.rows[0].timestamp.isoformat(),
+            "source_max_timestamp": snapshot.rows[-1].timestamp.isoformat(),
+            "data_time_semantics": catalog.lineage.data_time_semantics,
+        },
+    }
+    if contract_group is not None:
+        evidence_groups["feature_selection_contract"] = contract_group
+    # The remaining groups are assembled below so the contract identity is
+    # serialized alongside, rather than hidden behind, fold evidence.
+    evidence_groups.update(
+        {
             "quality": {"folds": [item["quality"] for item in selected]},
             "distance": {"folds": [item["distance"] for item in selected]},
             "clustering": {"folds": [item["clustering"] for item in selected]},
@@ -714,15 +726,31 @@ def build_global_v4_evidence(
             "stability": {
                 "selection_sink": "outer_fold_train_only",
                 "adjacent_fold_cluster_membership_jaccard": _adjacent_cluster_stability(
-                    result,
-                    selections,
+                    result, selections
                 ),
                 "fold_feature_discovery_hashes": [
                     fold.final_configuration.feature_discovery_hash for fold in result.outer_folds
                 ],
             },
             **({"failure": {"outer_fold_failures": list(failures)}} if failures else {}),
-        },
+        }
+    )
+    return GlobalV4Evidence(
+        source_build_id=result.source_build_id,
+        source_data_hash=catalog.lineage.data_sha256,
+        catalog_hash=catalog.catalog_hash,
+        profile_hash=profile.profile_hash,
+        repository_hash=sha256(repository_commit_sha.encode("utf-8")).hexdigest(),
+        outer_plan_hash=outer_plan.plan_hash,
+        evidence=evidence_groups,
+        feature_role_contract_hash=(
+            feature_role_contract.contract_hash if feature_role_contract is not None else None
+        ),
+        feature_selection_profile_hash=(
+            feature_role_contract.profile.profile_hash
+            if feature_role_contract is not None
+            else None
+        ),
     )
 
 
@@ -796,6 +824,8 @@ def _track_global_v4_fold(
             "feature_discovery_hash": (
                 selection.feature_discovery_hash if selection is not None else ""
             ),
+            "feature_role_contract_hash": evidence.feature_role_contract_hash or "",
+            "feature_selection_profile_hash": evidence.feature_selection_profile_hash or "",
         },
     )
     model_ids: list[tuple[str, str]] = []
@@ -890,6 +920,8 @@ def track_global_v4_evaluation(
                     lineage.get("source_catalog_hash", evidence.catalog_hash)
                 ),
                 "profile_hash": evidence.profile_hash,
+                "feature_role_contract_hash": evidence.feature_role_contract_hash or "",
+                "feature_selection_profile_hash": evidence.feature_selection_profile_hash or "",
                 "repository_hash": evidence.repository_hash,
                 "outer_plan_hash": evidence.outer_plan_hash,
                 "outer_fold_count": str(identity.get("outer_fold_count", len(result.outer_folds))),

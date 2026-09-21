@@ -35,6 +35,9 @@ from market_regime_engine.evaluations.global_regime_v4 import (
     evaluate_global_regime_v4_from_source,
 )
 from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
+from market_regime_engine.feature_discovery.feature_roles import (
+    build_feature_role_contract_from_catalog,
+)
 from market_regime_engine.features.ports import FeatureRequest, FeatureSnapshot
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
@@ -274,6 +277,7 @@ class V4LifecycleBackend:
             profile=self.profile,
             selections=selections,
             repository_commit_sha=_commit(self.root),
+            feature_role_contract=build_feature_role_contract_from_catalog(catalog),
         )
         track_global_v4_evaluation(
             FileMlflowTrackingPort(

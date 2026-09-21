@@ -87,6 +87,7 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
 
     monkeypatch.setattr(module, "evaluate_global_regime_v4_from_source", fake_evaluate)
     monkeypatch.setattr(module, "fit_and_materialize_pca_source", fake_materialize)
+    monkeypatch.setattr(module, "build_feature_role_contract_from_catalog", lambda catalog: object())
     monkeypatch.setattr(module, "build_global_v4_evidence", lambda *args, **kwargs: object())
     monkeypatch.setattr(module, "track_global_v4_evaluation", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "FileMlflowTrackingPort", lambda *args, **kwargs: object())

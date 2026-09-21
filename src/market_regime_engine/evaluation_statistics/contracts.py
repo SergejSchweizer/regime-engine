@@ -26,6 +26,7 @@ _EVIDENCE_GROUPS = {
     "champion",
     "optimization",
     "failure",
+    "feature_selection_contract",
 }
 _GLOBAL_V4_EVIDENCE_GROUPS = {
     "identity",
@@ -45,10 +46,12 @@ _GLOBAL_V4_EVIDENCE_GROUPS = {
     "stability",
     "deployment_selection",
     "failure",
+    "feature_selection_contract",
 }
 _REQUIRED_GLOBAL_V4_EVIDENCE_GROUPS = _GLOBAL_V4_EVIDENCE_GROUPS - {
     "deployment_selection",
     "failure",
+    "feature_selection_contract",
 }
 _EVIDENCE_GROUPS.update(_GLOBAL_V4_EVIDENCE_GROUPS)
 
@@ -105,6 +108,8 @@ class GlobalV4Evidence:
     outer_plan_hash: str
     evidence: dict[str, object]
     schema_version: int = GLOBAL_V4_SCHEMA_VERSION
+    feature_role_contract_hash: str | None = None
+    feature_selection_profile_hash: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != GLOBAL_V4_SCHEMA_VERSION:
@@ -124,6 +129,16 @@ class GlobalV4Evidence:
                 or any(character not in "0123456789abcdef" for character in value)
             ):
                 raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        for optional_value, name in (
+            (self.feature_role_contract_hash, "feature_role_contract_hash"),
+            (self.feature_selection_profile_hash, "feature_selection_profile_hash"),
+        ):
+            if optional_value is not None and (
+                len(optional_value) != 64
+                or optional_value != optional_value.lower()
+                or any(character not in "0123456789abcdef" for character in optional_value)
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest when present")
         if not isinstance(self.evidence, dict):
             raise TypeError("global v4 evidence groups must be a mapping")
         unknown = set(self.evidence) - _GLOBAL_V4_EVIDENCE_GROUPS
@@ -146,6 +161,8 @@ class GlobalV4Evidence:
             "profile_hash": self.profile_hash,
             "repository_hash": self.repository_hash,
             "outer_plan_hash": self.outer_plan_hash,
+            "feature_role_contract_hash": self.feature_role_contract_hash,
+            "feature_selection_profile_hash": self.feature_selection_profile_hash,
             "evidence": self.evidence,
         }
 
