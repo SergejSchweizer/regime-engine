@@ -7,8 +7,10 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.ablation import (
     HMMSubsetEvaluation,
+    HMMSubsetEvaluator,
     run_one_feature_hmm_ablation,
 )
 from market_regime_engine.feature_discovery.metadata_store import (
@@ -88,6 +90,19 @@ def test_ablation_rejects_changed_inner_plan_or_seed_identity() -> None:
         run_one_feature_hmm_ablation(
             ("a", "b", "c"), changed, selector_contract_hash=SELECTOR_HASH, max_workers=1
         )
+
+
+def test_ablation_can_reuse_a_caller_owned_shared_frontier() -> None:
+    with SharedTaskFrontier[HMMSubsetEvaluator, HMMSubsetEvaluation | None](
+        max_workers=2
+    ) as frontier:
+        result = run_one_feature_hmm_ablation(
+            ("a", "b", "c"),
+            _evaluation,
+            selector_contract_hash=SELECTOR_HASH,
+            frontier=frontier,
+        )
+    assert result.ablation_losses == (1.0, 0.0, -1.0)
 
 
 def test_ablation_losses_are_persisted_without_clipping(tmp_path: Path) -> None:

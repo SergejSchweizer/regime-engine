@@ -1208,8 +1208,11 @@ oracle and completion-order QA are production-code-free. No full evaluation was 
 **Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-521-shared-hmm-task-frontier`; the
 persistent `SharedTaskFrontier` boundary now provides canonical task ordering, completion-order
 independence, fail-fast worker errors and queue/runnable/utilization metrics. K-slot SFFS now
-reuses one frontier across all K slots and SFFS steps. Inner-fold/multistart/ablation fit fan-out
-and real matrix-memmap task wiring remain open. No full evaluation was run.
+reuses one caller-owned frontier across all K slots and SFFS steps, and the canonical selection
+pipeline reuses that same frontier for final ablation when both evaluator seams are pickleable.
+Frontier results are restored to submission identity before coordinator aggregation. Inner-fold/
+multistart task decomposition and real matrix-memmap task wiring remain open. No full evaluation
+was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
@@ -1220,7 +1223,8 @@ that control boundary is flattened onto the one shared process pool.
   `K x inner-fold x candidate-subset x seed/start` frontier.
 - [x] Keep SFFS add/remove decisions in the deterministic coordinator; process workers return fit
   evidence only.
-- [ ] Reuse persistent workers across SFFS steps, K slots and final ablations.
+- [x] Reuse persistent workers across SFFS steps, K slots and final ablations when the canonical
+  evaluator seams are pickleable; the serial/non-pickleable reference path remains explicit.
 - [ ] Never create candidate-local or multistart-local child pools.
 - [ ] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work.
 - [ ] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,

@@ -63,6 +63,7 @@ def select_k_slot_sffs(
     state_counts: Iterable[int] = LEGAL_K,
     max_features: int = SFFS_MAX_FEATURES,
     max_workers: int | None = None,
+    frontier: SharedTaskFrontier[Any, Any] | None = None,
 ) -> tuple[KSlotSFFSResult, ...]:
     """Run an independent Gaussian full-covariance SFFS search for every K.
 
@@ -79,9 +80,14 @@ def select_k_slot_sffs(
 
     candidate_tuple = tuple(candidates)
     results: list[KSlotSFFSResult] = []
-    use_frontier = max_workers != 1 and is_pickleable(evaluate_gaussian_subset)
+    use_frontier = (
+        frontier is not None
+        or (max_workers != 1 and is_pickleable(evaluate_gaussian_subset))
+    )
     frontier_context: Any = (
-        SharedTaskFrontier(max_workers) if use_frontier else nullcontext(None)
+        nullcontext(frontier)
+        if frontier is not None
+        else SharedTaskFrontier(max_workers) if use_frontier else nullcontext(None)
     )
     with frontier_context as frontier:
         for state_count in requested:

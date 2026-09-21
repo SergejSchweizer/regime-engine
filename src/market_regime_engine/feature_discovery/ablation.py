@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.sffs import (
     FeatureSubsetScore,
     _canonical_subset,
@@ -126,12 +127,19 @@ def _evaluate_ablation_in_process(
     return evaluate(features)
 
 
+def _evaluate_ablation_in_frontier(
+    task: FrontierTask[HMMSubsetEvaluator],
+) -> HMMSubsetEvaluation | None:
+    return task.payload(task.candidate_subset)
+
+
 def run_one_feature_hmm_ablation(
     selected_features: tuple[str, ...],
     evaluate: HMMSubsetEvaluator,
     *,
     selector_contract_hash: str,
     max_workers: int | None = None,
+    frontier: SharedTaskFrontier[HMMSubsetEvaluator, HMMSubsetEvaluation | None] | None = None,
 ) -> AblationResult:
     """Refit and evaluate the baseline and every one-feature removal.
 
@@ -188,12 +196,32 @@ def run_one_feature_hmm_ablation(
     if any(not remaining for _, remaining in removal_tasks):
         raise ValueError("ablation requires a selected tuple with at least two features")
     parallel = (
-        max_workers != 1
+        frontier is None
+        and max_workers != 1
         and os.environ.get("REGIME_CPU_PROCESS_WORKER") != "1"
         and is_pickleable(evaluate)
     )
     worker_limit = cpu_worker_count(max_workers, task_count=len(removal_tasks)) if parallel else 1
-    if worker_limit > 1:
+    if frontier is not None:
+        frontier_tasks = tuple(
+            FrontierTask(
+                task_id=f"ablation:{index}:{feature}",
+                state_count=baseline_evaluation.state_count,
+                fold_id="ablation",
+                candidate_subset=remaining,
+                seed=index,
+                profile_hash=selector_contract_hash,
+                matrix_identity="ablation-candidate-frontier",
+                row_indices=(0,),
+                column_indices=(0,),
+                payload=evaluate,
+            )
+            for index, (feature, remaining) in enumerate(removal_tasks)
+        )
+        frontier_result = frontier.map(frontier_tasks, _evaluate_ablation_in_frontier)
+        by_task_id = {task.task_id: item for task, item in frontier_result.values}
+        evaluated_removals = tuple(by_task_id[task.task_id] for task in frontier_tasks)
+    elif worker_limit > 1:
         with cpu_process_pool(worker_limit) as executor:
             evaluated_removals = tuple(
                 executor.map(

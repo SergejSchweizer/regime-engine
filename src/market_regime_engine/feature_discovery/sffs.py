@@ -210,9 +210,9 @@ def select_sffs(
                     )
                     for index, features in enumerate(feature_sets)
                 )
-                results = tuple(
-                    item for _task, item in frontier.map(frontier_tasks, _score_in_frontier).values
-                )
+                frontier_result = frontier.map(frontier_tasks, _score_in_frontier)
+                by_task_id = {task.task_id: item for task, item in frontier_result.values}
+                results = tuple(by_task_id[task.task_id] for task in frontier_tasks)
             elif executor is None:
                 results = tuple(_score_in_process(task) for task in tasks)
             else:
