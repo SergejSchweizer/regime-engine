@@ -15,6 +15,29 @@ from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 SELECTOR_HASH = "a" * 64
 
 
+def _frontier_score(features: tuple[str, ...]) -> FeatureSubsetScore:
+    return FeatureSubsetScore(features, float(len(features)))
+
+
+def _frontier_hmm(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+    return HMMSubsetEvaluation(
+        _frontier_score(features),
+        "gaussian_hmm",
+        2,
+        SELECTOR_HASH,
+        sha256("|".join(features).encode()).hexdigest(),
+    )
+
+
+def _frontier_k_score(state_count: int, features: tuple[str, ...]) -> FeatureSubsetScore:
+    return FeatureSubsetScore(
+        features,
+        float(len(features)),
+        model_family="gaussian_hmm",
+        state_count=state_count,
+    )
+
+
 def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) -> None:
     names = (
         "vix_log_level",
@@ -137,6 +160,31 @@ def test_canonical_pipeline_can_run_without_transformations() -> None:
     assert result.family_reduction.retained_features == ()
     assert result.family_pca == ()
     assert result.selected_features == names
+
+
+def test_canonical_pipeline_reuses_frontier_for_selection_and_ablation() -> None:
+    names = ("vix_log_level", "us_10y_log_level")
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    values = {
+        names[0]: tuple(float(index) for index in range(30)),
+        names[1]: tuple(float((index % 7) ** 2) for index in range(30)),
+    }
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=_frontier_score,
+        evaluate_hmm_subset=_frontier_hmm,
+        hmm_selector_contract_hash=SELECTOR_HASH,
+        max_sffs_features=2,
+        max_workers=2,
+        evaluate_gaussian_subset_by_k=_frontier_k_score,
+    )
+
+    assert result.selected_features == names
+    assert tuple(item.state_count for item in result.k_sffs) == (2, 3, 4, 5)
+    assert result.ablation.ablation_losses == (1.0, 1.0)
 
 
 def test_zero_rank_family_is_invalid_without_blocking_core_selection() -> None:

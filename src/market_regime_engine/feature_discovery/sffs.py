@@ -4,13 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
+from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
+from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
-from market_regime_engine.feature_discovery.feature_subset_score import SCORE_ABS_TOLERANCE
+from market_regime_engine.feature_discovery.feature_subset_score import (
+    SCORE_ABS_TOLERANCE,
+    FeatureSubsetCandidate,
+    FeatureSubsetFoldEvidence,
+    score_feature_subset,
+    to_sffs_score,
+)
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.training.multistart import (
+    MultistartBatchJob,
+    MultistartResult,
+    run_multistart_batch,
+)
 
 DIMENSION_INDEPENDENT_SCORE = "dimension_independent_feature_subset_score"
 
@@ -81,11 +94,111 @@ class SFFSResult:
 ScoreFunction = Callable[[tuple[str, ...]], FeatureSubsetScore | None]
 
 
+@dataclass(frozen=True, slots=True)
+class FrontierFoldJob:
+    """One candidate-subset/inner-fold job whose seeds share a frontier."""
+
+    candidate_subset: tuple[str, ...]
+    fold_id: str
+    job: MultistartBatchJob
+
+    def __post_init__(self) -> None:
+        if self.job.job_id != f"{self.fold_id}:{','.join(self.candidate_subset)}":
+            raise ValueError("frontier fold job identity is not canonical")
+
+
+@dataclass(frozen=True, slots=True)
+class FrontierFeatureSubsetEvaluator:
+    """Build and aggregate real HMM seed jobs for SFFS candidate tuples."""
+
+    job_factory: Callable[[int, tuple[str, ...]], tuple[FrontierFoldJob, ...]]
+    evidence_factory: Callable[[FrontierFoldJob, MultistartResult], FeatureSubsetFoldEvidence]
+    feature_order_hash: str
+    source_build_id: str
+    evaluation_plan_hash: str
+    latest_fold_id: str
+    state_count: int
+    max_workers: int | None = None
+    frontier: SharedTaskFrontier[Any, Any] | None = None
+
+    def evaluate_many(
+        self,
+        feature_sets: Iterable[tuple[str, ...]],
+        *,
+        state_count: int | None = None,
+    ) -> tuple[FeatureSubsetScore | None, ...]:
+        requested_state_count = self.state_count if state_count is None else state_count
+        if requested_state_count not in (2, 3, 4, 5):
+            raise ValueError("frontier SFFS state_count must be 2, 3, 4, or 5")
+        candidates = tuple(feature_sets)
+        entries = tuple(
+            entry
+            for candidate in candidates
+            for entry in self.job_factory(requested_state_count, candidate)
+        )
+        if not entries and candidates:
+            return tuple(None for _candidate in candidates)
+        if len({entry.job.job_id for entry in entries}) != len(entries):
+            raise ValueError("frontier SFFS fold job IDs must be unique")
+        results = run_multistart_batch(
+            tuple(entry.job for entry in entries),
+            max_workers=self.max_workers,
+            frontier=self.frontier,
+        )
+        evidence_by_candidate: dict[tuple[str, ...], list[FeatureSubsetFoldEvidence]] = {
+            candidate: [] for candidate in candidates
+        }
+        for entry, result in zip(entries, results, strict=True):
+            if result is None:
+                raise RuntimeError("frontier SFFS multistart gate failed")
+            evidence_by_candidate[entry.candidate_subset].append(
+                self.evidence_factory(entry, result)
+            )
+        scores: list[FeatureSubsetScore | None] = []
+        for candidate in candidates:
+            evidence = tuple(
+                sorted(evidence_by_candidate[candidate], key=lambda item: item.fold_id)
+            )
+            if not evidence:
+                scores.append(None)
+                continue
+            breakdown = score_feature_subset(
+                FeatureSubsetCandidate(
+                    candidate,
+                    self.feature_order_hash,
+                    self.source_build_id,
+                    self.evaluation_plan_hash,
+                    evidence,
+                ),
+                latest_fold_id=self.latest_fold_id,
+            )
+            score = to_sffs_score(breakdown)
+            scores.append(
+                None
+                if score is None
+                else replace(
+                    score,
+                    model_family="gaussian_hmm",
+                    state_count=requested_state_count,
+                )
+            )
+        return tuple(scores)
+
+    def __call__(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
+        return self.evaluate_many((features,))[0]
+
+
 def _score_in_process(
     task: tuple[ScoreFunction, tuple[str, ...]],
 ) -> FeatureSubsetScore | None:
     score, features = task
     return _score(score, features)
+
+
+def _score_in_frontier(
+    task: FrontierTask[ScoreFunction],
+) -> FeatureSubsetScore | None:
+    return _score(task.payload, task.candidate_subset)
 
 
 def _canonical_subset(names: Iterable[str]) -> tuple[str, ...]:
@@ -150,6 +263,8 @@ def select_sffs(
     *,
     max_features: int = SFFS_MAX_FEATURES,
     max_workers: int | None = None,
+    frontier: SharedTaskFrontier[ScoreFunction, FeatureSubsetScore | None] | None = None,
+    frontier_state_count: int = 2,
 ) -> SFFSResult:
     """Run deterministic sequential floating forward selection.
 
@@ -168,10 +283,14 @@ def select_sffs(
 
     parallel = max_workers != 1 and is_pickleable(score)
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidate_tuple)) if parallel else 1
-    pool_context = (
-        cpu_process_pool(worker_limit) if parallel and worker_limit > 1 else nullcontext()
+    if frontier is not None and frontier_state_count not in (2, 3, 4, 5):
+        raise ValueError("frontier_state_count must be 2, 3, 4, or 5")
+    frontier_context: Any = (
+        SharedTaskFrontier(worker_limit)
+        if frontier is None and parallel and worker_limit > 1
+        else nullcontext(frontier)
     )
-    with pool_context as executor:
+    with frontier_context as execution_frontier:
         evaluations: list[SFFSEvaluation] = []
 
         def evaluate_many(
@@ -180,11 +299,40 @@ def select_sffs(
             action: str,
             selected_features: tuple[str, ...],
         ) -> tuple[FeatureSubsetScore | None, ...]:
-            tasks = tuple((score, features) for features in feature_sets)
-            if executor is None:
-                results = tuple(_score_in_process(task) for task in tasks)
+            batch_evaluator = getattr(score, "evaluate_many", None)
+            if callable(batch_evaluator):
+                results = tuple(batch_evaluator(feature_sets))
+                if len(results) != len(feature_sets):
+                    raise ValueError("frontier SFFS evaluator returned the wrong result count")
+                for features, evaluated in zip(feature_sets, results, strict=True):
+                    if evaluated is not None and evaluated.feature_names != features:
+                        raise ValueError(
+                            "frontier SFFS score must identify exactly the evaluated feature tuple"
+                        )
             else:
-                results = tuple(executor.map(_score_in_process, tasks))
+                tasks = tuple((score, features) for features in feature_sets)
+                active_frontier = frontier or execution_frontier
+                if active_frontier is not None:
+                    frontier_tasks = tuple(
+                        FrontierTask(
+                            task_id=f"{action}:{index}:{','.join(features)}",
+                            state_count=frontier_state_count,
+                            fold_id="sffs",
+                            candidate_subset=features,
+                            seed=index,
+                            profile_hash="a" * 64,
+                            matrix_identity="sffs-candidate-frontier",
+                            row_indices=(0,),
+                            column_indices=(0,),
+                            payload=score,
+                        )
+                        for index, features in enumerate(feature_sets)
+                    )
+                    frontier_result = active_frontier.map(frontier_tasks, _score_in_frontier)
+                    by_task_id = {task.task_id: item for task, item in frontier_result.values}
+                    results = tuple(by_task_id[task.task_id] for task in frontier_tasks)
+                else:
+                    results = tuple(_score_in_process(task) for task in tasks)
             evaluations.extend(
                 SFFSEvaluation(action, features, selected_features, evaluated)
                 for features, evaluated in zip(feature_sets, results, strict=True)
@@ -258,6 +406,8 @@ def select_sffs(
 __all__ = [
     "DIMENSION_INDEPENDENT_SCORE",
     "FeatureSubsetScore",
+    "FrontierFeatureSubsetEvaluator",
+    "FrontierFoldJob",
     "SFFSEvaluation",
     "SFFSResult",
     "SFFSStep",

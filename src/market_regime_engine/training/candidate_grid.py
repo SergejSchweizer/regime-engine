@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from math import isfinite
 from statistics import fmean, pstdev
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -19,8 +19,9 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.scheduling import randomized_order
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.contracts import content_hash
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import (
@@ -29,7 +30,7 @@ from market_regime_engine.profiles.resolution import (
     expected_candidate_ids,
     validate_candidate_comparison_inputs,
 )
-from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.adapter_factory import adapter_factory
 
 if TYPE_CHECKING:
@@ -45,49 +46,6 @@ CandidateRunner = Callable[
     WalkForwardEvaluation,
 ]
 SeedCheckpointFactory = Callable[[str, str, int], "HMMSeedCheckpoint"]
-
-
-@dataclass(frozen=True, slots=True)
-class _CandidateProcessTask:
-    """Pickle-safe immutable input for one CPU-bound candidate evaluation."""
-
-    source_rows: pd.DataFrame
-    plan: WalkForwardPlan
-    profile: ModelProfile
-    candidate: ResolvedCandidateProfile
-    max_workers: int
-    pca_raw_feature_order: tuple[str, ...]
-    pca_variance_threshold: float
-    runner: CandidateRunner
-    adapter_factory_builder: AdapterFactoryBuilder | None
-
-
-def _evaluate_candidate_in_process(task: _CandidateProcessTask) -> WalkForwardEvaluation:
-    """Evaluate one candidate outside the caller's interpreter/GIL."""
-
-    candidate_adapter = (
-        task.adapter_factory_builder(task.candidate)
-        if task.adapter_factory_builder is not None
-        else cast(AdapterFactory, adapter_factory(task.profile, task.candidate))
-    )
-    if task.runner is _default_runner:
-        return run_walk_forward_candidate(
-            task.source_rows,
-            plan=task.plan,
-            profile=task.profile,
-            candidate=task.candidate,
-            adapter_factory=candidate_adapter,
-            max_workers=task.max_workers,
-            pca_raw_feature_order=task.pca_raw_feature_order,
-            pca_variance_threshold=task.pca_variance_threshold,
-        )
-    return task.runner(
-        task.source_rows,
-        task.plan,
-        task.profile,
-        task.candidate,
-        candidate_adapter,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +214,7 @@ def _default_runner(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    frontier: SharedTaskFrontier[Any, Any] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
 ) -> WalkForwardEvaluation:
@@ -267,6 +226,7 @@ def _default_runner(
         adapter_factory=adapter_factory,
         max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
+        frontier=frontier,
         pca_raw_feature_order=pca_raw_feature_order,
         pca_variance_threshold=pca_variance_threshold,
     )
@@ -340,6 +300,7 @@ def evaluate_candidate_grid(
     def evaluate(
         candidate: ResolvedCandidateProfile,
         candidate_max_workers: int | None = max_workers,
+        frontier: SharedTaskFrontier[Any, Any] | None = None,
     ) -> WalkForwardEvaluation:
         candidate_adapter = (
             _default_adapter_builder(profile, candidate)
@@ -412,45 +373,31 @@ def evaluate_candidate_grid(
             candidate,
             candidate_adapter,
             max_workers=candidate_max_workers,
+            frontier=frontier,
             pca_raw_feature_order=pca_order,
             pca_variance_threshold=pca_variance_threshold,
         )
 
-    use_processes = (
+    use_shared_frontier = (
         seed_checkpoint_factory is None
         and worker_limit > 1
         and runner is _default_runner
-        and is_pickleable(runner)
         and (adapter_factory_builder is None or is_pickleable(adapter_factory_builder))
     )
-    if use_processes:
-        nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
-        tasks = tuple(
-            _CandidateProcessTask(
-                source_rows,
-                plan,
-                profile,
-                candidate,
-                nested_limits[index % worker_limit],
-                pca_order,
-                pca_variance_threshold,
-                runner,
-                adapter_factory_builder,
+    if use_shared_frontier:
+        # Candidate calls are coordinators only. Every fold/seed fit from all
+        # candidates enters one persistent process frontier, so candidates do
+        # not create child pools and the host cannot be oversubscribed by
+        # nested candidate/fold/multistart pools.
+        with (
+            SharedTaskFrontier[Any, Any](total_worker_budget) as active_frontier,
+            ThreadPoolExecutor(max_workers=len(scheduled_candidates)) as executor,
+        ):
+            frontier_futures = tuple(
+                executor.submit(evaluate, candidate, total_worker_budget, active_frontier)
+                for candidate in scheduled_candidates
             )
-            for index, candidate in enumerate(scheduled_candidates)
-        )
-        with cpu_process_pool(worker_limit) as executor:
-            process_futures = {
-                task.candidate.candidate_id: executor.submit(_evaluate_candidate_in_process, task)
-                for task in tasks
-            }
-            evaluations_by_id = {
-                candidate_id: process_futures[candidate_id].result()
-                for candidate_id in process_futures
-            }
-        evaluations = tuple(
-            evaluations_by_id[candidate.candidate_id] for candidate in scheduled_candidates
-        )
+            evaluations = tuple(future.result() for future in frontier_futures)
     elif worker_limit == 1:
         evaluations = tuple(
             evaluate(candidate, total_worker_budget) for candidate in scheduled_candidates

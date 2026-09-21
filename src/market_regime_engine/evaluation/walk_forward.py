@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -25,7 +25,8 @@ from market_regime_engine.evaluation.diagnostics import (
 )
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.inference.predictive_likelihood import (
     continued_test_predictive_likelihood,
@@ -39,14 +40,19 @@ from market_regime_engine.preprocessing.two_stage import (
     fit_pca_hmm_scaler,
 )
 from market_regime_engine.profiles.config import ModelProfile
-from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.states.alignment import (
     StateAlignment,
     align_first_fold,
     align_to_reference,
 )
 from market_regime_engine.states.signatures import StateSignature
-from market_regime_engine.training.multistart import MultistartResult, run_multistart
+from market_regime_engine.training.multistart import (
+    MultistartBatchJob,
+    MultistartResult,
+    run_multistart,
+    run_multistart_batch,
+)
 
 if TYPE_CHECKING:
     from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
@@ -85,50 +91,6 @@ class WalkForwardCandidate(Protocol):
 
     @property
     def original_feature_universe(self) -> tuple[str, ...]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class _SingleFoldTask:
-    """Pickle-safe payload for one independent fold-local computation."""
-
-    source_rows: pd.DataFrame
-    fold: WalkForwardFold
-    plan_hash: str
-    profile: ModelProfile
-    candidate: WalkForwardCandidate
-    adapter_factory: AdapterFactory
-    max_workers: int
-    pca_raw_feature_order: tuple[str, ...] | None
-    pca_variance_threshold: float
-
-
-@dataclass(frozen=True, slots=True)
-class _SingleFoldEvaluation:
-    """Private result envelope for one fold executed in a child process."""
-
-    folds: tuple[WalkForwardFoldResult, ...]
-
-
-def _evaluate_single_fold_process(task: _SingleFoldTask) -> WalkForwardFoldResult:
-    """Run one fold outside the caller's interpreter/GIL."""
-
-    one_fold_plan = WalkForwardPlan(
-        folds=(task.fold,),
-        evaluation_cutoff=task.fold.test_end,
-        plan_hash=task.plan_hash,
-    )
-    evaluation = run_walk_forward_candidate(
-        task.source_rows,
-        plan=one_fold_plan,
-        profile=task.profile,
-        candidate=task.candidate,
-        adapter_factory=task.adapter_factory,
-        max_workers=task.max_workers,
-        pca_raw_feature_order=task.pca_raw_feature_order,
-        pca_variance_threshold=task.pca_variance_threshold,
-        _single_fold_execution=True,
-    )
-    return evaluation.folds[0]
 
 
 def _require_utc(value: datetime, field_name: str) -> datetime:
@@ -652,6 +614,180 @@ def _reconcile_parallel_fold(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedFrontierFold:
+    fold: WalkForwardFold
+    train_model_count: int
+    test_model_count: int
+    skipped_train: int
+    skipped_test: int
+    train_rows: np.ndarray
+    test_rows: np.ndarray
+    train_timestamps: tuple[datetime, ...]
+    test_timestamps: tuple[datetime, ...]
+    pca_scaler: PCATwoStageScalerArtifact
+    scaled_train: np.ndarray
+    scaled_test: np.ndarray
+
+
+def _prepare_frontier_fold(
+    source_rows: pd.DataFrame,
+    fold: WalkForwardFold,
+    *,
+    profile: ModelProfile,
+    candidate: WalkForwardCandidate,
+    pca_raw_order: tuple[str, ...],
+    pca_variance_threshold: float,
+) -> _PreparedFrontierFold:
+    train_source, test_source = _fold_source_frames(source_rows, fold)
+    train_rows, train_timestamps, skipped_train = _complete_case(train_source, pca_raw_order)
+    test_rows, test_timestamps, skipped_test = _complete_case(test_source, pca_raw_order)
+    train_model_count = int(train_rows.shape[0])
+    test_model_count = int(test_rows.shape[0])
+    if train_model_count < profile.walk_forward.minimum_model_train_observations:
+        raise RecoverableEvaluationInvalidity(
+            f"retained TRAIN observations are below pinned minimum 504: {train_model_count}"
+        )
+    minimum_test_observations = (
+        1
+        if hasattr(fold, "test_calendar_month")
+        else profile.walk_forward.minimum_model_test_observations
+    )
+    if test_model_count < minimum_test_observations:
+        minimum_label = (
+            f"the model-clock minimum {minimum_test_observations}"
+            if minimum_test_observations != profile.walk_forward.minimum_model_test_observations
+            else f"pinned minimum {minimum_test_observations}"
+        )
+        raise RecoverableEvaluationInvalidity(
+            f"retained TEST observations are below {minimum_label}: {test_model_count}"
+        )
+    pca_scaler = fit_pca_hmm_scaler(
+        train_timestamps,
+        train_rows,
+        raw_feature_order=pca_raw_order,
+        inner_fold_id=fold.fold_id,
+        fit_start=fold.train_start,
+        fit_end=fold.train_end,
+        variance_threshold=pca_variance_threshold,
+        component_count=profile.pca.component_count,
+        model_feature_order=candidate.feature_order,
+    )
+    if pca_scaler.model_feature_order != candidate.feature_order:
+        raise RecoverableEvaluationInvalidity(
+            "fold-local PCA generated feature order differs from candidate order"
+        )
+    scaled_train = pca_scaler.transform(train_rows)
+    scaled_test = pca_scaler.transform(test_rows)
+    return _PreparedFrontierFold(
+        fold,
+        train_model_count,
+        test_model_count,
+        skipped_train,
+        skipped_test,
+        train_rows,
+        test_rows,
+        train_timestamps,
+        test_timestamps,
+        pca_scaler,
+        scaled_train,
+        scaled_test,
+    )
+
+
+def _evaluate_prepared_frontier_fold(
+    prepared: _PreparedFrontierFold,
+    multistart: MultistartResult,
+    *,
+    candidate: WalkForwardCandidate,
+    reference_signatures: tuple[StateSignature, ...] | None,
+    reference_scaler: StandardScalerArtifact | None,
+) -> tuple[WalkForwardFoldResult, tuple[StateSignature, ...], StandardScalerArtifact]:
+    artifact = multistart.winner.artifact
+    if artifact.feature_order != candidate.feature_order:
+        raise RecoverableEvaluationInvalidity(
+            "fitted model feature order differs from frozen resolved order"
+        )
+    validate_full_covariances(artifact)
+    scaler = prepared.pca_scaler.hmm_scaler
+    resolved_reference_scaler = reference_scaler or scaler
+    train_filter = causal_filter(prepared.scaled_train, artifact)
+    fit_train_log_likelihood = multistart.winner.train_log_likelihood
+    filter_train_log_likelihood = train_filter.log_likelihood
+    parity_tolerance = 1e-10 * max(
+        1.0,
+        abs(fit_train_log_likelihood),
+        abs(filter_train_log_likelihood),
+    )
+    if abs(fit_train_log_likelihood - filter_train_log_likelihood) > parity_tolerance:
+        raise RecoverableEvaluationInvalidity(
+            "TRAIN likelihood parity failed: "
+            f"fit={fit_train_log_likelihood:.17g}, "
+            f"filter={filter_train_log_likelihood:.17g}, "
+            f"tolerance={parity_tolerance:.17g}"
+        )
+    train_occupancy_raw = validate_train_occupancy(train_filter.filtered_probabilities)
+    continued = continued_test_predictive_likelihood(
+        prepared.scaled_train,
+        prepared.scaled_test,
+        artifact,
+    )
+    test_filter = causal_filter(
+        prepared.scaled_test,
+        artifact,
+        initial_filtered_probabilities=train_filter.terminal_probabilities,
+    )
+    if abs(test_filter.log_likelihood - continued.test_log_likelihood) > 1e-10:
+        raise RecoverableEvaluationInvalidity("continued TEST likelihood/filter evidence disagree")
+    if reference_signatures is None:
+        alignment = align_first_fold(artifact, scaler, resolved_reference_scaler)
+    else:
+        alignment = align_to_reference(
+            artifact,
+            reference_signatures,
+            scaler,
+            resolved_reference_scaler,
+        )
+    aligned_train_occupancy = _aligned_occupancy(train_occupancy_raw, alignment)
+    aligned_oos_probabilities = _aligned_probabilities(
+        test_filter.filtered_probabilities,
+        alignment,
+    )
+    aligned_oos_occupancy = _aligned_occupancy(
+        occupancy(test_filter.filtered_probabilities),
+        alignment,
+    )
+    criteria = information_criteria(
+        filter_train_log_likelihood,
+        prepared.train_model_count,
+        candidate.state_count,
+        candidate.feature_dimension,
+        candidate.mixture_count,
+        candidate.model_family,
+    )
+    result = _valid_fold_result(
+        fold=prepared.fold,
+        train_model_count=prepared.train_model_count,
+        test_model_count=prepared.test_model_count,
+        skipped_train=prepared.skipped_train,
+        skipped_test=prepared.skipped_test,
+        scaler=scaler,
+        pca_scaler=prepared.pca_scaler,
+        multistart=multistart,
+        artifact=artifact,
+        alignment=alignment,
+        criteria=criteria,
+        train_occupancy=aligned_train_occupancy,
+        oos_occupancy=aligned_oos_occupancy,
+        train_log_likelihood=filter_train_log_likelihood,
+        oos_log_likelihood=continued.test_log_likelihood,
+        oos_per_observation=continued.test_log_likelihood_per_observation,
+        oos_timestamps=prepared.test_timestamps,
+        oos_probabilities=aligned_oos_probabilities,
+    )
+    return result, alignment.aligned_signatures, resolved_reference_scaler
+
+
 def run_walk_forward_candidate(
     source_rows: pd.DataFrame,
     *,
@@ -661,9 +797,9 @@ def run_walk_forward_candidate(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    frontier: SharedTaskFrontier[Any, Any] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
-    _single_fold_execution: bool = False,
 ) -> WalkForwardEvaluation:
     """Evaluate one frozen-feature K candidate without rerunning feature selection.
 
@@ -704,52 +840,101 @@ def run_walk_forward_candidate(
     if plan.evaluation_cutoff != plan.folds[-1].test_end:
         raise ValueError("evaluation cutoff must equal final planned complete-fold TEST end")
 
-    results: list[WalkForwardFoldResult] = []
-    reference_signatures: tuple[StateSignature, ...] | None = None
-    reference_scaler: StandardScalerArtifact | None = None
-    # Fold-local scaling/PCA, HMM fitting, filtering and diagnostics are
-    # independent.  State alignment is the only ordered operation: reconcile
-    # completed fold payloads below in plan order so persistent state IDs and
-    # evidence hashes remain deterministic.  Checkpointed runs retain the
-    # existing serial path because their factory may own a non-pickleable
-    # durable ledger handle.
-    total_worker_budget = cpu_worker_count(max_workers)
     fold_worker_limit = cpu_worker_count(max_workers, task_count=len(plan.folds))
-    use_parallel_folds = (
-        len(plan.folds) > 1
-        and fold_worker_limit > 1
+    if (
+        frontier is None
         and seed_checkpoint_factory is None
+        and fold_worker_limit > 1
         and is_pickleable(adapter_factory)
-        and is_pickleable(candidate)
-        and is_pickleable(profile)
-    )
-    if use_parallel_folds:
-        child_limits = nested_worker_limits(total_worker_budget, fold_worker_limit)
-        tasks = tuple(
-            _SingleFoldTask(
-                source_rows=source_rows,
-                fold=fold,
-                plan_hash=plan.plan_hash,
+    ):
+        # A direct caller owns one frontier at the process boundary.  The
+        # recursive call then flattens every fold's multistart seeds into it;
+        # no fold worker can create a child pool of its own.
+        with SharedTaskFrontier[Any, Any](fold_worker_limit) as active_frontier:
+            return run_walk_forward_candidate(
+                source_rows,
+                plan=plan,
                 profile=profile,
                 candidate=candidate,
                 adapter_factory=adapter_factory,
-                max_workers=child_limits[index % fold_worker_limit],
+                max_workers=fold_worker_limit,
+                frontier=active_frontier,
                 pca_raw_feature_order=pca_raw_order,
                 pca_variance_threshold=pca_variance_threshold,
             )
-            for index, fold in enumerate(plan.folds)
-        )
-        with cpu_process_pool(fold_worker_limit) as executor:
-            futures = tuple(executor.submit(_evaluate_single_fold_process, task) for task in tasks)
-            independent_results = tuple(future.result() for future in futures)
-        reconciled: list[WalkForwardFoldResult] = []
-        for fold_result in independent_results:
-            aligned, reference_signatures, reference_scaler = _reconcile_parallel_fold(
-                fold_result,
-                reference_signatures=reference_signatures,
-                reference_scaler=reference_scaler,
+
+    results: list[WalkForwardFoldResult] = []
+    reference_signatures: tuple[StateSignature, ...] | None = None
+    reference_scaler: StandardScalerArtifact | None = None
+
+    if frontier is not None and seed_checkpoint_factory is None:
+        prepared: list[_PreparedFrontierFold] = []
+        fold_results: dict[str, WalkForwardFoldResult] = {}
+        for fold in plan.folds:
+            try:
+                prepared.append(
+                    _prepare_frontier_fold(
+                        source_rows,
+                        fold,
+                        profile=profile,
+                        candidate=candidate,
+                        pca_raw_order=pca_raw_order,
+                        pca_variance_threshold=pca_variance_threshold,
+                    )
+                )
+            except RecoverableEvaluationInvalidity as exc:
+                fold_results[fold.fold_id] = _invalid_fold_result(
+                    fold,
+                    train_model_count=0,
+                    test_model_count=0,
+                    skipped_train=fold.train_source_observations,
+                    skipped_test=fold.test_source_observations,
+                    failure_reason=f"{type(exc).__name__}: {exc}",
+                )
+        jobs = tuple(
+            MultistartBatchJob(
+                prepared_fold.fold.fold_id,
+                prepared_fold.scaled_train,
+                candidate.state_count,
+                adapter_factory,
             )
-            reconciled.append(aligned)
+            for prepared_fold in prepared
+        )
+        multistarts = run_multistart_batch(
+            jobs,
+            max_workers=max_workers,
+            allow_invalid=True,
+            frontier=frontier,
+        )
+        for prepared_fold, multistart in zip(prepared, multistarts, strict=True):
+            if multistart is None:
+                fold_results[prepared_fold.fold.fold_id] = _invalid_fold_result(
+                    prepared_fold.fold,
+                    train_model_count=prepared_fold.train_model_count,
+                    test_model_count=prepared_fold.test_model_count,
+                    skipped_train=prepared_fold.skipped_train,
+                    skipped_test=prepared_fold.skipped_test,
+                    failure_reason="RecoverableEvaluationInvalidity: multistart gate failed",
+                )
+                continue
+            try:
+                result, reference_signatures, reference_scaler = _evaluate_prepared_frontier_fold(
+                    prepared_fold,
+                    multistart,
+                    candidate=candidate,
+                    reference_signatures=reference_signatures,
+                    reference_scaler=reference_scaler,
+                )
+                fold_results[prepared_fold.fold.fold_id] = result
+            except RecoverableEvaluationInvalidity as exc:
+                fold_results[prepared_fold.fold.fold_id] = _invalid_fold_result(
+                    prepared_fold.fold,
+                    train_model_count=prepared_fold.train_model_count,
+                    test_model_count=prepared_fold.test_model_count,
+                    skipped_train=prepared_fold.skipped_train,
+                    skipped_test=prepared_fold.skipped_test,
+                    failure_reason=f"{type(exc).__name__}: {exc}",
+                )
         evaluation = WalkForwardEvaluation(
             profile_id=profile.profile_id,
             profile_config_version=profile.profile_config_version,
@@ -761,11 +946,9 @@ def run_walk_forward_candidate(
             feature_selection_execution_hash=candidate.feature_selection_execution_hash,
             evaluation_plan_hash=plan.plan_hash,
             evaluation_cutoff=plan.evaluation_cutoff,
-            folds=tuple(reconciled),
+            folds=tuple(fold_results[fold.fold_id] for fold in plan.folds),
             alignment_reference_scaler=reference_scaler,
         )
-        if _single_fold_execution:
-            return cast(WalkForwardEvaluation, _SingleFoldEvaluation(folds=evaluation.folds))
         return evaluation
 
     for fold in plan.folds:
@@ -830,36 +1013,19 @@ def run_walk_forward_candidate(
             checkpoint = (
                 None if seed_checkpoint_factory is None else seed_checkpoint_factory(fold.fold_id)
             )
-            if max_workers is None:
-                if checkpoint is None:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                    )
-                else:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        checkpoint=checkpoint,
-                    )
-            else:
-                if checkpoint is None:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        max_workers=max_workers,
-                    )
-                else:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        max_workers=max_workers,
-                        checkpoint=checkpoint,
-                    )
+            multistart_kwargs: dict[str, Any] = {}
+            if max_workers is not None:
+                multistart_kwargs["max_workers"] = max_workers
+            if checkpoint is not None:
+                multistart_kwargs["checkpoint"] = checkpoint
+            if frontier is not None:
+                multistart_kwargs["frontier"] = frontier
+            multistart = run_multistart(
+                scaled_train,
+                state_count=candidate.state_count,
+                adapter_factory=adapter_factory,
+                **multistart_kwargs,
+            )
             artifact = multistart.winner.artifact
             if artifact.feature_order != candidate.feature_order:
                 raise RecoverableEvaluationInvalidity(
@@ -957,9 +1123,6 @@ def run_walk_forward_candidate(
                     failure_reason=f"{type(exc).__name__}: {exc}",
                 )
             )
-
-    if _single_fold_execution:
-        return cast(WalkForwardEvaluation, _SingleFoldEvaluation(folds=tuple(results)))
 
     return WalkForwardEvaluation(
         profile_id=profile.profile_id,

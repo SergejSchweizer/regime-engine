@@ -1205,26 +1205,58 @@ oracle and completion-order QA are production-code-free. No full evaluation was 
 **Type:** implementation / performance
 **Depends on:** PR-493
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-521-shared-hmm-task-frontier`; the
+persistent `SharedTaskFrontier` boundary now provides canonical task ordering, completion-order
+independence, fail-fast worker errors and queue/runnable/utilization metrics. K-slot SFFS now
+reuses one caller-owned frontier across all K slots and SFFS steps, and the canonical selection
+pipeline reuses that same frontier for final ablation when both evaluator seams are pickleable.
+Multistart and walk-forward now accept the same caller-owned frontier; direct multistart uses the
+same frontier boundary instead of a private process-pool path, and parallel fold workers no
+longer attempt nested multistart pools. Multistart frontier tasks open one immutable memmapped
+TRAIN matrix per batch and carry only its path/shape/dtype identity. Frontier results are restored
+to submission identity before coordinator aggregation; the frontier submits only a bounded
+in-flight window and replenishes it as workers finish. A batch API now flattens all jobs' eight
+seeds into one frontier and aggregates each job canonically. The canonical provisional-teacher
+candidate coordinator now owns one Frontier across all K candidates; each candidate batches its
+  inner folds and eight seeds through that same pool, and the old candidate-local process-pool path
+  is removed. The production provisional-teacher path is therefore flattened through
+  `candidate × inner-fold × seed`; the canonical SFFS API now also exposes the explicit
+  `FrontierFeatureSubsetEvaluator` for candidate-subset fit evidence. SFFS and final ablation no
+  longer create direct candidate-local process pools. The remaining child-pool audit covers the
+  candidate-grid/fold orchestration boundaries are now closed: candidate-grid and direct
+  walk-forward execution both use one caller-owned shared frontier, with no candidate-local,
+  fold-local or multistart-local process pool in the HMM path. Serial parity QA is closed by
+  exact SFFS frontier parity and walk-forward fold/model parity tests. No full evaluation was
+  run.
+
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
 
 #### Acceptance
 
-- [ ] Decompose candidate scoring into independent fit tasks over the ready
-  `K x inner-fold x candidate-subset x seed/start` frontier.
-- [ ] Keep SFFS add/remove decisions in the deterministic coordinator; process workers return fit
+- [x] Decompose candidate scoring into independent fit tasks over the ready
+  `K x inner-fold x candidate-subset x seed/start` frontier through the explicit
+  `FrontierFeatureSubsetEvaluator`/`FrontierFoldJob` contract.
+- [x] Keep SFFS add/remove decisions in the deterministic coordinator; process workers return fit
   evidence only.
-- [ ] Reuse persistent workers across SFFS steps, K slots and final ablations.
-- [ ] Never create candidate-local or multistart-local child pools.
-- [ ] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work.
-- [ ] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
+- [x] Reuse persistent workers across SFFS steps, K slots and final ablations when the canonical
+  evaluator seams are pickleable; the serial/non-pickleable reference path remains explicit.
+- [x] Never create candidate-local or multistart-local child pools.
+- [x] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work;
+  independent K coordinators submit concurrently through the shared frontier.
+- [x] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
   independent of task completion order.
-- [ ] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
+- [x] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
   preprocessing identities rather than copied feature arrays where backend contracts permit.
-- [ ] Cache only immutable fit-independent slices/indices; never cache a model result across a
+- [x] Cache only immutable fit-independent slices/indices; never cache a model result across a
   different feature tuple, fold, seed, K or profile identity.
-- [ ] Serial reference mode remains statistically identical.
-- [ ] Record queue depth, runnable tasks, worker utilization proxy, fit count and stage wall time.
+- [x] Serial reference mode remains statistically identical.
+- [x] Record queue depth, runnable tasks, worker utilization proxy, fit count and stage wall time.
+
+Current git status at implementation closure: branch
+`pr/PR-521-shared-hmm-task-frontier`, implementation commit created and working tree clean; the
+local Hermetic integration hook passed, no full evaluation was run, and no integration test is
+run as a GitHub merge gate.
 
 ### PR-522 — QA: HMM frontier saturation, nested-pool prohibition and parity
 

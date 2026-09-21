@@ -11,6 +11,7 @@ import market_regime_engine.evaluation.walk_forward as walk_forward
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
@@ -145,7 +146,52 @@ def test_independent_folds_use_process_workers_with_canonical_result_order() -> 
     )
 
     assert tuple(fold.fold_id for fold in parallel.folds) == ("fold_001", "fold_002")
-    assert parallel.folds == serial.folds
+    for parallel_fold, serial_fold in zip(parallel.folds, serial.folds, strict=True):
+        assert parallel_fold.fold_id == serial_fold.fold_id
+        assert parallel_fold.valid == serial_fold.valid
+        assert parallel_fold.model_artifact == serial_fold.model_artifact
+        assert parallel_fold.multistart_result == serial_fold.multistart_result
+        np.testing.assert_allclose(
+            parallel_fold.oos_filtered_probabilities,
+            serial_fold.oos_filtered_probabilities,
+        )
+        np.testing.assert_allclose(
+            parallel_fold.oos_soft_occupancy,
+            serial_fold.oos_soft_occupancy,
+        )
+    assert parallel.alignment_reference_scaler == serial.alignment_reference_scaler
+
+
+def test_frontier_batches_all_fold_multistart_seeds_and_preserves_evidence() -> None:
+    rows = source_rows(1386)
+    serial = evaluate(rows)
+    profile = load_profile(PROFILE_CONFIG)
+    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
+    with SharedTaskFrontier(max_workers=2) as frontier:
+        parallel = run_walk_forward_candidate(
+            rows,
+            plan=plan,
+            profile=profile,
+            candidate=candidate(),
+            adapter_factory=DeterministicAdapter,
+            pca_raw_feature_order=RAW_FEATURES,
+            max_workers=2,
+            frontier=frontier,
+        )
+
+    for parallel_fold, serial_fold in zip(parallel.folds, serial.folds, strict=True):
+        assert parallel_fold.fold_id == serial_fold.fold_id
+        assert parallel_fold.valid == serial_fold.valid
+        assert parallel_fold.model_artifact == serial_fold.model_artifact
+        assert parallel_fold.multistart_result == serial_fold.multistart_result
+        np.testing.assert_allclose(
+            parallel_fold.oos_filtered_probabilities,
+            serial_fold.oos_filtered_probabilities,
+        )
+        np.testing.assert_allclose(
+            parallel_fold.oos_soft_occupancy,
+            serial_fold.oos_soft_occupancy,
+        )
     assert parallel.alignment_reference_scaler == serial.alignment_reference_scaler
 
 

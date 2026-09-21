@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from math import isfinite
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import numpy as np
 
+from market_regime_engine.evaluations.process_parallel import is_pickleable
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.ablation import (
     AblationResult,
     HMMSubsetEvaluator,
@@ -313,54 +317,72 @@ def run_canonical_feature_selection(
     sffs_max_features = (
         resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
     )
-    if evaluate_gaussian_subset_by_k is None:
-        sffs = select_sffs(
-            global_reduction.representatives,
-            evaluate_subset,
-            max_features=sffs_max_features,
-            max_workers=max_workers,
-        )
-        k_sffs: tuple[KSlotSFFSResult, ...] = ()
-    else:
-        k_sffs = select_k_slot_sffs(
-            global_reduction.representatives,
-            evaluate_gaussian_subset_by_k,
-            state_counts=state_counts,
-            max_features=sffs_max_features,
-            max_workers=max_workers,
-        )
-        sffs = k_sffs[0].sffs
-    if metadata_store is not None:
-        if (
-            metadata_fold_id is None
-            or metadata_source_build_id is None
-            or metadata_state_count is None
-        ):
-            raise ValueError(
-                "metadata_fold_id, metadata_source_build_id and metadata_state_count are required"
-            )
-        assert metadata_state_count is not None
-        records = (
-            tuple((item.state_count, item.sffs) for item in k_sffs)
-            if k_sffs
-            else ((metadata_state_count, sffs),)
-        )
-        for state_count, slot_sffs in records:
-            metadata_store.commit_sffs_steps(
-                sffs_step_records(
-                    slot_sffs,
-                    fold_id=metadata_fold_id,
-                    profile_hash=resolved_profile.profile_hash,
-                    source_build_id=metadata_source_build_id,
-                    state_count=state_count,
-                )
-            )
-    ablation = run_one_feature_hmm_ablation(
-        sffs.selected_features,
-        evaluate_hmm_subset,
-        selector_contract_hash=hmm_selector_contract_hash,
-        max_workers=max_workers,
+    selection_evaluator = (
+        evaluate_gaussian_subset_by_k
+        if evaluate_gaussian_subset_by_k is not None
+        else evaluate_subset
     )
+    can_share_frontier = (
+        max_workers != 1
+        and is_pickleable(selection_evaluator)
+        and is_pickleable(evaluate_hmm_subset)
+    )
+    frontier_context: Any = (
+        SharedTaskFrontier(max_workers) if can_share_frontier else nullcontext(None)
+    )
+    with frontier_context as frontier:
+        if evaluate_gaussian_subset_by_k is None:
+            sffs = select_sffs(
+                global_reduction.representatives,
+                evaluate_subset,
+                max_features=sffs_max_features,
+                max_workers=max_workers,
+                frontier=frontier,
+            )
+            k_sffs: tuple[KSlotSFFSResult, ...] = ()
+        else:
+            k_sffs = select_k_slot_sffs(
+                global_reduction.representatives,
+                evaluate_gaussian_subset_by_k,
+                state_counts=state_counts,
+                max_features=sffs_max_features,
+                max_workers=max_workers,
+                frontier=frontier,
+            )
+            sffs = k_sffs[0].sffs
+        if metadata_store is not None:
+            if (
+                metadata_fold_id is None
+                or metadata_source_build_id is None
+                or metadata_state_count is None
+            ):
+                raise ValueError(
+                    "metadata_fold_id, metadata_source_build_id and "
+                    "metadata_state_count are required"
+                )
+            assert metadata_state_count is not None
+            records = (
+                tuple((item.state_count, item.sffs) for item in k_sffs)
+                if k_sffs
+                else ((metadata_state_count, sffs),)
+            )
+            for state_count, slot_sffs in records:
+                metadata_store.commit_sffs_steps(
+                    sffs_step_records(
+                        slot_sffs,
+                        fold_id=metadata_fold_id,
+                        profile_hash=resolved_profile.profile_hash,
+                        source_build_id=metadata_source_build_id,
+                        state_count=state_count,
+                    )
+                )
+        ablation = run_one_feature_hmm_ablation(
+            sffs.selected_features,
+            evaluate_hmm_subset,
+            selector_contract_hash=hmm_selector_contract_hash,
+            max_workers=max_workers,
+            frontier=frontier,
+        )
     if metadata_fold_feature_stats is not None:
         if metadata_store is None:
             raise ValueError("metadata_store is required for feature-stat persistence")
