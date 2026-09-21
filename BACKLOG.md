@@ -686,22 +686,25 @@ schema-contract tests pass locally.
 **Type:** implementation / provenance
 **Depends on:** PR-479
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-480-canonical-feature-provenance`; targeted
+provenance identity tests pass locally.
+
 This PR implements provenance transport/storage for the already-fixed PR-476 classification; it
 must not redefine which features are CORE or which transformation family owns a feature.
 
 #### Acceptance
 
-- [ ] Every discovered candidate receives the immutable PR-476 role: core or transformation.
-- [ ] Every transformation receives one immutable source family and structured transformation
+- [x] Every discovered candidate receives the immutable PR-476 role: core or transformation.
+- [x] Every transformation receives one immutable source family and structured transformation
   provenance from the existing generated-feature provenance contract.
-- [ ] Feature role/family may not be inferred from ad-hoc string heuristics inside selection code.
-- [ ] Missing or conflicting provenance fails closed with the exact feature identity.
-- [ ] Core features preserve their source column identity.
-- [ ] Transformation provenance includes source family, transform name and normalized parameters
+- [x] Feature role/family may not be inferred from ad-hoc string heuristics inside selection code.
+- [x] Missing or conflicting provenance fails closed with the exact feature identity.
+- [x] Core features preserve their source column identity.
+- [x] Transformation provenance includes source family, transform name and normalized parameters
   sufficient to distinguish windows/variants.
-- [ ] Canonical feature identity is independent of discovery order and process completion order.
-- [ ] The same source snapshot and provenance produce the same feature-registry rows and hashes.
-- [ ] No statistical filtering or HMM fitting is added in this PR.
+- [x] Canonical feature identity is independent of discovery order and process completion order.
+- [x] The same source snapshot and provenance produce the same feature-registry rows and hashes.
+- [x] No statistical filtering or HMM fitting is added in this PR.
 
 ### PR-481 — QA: provenance, family and identity matrix
 
