@@ -29,7 +29,7 @@ class FeatureCatalogEntry:
     canonical_ordinal: int
     postgres_type: str = "DOUBLE PRECISION"
     schema_name: str = "macro_loader"
-    relation_name: str = "macro_features_daily"
+    relation_name: str = "macro_features"
     relation_kind: str = "BASE TABLE"
     ordinal_position: int | None = None
 
@@ -307,13 +307,6 @@ class FeatureSource(Protocol):
 class DynamicFeatureSource(Protocol):
     def read_with_catalog(
         self, request: FeatureRequest
-    ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]: ...
-
-
-class SchemaWideFeatureSource(Protocol):
-    def read_schema_wide_with_catalog(
-        self,
-        request: FeatureRequest,
     ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]: ...
 
 

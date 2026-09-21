@@ -89,11 +89,11 @@ from market_regime_engine.feature_discovery.winners import (
     select_cluster_winners,
 )
 from market_regime_engine.features.ports import (
+    DynamicFeatureSource,
     FeatureCatalogSnapshot,
     FeatureRequest,
     FeatureRow,
     FeatureSnapshot,
-    SchemaWideFeatureSource,
 )
 from market_regime_engine.preprocessing.pca_features import (
     PCAGeneratedFeatureSet,
@@ -1508,7 +1508,7 @@ def evaluate_global_regime_v4(
 
 
 def evaluate_global_regime_v4_from_source(
-    source: SchemaWideFeatureSource,
+    source: DynamicFeatureSource,
     *,
     profile: ModelProfile,
     start: datetime | None = None,
@@ -1539,9 +1539,7 @@ def evaluate_global_regime_v4_from_source(
         raise ValueError("dynamic source evaluation requires the canonical Xetra v4 profile")
     if run_store is not None and snapshot_store is None:
         raise ValueError("run_store requires snapshot_store")
-    catalog, snapshot = source.read_schema_wide_with_catalog(
-        FeatureRequest.all_features(start, end)
-    )
+    catalog, snapshot = source.read_with_catalog(FeatureRequest.all_features(start, end))
     if snapshot.feature_names != catalog.feature_names:
         raise ValueError("dynamic source snapshot columns do not match its catalog")
     if snapshot.materialized_feature_data_sha256 is None:

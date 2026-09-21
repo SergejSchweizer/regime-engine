@@ -11,7 +11,10 @@ import psycopg
 from mlflow.tracking import MlflowClient
 
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
-from market_regime_engine.features.postgres_source import ConnectionLike, PostgresFeatureSource
+from market_regime_engine.features.postgres_source import (
+    ConnectionLike,
+    MacroFeaturesPostgresSource,
+)
 from market_regime_engine.mlflow_app.dependencies import (
     ReadinessSnapshot,
     ServiceDependencies,
@@ -43,7 +46,7 @@ def compose_serving_dependencies() -> ServiceDependencies:
     def connect() -> ConnectionLike:
         return cast(ConnectionLike, psycopg.connect(**cast(Any, settings.connection_kwargs())))
 
-    source = PostgresFeatureSource(connect)
+    source = MacroFeaturesPostgresSource(connect)
     mlflow_settings = MLflowSettings.from_environment()
     tracking_uri = mlflow_settings.tracking_uri
     mlflow.set_tracking_uri(tracking_uri)

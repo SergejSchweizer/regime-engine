@@ -57,12 +57,12 @@ def _rows() -> pd.DataFrame:
 def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
     names = tuple(column for column in rows.columns if column != "timestamp_m1")
     lineage = SourceLineage(
-        source_dataset="macro_features_daily",
+        source_dataset="macro_features",
         source_build_id="fixed-k-build",
         data_sha256="d" * 64,
         schema_version=6,
         feature_version=5,
-        source_table="macro_loader.macro_features_daily",
+        source_table="macro_loader.macro_features",
         synced_at_utc=START,
         row_count=len(rows),
         min_timestamp=rows["timestamp_m1"].iloc[0],
@@ -74,7 +74,7 @@ def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
             ordinal,
             schema_name=("regime_engine" if name.startswith("pca_pc_") else "macro_loader"),
             relation_name=(
-                "pca_generated_features" if name.startswith("pca_pc_") else "macro_features_daily"
+                "pca_generated_features" if name.startswith("pca_pc_") else "macro_features"
             ),
             relation_kind=("MATERIALIZED VIEW" if name.startswith("pca_pc_") else "BASE TABLE"),
         )

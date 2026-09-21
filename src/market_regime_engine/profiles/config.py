@@ -70,6 +70,7 @@ from market_regime_engine.feature_discovery.contracts import (
     V4_SOURCE_NAN_INF_POLICY,
     V4_TEMPORARY_PROTOTYPE_METHOD,
 )
+from market_regime_engine.feature_discovery.feature_roles import FeatureSelectionProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +418,7 @@ class ModelProfile:
     gaussian_hmm: GaussianHMMConfig
     gates: EvaluationGates
     feature_discovery: FeatureDiscoveryConfig
+    feature_selection: FeatureSelectionProfile
     pca: PCAConfig
     gmm_hmms: tuple[GMMHMMConfig, ...] = ()
     student_t_hmm: StudentTHMMConfig | None = None

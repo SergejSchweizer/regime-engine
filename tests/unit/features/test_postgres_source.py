@@ -7,7 +7,11 @@ import pytest
 from psycopg import IsolationLevel
 
 from market_regime_engine.contracts import SourceLineage
-from market_regime_engine.features import FeatureRequest, PostgresFeatureSource, SourceMode
+from market_regime_engine.features import (
+    FeatureRequest,
+    MacroFeaturesPostgresSource,
+    SourceMode,
+)
 
 NOW = datetime(2026, 8, 24, tzinfo=UTC)
 
@@ -123,7 +127,7 @@ def test_selection_mode_preserves_nulls_and_snapshot_transaction() -> None:
         [(NOW, 1.0, None), (NOW.replace(day=25), 2.0, 3.0)],
     )
     connection = FakeConnection(cursor)
-    source = PostgresFeatureSource(lambda: connection, ("f1", "f2"))
+    source = MacroFeaturesPostgresSource(lambda: connection, ("f1", "f2"))
     snapshot = source.read(FeatureRequest(("f2", "f1"), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert snapshot.feature_names == ("f2", "f1")
     assert snapshot.rows[0].values == (1.0, None)
@@ -141,7 +145,7 @@ def test_resolved_model_mode_excludes_incomplete_rows_without_fill() -> None:
         [(NOW, 1.0, None), (NOW.replace(day=25), 2.0, 3.0)],
     )
     connection = FakeConnection(cursor)
-    snapshot = PostgresFeatureSource(lambda: connection, ("f1", "f2")).read(
+    snapshot = MacroFeaturesPostgresSource(lambda: connection, ("f1", "f2")).read(
         FeatureRequest(("f1", "f2"), NOW, NOW.replace(day=25), SourceMode.RESOLVED_MODEL)
     )
     assert len(snapshot.rows) == 1
@@ -157,7 +161,7 @@ def test_unregistered_identifier_is_rejected_before_connection() -> None:
         called = True
         raise AssertionError("must not connect")
 
-    source = PostgresFeatureSource(connect, ("f1",))
+    source = MacroFeaturesPostgresSource(connect, ("f1",))
     with pytest.raises(ValueError, match="unregistered"):
         source.read(FeatureRequest(("f1;DROP",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert called is False
@@ -167,7 +171,7 @@ def test_incompatible_source_schema_version_fails_closed() -> None:
     values = list(lineage_row())
     values[2] = 1
     connection = FakeConnection(FakeCursor(tuple(values), []))
-    source = PostgresFeatureSource(lambda: connection, ("f1",))
+    source = MacroFeaturesPostgresSource(lambda: connection, ("f1",))
     with pytest.raises(ValueError, match="schema_version"):
         source.read(FeatureRequest(("f1",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert connection.rolled_back and connection.closed
@@ -180,7 +184,7 @@ def test_nonfinite_and_non_monotonic_rows_fail_closed_and_rollback() -> None:
     ):
         cursor = FakeCursor(lineage_row(), rows)
         connection = FakeConnection(cursor)
-        source = PostgresFeatureSource(lambda connection=connection: connection, ("f1",))
+        source = MacroFeaturesPostgresSource(lambda connection=connection: connection, ("f1",))
         with pytest.raises(ValueError, match=match):
             source.read(FeatureRequest(("f1",), None, None, SourceMode.SCHEMA_DISCOVERY))
         assert connection.rolled_back and connection.closed
@@ -198,9 +202,9 @@ def test_dynamic_catalog_full_and_subset_requests_use_the_expected_columns() -> 
         [(NOW, 1.0, 2.0), (NOW.replace(day=25), 3.0, 4.0)],
     )
     full_connection = FakeConnection(full_cursor)
-    full_catalog, full_snapshot = PostgresFeatureSource(lambda: full_connection).read_with_catalog(
-        FeatureRequest.all_features()
-    )
+    full_catalog, full_snapshot = MacroFeaturesPostgresSource(
+        lambda: full_connection
+    ).read_with_catalog(FeatureRequest.all_features())
     assert full_catalog.feature_names == ("f1", "f2")
     assert full_snapshot.materialized_feature_data_sha256 is not None
     assert (
@@ -210,7 +214,7 @@ def test_dynamic_catalog_full_and_subset_requests_use_the_expected_columns() -> 
 
     subset_cursor = DynamicCatalogCursor(lineage_row(), columns, [(NOW, 2.0)])
     subset_connection = FakeConnection(subset_cursor)
-    subset_catalog, subset_snapshot = PostgresFeatureSource(
+    subset_catalog, subset_snapshot = MacroFeaturesPostgresSource(
         lambda: subset_connection
     ).read_with_catalog(FeatureRequest(("f2",), None, None, SourceMode.SCHEMA_DISCOVERY))
     assert subset_catalog.feature_names == ("f1", "f2")
@@ -255,7 +259,7 @@ def test_dynamic_catalog_full_and_subset_requests_use_the_expected_columns() -> 
 )
 def test_lineage_contract_failures_are_explicit(row: tuple[Any, ...] | None, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        PostgresFeatureSource(lambda: None)._read_lineage(OneRowCursor(row))  # type: ignore[arg-type]
+        MacroFeaturesPostgresSource(lambda: None)._read_lineage(OneRowCursor(row))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -279,7 +283,7 @@ def test_lineage_contract_failures_are_explicit(row: tuple[Any, ...] | None, mes
                 ("timestamp_m1", 1, "timestamp with time zone", "timestamptz"),
                 ("f1", 2, "double precision"),
             ],
-            "column shape",
+            "catalog shape",
         ),
         (
             [
@@ -304,7 +308,7 @@ def test_lineage_contract_failures_are_explicit(row: tuple[Any, ...] | None, mes
         ),
         (
             [("timestamp_m1", 1, "timestamp with time zone", "timestamptz")],
-            "no dynamic Gold feature",
+            "no dynamic feature",
         ),
     ],
 )
@@ -312,7 +316,7 @@ def test_schema_catalog_contract_failures_are_explicit(
     columns: list[tuple[Any, ...]], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        PostgresFeatureSource._read_catalog(  # type: ignore[arg-type]
+        MacroFeaturesPostgresSource._read_catalog(  # type: ignore[arg-type]
             ColumnsCursor(columns),
             SourceLineage(
                 "dataset",
@@ -324,3 +328,24 @@ def test_schema_catalog_contract_failures_are_explicit(
                 NOW,
             ),
         )
+
+
+def test_canonical_macro_features_source_reads_only_materialized_view_catalog() -> None:
+    columns = [
+        ("timestamp_m1", 1, "timestamp with time zone", "timestamptz"),
+        ("f1", 2, "double precision", "float8"),
+    ]
+    cursor = DynamicCatalogCursor(lineage_row(), columns, [(NOW, 1.0)])
+    connection = FakeConnection(cursor)
+
+    catalog, snapshot = MacroFeaturesPostgresSource(lambda: connection).read_with_catalog(
+        FeatureRequest.all_features()
+    )
+
+    assert catalog.feature_names == ("f1",)
+    assert catalog.entries[0].relation_name == "macro_features"
+    assert catalog.entries[0].relation_kind == "MATERIALIZED VIEW"
+    assert snapshot.feature_names == ("f1",)
+    assert cursor.executed[0][1] == ("macro_features",)
+    assert "pg_catalog.pg_class" in str(cursor.executed[1][0])
+    assert cursor.executed[1][1] == ("macro_loader", "macro_features")

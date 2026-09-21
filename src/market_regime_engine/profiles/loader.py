@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from market_regime_engine.feature_discovery.feature_roles import FeatureSelectionProfile
 from market_regime_engine.profiles.config import (
     EvaluationGates,
     FeatureDiscoveryConfig,
@@ -29,6 +30,7 @@ type ProfileDataclass = (
     | StudentTHMMConfig
     | EvaluationGates
     | PCAConfig
+    | FeatureSelectionProfile
 )
 
 
@@ -58,6 +60,7 @@ def _require_mapping(value: Any, field: str) -> Mapping[str, Any]:
 def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     top = _strict_kwargs(ModelProfile, raw)
     feature_discovery_value = top.pop("feature_discovery")
+    feature_selection_raw = _require_mapping(top.pop("feature_selection"), "feature_selection")
     pca_raw = _require_mapping(top.pop("pca"), "pca")
     walk_forward_raw = _require_mapping(top.pop("walk_forward"), "walk_forward")
     gaussian_hmm_raw = _require_mapping(top.pop("gaussian_hmm"), "gaussian_hmm")
@@ -96,6 +99,9 @@ def load_profile_mapping(raw: Mapping[str, Any]) -> ModelProfile:
     return ModelProfile(
         **top,
         feature_discovery=feature_discovery,
+        feature_selection=FeatureSelectionProfile(
+            **_strict_kwargs(FeatureSelectionProfile, feature_selection_raw)
+        ),
         walk_forward=WalkForwardConfig(**_strict_kwargs(WalkForwardConfig, walk_forward_raw)),
         gaussian_hmm=GaussianHMMConfig(**hmm_kwargs),
         gates=EvaluationGates(**_strict_kwargs(EvaluationGates, gates_raw)),

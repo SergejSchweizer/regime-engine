@@ -55,20 +55,20 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
                 "has_schema_privilege(current_user, 'macro_loader', 'USAGE'), "
                 "has_schema_privilege(current_user, 'macro_loader_sync', 'USAGE'), "
                 "has_table_privilege(current_user, "
-                "'macro_loader.macro_features_daily', 'SELECT'), "
+                "'macro_loader.macro_features', 'SELECT'), "
                 "has_table_privilege(current_user, "
                 "'macro_loader_sync.gold_sync_state', 'SELECT'), "
                 "has_schema_privilege(current_user, 'macro_loader', 'CREATE'), "
                 "has_schema_privilege(current_user, 'macro_loader_sync', 'CREATE'), "
                 "has_table_privilege(current_user, "
-                "'macro_loader.macro_features_daily', "
+                "'macro_loader.macro_features', "
                 "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"
                 ", EXISTS ("
                 "SELECT 1 FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "JOIN pg_roles r ON r.oid = c.relowner "
                 "WHERE n.nspname = 'macro_loader' "
-                "AND c.relname = 'macro_features_daily' "
+                "AND c.relname = 'macro_features' "
                 "AND r.rolname = 'macro-loader-owner')"
             )
             privileges = cursor.fetchone()
@@ -82,7 +82,7 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
                 "row_count, min_timestamp, max_timestamp, synced_at_utc "
                 "FROM macro_loader_sync.gold_sync_state "
                 "WHERE dataset_id = %s",
-                ("macro_features_daily",),
+                ("macro_features",),
             )
             lineage = cursor.fetchone()
             assert lineage is not None and len(lineage) == 8
@@ -94,7 +94,7 @@ def test_external_feature_postgres_is_plain_read_only_and_least_privilege() -> N
             assert lineage[5] <= lineage[6]
 
             cursor.execute(
-                "SELECT timestamp_m1 FROM macro_loader.macro_features_daily "
+                "SELECT timestamp_m1 FROM macro_loader.macro_features "
                 "WHERE timestamp_m1 >= %s AND timestamp_m1 <= %s "
                 "ORDER BY timestamp_m1 ASC LIMIT 1",
                 (lineage[5], lineage[6]),

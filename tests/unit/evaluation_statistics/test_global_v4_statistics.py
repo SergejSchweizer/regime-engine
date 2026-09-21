@@ -78,6 +78,28 @@ def test_global_v4_evidence_is_exactly_reproducible_and_finite() -> None:
     assert b"model_binary" not in first.canonical_json()
 
 
+def test_global_v4_evidence_carries_feature_role_and_profile_identity() -> None:
+    groups = evidence_groups()
+    groups["feature_selection_contract"] = {
+        "feature_role_contract_hash": HASH,
+        "feature_selection_profile_hash": HASH,
+    }
+    payload = GlobalV4Evidence(
+        source_build_id="build-1",
+        source_data_hash=HASH,
+        catalog_hash=HASH,
+        profile_hash=HASH,
+        repository_hash=HASH,
+        outer_plan_hash=HASH,
+        evidence=groups,
+        feature_role_contract_hash=HASH,
+        feature_selection_profile_hash=HASH,
+    )
+    encoded = payload.canonical_json()
+    assert b"feature_role_contract_hash" in encoded
+    assert b"feature_selection_profile_hash" in encoded
+
+
 def test_global_v4_evidence_requires_complete_known_groups_and_safe_values() -> None:
     complete = evidence_groups()
     complete.pop("stability")

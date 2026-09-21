@@ -35,9 +35,12 @@ from market_regime_engine.evaluations.global_regime_v4 import (
     evaluate_global_regime_v4_from_source,
 )
 from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
+from market_regime_engine.feature_discovery.feature_roles import (
+    build_feature_role_contract_from_catalog,
+)
 from market_regime_engine.features.ports import FeatureRequest, FeatureSnapshot
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
-from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
 from market_regime_engine.mlflow_support.evaluation_tracking import (
     build_global_v4_evidence,
     track_global_v4_evaluation,
@@ -59,15 +62,15 @@ from market_regime_engine.training.final_refit import final_production_refit
 
 
 class _RecordingSource:
-    def __init__(self, source: PostgresFeatureSource) -> None:
+    def __init__(self, source: MacroFeaturesPostgresSource) -> None:
         self._source = source
         self.catalog: Any | None = None
         self.snapshot: FeatureSnapshot | None = None
 
-    def read_schema_wide_with_catalog(self, request: FeatureRequest) -> Any:
+    def read_with_catalog(self, request: FeatureRequest) -> Any:
         if self.catalog is not None and self.snapshot is not None:
             return self.catalog, self.snapshot
-        catalog, snapshot = self._source.read_schema_wide_with_catalog(request)
+        catalog, snapshot = self._source.read_with_catalog(request)
         self.catalog = catalog
         self.snapshot = snapshot
         return catalog, snapshot
@@ -145,14 +148,14 @@ class V4LifecycleBackend:
         self.root = Path(os.environ.get("REGIME_ENGINE_ROOT", Path(__file__).resolve().parents[3]))
         self.state_root = _configured_state_root(self.root) / "xetra"
         self.profile = load_profile(self.root / "configs/profiles/xetra_v4.yaml")
-        self._source: PostgresFeatureSource | None = None
+        self._source: MacroFeaturesPostgresSource | None = None
         self.mlflow_settings = MLflowSettings.from_environment()
 
     @property
-    def source(self) -> PostgresFeatureSource:
+    def source(self) -> MacroFeaturesPostgresSource:
         if self._source is None:
             settings = FeaturePostgresSettings.from_env(os.environ)
-            self._source = PostgresFeatureSource(
+            self._source = MacroFeaturesPostgresSource(
                 lambda: cast(Any, psycopg.connect(**cast(Any, settings.connection_kwargs())))
             )
         return self._source
@@ -179,7 +182,7 @@ class V4LifecycleBackend:
 
     def _capture_source(self) -> tuple[Any, FeatureSnapshot]:
         recording = _RecordingSource(self.source)
-        recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
+        recording.read_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = recording.catalog, recording.snapshot
@@ -246,7 +249,7 @@ class V4LifecycleBackend:
                 ),
             )
         recording = _RecordingSource(self.source)
-        recording.read_schema_wide_with_catalog(FeatureRequest.all_features())
+        recording.read_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = self._capture_source()
@@ -274,6 +277,7 @@ class V4LifecycleBackend:
             profile=self.profile,
             selections=selections,
             repository_commit_sha=_commit(self.root),
+            feature_role_contract=build_feature_role_contract_from_catalog(catalog),
         )
         track_global_v4_evaluation(
             FileMlflowTrackingPort(

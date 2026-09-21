@@ -68,28 +68,34 @@ PR-448
 
 ### Current repository and external state
 
-- `origin/main` is `026b3a2`; local working branch is
-  `pr/PR-453-evaluation-invalidity-boundary`, based on it.
+- `origin/main` is `9165249`; local working branch is
+  `pr/PR-476-feature-role-selection-contract` at the current pushed `HEAD`;
+  the working tree is clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
 - The authorized full evaluation was attempted on 2026-09-20 and stopped
-  before HMM/PCA/MLflow writes because NAS PostgreSQL has no
-  `macro_loader_sync.gold_sync_state` relation; read-only login as
-  `macro-loader` succeeds, but `macro_loader` and `macro_loader_sync` expose
-  no tables. NAS MLflow health is `OK` and no `regime-xetra` model exists.
-- No production PostgreSQL, MLflow, model, registry or alias mutation has been
-  performed. Full evaluation remains externally blocked until the source
-  schema is provisioned and its lineage is revalidated.
+  before HMM/PCA/MLflow writes because the canonical NAS source was then
+  unavailable. The source is now reachable read-only as `macro-loader`, exposes
+  the canonical 168-column materialized view, and has a verified
+  `dataset_id='macro_features'` lineage row (4,426 rows, 2010-01-01 through
+  2026-09-18, schema version 6, feature version 5). NAS MLflow health is `OK`
+  and no `regime-xetra` model exists.
+- An authorized NAS PostgreSQL metadata INSERT published the missing canonical
+  lineage row; the existing `macro_features_daily` row was not changed. No
+  MLflow, model, registry or alias mutation has been performed. The full
+  evaluation remains intentionally not run until the remaining HMM-ablation and
+  QA/provenance acceptance criteria are complete.
 - PR-449 is merged as GitHub PR #448 at `56885cb`; PR-450 is merged as
   GitHub PR #449 at `b0856c7`; PR-451 is merged as GitHub PR #450 at
   `758c5a7`; PR-452 is merged as GitHub PR #451 at `026b3a2`. Their
   implementation branches are retained
   only as rebased pointers to `origin/main` for the current branch-retention
   policy.
-- **Current active implementation:** PR-453 is branch
-  `pr/PR-453-evaluation-invalidity-boundary`; focused unit tests are green
-  locally. Full evaluation is intentionally not run.
+- **Current active implementation:** PR-476 is GitHub PR #456 on branch
+  `pr/PR-476-feature-role-selection-contract`; GitHub Git-Policy, Lint, Type,
+  Unit and Merge-Gate checks are green. Full evaluation is intentionally not
+  run.
 
 ---
 
@@ -299,7 +305,7 @@ month is never used as TEST evidence.
 
 ### PR-508 — QA: month-boundary, leakage and live-cadence clock matrix
 
-**Status:** QA COMPLETE LOCALLY — branch `pr/PR-508-calendar-month-qa`; 968 unit tests, Ruff, Mypy and targeted PR-508 QA green; GitHub PR pending
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #455 at `9165249`; PR branch rebased to `origin/main` and deleted; 968 unit tests, Ruff, Mypy and targeted PR-508 QA green; full evaluation not run
 
 **Branch:** `pr/PR-508-calendar-month-qa`
 
@@ -388,6 +394,28 @@ pruning so PCA still receives economically meaningful within-family covariance s
 
 ### PR-476 — Define canonical feature roles and the scalable selection contract
 
+**Status:** IMPLEMENTATION COMPLETE — branch `pr/PR-476-feature-role-selection-contract` is at the current pushed `HEAD` with a clean working tree; GitHub PR #456 remains open pending final merge after the green gates. The canonical role/family module is publicly exported, validates the complete temporal/core catalog identity, and includes fail-closed stage boundaries for quality, family PCA, correlation, SFFS, and HMM inputs. Deterministic TRAIN-only family near-duplicate reduction, family-local standardization/PCA, global stable absolute-Pearson redundancy pruning, capped dimension-independent SFFS, one-feature-at-a-time ablation, explicit role/profile evidence metadata, a sequential composition pipeline, and `build_feature_role_contract_from_catalog()` for discovered source catalogs are implemented; PCA retains the first non-zero-rank components up to eight and stores explained variance diagnostically only. The current read-only NAS catalog contains 168 `macro_loader.macro_features` columns (20 CORE, 147 transformations, 1 temporal key), and the repository role contract classifies all 167 non-temporal columns across all 13 families. Its canonical lineage row is now published and independently verified: source build `20260920T080048Z`, 4,426 rows, schema version 6, feature version 5, and bounds 2010-01-01 through 2026-09-18. The production composition and one-step evaluation script now instantiate the sole `macro_features` materialized-view adapter; schema-wide relation enumeration, `PostgresFeatureSource`, compatibility aliases, caller-selected schemas and legacy `macro_features_daily` test identities were removed. The source contract is `read_with_catalog()` only and rejects raw-source substitution. Global V4 evidence and MLflow parent/fold model dossiers now carry the role-contract and selection-profile hashes when the canonical catalog path is used. The pipeline runs quality boundary → family reduction → family PCA → global redundancy → SFFS → HMM-backed ablation without TEST inputs; final ablation requires same-contract/model fresh-fit SHA-256 evidence and rejects reused fits. Hermetic role-contract QA now covers all 13 families, canonical defaults, forbidden policies and fail-closed mutation paths. Eager heavy-module exports were removed from the package initializer to keep multiprocessing spawn imports hermetic. Full unit tests (1002), Ruff and Mypy pass; six affected HMM/source integration tests pass in 8:31 with 24 workers. No full evaluation has run. Production K-slot HMM integration remains intentionally assigned to PR-490 and is not a PR-476 acceptance criterion.
+
+**Branch:** `pr/PR-476-feature-role-selection-contract`
+
+**Acceptance note:** Runtime source-universe integration, raw-source exclusion in the canonical
+adapter, and role/profile hash transport into fold/model evidence are implemented and tested.
+HMM-backed ablation and independent QA/provenance proofs remain open for the subsequent PR-490
+and QA work; the PR-476 statistical stage contracts marked below are implemented and tested.
+Production HMM
+ablation is intentionally not wired to a surrogate valid-fold-rate score: it must consume the
+canonical `feature_subset_score.v1` contract introduced by PR-490, otherwise the implementation
+would silently violate the dimension-independent SFFS semantics.
+
+**External source audit:** read-only login as `macro-loader` succeeds against database
+`macro_loader`; `macro_loader.macro_features` is a materialized view with 168 columns and
+`macro-loader` has `SELECT` but no write privilege. `macro_loader_sync.gold_sync_state` now
+contains the canonical `dataset_id='macro_features'` row with the matching current view
+fingerprint (`4ceea44bd95232abd972b4af6f12dbc037f01a82cd6a6c04943e2136e614ba76`) and bounds;
+the real `MacroFeaturesPostgresSource` read reproduced 167 catalog entries and 4,426 rows with
+the same digest. The legacy `macro_features_daily` row remains present but is never used as a
+fallback. `scripts/verify_feature_postgres.sh` passes 1/1.
+
 **Type:** contract / configuration
 **Depends on:** PR-508
 
@@ -474,43 +502,43 @@ closed and requires an explicit contract update.
 
 #### Acceptance
 
-- [ ] Introduce one versioned feature-selection profile for the pipeline defined above.
-- [ ] Encode the exact 20 CORE identities above in one canonical role contract; there is no second
+- [x] Introduce one versioned feature-selection profile for the pipeline defined above.
+- [x] Encode the exact 20 CORE identities above in one canonical role contract; there is no second
   core allowlist elsewhere in the codebase.
-- [ ] Classify `timestamp_m1` as temporal key only and prove it can never enter quality ranking,
+- [x] Classify `timestamp_m1` as temporal key only and prove it can never enter quality ranking,
   family PCA, correlation candidates, SFFS or an HMM observation vector.
-- [ ] Classify every currently catalogued non-core feature in `macro_loader.macro_features` as a
+- [x] Classify every currently catalogued non-core feature in `macro_loader.macro_features` as a
   TRANSFORMATION assigned to exactly one of the 13 source families above.
-- [ ] Explicitly classify `usd_broad_log_return_20obs` as a USD_BROAD transformation, not as CORE.
-- [ ] Treat all `*_delta_*`, `*_zscore_*`, `*_momentum_autocorr_*` and
+- [x] Explicitly classify `usd_broad_log_return_20obs` as a USD_BROAD transformation, not as CORE.
+- [x] Treat all `*_delta_*`, `*_zscore_*`, `*_momentum_autocorr_*` and
   `*_return_geom_*` columns in the current view as transformations, never direct HMM candidates.
-- [ ] Do not read or substitute unchanged raw source levels from `macro_loader.macro_raw`; the
+- [x] Do not read or substitute unchanged raw source levels from `macro_loader.macro_raw`; the
   canonical current-state level inputs are the 13 log-level columns listed above.
-- [ ] Role classification is semantic only and does not waive later TRAIN-only finite/coverage/
+- [x] Role classification is semantic only and does not waive later TRAIN-only finite/coverage/
   variance validation; in particular, no assumption about how an upstream log-level was constructed
   is invented by regime-engine.
-- [ ] Persist the exact canonical defaults listed above, including the 0.995/0.99 family
+- [x] Persist the exact canonical defaults listed above, including the 0.995/0.99 family
   near-duplicate thresholds; no hidden environment-specific threshold changes are allowed.
-- [ ] Core features are direct HMM candidates and never forced through PCA.
-- [ ] Generated transformation features may reach the HMM only through a family PC.
-- [ ] Family near-duplicate pruning occurs before family PCA and may remove only direct stable
+- [x] Core features are direct HMM candidates and never forced through PCA.
+- [x] Generated transformation features may reach the HMM only through a family PC.
+- [x] Family near-duplicate pruning occurs before family PCA and may remove only direct stable
   near-duplicates under the canonical 0.995/0.99 rule.
-- [ ] Family PCA retains at most the first 8 non-zero-rank PCs; explained variance is diagnostic
+- [x] Family PCA retains at most the first 8 non-zero-rank PCs; explained variance is diagnostic
   only and never decides the retained count.
-- [ ] Global correlation pruning operates only on quality-eligible core features plus retained
+- [x] Global correlation pruning operates only on quality-eligible core features plus retained
   family PCs.
-- [ ] Correlation pruning uses absolute Pearson correlation and the full-TRAIN plus three-subwindow
+- [x] Correlation pruning uses absolute Pearson correlation and the full-TRAIN plus three-subwindow
   stability rule defined above.
-- [ ] Correlation pruning is explicitly redundancy-only; no target, HMM score, likelihood, AIC,
+- [x] Correlation pruning is explicitly redundancy-only; no target, HMM score, likelihood, AIC,
   BIC, future return or semantic label may influence representative choice.
-- [ ] SFFS has a hard cap of 10 final features per configured K and starts from the best eligible
+- [x] SFFS has a hard cap of 10 final features per configured K and starts from the best eligible
   singleton under the canonical feature-subset score.
-- [ ] SFFS compares different feature dimensions only with a dimension-independent score; raw
+- [x] SFFS compares different feature dimensions only with a dimension-independent score; raw
   HMM likelihood, AIC and BIC comparisons across dimensions are forbidden.
-- [ ] Final ablation removes exactly one selected feature at a time and refits/re-evaluates the
+- [x] Final ablation removes exactly one selected feature at a time and refits/re-evaluates the
   same HMM selector contract.
-- [ ] Outer TEST is evaluation-only and never influences any feature-selection step.
-- [ ] The complete feature-role/family contract and feature-selection profile hash are part of
+- [x] Outer TEST is evaluation-only and never influences any feature-selection step.
+- [x] The complete feature-role/family contract and feature-selection profile hash are part of
   fold/model evidence.
 
 ### PR-477 — QA: static feature-role and selection-contract consistency
@@ -518,28 +546,33 @@ closed and requires an explicit contract update.
 **Type:** QA only
 **Depends on:** PR-476
 
+**Status:** ACCEPTANCE COMPLETE — QA implementation is present in PR-476 and covered by hermetic
+unit tests. The current NAS catalog inventory was verified read-only: 168 columns total (20 CORE,
+147 transformations, and 1 temporal key), with all 13 transformation families represented. No
+production behavior was changed.
+
 #### Acceptance
 
-- [ ] Assert the CORE set contains exactly the 20 identities declared by PR-476 and no additional
+- [x] Assert the CORE set contains exactly the 20 identities declared by PR-476 and no additional
   column.
-- [ ] Assert `timestamp_m1` has only the temporal-key role.
-- [ ] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
+- [x] Assert `timestamp_m1` has only the temporal-key role.
+- [x] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
   `usd_broad_log_return_20obs` feature is a transformation in exactly one of the 13 families.
-- [ ] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
+- [x] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
   temporal-key, CORE or TRANSFORMATION classification with no overlap.
-- [ ] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
+- [x] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
   or an arbitrary family.
-- [ ] Mutation of a role, family, CORE identity or canonical default changes the profile hash.
-- [ ] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
+- [x] Mutation of a role, family, CORE identity or canonical default changes the profile hash.
+- [x] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
   8 PCA components, 0.95/0.90 global-correlation thresholds, three subwindows, 30/10 support minima
   and the 10-feature SFFS cap.
-- [ ] Reject a profile that routes a generated transformation directly to the HMM.
-- [ ] Reject a profile that forces all core features through PCA.
-- [ ] Reject Spearman, signed-only correlation or target-aware representative selection.
-- [ ] Reject explained-variance-driven PC-count selection.
-- [ ] Reject raw PLL/AIC/BIC as a cross-dimension SFFS objective.
-- [ ] Prove Outer-TEST access is absent from the feature-selection contract.
-- [ ] QA is hermetic and changes no production behavior.
+- [x] Reject a profile that routes a generated transformation directly to the HMM.
+- [x] Reject a profile that forces all core features through PCA.
+- [x] Reject Spearman, signed-only correlation or target-aware representative selection.
+- [x] Reject explained-variance-driven PC-count selection.
+- [x] Reject raw PLL/AIC/BIC as a cross-dimension SFFS objective.
+- [x] Prove Outer-TEST access is absent from the feature-selection contract.
+- [x] QA is hermetic and changes no production behavior.
 
 ### PR-509 — Cut the canonical feature source over to macro_loader.macro_features
 
@@ -992,6 +1025,14 @@ The input universe is exactly quality-eligible core features plus family PCs.
 
 **Type:** implementation / feature subset search
 **Depends on:** PR-489
+
+**Current implementation note:** the immutable `feature_subset_score.v1` data contract and pure
+scoring/ranking implementation now exist on the pushed PR-476 branch and are covered by 8 focused
+unit tests plus the 154-test feature-discovery/source regression slice. The SFFS coordinator now
+uses the existing GIL-independent process pool for pickle-safe score evaluators, with deterministic
+serial fallback for non-pickleable test callbacks. Production HMM fitting, end-to-end K-slot wiring,
+and `sffs_steps` persistence remain open; this contract is therefore not counted as PR-490
+acceptance completion.
 
 #### Acceptance
 
