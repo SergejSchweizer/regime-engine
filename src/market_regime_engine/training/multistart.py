@@ -9,8 +9,10 @@ from concurrent.futures import as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
+import numpy as np
 import numpy.typing as npt
 
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
@@ -19,6 +21,7 @@ from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedT
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
+from market_regime_engine.runtime.parallel import ReadOnlyMatrix
 
 if TYPE_CHECKING:
     from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
@@ -88,7 +91,9 @@ AdapterFactory = Callable[[], GaussianHMMAdapter]
 
 @dataclass(frozen=True, slots=True)
 class _FrontierStartPayload:
-    train_rows: npt.ArrayLike
+    matrix_path: str
+    matrix_shape: tuple[int, int]
+    matrix_dtype: str
     state_count: int
     adapter_factory: AdapterFactory
     seed: int
@@ -151,13 +156,23 @@ def _evaluate_start_in_frontier(
     task: FrontierTask[_FrontierStartPayload],
 ) -> tuple[StartDiagnostic, FitResult | None]:
     payload = task.payload
-    return _evaluate_start(
-        payload.train_rows,
-        state_count=payload.state_count,
-        adapter_factory=payload.adapter_factory,
-        seed=payload.seed,
-        retryable_technical_failure=payload.retryable_technical_failure,
+    mapped = np.memmap(
+        payload.matrix_path,
+        dtype=np.dtype(payload.matrix_dtype),
+        mode="r",
+        shape=payload.matrix_shape,
     )
+    mapped.flags.writeable = False
+    try:
+        return _evaluate_start(
+            mapped,
+            state_count=payload.state_count,
+            adapter_factory=payload.adapter_factory,
+            seed=payload.seed,
+            retryable_technical_failure=payload.retryable_technical_failure,
+        )
+    finally:
+        del mapped
 
 
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
@@ -229,32 +244,42 @@ def run_multistart(
         pending_worker_limit = min(worker_limit, len(pending_seeds))
         save_results_in_parent = False
         if frontier is not None:
-            frontier_tasks = tuple(
-                FrontierTask(
-                    task_id=f"multistart:{state_count}:{seed}",
-                    state_count=state_count,
-                    fold_id="multistart",
-                    candidate_subset=(f"seed:{seed}",),
-                    seed=index,
-                    profile_hash="0" * 64,
-                    matrix_identity="multistart-train-matrix",
-                    row_indices=(0,),
-                    column_indices=(0,),
-                    payload=_FrontierStartPayload(
-                        train_rows,
-                        state_count,
-                        adapter_factory,
-                        seed,
-                        checkpoint is not None,
-                    ),
+            matrix = np.ascontiguousarray(np.asarray(train_rows))
+            if matrix.ndim != 2:
+                raise ValueError("multistart train_rows must be a two-dimensional numeric matrix")
+            with (
+                TemporaryDirectory(prefix="regime-multistart-") as matrix_directory,
+                ReadOnlyMatrix.create(matrix, matrix_directory) as shared_matrix,
+            ):
+                frontier_tasks = tuple(
+                    FrontierTask(
+                        task_id=f"multistart:{state_count}:{seed}",
+                        state_count=state_count,
+                        fold_id="multistart",
+                        candidate_subset=(f"seed:{seed}",),
+                        seed=index,
+                        profile_hash="0" * 64,
+                        matrix_identity=shared_matrix.identity,
+                        row_indices=(0, matrix.shape[0] - 1),
+                        column_indices=(0, matrix.shape[1] - 1),
+                        payload=_FrontierStartPayload(
+                            str(shared_matrix.path),
+                            (int(matrix.shape[0]), int(matrix.shape[1])),
+                            matrix.dtype.str,
+                            state_count,
+                            adapter_factory,
+                            seed,
+                            checkpoint is not None,
+                        ),
+                    )
+                    for index, seed in enumerate(pending_seeds)
                 )
-                for index, seed in enumerate(pending_seeds)
-            )
-            frontier_result = frontier.map(frontier_tasks, _evaluate_start_in_frontier)
-            by_task_id = {task.task_id: item for task, item in frontier_result.values}
-            pending_results = {
-                seed: by_task_id[f"multistart:{state_count}:{seed}"] for seed in pending_seeds
-            }
+                frontier_result = frontier.map(frontier_tasks, _evaluate_start_in_frontier)
+                by_task_id = {task.task_id: item for task, item in frontier_result.values}
+                pending_results = {
+                    seed: by_task_id[f"multistart:{state_count}:{seed}"]
+                    for seed in pending_seeds
+                }
             if checkpoint is not None:
                 from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
 

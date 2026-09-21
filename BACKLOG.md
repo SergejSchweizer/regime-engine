@@ -1211,9 +1211,11 @@ independence, fail-fast worker errors and queue/runnable/utilization metrics. K-
 reuses one caller-owned frontier across all K slots and SFFS steps, and the canonical selection
 pipeline reuses that same frontier for final ablation when both evaluator seams are pickleable.
 Multistart and walk-forward now accept the same caller-owned frontier; parallel fold workers no
-longer attempt nested multistart pools. Frontier results are restored to submission identity
-before coordinator aggregation. Automatic parent-level fold/multistart flattening, inner-fold
-task decomposition and real matrix-memmap task wiring remain open. No full evaluation was run.
+longer attempt nested multistart pools. Multistart frontier tasks open one immutable memmapped
+TRAIN matrix per batch and carry only its path/shape/dtype identity. Frontier results are restored
+to submission identity before coordinator aggregation. Automatic parent-level fold/multistart
+flattening, inner-fold task decomposition and candidate-scoring matrix wiring remain open. No
+full evaluation was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
