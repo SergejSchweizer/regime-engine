@@ -1218,9 +1218,11 @@ to submission identity before coordinator aggregation; the frontier submits only
 in-flight window and replenishes it as workers finish. A batch API now flattens all jobs' eight
 seeds into one frontier and aggregates each job canonically. The canonical provisional-teacher
 candidate coordinator now owns one Frontier across all K candidates; each candidate batches its
-inner folds and eight seeds through that same pool, and the old candidate-local process-pool path
-is removed. Full feature-subset/SFFS candidate scoring integration and candidate-scoring matrix
-wiring remain open. No full evaluation was run.
+  inner folds and eight seeds through that same pool, and the old candidate-local process-pool path
+  is removed. The production provisional-teacher path is therefore flattened through
+  `candidate × inner-fold × seed`; the canonical SFFS API still accepts a generic completed-score
+  callback, so mandatory fit-evidence aggregation for feature-subset candidates and its matrix
+  wiring remain open. No full evaluation was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
