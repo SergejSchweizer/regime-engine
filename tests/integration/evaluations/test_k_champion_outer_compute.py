@@ -124,9 +124,7 @@ def _catalog(rows: pd.DataFrame) -> FeatureCatalogSnapshot:
             ordinal,
             schema_name="macro_loader" if not name.startswith("pca_pc_") else "regime_engine",
             relation_name=(
-                "macro_features"
-                if not name.startswith("pca_pc_")
-                else "pca_generated_features"
+                "macro_features" if not name.startswith("pca_pc_") else "pca_generated_features"
             ),
             relation_kind="BASE TABLE" if not name.startswith("pca_pc_") else "MATERIALIZED VIEW",
         )

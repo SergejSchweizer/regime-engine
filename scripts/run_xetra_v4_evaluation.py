@@ -465,9 +465,7 @@ def _run(performance: PerformanceRecorder) -> None:
         assert source is not None
         audit_request_evidence = _source_request_evidence(FeatureRequest.all_features())
         with performance.stage("postgres_audit", worker_count=1, task_count=1):
-            audit_catalog, audit_snapshot = source.read_with_catalog(
-                FeatureRequest.all_features()
-            )
+            audit_catalog, audit_snapshot = source.read_with_catalog(FeatureRequest.all_features())
         audit_source_identity = (
             audit_catalog.lineage.source_build_id,
             audit_catalog.lineage.data_sha256,
