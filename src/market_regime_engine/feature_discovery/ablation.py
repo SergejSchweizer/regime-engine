@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.feature_discovery.sffs import (
     FeatureSubsetScore,
     _canonical_subset,
 )
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 
 def _require_text(value: str, field: str) -> None:
@@ -26,19 +29,23 @@ def _require_sha256(value: str, field: str) -> None:
 class AblationObservation:
     removed_feature: str | None
     remaining_features: tuple[str, ...]
-    score: FeatureSubsetScore
+    score: FeatureSubsetScore | None
     hmm_evaluation: HMMSubsetEvaluation
+    ablation_loss: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class HMMSubsetEvaluation:
     """Evidence returned by one fresh HMM fit for one feature tuple."""
 
-    score: FeatureSubsetScore
+    score: FeatureSubsetScore | None
     model_family: str
     state_count: int
     selector_contract_hash: str
     fit_execution_hash: str
+    evaluation_plan_hash: str | None = None
+    seed_identity: str | None = None
+    invalid_reason: str | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.model_family, "model_family")
@@ -46,6 +53,16 @@ class HMMSubsetEvaluation:
             raise ValueError("HMM ablation state_count must be at least two")
         _require_sha256(self.selector_contract_hash, "selector_contract_hash")
         _require_sha256(self.fit_execution_hash, "fit_execution_hash")
+        for value, field in (
+            (self.evaluation_plan_hash, "evaluation_plan_hash"),
+            (self.seed_identity, "seed_identity"),
+        ):
+            if value is not None:
+                _require_sha256(value, field)
+        if self.score is None:
+            _require_text(self.invalid_reason or "", "invalid_reason")
+        elif self.invalid_reason is not None:
+            raise ValueError("valid HMM ablations cannot carry an invalid reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +90,10 @@ class AblationResult:
             *(item.hmm_evaluation.fit_execution_hash for item in self.one_feature_results),
         )
 
+    @property
+    def ablation_losses(self) -> tuple[float | None, ...]:
+        return tuple(item.ablation_loss for item in self.one_feature_results)
+
     def __post_init__(self) -> None:
         expected = tuple(
             item for item in self.selected_features if item not in {self.baseline.removed_feature}
@@ -98,11 +119,19 @@ SubsetEvaluator = Callable[[tuple[str, ...]], FeatureSubsetScore | None]
 HMMSubsetEvaluator = Callable[[tuple[str, ...]], HMMSubsetEvaluation | None]
 
 
+def _evaluate_ablation_in_process(
+    task: tuple[HMMSubsetEvaluator, tuple[str, ...]],
+) -> HMMSubsetEvaluation | None:
+    evaluate, features = task
+    return evaluate(features)
+
+
 def run_one_feature_hmm_ablation(
     selected_features: tuple[str, ...],
     evaluate: HMMSubsetEvaluator,
     *,
     selector_contract_hash: str,
+    max_workers: int | None = None,
 ) -> AblationResult:
     """Refit and evaluate the baseline and every one-feature removal.
 
@@ -122,7 +151,7 @@ def run_one_feature_hmm_ablation(
     ) -> HMMSubsetEvaluation:
         if result is None:
             raise ValueError("ablation subset must be eligible under the HMM selector contract")
-        if result.score.feature_names != features:
+        if result.score is not None and result.score.feature_names != features:
             raise ValueError("HMM ablation score must identify exactly the evaluated tuple")
         if result.selector_contract_hash != selector_contract_hash:
             raise ValueError("HMM ablation changed the selector contract")
@@ -131,12 +160,20 @@ def run_one_feature_hmm_ablation(
             or result.state_count != baseline.state_count
         ):
             raise ValueError("HMM ablation changed the model selector")
+        if baseline is not None:
+            for field in ("evaluation_plan_hash", "seed_identity"):
+                expected = getattr(baseline, field)
+                actual = getattr(result, field)
+                if expected is not None and actual != expected:
+                    raise ValueError(f"ablation changed the {field}")
         return result
 
     baseline_evaluation = evaluate(selected)
     if baseline_evaluation is None:
         raise ValueError("ablation baseline must be eligible under the same selector contract")
     baseline_evaluation = validate_evaluation(selected, baseline_evaluation)
+    if baseline_evaluation.score is None:
+        raise ValueError("ablation baseline must be eligible under the same selector contract")
     baseline = AblationObservation(
         None,
         selected,
@@ -145,19 +182,38 @@ def run_one_feature_hmm_ablation(
     )
     results: list[AblationObservation] = []
     fit_hashes = {baseline_evaluation.fit_execution_hash}
-    for feature in selected:
-        remaining = tuple(item for item in selected if item != feature)
-        if not remaining:
-            raise ValueError("ablation requires a selected tuple with at least two features")
-        evaluation = validate_evaluation(
-            remaining,
-            evaluate(remaining),
-            baseline=baseline_evaluation,
-        )
+    removal_tasks = tuple(
+        (feature, tuple(item for item in selected if item != feature)) for feature in selected
+    )
+    if any(not remaining for _, remaining in removal_tasks):
+        raise ValueError("ablation requires a selected tuple with at least two features")
+    parallel = (
+        max_workers != 1
+        and os.environ.get("REGIME_CPU_PROCESS_WORKER") != "1"
+        and is_pickleable(evaluate)
+    )
+    worker_limit = cpu_worker_count(max_workers, task_count=len(removal_tasks)) if parallel else 1
+    if worker_limit > 1:
+        with cpu_process_pool(worker_limit) as executor:
+            evaluated_removals = tuple(
+                executor.map(
+                    _evaluate_ablation_in_process,
+                    tuple((evaluate, remaining) for _, remaining in removal_tasks),
+                )
+            )
+    else:
+        evaluated_removals = tuple(evaluate(remaining) for _, remaining in removal_tasks)
+    for (feature, remaining), raw_evaluation in zip(removal_tasks, evaluated_removals, strict=True):
+        evaluation = validate_evaluation(remaining, raw_evaluation, baseline=baseline_evaluation)
         if evaluation.fit_execution_hash in fit_hashes:
             raise ValueError("each HMM ablation tuple must be refit independently")
         fit_hashes.add(evaluation.fit_execution_hash)
-        results.append(AblationObservation(feature, remaining, evaluation.score, evaluation))
+        loss = (
+            None
+            if evaluation.score is None
+            else baseline_evaluation.score.value - evaluation.score.value
+        )
+        results.append(AblationObservation(feature, remaining, evaluation.score, evaluation, loss))
     return AblationResult(selected, baseline, tuple(results))
 
 
