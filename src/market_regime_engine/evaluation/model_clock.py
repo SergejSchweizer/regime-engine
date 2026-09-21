@@ -9,6 +9,10 @@ from typing import Literal
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.calendar_clock import (
+    MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    CalendarMonthPlan,
+)
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.feature_discovery.contracts import (
     MIN_FEATURE_VARIANCE,
@@ -30,6 +34,12 @@ def _utc(value: object, field: str) -> datetime:
         or value.utcoffset() != UTC.utcoffset(value)
     ):
         raise ValueError(f"{field} must be timezone-aware UTC")
+    return value
+
+
+def _aware(value: object, field: str) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field} must be timezone-aware")
     return value
 
 
@@ -233,6 +243,137 @@ def build_model_clock_preflight(
     )
 
 
+def build_calendar_model_clock_preflight(
+    source_rows: pd.DataFrame,
+    feature_order: tuple[str, ...],
+    plan: CalendarMonthPlan,
+    *,
+    minimum_model_train_observations: int = MIN_MODEL_TRAIN_OBSERVATIONS,
+    minimum_model_test_observations: int = MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    minimum_valid_fold_rate: float = 0.80,
+) -> ModelClockPreflight:
+    """Run the same complete-case gates against the canonical monthly plan."""
+
+    if not isinstance(source_rows, pd.DataFrame):
+        raise TypeError("source_rows must be a pandas DataFrame")
+    if not isinstance(plan, CalendarMonthPlan):
+        raise TypeError("plan must be a CalendarMonthPlan")
+    _validate_feature_order(feature_order)
+    _validate_thresholds(
+        minimum_model_train_observations,
+        minimum_model_test_observations,
+        minimum_valid_fold_rate,
+    )
+    if not plan.folds:
+        raise ValueError("monthly model-clock preflight requires at least one planned fold")
+    required = (_TIMESTAMP_COLUMN, *feature_order)
+    missing = tuple(column for column in required if column not in source_rows.columns)
+    if missing:
+        raise ValueError(f"source rows are missing required columns: {missing}")
+    timestamps = tuple(_aware(value, _TIMESTAMP_COLUMN) for value in source_rows[_TIMESTAMP_COLUMN])
+    if any(current <= previous for previous, current in pairwise(timestamps)):
+        raise ValueError("source timestamps must be strictly increasing and unique")
+    try:
+        values = source_rows.loc[:, list(feature_order)].to_numpy(dtype=np.float64, copy=True)
+    except (TypeError, ValueError) as error:
+        raise ValueError("model-clock feature rows must be numeric") from error
+    complete = source_rows.loc[:, list(feature_order)].notna().all(axis=1).to_numpy(dtype=bool)
+    complete &= np.isfinite(values).all(axis=1)
+
+    fold_evidence: list[ModelClockFold] = []
+    first_train_count: int | None = None
+    first_train_variances: tuple[tuple[str, float], ...] | None = None
+    for fold_index, fold in enumerate(plan.folds):
+        train_indices = tuple(
+            index
+            for index, timestamp in enumerate(timestamps)
+            if timestamp <= fold.train_cutoff_timestamp
+        )
+        test_indices = tuple(
+            index
+            for index, timestamp in enumerate(timestamps)
+            if fold.test_first_timestamp <= timestamp <= fold.test_last_timestamp
+        )
+        if (
+            len(train_indices) != fold.train_source_observations
+            or len(test_indices) != fold.test_source_observations
+        ):
+            raise ValueError(f"{fold.fold_id} monthly source-row counts do not reconcile")
+        if not train_indices or not test_indices:
+            raise ValueError(f"{fold.fold_id} monthly source windows cannot be empty")
+        if (
+            timestamps[train_indices[0]] != fold.train_first_timestamp
+            or timestamps[train_indices[-1]] != fold.train_cutoff_timestamp
+        ):
+            raise ValueError(f"{fold.fold_id} TRAIN timestamps do not reconcile")
+        if (
+            timestamps[test_indices[0]] != fold.test_first_timestamp
+            or timestamps[test_indices[-1]] != fold.test_last_timestamp
+        ):
+            raise ValueError(f"{fold.fold_id} TEST timestamps do not reconcile")
+        train_count = int(sum(complete[index] for index in train_indices))
+        test_count = int(sum(complete[index] for index in test_indices))
+        if fold_index == 0:
+            first_train_count, first_train_variances = _first_train_variances(
+                values, complete, train_indices, feature_order
+            )
+        reasons: list[str] = []
+        if train_count < minimum_model_train_observations:
+            reasons.append(
+                f"TRAIN complete observations {train_count} below "
+                f"{minimum_model_train_observations}"
+            )
+        if test_count < minimum_model_test_observations:
+            reasons.append(
+                f"TEST complete observations {test_count} below {minimum_model_test_observations}"
+            )
+        fold_evidence.append(
+            ModelClockFold(
+                fold_id=fold.fold_id,
+                train_start=fold.train_first_timestamp,
+                train_end=fold.train_cutoff_timestamp,
+                test_start=fold.test_first_timestamp,
+                test_end=fold.test_last_timestamp,
+                train_complete_observations=train_count,
+                test_complete_observations=test_count,
+                structurally_valid=not reasons,
+                invalid_reason="; ".join(reasons) or None,
+                train_through_month=fold.train_through_month,
+                test_calendar_month=fold.test_calendar_month,
+                train_cutoff_timestamp=fold.train_cutoff_timestamp,
+                test_first_timestamp=fold.test_first_timestamp,
+                test_last_timestamp=fold.test_last_timestamp,
+                month_clock_hash=fold.month_clock_hash,
+            )
+        )
+    assert first_train_count is not None
+    assert first_train_variances is not None
+    valid_rate = sum(fold.structurally_valid for fold in fold_evidence) / len(fold_evidence)
+    reasons: list[str] = []
+    if first_train_count < minimum_model_train_observations:
+        reasons.append(
+            f"first TRAIN complete observations {first_train_count} below "
+            f"{minimum_model_train_observations}"
+        )
+    low_variance = tuple(
+        name for name, variance in first_train_variances if variance <= MIN_FEATURE_VARIANCE
+    )
+    if low_variance:
+        reasons.append(f"first TRAIN feature variance is not greater than 1e-12: {low_variance}")
+    if valid_rate < minimum_valid_fold_rate:
+        reasons.append(f"structural valid-fold rate {valid_rate} below {minimum_valid_fold_rate}")
+    return ModelClockPreflight(
+        feature_order=feature_order,
+        plan_hash=plan.plan_hash,
+        first_train_complete_observations=first_train_count,
+        first_train_feature_variances=first_train_variances,
+        folds=tuple(fold_evidence),
+        structural_valid_fold_rate=valid_rate,
+        status=DiscoveryStatus.VALID if not reasons else DiscoveryStatus.INVALID,
+        invalid_reason="; ".join(reasons) or None,
+    )
+
+
 def require_model_clock_eligible(
     preflight: ModelClockPreflight,
     selection_scope: SelectionScope,
@@ -254,6 +395,7 @@ check_model_clock = build_model_clock_preflight
 
 __all__ = [
     "SelectionScope",
+    "build_calendar_model_clock_preflight",
     "build_model_clock_preflight",
     "check_model_clock",
     "preflight_model_clock",

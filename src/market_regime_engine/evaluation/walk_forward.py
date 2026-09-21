@@ -788,9 +788,23 @@ def run_walk_forward_candidate(
                 raise RecoverableEvaluationInvalidity(
                     f"retained TRAIN observations are below pinned minimum 504: {train_model_count}"
                 )
-            if test_model_count < profile.walk_forward.minimum_model_test_observations:
+            minimum_test_observations = (
+                1
+                if hasattr(fold, "test_calendar_month")
+                else profile.walk_forward.minimum_model_test_observations
+            )
+            if test_model_count < minimum_test_observations:
+                minimum_label = (
+                    f"the model-clock minimum {minimum_test_observations}"
+                    if (
+                        minimum_test_observations
+                        != profile.walk_forward.minimum_model_test_observations
+                    )
+                    else f"pinned minimum {minimum_test_observations}"
+                )
                 raise RecoverableEvaluationInvalidity(
-                    f"retained TEST observations are below pinned minimum 42: {test_model_count}"
+                    f"retained TEST observations are below {minimum_label}: "
+                    f"{test_model_count}"
                 )
 
             pca_scaler = fit_pca_hmm_scaler(

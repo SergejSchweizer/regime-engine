@@ -218,7 +218,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-454 — QA: adversarial failure-classification matrix
 
-**Status:** QA COMPLETE LOCALLY — branch `pr/PR-454-adversarial-failure-classification`; 952 unit tests, Ruff and local hermetic gate green; GitHub PR #453 pending
+**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #453 at `ce41867`; all required local and GitHub gates green
 
 **Branch:** `pr/PR-454-adversarial-failure-classification`
 
@@ -260,38 +260,42 @@ month is never used as TEST evidence.
 
 ### PR-507 — Implement the canonical calendar-month model clock
 
+**Status:** IMPLEMENTATION COMPLETE — GitHub PR #454 open; branch `pr/PR-507-calendar-month-model-clock` pushed at current `HEAD`; worktree clean; 961 unit tests, Ruff, and 83 hermetic integration tests green; full evaluation not run
+
+**Branch:** `pr/PR-507-calendar-month-model-clock`
+
 **Type:** implementation / temporal contract
 **Depends on:** PR-454
 
 #### Acceptance
 
-- [ ] Add one canonical `Europe/Berlin` calendar-month clock shared by outer evaluation, inner
+- [x] Add one canonical `Europe/Berlin` calendar-month clock shared by outer evaluation, inner
   selection and deployment/refit orchestration.
-- [ ] Convert each `timestamp_m1` to the canonical timezone only for month membership; preserve the
+- [x] Convert each `timestamp_m1` to the canonical timezone only for month membership; preserve the
   original timezone-aware timestamp as data/evidence.
-- [ ] Define a refit boundary as the last available source observation belonging to a closed
+- [x] Define a refit boundary as the last available source observation belonging to a closed
   calendar month.
-- [ ] Outer TRAIN is expanding and must contain at least the existing canonical minimum TRAIN
+- [x] Outer TRAIN is expanding and must contain at least the existing canonical minimum TRAIN
   history before the first eligible refit boundary.
-- [ ] Outer TEST is exactly the immediately following **complete calendar month**, not a fixed
+- [x] Outer TEST is exactly the immediately following **complete calendar month**, not a fixed
   63-observation block.
-- [ ] Outer STEP is exactly one calendar month.
-- [ ] The final partial calendar month at the evaluation cutoff produces no Outer TEST fold.
-- [ ] Inner selection mirrors the same cadence: expanding inner TRAIN, refit at closed month-end,
+- [x] Outer STEP is exactly one calendar month.
+- [x] The final partial calendar month at the evaluation cutoff produces no Outer TEST fold.
+- [x] Inner selection mirrors the same cadence: expanding inner TRAIN, refit at closed month-end,
   TEST on the immediately following complete calendar month, step one month.
-- [ ] Preserve the existing minimum inner TRAIN history; retire fixed 63-row/42-row TEST semantics
+- [x] Preserve the existing minimum inner TRAIN history; retire fixed 63-row/42-row TEST semantics
   from the new profile because monthly TEST length is calendar-driven.
-- [ ] A monthly TEST fold is valid only when its source month is complete and the downstream
+- [x] A monthly TEST fold is valid only when its source month is complete and the downstream
   transform/model evidence is non-empty and passes the existing finite/entropy/support/model gates;
   no synthetic rows may be added to reach a row count.
-- [ ] No TRAIN observation may have a timestamp later than its fold's month-end cutoff.
-- [ ] Persist for every fold: `train_through_month`, exact `train_cutoff_timestamp`,
+- [x] No TRAIN observation may have a timestamp later than its fold's month-end cutoff.
+- [x] Persist for every fold: `train_through_month`, exact `train_cutoff_timestamp`,
   `test_calendar_month`, first/last TEST timestamp, TEST source-row count and a month-clock hash.
-- [ ] Two folds may never overlap in TEST timestamps.
-- [ ] Missing calendar months remain explicit gaps; the evaluator must not silently test the next
+- [x] Two folds may never overlap in TEST timestamps.
+- [x] Missing calendar months remain explicit gaps; the evaluator must not silently test the next
   non-empty month as though it were the immediately following month.
-- [ ] DST transitions cannot change month assignment or duplicate/drop a source timestamp.
-- [ ] This PR changes only clock construction/contracts; it does not change PCA/HMM math.
+- [x] DST transitions cannot change month assignment or duplicate/drop a source timestamp.
+- [x] This PR changes only clock construction/contracts; it does not change PCA/HMM math.
 
 ### PR-508 — QA: month-boundary, leakage and live-cadence clock matrix
 

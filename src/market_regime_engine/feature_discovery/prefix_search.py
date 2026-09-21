@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.calendar_clock import (
+    MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    plan_calendar_month,
+)
 from market_regime_engine.evaluation.model_clock import (
+    build_calendar_model_clock_preflight,
     build_model_clock_preflight,
     require_model_clock_eligible,
 )
@@ -295,14 +300,28 @@ def _evaluate_prefix(task: _PrefixSearchTask) -> _EvaluatedPrefix:
             feature_selection_definition_hash=task.feature_selection_definition_hash,
             feature_selection_execution_hash=task.feature_selection_execution_hash,
         )
-        preflight = build_model_clock_preflight(
-            task.source_rows,
-            task.feature_order,
-            task.plan,
-            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
-            minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
-            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
-        )
+        if task.plan.folds and hasattr(task.plan.folds[0], "test_calendar_month"):
+            calendar_plan = plan_calendar_month(
+                tuple(task.source_rows[_TIMESTAMP_COLUMN]),
+                minimum_train_source_observations=task.plan.folds[0].train_source_observations,
+            )
+            preflight = build_calendar_model_clock_preflight(
+                task.source_rows,
+                task.feature_order,
+                calendar_plan,
+                minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+                minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+                minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+            )
+        else:
+            preflight = build_model_clock_preflight(
+                task.source_rows,
+                task.feature_order,
+                task.plan,
+                minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+                minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
+                minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+            )
         require_model_clock_eligible(preflight, "prefix")
         evaluations_by_id = _evaluate_candidates(
             task.source_rows,

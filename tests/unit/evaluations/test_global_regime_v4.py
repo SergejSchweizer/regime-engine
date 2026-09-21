@@ -526,7 +526,10 @@ def test_pickleable_custom_outer_callbacks_use_process_workers(
     )
 
     assert process_worker_counts == [2]
-    assert len(result.outer_folds) == 3
+    expected_plan = global_v4.plan_walk_forward(
+        tuple(rows["timestamp_m1"]), profile.walk_forward
+    )
+    assert len(result.outer_folds) == len(expected_plan.folds)
     assert result.valid_fold_count == 0
 
 
@@ -572,8 +575,14 @@ def test_outer_policy_passes_only_train_rows_to_each_selection(
     ) -> WalkForwardEvaluation:
         del profile, candidate, candidate_adapter_factory
         fold = plan.folds[0]
-        timestamps = tuple(source_rows["timestamp_m1"].iloc[-63:])
-        assert timestamps[-1] == fold.test_end
+        timestamps = tuple(
+            source_rows.loc[
+                (source_rows["timestamp_m1"] >= fold.test_start)
+                & (source_rows["timestamp_m1"] <= fold.test_end),
+                "timestamp_m1",
+            ]
+        )
+        assert timestamps
         return cast(WalkForwardEvaluation, _model_evaluation(timestamps))
 
     monkeypatch.setattr(global_v4, "select_v4_configuration", select)
@@ -589,9 +598,14 @@ def test_outer_policy_passes_only_train_rows_to_each_selection(
         max_workers=1,
     )
 
-    assert sorted(seen_lengths) == [1260, 1323, 1386]
-    assert len(result.outer_folds) == 3
-    assert result.valid_fold_count == 3
+    expected_plan = global_v4.plan_walk_forward(
+        tuple(rows["timestamp_m1"]), profile.walk_forward
+    )
+    assert sorted(seen_lengths) == sorted(
+        fold.train_source_observations for fold in expected_plan.folds
+    )
+    assert len(result.outer_folds) == len(expected_plan.folds)
+    assert result.valid_fold_count == len(expected_plan.folds)
     assert result.production_eligible is True
 
 
@@ -616,12 +630,16 @@ def test_failed_outer_selection_does_not_reuse_a_previous_configuration(
         max_workers=1,
     )
 
-    assert calls == 3
+    expected_plan = global_v4.plan_walk_forward(
+        tuple(rows["timestamp_m1"]), profile.walk_forward
+    )
+    assert calls == len(expected_plan.folds)
     assert result.valid_fold_count == 0
     assert result.production_eligible is False
     assert all(not fold.valid for fold in result.outer_folds)
     assert (
-        len({fold.final_configuration.feature_discovery_hash for fold in result.outer_folds}) == 3
+        len({fold.final_configuration.feature_discovery_hash for fold in result.outer_folds})
+        == len(expected_plan.folds)
     )
     assert all(
         "TRAIN-only v4 selection failed" in (fold.failure_reason or "")

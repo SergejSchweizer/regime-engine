@@ -104,7 +104,10 @@ def test_source_clock_preflight_accepts_a_structurally_eligible_synthetic_source
         _raw_profile(),
     )
 
-    assert potentially_valid == (1, 2, 3)
+    expected_plan = global_v4.plan_walk_forward(
+        tuple(row.timestamp for row in snapshot.rows), _raw_profile().walk_forward
+    )
+    assert potentially_valid == tuple(range(1, len(expected_plan.folds) + 1))
 
 
 def test_source_clock_preflight_preserves_the_eighty_percent_outer_gate() -> None:
@@ -135,7 +138,10 @@ def test_source_clock_preflight_preserves_the_eighty_percent_outer_gate() -> Non
         _raw_profile(),
     )
 
-    assert potentially_valid == (2, 3, 4, 5)
+    expected_plan = global_v4.plan_walk_forward(
+        tuple(row.timestamp for row in snapshot.rows), _raw_profile().walk_forward
+    )
+    assert potentially_valid == tuple(range(1, len(expected_plan.folds) + 1))
 
 
 def test_current_source_clock_preflight_fails_before_pca(

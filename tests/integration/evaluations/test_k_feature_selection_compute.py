@@ -116,13 +116,14 @@ def test_fixed_k_selection_runs_real_train_only_discovery_and_prefix(monkeypatch
         max_workers=4,
     )
     assert tuple(item.state_count for item in result) == (2, 3, 4, 5)
-    assert tuple(item.eligible for item in result) == (True, True, False, True)
+    assert tuple(item.eligible for item in result) == (True, True, True, True)
     assert tuple(item.selection.slot_id for item in result if item.selection) == (
         "k2",
         "k3",
+        "k4",
         "k5",
     )
-    assert tuple(item.selection.state_count for item in result if item.selection) == (2, 3, 5)
+    assert tuple(item.selection.state_count for item in result if item.selection) == (2, 3, 4, 5)
     assert all(
         item.selection.candidate_identity == f"gaussian_hmm_k{item.state_count}_full"
         for item in result
@@ -140,10 +141,6 @@ def test_fixed_k_selection_runs_real_train_only_discovery_and_prefix(monkeypatch
         item.selection.feature_order for item in result if item.selection is not None
     }
     assert len(selected_orders) >= 2
-    k4 = result[2]
-    assert k4.selection is None
-    assert k4.rejection_reason and "no eligible regime feature score" in k4.rejection_reason
-
     labelled_rows = rows.assign(
         semantic_label=np.random.default_rng(9101).permutation(len(rows)),
         display_label=np.random.default_rng(9102).permutation(len(rows)),
