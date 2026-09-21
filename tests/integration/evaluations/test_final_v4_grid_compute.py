@@ -62,8 +62,21 @@ def _one_real_fit_multistart(train_rows, *, state_count, adapter_factory, **_kwa
     )
 
 
+def _one_real_fit_multistart_batch(jobs, **_kwargs):
+    """Run one real fit per fold while preserving the batch API contract."""
+
+    return tuple(
+        _one_real_fit_multistart(
+            job.train_rows,
+            state_count=job.state_count,
+            adapter_factory=job.adapter_factory,
+        )
+        for job in jobs
+    )
+
+
 def test_exact_12_candidate_grid_runs_all_model_families_with_real_fits(monkeypatch) -> None:
-    monkeypatch.setattr(walk_forward, "run_multistart", _one_real_fit_multistart)
+    monkeypatch.setattr(walk_forward, "run_multistart_batch", _one_real_fit_multistart_batch)
     rows = source_rows()
     profile = load_profile("configs/profiles/xetra_v4.yaml")
     plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)

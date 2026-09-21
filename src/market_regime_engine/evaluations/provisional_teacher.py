@@ -170,9 +170,7 @@ def _evaluate_candidates(
         and runner is run_provisional_gaussian_candidate
         and worker_limit > 1
         and os.environ.get("REGIME_CPU_PROCESS_WORKER") != "1"
-        and all(
-            is_pickleable(adapter_factory(profile, candidate)) for candidate in candidates
-        )
+        and all(is_pickleable(adapter_factory(profile, candidate)) for candidate in candidates)
     )
     if use_shared_frontier:
         with (

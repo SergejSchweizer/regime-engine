@@ -197,9 +197,13 @@ def _evaluate_start_in_frontier(
         shape=payload.matrix_shape,
     )
     mapped.flags.writeable = False
+    # Keep the process-boundary contract file-backed, but hand numerical
+    # backends a normal contiguous ndarray.  Some hmmlearn versions take
+    # different convergence paths for the np.memmap subclass itself.
+    train_rows = np.array(mapped, copy=True, order="C")
     try:
         return _evaluate_start(
-            mapped,
+            train_rows,
             state_count=payload.state_count,
             adapter_factory=payload.adapter_factory,
             seed=payload.seed,
@@ -255,6 +259,7 @@ def run_multistart(
 
     if pending_seeds:
         pending_worker_limit = min(worker_limit, len(pending_seeds))
+
         def map_frontier(
             active_frontier: SharedTaskFrontier[
                 _FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]
@@ -293,8 +298,7 @@ def run_multistart(
                 frontier_result = active_frontier.map(frontier_tasks, _evaluate_start_in_frontier)
                 by_task_id = {task.task_id: item for task, item in frontier_result.values}
                 mapped_results = {
-                    seed: by_task_id[f"multistart:{state_count}:{seed}"]
-                    for seed in pending_seeds
+                    seed: by_task_id[f"multistart:{state_count}:{seed}"] for seed in pending_seeds
                 }
             if checkpoint is not None:
                 from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
@@ -344,11 +348,10 @@ def run_multistart_batch(
     jobs: Iterable[MultistartBatchJob],
     *,
     max_workers: int | None = None,
-    frontier: SharedTaskFrontier[
-        _FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]
-    ]
+    allow_invalid: bool = False,
+    frontier: SharedTaskFrontier[_FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]]
     | None = None,
-) -> tuple[MultistartResult, ...]:
+) -> tuple[MultistartResult | None, ...]:
     """Fit all job seeds through one shared fold-by-seed process frontier."""
 
     ordered_jobs = tuple(jobs)
@@ -361,15 +364,22 @@ def run_multistart_batch(
             raise TypeError("parallel multistart batch requires pickleable adapter factories")
 
     if max_workers == 1:
-        return tuple(
-            run_multistart(
-                job.train_rows,
-                state_count=job.state_count,
-                adapter_factory=job.adapter_factory,
-                max_workers=1,
-            )
-            for job in ordered_jobs
-        )
+        results: list[MultistartResult | None] = []
+        for job in ordered_jobs:
+            try:
+                results.append(
+                    run_multistart(
+                        job.train_rows,
+                        state_count=job.state_count,
+                        adapter_factory=job.adapter_factory,
+                        max_workers=1,
+                    )
+                )
+            except RecoverableEvaluationInvalidity:
+                if not allow_invalid:
+                    raise
+                results.append(None)
+        return tuple(results)
 
     worker_limit = cpu_worker_count(
         max_workers, task_count=len(ordered_jobs) * len(MULTISTART_SEEDS)
@@ -379,7 +389,7 @@ def run_multistart_batch(
         active_frontier: SharedTaskFrontier[
             _FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]
         ],
-    ) -> tuple[MultistartResult, ...]:
+    ) -> tuple[MultistartResult | None, ...]:
         with TemporaryDirectory(prefix="regime-multistart-batch-") as matrix_directory:
             matrices: dict[str, ReadOnlyMatrix] = {}
             with ExitStack() as stack:
@@ -423,14 +433,19 @@ def run_multistart_batch(
         }
         for task, outcome in frontier_result.values:
             by_job[task.fold_id][task.seed] = outcome
-        return tuple(
-            _assemble_multistart_result(job.state_count, by_job[job.job_id])
-            for job in ordered_jobs
-        )
+        results: list[MultistartResult | None] = []
+        for job in ordered_jobs:
+            try:
+                results.append(_assemble_multistart_result(job.state_count, by_job[job.job_id]))
+            except RecoverableEvaluationInvalidity:
+                if not allow_invalid:
+                    raise
+                results.append(None)
+        return tuple(results)
 
     if frontier is not None:
         return map_jobs(frontier)
-    with SharedTaskFrontier[
-        _FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]
-    ](worker_limit) as owned_frontier:
+    with SharedTaskFrontier[_FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]](
+        worker_limit
+    ) as owned_frontier:
         return map_jobs(owned_frontier)

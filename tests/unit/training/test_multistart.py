@@ -90,9 +90,7 @@ class PickleableAdapterFactory:
         raise AssertionError(f"unused: {rows}, {initial_filtered_probabilities}")
 
 
-def _frontier_sffs_jobs(
-    state_count: int, features: tuple[str, ...]
-) -> tuple[FrontierFoldJob, ...]:
+def _frontier_sffs_jobs(state_count: int, features: tuple[str, ...]) -> tuple[FrontierFoldJob, ...]:
     outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
     return tuple(
         FrontierFoldJob(
@@ -284,6 +282,22 @@ def test_frontier_feature_subset_evaluator_feeds_sffs_from_fold_evidence() -> No
 
     assert result.selected_features == ("a", "b")
     assert len(result.evaluations) >= 3
+    serial = select_sffs(
+        ("a", "b"),
+        FrontierFeatureSubsetEvaluator(
+            _frontier_sffs_jobs,
+            _frontier_sffs_evidence,
+            "a" * 64,
+            "build-001",
+            "b" * 64,
+            "fold-003",
+            2,
+            max_workers=1,
+        ),
+        max_features=2,
+        max_workers=1,
+    )
+    assert result == serial
 
 
 def test_frontier_feature_subset_evaluator_supports_independent_k_slots() -> None:

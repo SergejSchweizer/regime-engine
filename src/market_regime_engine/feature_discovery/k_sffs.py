@@ -36,9 +36,7 @@ class _FixedKScore:
     ) -> tuple[FeatureSubsetScore | None, ...]:
         batch_evaluator = getattr(self.evaluator, "evaluate_many", None)
         if callable(batch_evaluator):
-            results = tuple(
-                batch_evaluator(feature_sets, state_count=self.state_count)
-            )
+            results = tuple(batch_evaluator(feature_sets, state_count=self.state_count))
         else:
             results = tuple(self(features) for features in feature_sets)
         return tuple(self._validate(result) for result in results)
@@ -96,16 +94,18 @@ def select_k_slot_sffs(
 
     candidate_tuple = tuple(candidates)
     results: list[KSlotSFFSResult] = []
-    use_frontier = (
-        frontier is not None
-        or (max_workers != 1 and is_pickleable(evaluate_gaussian_subset))
+    use_frontier = frontier is not None or (
+        max_workers != 1 and is_pickleable(evaluate_gaussian_subset)
     )
     frontier_context: Any = (
         nullcontext(frontier)
         if frontier is not None
-        else SharedTaskFrontier(max_workers) if use_frontier else nullcontext(None)
+        else SharedTaskFrontier(max_workers)
+        if use_frontier
+        else nullcontext(None)
     )
     with frontier_context as frontier:
+
         def select_one(state_count: int) -> KSlotSFFSResult:
             fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
             selected = select_sffs(

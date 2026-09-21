@@ -149,6 +149,8 @@ class FrontierFeatureSubsetEvaluator:
             candidate: [] for candidate in candidates
         }
         for entry, result in zip(entries, results, strict=True):
+            if result is None:
+                raise RuntimeError("frontier SFFS multistart gate failed")
             evidence_by_candidate[entry.candidate_subset].append(
                 self.evidence_factory(entry, result)
             )

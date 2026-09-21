@@ -200,7 +200,9 @@ def run_one_feature_hmm_ablation(
     frontier_context: Any = (
         nullcontext(frontier)
         if frontier is not None
-        else SharedTaskFrontier(worker_limit) if parallel else nullcontext(None)
+        else SharedTaskFrontier(worker_limit)
+        if parallel
+        else nullcontext(None)
     )
     with frontier_context as execution_frontier:
         if execution_frontier is not None:
@@ -219,9 +221,7 @@ def run_one_feature_hmm_ablation(
                 )
                 for index, (feature, remaining) in enumerate(removal_tasks)
             )
-            frontier_result = execution_frontier.map(
-                frontier_tasks, _evaluate_ablation_in_frontier
-            )
+            frontier_result = execution_frontier.map(frontier_tasks, _evaluate_ablation_in_frontier)
             by_task_id = {task.task_id: item for task, item in frontier_result.values}
             evaluated_removals = tuple(by_task_id[task.task_id] for task in frontier_tasks)
         else:

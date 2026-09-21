@@ -309,6 +309,48 @@ def test_grid_default_adapter_factory_and_profile_derived_model_families() -> No
     assert isinstance(gmm, HmmlearnGMMHMMAdapter)
 
 
+def test_default_grid_routes_all_candidates_through_one_frontier(monkeypatch) -> None:
+    base, profile, plan = base_evaluation()
+    seen_frontiers = []
+
+    def fake_walk_forward_with_candidate(
+        rows,
+        *,
+        plan,
+        profile,
+        candidate,
+        adapter_factory,
+        max_workers=None,
+        seed_checkpoint_factory=None,
+        frontier=None,
+        pca_raw_feature_order=None,
+        pca_variance_threshold=0.90,
+    ):
+        del rows, plan, profile, adapter_factory, max_workers, seed_checkpoint_factory
+        del pca_raw_feature_order, pca_variance_threshold
+        assert frontier is not None
+        seen_frontiers.append(frontier)
+        return replace(base, candidate_id=candidate.candidate_id, state_count=candidate.state_count)
+
+    monkeypatch.setattr(
+        candidate_grid_module,
+        "run_walk_forward_candidate",
+        fake_walk_forward_with_candidate,
+    )
+    evaluate_candidate_grid(
+        source_rows(),
+        plan=plan,
+        profile=profile,
+        resolved_profile=resolved_profile(),
+        runner=candidate_grid_module._default_runner,
+        pca_raw_feature_order=RAW_FEATURES,
+        max_workers=4,
+    )
+
+    assert len(seen_frontiers) == len(EXPECTED_CANDIDATE_IDS)
+    assert len({id(frontier) for frontier in seen_frontiers}) == 1
+
+
 @pytest.mark.parametrize(
     ("total_worker_budget", "task_count", "expected"),
     (
