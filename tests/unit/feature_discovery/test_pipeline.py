@@ -1,17 +1,21 @@
 from hashlib import sha256
+from pathlib import Path
+
+import duckdb
 
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
     build_feature_role_contract,
 )
+from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
 from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 
 SELECTOR_HASH = "a" * 64
 
 
-def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
+def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) -> None:
     names = (
         "vix_log_level",
         "us_10y_log_level",
@@ -60,6 +64,10 @@ def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
         evaluate_hmm_subset=evaluate_hmm,
         hmm_selector_contract_hash=SELECTOR_HASH,
         max_sffs_features=2,
+        metadata_store=FeatureSelectionMetadataStore(tmp_path),
+        metadata_fold_id="fold-001",
+        metadata_source_build_id="build-001",
+        metadata_state_count=2,
     )
 
     assert result.quality_eligible_features == names
@@ -75,6 +83,8 @@ def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
     assert (
         result.evidence_metadata["feature_selection_profile_hash"] == contract.profile.profile_hash
     )
+    with duckdb.connect(str(tmp_path / "feature_selection.duckdb"), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM sffs_steps").fetchone() == (7,)
 
 
 def test_canonical_pipeline_can_run_without_transformations() -> None:

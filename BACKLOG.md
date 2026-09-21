@@ -1098,31 +1098,32 @@ branch is clean only after the pending commit/push and remains open. The SFFS co
 enforces the strict `1e-12` forward and backward improvement rules, carries all canonical score
 tie-break components, forwards the configured worker budget, and exposes every evaluated
 candidate for durable metadata conversion. A fixed-K Gaussian selector boundary for K=2,3,4,5
-is covered by focused tests. Production HMM callback wiring, complete pipeline K-slot integration,
-and actual `sffs_steps` commit integration remain open. No full evaluation was run.
+is covered by focused tests. Production HMM callback wiring and complete pipeline K-slot integration
+remain open; the canonical pipeline now has an atomic `sffs_steps` commit path, covered by a
+persistence test. A nested prefix worker no longer creates a child process pool: candidate work is
+bounded by worker-local threads with one native numerical lane. No full evaluation was run.
 
 **Current implementation note:** the immutable `feature_subset_score.v1` data contract and pure
 scoring/ranking implementation now exist on the pushed PR-476 branch and are covered by 8 focused
 unit tests plus the 154-test feature-discovery/source regression slice. The SFFS coordinator now
 uses the existing GIL-independent process pool for pickle-safe score evaluators, with deterministic
-serial fallback for non-pickleable test callbacks. Production HMM fitting, end-to-end K-slot wiring,
-and `sffs_steps` persistence remain open; this contract is therefore not counted as PR-490
-acceptance completion.
+serial fallback for non-pickleable test callbacks. Production HMM fitting and end-to-end K-slot
+wiring remain open; this contract is therefore not counted as PR-490 acceptance completion.
 
 #### Acceptance
 
-- [ ] SFFS input is exactly the retained correlation representatives for the current outer TRAIN
+- [x] SFFS input is exactly the retained correlation representatives for the current outer TRAIN
   fold; no removed candidate may re-enter directly.
 - [ ] Run SFFS independently for each configured K slot; current legal K values remain 2,3,4,5.
 - [ ] Use the Gaussian full-covariance HMM as the feature selector for each K; the selected tuple is
   then reused by all configured emission families at that K.
-- [ ] Candidate subset scoring uses a new immutable feature_subset_score.v1 built from the existing
+- [x] Candidate subset scoring uses a new immutable feature_subset_score.v1 built from the existing
   dimension-independent forecast, calibration, stability, support and valid-fold components used
   by cross_k_score.v1, but with no K-complexity penalty.
-- [ ] feature_subset_score.v1 uses only monthly inner folds contained inside outer TRAIN and applies
+- [x] feature_subset_score.v1 uses only monthly inner folds contained inside outer TRAIN and applies
   the same eligibility gates: valid-fold rate at least 0.80, at least three valid inner folds and a
   valid latest inner fold.
-- [ ] The score is tuning evidence only; Outer TEST remains the sole unbiased fold performance
+- [x] The score is tuning evidence only; Outer TEST remains the sole unbiased fold performance
   evidence.
 - [x] Start from the best eligible singleton; after every forward add, perform backward removals
   while the canonical score strictly improves by more than 1e-12.
@@ -1134,7 +1135,7 @@ acceptance completion.
   deterministic result assembly.
 - [ ] Reuse existing affinity/cgroup-aware worker sizing; cap native BLAS/OpenMP threads to one per
   worker and forbid nested process-pool oversubscription.
-- [ ] Persist every evaluated SFFS step/action/score to sffs_steps.
+- [x] Persist every evaluated SFFS step/action/score to sffs_steps.
 - [ ] Raw HMM likelihood, AIC and BIC are logged only as diagnostics and never choose between
   different feature dimensions.
 
