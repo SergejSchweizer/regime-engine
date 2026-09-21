@@ -936,16 +936,19 @@ parity tests pass locally. PR-518 remains the separate family-stage concurrency 
 **Type:** QA only
 **Depends on:** PR-517
 
+**Status:** QA COMPLETE on branch `pr/PR-518-family-stage-qa`; canonical and 32-family synthetic
+concurrency/parity tests pass locally.
+
 #### Acceptance
 
-- [ ] A fixture with at least 32 independent families proves concurrent task execution when CPU
+- [x] A fixture with at least 32 independent families proves concurrent task execution when CPU
   capacity is available.
-- [ ] Worker counts 1, 8, 32, 64 and auto produce identical family mappings, scaler/PCA outputs and
+- [x] Worker counts 1, 8, 32, 64 and auto produce identical family mappings, scaler/PCA outputs and
   hashes.
-- [ ] Deliberately delay random family tasks and prove completion order cannot alter output order.
-- [ ] Prove family matrices are read from shared/memory-mapped storage rather than copied per task.
-- [ ] Typed invalid family and unexpected-failure fixtures follow the required isolation semantics.
-- [ ] QA adds no new statistical behavior.
+- [x] Deliberately delay random family tasks and prove completion order cannot alter output order.
+- [x] Prove family matrices are read from shared/memory-mapped storage rather than copied per task.
+- [x] Typed invalid family and unexpected-failure fixtures follow the required isolation semantics.
+- [x] QA adds no new statistical behavior.
 
 ### PR-486 — Implement global stable correlation-leader pruning
 
