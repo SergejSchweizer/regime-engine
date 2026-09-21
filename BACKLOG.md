@@ -1021,6 +1021,12 @@ The input universe is exactly quality-eligible core features plus family PCs.
 **Type:** implementation / feature subset search
 **Depends on:** PR-489
 
+**Current implementation note:** the immutable `feature_subset_score.v1` data contract and pure
+scoring/ranking implementation now exist on the pushed PR-476 branch and are covered by 8 focused
+unit tests plus the 154-test feature-discovery/source regression slice. Production HMM fitting,
+process-parallel SFFS wiring and `sffs_steps` persistence remain open; this contract is therefore
+not counted as PR-490 acceptance completion.
+
 #### Acceptance
 
 - [ ] SFFS input is exactly the retained correlation representatives for the current outer TRAIN
