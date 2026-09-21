@@ -63,16 +63,17 @@ def test_outer_test_access_and_wrong_plan_fail_closed() -> None:
     with pytest.raises(ValueError, match="Outer TEST"):
         FeatureSubsetCandidate(("a",), HASH, "build", "b" * 64, folds, outer_test_accessed=True)
     with pytest.raises(ValueError, match="monthly inner"):
-        FeatureSubsetCandidate(
-            ("a",), HASH, "build", "b" * 64, folds, fold_plan_id="outer_test.v1"
-        )
+        FeatureSubsetCandidate(("a",), HASH, "build", "b" * 64, folds, fold_plan_id="outer_test.v1")
 
 
 def test_ranking_uses_canonical_tie_breaks_and_feature_tuple() -> None:
     candidates = [
         _candidate(_fold("m1"), _fold("m2"), _fold("m3"), _fold("m4", latest=True)),
         FeatureSubsetCandidate(
-            ("a",), HASH, "build", "b" * 64,
+            ("a",),
+            HASH,
+            "build",
+            "b" * 64,
             (_fold("m1"), _fold("m2"), _fold("m3"), _fold("m4", latest=True)),
         ),
     ]
