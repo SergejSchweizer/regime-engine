@@ -7,6 +7,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from statistics import median
+from tempfile import TemporaryDirectory
+from typing import cast
+
+import numpy as np
 
 from market_regime_engine.feature_discovery.family_reduction import (
     _absolute_pearson,
@@ -17,6 +21,46 @@ from market_regime_engine.feature_discovery.feature_roles import (
     FeatureSelectionProfile,
     FeatureStage,
 )
+from market_regime_engine.runtime.cpu import available_cpu_count
+from market_regime_engine.runtime.parallel import (
+    FoldParallelExecutor,
+    ParallelExecutionPlan,
+    ReadOnlyMatrix,
+)
+
+_Redundancy = tuple[float, int, tuple[float, ...], tuple[int, ...]]
+_PairResult = tuple[int, int, _Redundancy]
+
+
+@dataclass(frozen=True, slots=True)
+class _CorrelationTileTask:
+    matrix_path: str
+    matrix_shape: tuple[int, int]
+    matrix_dtype: str
+    pairs: tuple[tuple[int, int], ...]
+    profile: FeatureSelectionProfile
+
+
+def _run_correlation_tile(task: _CorrelationTileTask) -> tuple[_PairResult, ...]:
+    matrix = np.memmap(
+        task.matrix_path,
+        dtype=np.dtype(task.matrix_dtype),
+        mode="r",
+        shape=task.matrix_shape,
+    )
+    try:
+        results: list[_PairResult] = []
+        for left_index, right_index in task.pairs:
+            redundant = _stable_redundancy(
+                cast(Sequence[float | None], matrix[:, left_index]),
+                cast(Sequence[float | None], matrix[:, right_index]),
+                task.profile,
+            )
+            if redundant is not None:
+                results.append((left_index, right_index, redundant))
+        return tuple(results)
+    finally:
+        del matrix
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +106,7 @@ def _stable_redundancy(
     left: Sequence[float | None],
     right: Sequence[float | None],
     profile: FeatureSelectionProfile,
-) -> tuple[float, int, tuple[float, ...], tuple[int, ...]] | None:
+) -> _Redundancy | None:
     full = _absolute_pearson(left, right)
     if full is None or full[1] < profile.correlation_min_pair_rows:
         return None
@@ -86,6 +130,7 @@ def prune_global_correlated_features(
     contract: FeatureRoleContract,
     *,
     profile: FeatureSelectionProfile | None = None,
+    max_workers: int | None = None,
 ) -> GlobalCorrelationResult:
     """Keep deterministic redundancy leaders among core and family-PC inputs."""
 
@@ -117,6 +162,55 @@ def prune_global_correlated_features(
             ),
         )
     )
+    matrix = np.ascontiguousarray(
+        np.asarray(
+            tuple(
+                tuple(np.nan if value is None else value for value in feature_values[name])
+                for name in ordered_names
+            ),
+            dtype=np.float64,
+        ).T
+    )
+    pair_indexes = tuple(
+        (left_index, right_index)
+        for left_index in range(len(ordered_names))
+        for right_index in range(left_index + 1, len(ordered_names))
+    )
+    candidate_index = {name: index for index, name in enumerate(ordered_names)}
+    edges: dict[tuple[int, int], _Redundancy] = {}
+    if pair_indexes:
+        with (
+            TemporaryDirectory(prefix="regime-global-correlation-") as directory,
+            ReadOnlyMatrix.create(matrix, directory) as shared_matrix,
+        ):
+            tile_size = max(1, len(pair_indexes) // max(1, 4 * available_cpu_count()))
+            tiles = tuple(
+                pair_indexes[start : start + tile_size]
+                for start in range(0, len(pair_indexes), tile_size)
+            )
+            plan = ParallelExecutionPlan.create(
+                len(tiles),
+                requested_workers=max_workers,
+                shared_matrix_identity=shared_matrix.identity,
+            )
+            tasks = tuple(
+                _CorrelationTileTask(
+                    matrix_path=str(shared_matrix.path),
+                    matrix_shape=(matrix.shape[0], matrix.shape[1]),
+                    matrix_dtype=matrix.dtype.str,
+                    pairs=tile,
+                    profile=resolved_profile,
+                )
+                for tile in tiles
+            )
+            with FoldParallelExecutor[_CorrelationTileTask, tuple[_PairResult, ...]](
+                plan, max_pending=max(1, plan.worker_count * 2)
+            ) as executor:
+                tile_results = executor.map_ordered(_run_correlation_tile, tasks)
+            for tile in tile_results:
+                for left_index, right_index, redundant in tile:
+                    edges[(left_index, right_index)] = redundant
+
     remaining = set(ordered_names)
     representatives: list[str] = []
     removed: list[str] = []
@@ -125,24 +219,22 @@ def prune_global_correlated_features(
         candidates = tuple(sorted(remaining, key=lambda name: canonical_order[name]))
         neighborhoods: dict[
             str,
-            list[tuple[str, tuple[float, int, tuple[float, ...], tuple[int, ...]]]],
+            list[tuple[str, _Redundancy]],
         ] = {name: [] for name in candidates}
         for left_index, left_name in enumerate(candidates):
             for right_name in candidates[left_index + 1 :]:
-                redundant = _stable_redundancy(
-                    feature_values[left_name], feature_values[right_name], resolved_profile
-                )
-                if redundant is None:
+                left_order = candidate_index[left_name]
+                right_order = candidate_index[right_name]
+                pair = (min(left_order, right_order), max(left_order, right_order))
+                edge_redundancy = edges.get(pair)
+                if edge_redundancy is None:
                     continue
-                neighborhoods[left_name].append((right_name, redundant))
-                neighborhoods[right_name].append((left_name, redundant))
+                neighborhoods[left_name].append((right_name, edge_redundancy))
+                neighborhoods[right_name].append((left_name, edge_redundancy))
 
         def leader_key(
             name: str,
-            neighborhoods: dict[
-                str,
-                list[tuple[str, tuple[float, int, tuple[float, ...], tuple[int, ...]]]],
-            ] = neighborhoods,
+            neighborhoods: dict[str, list[tuple[str, _Redundancy]]] = neighborhoods,
         ) -> tuple[int, float, float, int, int]:
             neighborhood = neighborhoods[name]
             correlation_median = (
