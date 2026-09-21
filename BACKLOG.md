@@ -636,27 +636,30 @@ hermetic QA matrix is independently implemented and passes without external writ
 The store lives under the existing configured local evaluation state root as
 feature_selection.duckdb. PostgreSQL remains the source feature store; MLflow remains tracking.
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-478-duckdb-feature-selection-store`; targeted
+DuckDB contract tests pass locally. PR-479 remains the separate durability/QA proof.
+
 #### Acceptance
 
-- [ ] Add a single local DuckDB database at state_root/feature_selection.duckdb.
-- [ ] Create only these durable tables: feature_registry, fold_feature_stats, pca_loadings,
+- [x] Add a single local DuckDB database at state_root/feature_selection.duckdb.
+- [x] Create only these durable tables: feature_registry, fold_feature_stats, pca_loadings,
   correlation_mapping, sffs_steps and fold_model_stats.
-- [ ] Create feature_global_stats as a deterministic SQL view, not a separately mutable table.
-- [ ] feature_registry records immutable feature identity, source identity, role, family,
+- [x] Create feature_global_stats as a deterministic SQL view, not a separately mutable table.
+- [x] feature_registry records immutable feature identity, source identity, role, family,
   transformation provenance, first_seen and lifecycle status.
-- [ ] fold_feature_stats records eligibility, quality reason, direct/PC participation, PCA credit,
+- [x] fold_feature_stats records eligibility, quality reason, direct/PC participation, PCA credit,
   representative status, SFFS participation, final selection and ablation loss.
-- [ ] pca_loadings records fold, family, PC ordinal, source feature, loading, squared loading and
+- [x] pca_loadings records fold, family, PC ordinal, source feature, loading, squared loading and
   explained-variance diagnostic.
-- [ ] correlation_mapping records fold, candidate, chosen representative, full absolute correlation,
+- [x] correlation_mapping records fold, candidate, chosen representative, full absolute correlation,
   three subwindow correlations, support counts and retained/rejected reason.
-- [ ] sffs_steps records fold, K, step number, action, candidate, selected tuple hash and canonical
+- [x] sffs_steps records fold, K, step number, action, candidate, selected tuple hash and canonical
   score components.
-- [ ] fold_model_stats records fold identity, selected tuple/hash, K, family, validity, diagnostics
+- [x] fold_model_stats records fold identity, selected tuple/hash, K, family, validity, diagnostics
   and MLflow run identity when tracking exists.
-- [ ] One fold commit is transactional and idempotent under the same fold/profile/source identity.
-- [ ] Failed or interrupted fold writes leave no partial committed fold result.
-- [ ] No PostgreSQL schema mutation and no mandatory MLflow dependency is introduced.
+- [x] One fold commit is transactional and idempotent under the same fold/profile/source identity.
+- [x] Failed or interrupted fold writes leave no partial committed fold result.
+- [x] No PostgreSQL schema mutation and no mandatory MLflow dependency is introduced.
 
 ### PR-479 — QA: DuckDB durability, idempotency and schema contract
 
