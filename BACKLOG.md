@@ -771,26 +771,29 @@ tests pass locally. PR-483 remains the separate leakage/high-dimensional QA proo
 **Type:** implementation / performance infrastructure
 **Depends on:** PR-483
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-513-shared-parallel-planner`; targeted
+planner, worker-cap, shared-matrix, quality, tracking, and performance tests pass locally.
+
 The goal is maximum useful CPU concurrency on the target host class (86 vCPUs, 256 GiB RAM)
 without nested process pools, oversubscribed BLAS threads or repeated matrix copies.
 
 #### Acceptance
 
-- [ ] Introduce one immutable ParallelExecutionPlan derived from process affinity, cgroup CPU quota,
+- [x] Introduce one immutable ParallelExecutionPlan derived from process affinity, cgroup CPU quota,
   runnable task count and explicit operator override.
-- [ ] `auto` has no arbitrary worker cap below the available CPU budget; effective workers are
+- [x] `auto` has no arbitrary worker cap below the available CPU budget; effective workers are
   `min(available_cpu_budget, runnable_tasks)` unless a measured memory-safety bound is lower.
-- [ ] Create at most one CPU process pool per evaluation process and reuse it across eligible stages.
-- [ ] Process workers may never create child process pools.
-- [ ] Set/verify OMP, MKL, OpenBLAS and NumExpr native thread pools to one thread per worker for
+- [x] Create at most one CPU process pool per evaluation process and reuse it across eligible stages.
+- [x] Process workers may never create child process pools.
+- [x] Set/verify OMP, MKL, OpenBLAS and NumExpr native thread pools to one thread per worker for
   process-parallel numerical stages.
-- [ ] Materialize each fold's numeric candidate matrix once as immutable shared/read-only memory or
+- [x] Materialize each fold's numeric candidate matrix once as immutable shared/read-only memory or
   memory-mapped storage; worker tasks receive column/row indices and small metadata, not full
   DataFrame copies.
-- [ ] Centralize bounded task submission/backpressure and deterministic result reordering.
-- [ ] Preserve explicit serial mode for reference tests and debugging.
-- [ ] Parallel runtime policy changes no statistical formula, seed, ordering rule or threshold.
-- [ ] Persist effective CPU budget, worker count, task count and shared-matrix identity in fold
+- [x] Centralize bounded task submission/backpressure and deterministic result reordering.
+- [x] Preserve explicit serial mode for reference tests and debugging.
+- [x] Parallel runtime policy changes no statistical formula, seed, ordering rule or threshold.
+- [x] Persist effective CPU budget, worker count, task count and shared-matrix identity in fold
   runtime metadata and MLflow runtime metrics.
 
 ### PR-514 — QA: parallel planner, shared-memory and thread-cap determinism

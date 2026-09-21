@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from math import sqrt
@@ -282,27 +282,22 @@ def test_quality_features_use_process_workers_when_budget_is_explicit(
         max_workers=1,
     )
 
-    class _CompletedFuture:
-        def __init__(self, value: object) -> None:
-            self._value = value
+    class _InlinePlanner:
+        def __init__(self, plan: object) -> None:
+            worker_counts.append(plan.worker_count)  # type: ignore[attr-defined]
 
-        def result(self) -> object:
-            return self._value
-
-    class _InlineProcessPool:
-        def __init__(self, max_workers: int, **_kwargs: object) -> None:
-            worker_counts.append(max_workers)
-
-        def __enter__(self) -> _InlineProcessPool:
+        def __enter__(self) -> _InlinePlanner:
             return self
 
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def submit(self, function: Callable[[object], object], task: object) -> _CompletedFuture:
-            return _CompletedFuture(function(task))
+        def map_ordered(
+            self, function: Callable[[object], object], tasks: Iterable[object]
+        ) -> tuple[object, ...]:
+            return tuple(function(task) for task in tasks)
 
-    monkeypatch.setattr(quality_module, "cpu_process_pool", _InlineProcessPool)
+    monkeypatch.setattr(quality_module, "FoldParallelExecutor", _InlinePlanner)
     parallel = filter_outer_train_quality(
         catalog,
         _snapshot(catalog, values),
