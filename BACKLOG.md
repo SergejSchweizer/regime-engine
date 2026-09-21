@@ -753,16 +753,18 @@ tests pass locally. PR-483 remains the separate leakage/high-dimensional QA proo
 **Type:** QA only
 **Depends on:** PR-482
 
+**Status:** QA COMPLETE on branch `pr/PR-483-quality-filter-qa`; targeted quality QA passes locally.
+
 #### Acceptance
 
-- [ ] Independent reference statistics reproduce coverage/finite/variance decisions exactly.
-- [ ] Mutating any Outer-TEST value cannot alter TRAIN quality results.
-- [ ] Fixtures cover all-null, near-constant, non-finite, short-history and fully valid columns.
-- [ ] A synthetic matrix with at least 5,000 candidate features completes without an NxN quality
+- [x] Independent reference statistics reproduce coverage/finite/variance decisions exactly.
+- [x] Mutating any Outer-TEST value cannot alter TRAIN quality results.
+- [x] Fixtures cover all-null, near-constant, non-finite, short-history and fully valid columns.
+- [x] A synthetic matrix with at least 5,000 candidate features completes without an NxN quality
   allocation.
-- [ ] Input-column order reversal preserves accepted identities and reasons.
-- [ ] Serial/process results and hashes are identical.
-- [ ] QA adds no production behavior.
+- [x] Input-column order reversal preserves accepted identities and reasons.
+- [x] Serial/process results and hashes are identical.
+- [x] QA adds no production behavior.
 
 ### PR-513 — Add one shared fold-local parallel execution planner
 
