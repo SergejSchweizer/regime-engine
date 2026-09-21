@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterable
-from concurrent.futures import Future, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
@@ -96,6 +96,7 @@ class SharedTaskFrontier[T, R]:
         self._executor: Any = None
         self._context: Any = None
         self._worker_limit = 0
+        self._max_in_flight = 0
 
     @property
     def worker_limit(self) -> int:
@@ -109,6 +110,7 @@ class SharedTaskFrontier[T, R]:
         self._worker_limit = cpu_worker_count(self._requested_workers)
         self._context = cpu_process_pool(self._worker_limit)
         self._executor = self._context.__enter__()
+        self._max_in_flight = max(1, self._worker_limit * 2)
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -116,6 +118,7 @@ class SharedTaskFrontier[T, R]:
             self._context.__exit__(exc_type, exc, traceback)
         self._executor = None
         self._worker_limit = 0
+        self._max_in_flight = 0
 
     def map(
         self,
@@ -132,14 +135,29 @@ class SharedTaskFrontier[T, R]:
         if len({task.task_id for task in ordered}) != len(ordered):
             raise ValueError("frontier task IDs must be unique")
         started = monotonic()
-        futures: dict[Future[R], FrontierTask[T]] = {
-            self._executor.submit(_run_frontier_task, worker, task): task for task in ordered
-        }
+        task_iterator = iter(ordered)
+        futures: dict[Future[R], FrontierTask[T]] = {}
         completed: dict[str, R] = {}
-        for future in as_completed(futures):
-            task = futures[future]
-            # Unexpected worker exceptions intentionally propagate immediately.
-            completed[task.task_id] = future.result()
+        try:
+            while futures or len(completed) < len(ordered):
+                while len(futures) < self._max_in_flight:
+                    try:
+                        task = next(task_iterator)
+                    except StopIteration:
+                        break
+                    future = self._executor.submit(_run_frontier_task, worker, task)
+                    futures[future] = task
+                if not futures:
+                    break
+                finished, _pending = wait(futures, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    task = futures.pop(future)
+                    # Unexpected worker exceptions intentionally propagate immediately.
+                    completed[task.task_id] = future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
         elapsed = monotonic() - started
         metrics = FrontierMetrics(
             submitted_count=len(ordered),
