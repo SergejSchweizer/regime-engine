@@ -12,6 +12,8 @@ from pathlib import Path
 
 import duckdb
 
+from market_regime_engine.feature_discovery.sffs import SFFSResult
+
 _TABLES = (
     "feature_registry",
     "fold_feature_stats",
@@ -168,6 +170,48 @@ class FoldModelStat:
     valid: bool
     diagnostics: Mapping[str, object]
     mlflow_run_id: str | None = None
+
+
+def sffs_step_records(
+    result: SFFSResult,
+    *,
+    fold_id: str,
+    profile_hash: str,
+    source_build_id: str,
+    state_count: int,
+) -> tuple[SFFSStepRecord, ...]:
+    """Convert every SFFS candidate evaluation into immutable store rows."""
+
+    _text(fold_id, "fold_id")
+    _sha256(profile_hash, "profile_hash")
+    _text(source_build_id, "source_build_id")
+    if state_count not in (2, 3, 4, 5):
+        raise ValueError("state_count must be 2, 3, 4, or 5")
+    rows: list[SFFSStepRecord] = []
+    for step_number, evaluation in enumerate(result.evaluations, start=1):
+        score = evaluation.score
+        candidate = "|".join(evaluation.candidate)
+        selected_hash = _hash(evaluation.candidate)
+        rows.append(
+            SFFSStepRecord(
+                fold_id,
+                profile_hash,
+                source_build_id,
+                state_count,
+                step_number,
+                evaluation.action,
+                candidate,
+                selected_hash,
+                None if score is None else score.forecast_score,
+                None if score is None else score.calibration_score,
+                None if score is None else score.stability_score,
+                None if score is None else score.robustness_score,
+                None if score is None else score.value,
+                score is not None,
+                None if score is not None else "ineligible candidate",
+            )
+        )
+    return tuple(rows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +457,50 @@ class FeatureSelectionMetadataStore:
                 connection.execute("ROLLBACK")
                 raise
 
+    def commit_sffs_steps(self, rows: tuple[SFFSStepRecord, ...]) -> bool:
+        """Atomically persist SFFS evaluations without requiring model rows yet."""
+
+        if not rows:
+            return False
+        identities = {
+            (row.fold_id, row.profile_hash, row.source_build_id, row.state_count) for row in rows
+        }
+        if len(identities) != 1:
+            raise ValueError("SFFS step rows must share one fold identity")
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                for row in rows:
+                    values = list(asdict(row).values())
+                    key = values[:7]
+                    existing = connection.execute(
+                        """
+                        SELECT fold_id, profile_hash, source_build_id, state_count,
+                               step_number, action, candidate, selected_tuple_hash,
+                               forecast_score, calibration_score, stability_score,
+                               robustness_score, total_score, eligible, rejection_reason
+                        FROM sffs_steps
+                        WHERE fold_id = ? AND profile_hash = ? AND source_build_id = ?
+                          AND state_count = ? AND step_number = ? AND action = ?
+                          AND candidate = ?
+                        """,
+                        key,
+                    ).fetchone()
+                    if existing is not None and tuple(existing) != tuple(values):
+                        raise ValueError("conflicting immutable SFFS step identity")
+                    connection.execute(
+                        """
+                        INSERT INTO sffs_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        values,
+                    )
+                connection.execute("COMMIT")
+                return True
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     @staticmethod
     def _insert_fold_rows(
         connection: duckdb.DuckDBPyConnection,
@@ -514,4 +602,5 @@ __all__ = [
     "FoldModelStat",
     "PcaLoading",
     "SFFSStepRecord",
+    "sffs_step_records",
 ]

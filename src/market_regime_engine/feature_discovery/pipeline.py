@@ -34,6 +34,16 @@ from market_regime_engine.feature_discovery.global_reduction import (
     GlobalCorrelationResult,
     prune_global_correlated_features,
 )
+from market_regime_engine.feature_discovery.k_sffs import (
+    LEGAL_K,
+    KSlotSFFSResult,
+    KSubsetScore,
+    select_k_slot_sffs,
+)
+from market_regime_engine.feature_discovery.metadata_store import (
+    FeatureSelectionMetadataStore,
+    sffs_step_records,
+)
 from market_regime_engine.feature_discovery.sffs import SFFSResult, select_sffs
 from market_regime_engine.runtime.parallel import (
     FoldParallelExecutor,
@@ -66,10 +76,17 @@ class FeatureSelectionPipelineResult:
     profile_hash: str
     role_contract_hash: str
     invalid_families: tuple[str, ...] = ()
+    k_sffs: tuple[KSlotSFFSResult, ...] = ()
 
     @property
     def selected_features(self) -> tuple[str, ...]:
         return self.sffs.selected_features
+
+    @property
+    def emission_feature_orders(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
+        """Return the frozen per-K tuple reused by every emission family."""
+
+        return tuple((item.state_count, item.selected_features) for item in self.k_sffs)
 
     @property
     def evidence_metadata(self) -> dict[str, object]:
@@ -81,6 +98,7 @@ class FeatureSelectionPipelineResult:
             "family_pca_invalid_families": self.invalid_families,
             "global_reduction_hash": self.global_reduction.result_hash,
             "sffs_selected_features": self.sffs.selected_features,
+            "sffs_selected_features_by_k": self.emission_feature_orders,
             "ablation_feature_count": len(self.ablation.one_feature_results),
             "ablation_selector_contract_hash": self.ablation.selector_contract_hash,
             "ablation_model_family": self.ablation.model_family,
@@ -163,6 +181,12 @@ def run_canonical_feature_selection(
     max_sffs_features: int | None = None,
     profile: FeatureSelectionProfile | None = None,
     max_workers: int | None = None,
+    metadata_store: FeatureSelectionMetadataStore | None = None,
+    metadata_fold_id: str | None = None,
+    metadata_source_build_id: str | None = None,
+    metadata_state_count: int | None = None,
+    evaluate_gaussian_subset_by_k: KSubsetScore | None = None,
+    state_counts: tuple[int, ...] = LEGAL_K,
 ) -> FeatureSelectionPipelineResult:
     """Run all currently implemented selection stages on one TRAIN snapshot.
 
@@ -279,13 +303,51 @@ def run_canonical_feature_selection(
         contract,
         profile=resolved_profile,
     )
-    sffs = select_sffs(
-        global_reduction.representatives,
-        evaluate_subset,
-        max_features=(
-            resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
-        ),
+    sffs_max_features = (
+        resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
     )
+    if evaluate_gaussian_subset_by_k is None:
+        sffs = select_sffs(
+            global_reduction.representatives,
+            evaluate_subset,
+            max_features=sffs_max_features,
+            max_workers=max_workers,
+        )
+        k_sffs: tuple[KSlotSFFSResult, ...] = ()
+    else:
+        k_sffs = select_k_slot_sffs(
+            global_reduction.representatives,
+            evaluate_gaussian_subset_by_k,
+            state_counts=state_counts,
+            max_features=sffs_max_features,
+            max_workers=max_workers,
+        )
+        sffs = k_sffs[0].sffs
+    if metadata_store is not None:
+        if (
+            metadata_fold_id is None
+            or metadata_source_build_id is None
+            or metadata_state_count is None
+        ):
+            raise ValueError(
+                "metadata_fold_id, metadata_source_build_id and metadata_state_count are required"
+            )
+        assert metadata_state_count is not None
+        records = (
+            tuple((item.state_count, item.sffs) for item in k_sffs)
+            if k_sffs
+            else ((metadata_state_count, sffs),)
+        )
+        for state_count, slot_sffs in records:
+            metadata_store.commit_sffs_steps(
+                sffs_step_records(
+                    slot_sffs,
+                    fold_id=metadata_fold_id,
+                    profile_hash=resolved_profile.profile_hash,
+                    source_build_id=metadata_source_build_id,
+                    state_count=state_count,
+                )
+            )
     ablation = run_one_feature_hmm_ablation(
         sffs.selected_features,
         evaluate_hmm_subset,
@@ -301,6 +363,7 @@ def run_canonical_feature_selection(
         profile_hash=resolved_profile.profile_hash,
         role_contract_hash=contract.contract_hash,
         invalid_families=tuple(invalid_families),
+        k_sffs=k_sffs,
     )
 
 

@@ -9,6 +9,7 @@ from math import isfinite
 
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
+from market_regime_engine.feature_discovery.feature_subset_score import SCORE_ABS_TOLERANCE
 from market_regime_engine.runtime.cpu import cpu_worker_count
 
 DIMENSION_INDEPENDENT_SCORE = "dimension_independent_feature_subset_score"
@@ -19,6 +20,13 @@ class FeatureSubsetScore:
     feature_names: tuple[str, ...]
     value: float
     metric: str = DIMENSION_INDEPENDENT_SCORE
+    forecast_score: float | None = None
+    worst_fold_forecast_score: float | None = None
+    calibration_score: float | None = None
+    stability_score: float | None = None
+    robustness_score: float | None = None
+    model_family: str | None = None
+    state_count: int | None = None
 
     def __post_init__(self) -> None:
         if not self.feature_names or len(set(self.feature_names)) != len(self.feature_names):
@@ -29,6 +37,20 @@ class FeatureSubsetScore:
             raise ValueError(
                 "SFFS cannot compare raw likelihood, AIC, BIC, or other dimension-dependent scores"
             )
+        for field in (
+            "forecast_score",
+            "worst_fold_forecast_score",
+            "calibration_score",
+            "stability_score",
+            "robustness_score",
+        ):
+            component = getattr(self, field)
+            if component is not None and (not isfinite(component) or not 0.0 <= component <= 1.0):
+                raise ValueError(f"{field} must be finite and in [0, 1]")
+        if self.model_family is not None and self.model_family != "gaussian_hmm":
+            raise ValueError("SFFS feature scores must use the Gaussian HMM selector")
+        if self.state_count is not None and self.state_count not in (2, 3, 4, 5):
+            raise ValueError("SFFS feature score state_count must be 2, 3, 4, or 5")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +61,21 @@ class SFFSStep:
 
 
 @dataclass(frozen=True, slots=True)
+class SFFSEvaluation:
+    """One candidate evaluation, including candidates rejected by the score gate."""
+
+    action: str
+    candidate: tuple[str, ...]
+    selected_features: tuple[str, ...]
+    score: FeatureSubsetScore | None
+
+
+@dataclass(frozen=True, slots=True)
 class SFFSResult:
     selected_features: tuple[str, ...]
     best_singleton: str
     steps: tuple[SFFSStep, ...]
+    evaluations: tuple[SFFSEvaluation, ...] = ()
 
 
 ScoreFunction = Callable[[tuple[str, ...]], FeatureSubsetScore | None]
@@ -82,11 +115,33 @@ def _better(
         return True
     candidate_names, candidate_score = candidate
     incumbent_names, incumbent_score = incumbent
-    if candidate_score.value != incumbent_score.value:
-        return candidate_score.value > incumbent_score.value
-    candidate_key = tuple(candidate_order[name] for name in candidate_names)
-    incumbent_key = tuple(candidate_order[name] for name in incumbent_names)
-    return candidate_key < incumbent_key
+    candidate_rank_key = (
+        candidate_score.value,
+        candidate_score.forecast_score if candidate_score.forecast_score is not None else 0.0,
+        candidate_score.worst_fold_forecast_score
+        if candidate_score.worst_fold_forecast_score is not None
+        else 0.0,
+        candidate_score.calibration_score if candidate_score.calibration_score is not None else 0.0,
+        candidate_score.stability_score if candidate_score.stability_score is not None else 0.0,
+        candidate_score.robustness_score if candidate_score.robustness_score is not None else 0.0,
+        -len(candidate_names),
+    )
+    incumbent_rank_key = (
+        incumbent_score.value,
+        incumbent_score.forecast_score if incumbent_score.forecast_score is not None else 0.0,
+        incumbent_score.worst_fold_forecast_score
+        if incumbent_score.worst_fold_forecast_score is not None
+        else 0.0,
+        incumbent_score.calibration_score if incumbent_score.calibration_score is not None else 0.0,
+        incumbent_score.stability_score if incumbent_score.stability_score is not None else 0.0,
+        incumbent_score.robustness_score if incumbent_score.robustness_score is not None else 0.0,
+        -len(incumbent_names),
+    )
+    if candidate_rank_key != incumbent_rank_key:
+        return candidate_rank_key > incumbent_rank_key
+    candidate_order_key = tuple(candidate_order[name] for name in candidate_names)
+    incumbent_order_key = tuple(candidate_order[name] for name in incumbent_names)
+    return candidate_order_key < incumbent_order_key
 
 
 def select_sffs(
@@ -117,17 +172,27 @@ def select_sffs(
         cpu_process_pool(worker_limit) if parallel and worker_limit > 1 else nullcontext()
     )
     with pool_context as executor:
+        evaluations: list[SFFSEvaluation] = []
 
         def evaluate_many(
             feature_sets: tuple[tuple[str, ...], ...],
+            *,
+            action: str,
+            selected_features: tuple[str, ...],
         ) -> tuple[FeatureSubsetScore | None, ...]:
             tasks = tuple((score, features) for features in feature_sets)
             if executor is None:
-                return tuple(_score_in_process(task) for task in tasks)
-            return tuple(executor.map(_score_in_process, tasks))
+                results = tuple(_score_in_process(task) for task in tasks)
+            else:
+                results = tuple(executor.map(_score_in_process, tasks))
+            evaluations.extend(
+                SFFSEvaluation(action, features, selected_features, evaluated)
+                for features, evaluated in zip(feature_sets, results, strict=True)
+            )
+            return results
 
         singleton_sets = tuple((name,) for name in candidate_tuple)
-        singleton_scores = evaluate_many(singleton_sets)
+        singleton_scores = evaluate_many(singleton_sets, action="singleton", selected_features=())
         best: tuple[tuple[str, ...], FeatureSubsetScore] | None = None
         for features, evaluated in zip(singleton_sets, singleton_scores, strict=True):
             if evaluated is not None and _better((features, evaluated), best, candidate_order):
@@ -144,11 +209,15 @@ def select_sffs(
                 for name in candidate_tuple
                 if name not in selected and (*selected, name) not in visited
             )
-            forward_scores = evaluate_many(forward_sets)
+            forward_scores = evaluate_many(
+                forward_sets, action="forward", selected_features=selected
+            )
             forward: tuple[tuple[str, ...], FeatureSubsetScore] | None = None
             for proposal, evaluated in zip(forward_sets, forward_scores, strict=True):
-                if evaluated is not None and _better(
-                    (proposal, evaluated), forward, candidate_order
+                if (
+                    evaluated is not None
+                    and evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
+                    and _better((proposal, evaluated), forward, candidate_order)
                 ):
                     forward = (proposal, evaluated)
             if forward is None:
@@ -161,12 +230,14 @@ def select_sffs(
                 backward_sets = tuple(
                     tuple(item for item in selected if item != name) for name in selected
                 )
-                backward_scores = evaluate_many(backward_sets)
+                backward_scores = evaluate_many(
+                    backward_sets, action="backward", selected_features=selected
+                )
                 backward: tuple[tuple[str, ...], FeatureSubsetScore] | None = None
                 for proposal, evaluated in zip(backward_sets, backward_scores, strict=True):
                     if (
                         evaluated is not None
-                        and evaluated.value > selected_score.value
+                        and evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
                         and _better((proposal, evaluated), backward, candidate_order)
                     ):
                         backward = (proposal, evaluated)
@@ -180,12 +251,14 @@ def select_sffs(
         selected_features=selected,
         best_singleton=best[0][0],
         steps=tuple(steps),
+        evaluations=tuple(evaluations),
     )
 
 
 __all__ = [
     "DIMENSION_INDEPENDENT_SCORE",
     "FeatureSubsetScore",
+    "SFFSEvaluation",
     "SFFSResult",
     "SFFSStep",
     "select_sffs",
