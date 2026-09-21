@@ -5,11 +5,12 @@ from market_regime_engine.feature_discovery.family_reduction import (
 )
 from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
+    FeatureRoleContract,
     build_feature_role_contract,
 )
 
 
-def _contract(*names: str):
+def _contract(*names: str) -> FeatureRoleContract:
     return build_feature_role_contract((TEMPORAL_KEY, *names))
 
 
@@ -40,7 +41,9 @@ def test_pruning_keeps_earliest_stable_leader_only_within_family() -> None:
     assert result.removed_features == (names[1],)
     assert len(result.evidence) == 1
     assert result.evidence[0].full_absolute_pearson == pytest.approx(1.0)
+    assert result.evidence[0].full_support_count == 30
     assert result.evidence[0].subwindow_absolute_pearsons == pytest.approx((1.0, 1.0, 1.0))
+    assert result.evidence[0].subwindow_support_counts == (10, 10, 10)
 
 
 def test_pruning_is_redundancy_only_and_does_not_fill_or_guess_unsupported_pairs() -> None:

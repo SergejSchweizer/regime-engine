@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from math import fsum, isfinite, sqrt
+from statistics import median
 
 from market_regime_engine.feature_discovery.feature_roles import (
     FeatureRoleContract,
@@ -21,7 +22,9 @@ class FamilyPairEvidence:
     leader: str
     duplicate: str
     full_absolute_pearson: float
+    full_support_count: int
     subwindow_absolute_pearsons: tuple[float, ...]
+    subwindow_support_counts: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +46,9 @@ class FamilyNearDuplicateResult:
                     "leader": item.leader,
                     "duplicate": item.duplicate,
                     "full_absolute_pearson": item.full_absolute_pearson,
+                    "full_support_count": item.full_support_count,
                     "subwindow_absolute_pearsons": item.subwindow_absolute_pearsons,
+                    "subwindow_support_counts": item.subwindow_support_counts,
                 }
                 for item in self.evidence
             ],
@@ -100,21 +105,23 @@ def _stable_duplicate(
     left: Sequence[float | None],
     right: Sequence[float | None],
     profile: FeatureSelectionProfile,
-) -> tuple[float, tuple[float, ...]] | None:
+) -> tuple[float, int, tuple[float, ...], tuple[int, ...]] | None:
     full = _absolute_pearson(left, right)
     if full is None or full[1] < profile.correlation_min_pair_rows:
         return None
     subwindows: list[float] = []
+    support_counts: list[int] = []
     for start, end in _contiguous_thirds(len(left)):
         result = _absolute_pearson(left[start:end], right[start:end])
         if result is None or result[1] < profile.correlation_min_subwindow_rows:
             return None
         subwindows.append(result[0])
+        support_counts.append(result[1])
     if full[0] < profile.family_near_duplicate_abs_threshold or any(
         value < profile.family_near_duplicate_subwindow_abs_threshold for value in subwindows
     ):
         return None
-    return full[0], tuple(subwindows)
+    return full[0], full[1], tuple(subwindows), tuple(support_counts)
 
 
 def prune_family_near_duplicates(
@@ -147,6 +154,9 @@ def prune_family_near_duplicates(
         raise ValueError("family pruning profile must match the role contract profile")
 
     by_family: dict[str, list[str]] = {}
+    canonical_order = {
+        assignment.feature_name: index for index, assignment in enumerate(contract.assignments)
+    }
     for name in names:
         family = contract.assignment(name).family
         if family is None:
@@ -156,30 +166,66 @@ def prune_family_near_duplicates(
     retained: list[str] = []
     removed: list[str] = []
     evidence: list[FamilyPairEvidence] = []
-    for name in names:
-        if name in removed:
-            continue
-        retained.append(name)
-        family = contract.assignment(name).family
-        assert family is not None
-        for candidate in by_family[family]:
-            if candidate == name or candidate in removed or candidate in retained:
-                continue
-            duplicate = _stable_duplicate(
-                feature_values[name], feature_values[candidate], resolved_profile
-            )
-            if duplicate is None:
-                continue
-            removed.append(candidate)
-            evidence.append(
-                FamilyPairEvidence(
-                    family=family,
-                    leader=name,
-                    duplicate=candidate,
-                    full_absolute_pearson=duplicate[0],
-                    subwindow_absolute_pearsons=duplicate[1],
+    for family in sorted(by_family):
+        remaining = set(by_family[family])
+        while remaining:
+            candidates = tuple(sorted(remaining, key=lambda name: canonical_order[name]))
+            neighborhoods: dict[
+                str,
+                list[tuple[str, tuple[float, int, tuple[float, ...], tuple[int, ...]]]],
+            ] = {name: [] for name in candidates}
+            for left_index, left_name in enumerate(candidates):
+                for right_name in candidates[left_index + 1 :]:
+                    duplicate = _stable_duplicate(
+                        feature_values[left_name], feature_values[right_name], resolved_profile
+                    )
+                    if duplicate is None:
+                        continue
+                    neighborhoods[left_name].append((right_name, duplicate))
+                    neighborhoods[right_name].append((left_name, duplicate))
+
+            def leader_key(
+                name: str,
+                neighborhoods: dict[
+                    str,
+                    list[tuple[str, tuple[float, int, tuple[float, ...], tuple[int, ...]]]],
+                ] = neighborhoods,
+            ) -> tuple[int, float, float, str]:
+                neighborhood = neighborhoods[name]
+                correlation_median = (
+                    median(item[1][0] for item in neighborhood) if neighborhood else 0.0
                 )
-            )
+                coverage = sum(value is not None for value in feature_values[name]) / len(
+                    feature_values[name]
+                )
+                return (-len(neighborhood), -correlation_median, -coverage, name)
+
+            leader = min(candidates, key=leader_key)
+            retained.append(leader)
+            direct_duplicates = sorted(neighborhoods[leader])
+            for duplicate_name, duplicate in direct_duplicates:
+                evidence.append(
+                    FamilyPairEvidence(
+                        family=family,
+                        leader=leader,
+                        duplicate=duplicate_name,
+                        full_absolute_pearson=duplicate[0],
+                        full_support_count=duplicate[1],
+                        subwindow_absolute_pearsons=duplicate[2],
+                        subwindow_support_counts=duplicate[3],
+                    )
+                )
+                removed.append(duplicate_name)
+            remaining.difference_update((leader, *(name for name, _ in direct_duplicates)))
+
+    retained.sort(key=lambda name: canonical_order[name])
+    removed.sort(key=lambda name: canonical_order[name])
+    evidence.sort(
+        key=lambda item: (
+            canonical_order[item.leader],
+            canonical_order[item.duplicate],
+        )
+    )
 
     return FamilyNearDuplicateResult(
         retained_features=tuple(retained),
