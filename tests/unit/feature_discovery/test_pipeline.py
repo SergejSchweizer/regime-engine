@@ -1,3 +1,4 @@
+from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
     build_feature_role_contract,
@@ -34,11 +35,26 @@ def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
     def evaluate(features: tuple[str, ...]) -> FeatureSubsetScore:
         return FeatureSubsetScore(features, sum(weights[name] for name in features))
 
+    fit_count = 0
+
+    def evaluate_hmm(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        nonlocal fit_count
+        fit_count += 1
+        return HMMSubsetEvaluation(
+            FeatureSubsetScore(features, sum(weights[name] for name in features)),
+            "gaussian_hmm",
+            2,
+            "selector-v1",
+            f"fit-{fit_count}",
+        )
+
     result = run_canonical_feature_selection(
         feature_values,
         contract,
         quality_eligible_features=names,
         evaluate_subset=evaluate,
+        evaluate_hmm_subset=evaluate_hmm,
+        hmm_selector_contract_hash="selector-v1",
         max_sffs_features=2,
     )
 
@@ -68,11 +84,26 @@ def test_canonical_pipeline_can_run_without_transformations() -> None:
     def evaluate(features: tuple[str, ...]) -> FeatureSubsetScore:
         return FeatureSubsetScore(features, float(len(features)))
 
+    fit_count = 0
+
+    def evaluate_hmm(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        nonlocal fit_count
+        fit_count += 1
+        return HMMSubsetEvaluation(
+            FeatureSubsetScore(features, float(len(features))),
+            "gaussian_hmm",
+            2,
+            "selector-v1",
+            f"fit-{fit_count}",
+        )
+
     result = run_canonical_feature_selection(
         values,
         contract,
         quality_eligible_features=names,
         evaluate_subset=evaluate,
+        evaluate_hmm_subset=evaluate_hmm,
+        hmm_selector_contract_hash="selector-v1",
         max_sffs_features=2,
     )
 

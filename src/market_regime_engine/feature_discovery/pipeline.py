@@ -8,8 +8,9 @@ from math import isfinite
 
 from market_regime_engine.feature_discovery.ablation import (
     AblationResult,
+    HMMSubsetEvaluator,
     SubsetEvaluator,
-    run_one_feature_ablation,
+    run_one_feature_hmm_ablation,
 )
 from market_regime_engine.feature_discovery.family_pca import (
     FamilyPCAArtifact,
@@ -70,6 +71,10 @@ class FeatureSelectionPipelineResult:
             "global_reduction_hash": self.global_reduction.result_hash,
             "sffs_selected_features": self.sffs.selected_features,
             "ablation_feature_count": len(self.ablation.one_feature_results),
+            "ablation_selector_contract_hash": self.ablation.selector_contract_hash,
+            "ablation_model_family": self.ablation.model_family,
+            "ablation_state_count": self.ablation.state_count,
+            "ablation_fit_execution_hashes": self.ablation.fit_execution_hashes,
         }
 
 
@@ -79,6 +84,8 @@ def run_canonical_feature_selection(
     *,
     quality_eligible_features: Sequence[str],
     evaluate_subset: SubsetEvaluator,
+    evaluate_hmm_subset: HMMSubsetEvaluator,
+    hmm_selector_contract_hash: str,
     max_sffs_features: int | None = None,
     profile: FeatureSelectionProfile | None = None,
 ) -> FeatureSelectionPipelineResult:
@@ -155,7 +162,11 @@ def run_canonical_feature_selection(
             resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
         ),
     )
-    ablation = run_one_feature_ablation(sffs.selected_features, evaluate_subset)
+    ablation = run_one_feature_hmm_ablation(
+        sffs.selected_features,
+        evaluate_hmm_subset,
+        selector_contract_hash=hmm_selector_contract_hash,
+    )
     return FeatureSelectionPipelineResult(
         quality_eligible_features=eligible,
         family_reduction=family_reduction,
