@@ -45,7 +45,10 @@ def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) 
 
     def evaluate_by_k(state_count: int, features: tuple[str, ...]) -> FeatureSubsetScore:
         return FeatureSubsetScore(
-            features, sum(weights[name] for name in features) + state_count * 0.0
+            features,
+            sum(weights[name] for name in features) + state_count * 0.0,
+            model_family="gaussian_hmm",
+            state_count=state_count,
         )
 
     fit_count = 0

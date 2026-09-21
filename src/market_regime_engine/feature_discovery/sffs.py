@@ -25,6 +25,8 @@ class FeatureSubsetScore:
     calibration_score: float | None = None
     stability_score: float | None = None
     robustness_score: float | None = None
+    model_family: str | None = None
+    state_count: int | None = None
 
     def __post_init__(self) -> None:
         if not self.feature_names or len(set(self.feature_names)) != len(self.feature_names):
@@ -45,6 +47,10 @@ class FeatureSubsetScore:
             component = getattr(self, field)
             if component is not None and (not isfinite(component) or not 0.0 <= component <= 1.0):
                 raise ValueError(f"{field} must be finite and in [0, 1]")
+        if self.model_family is not None and self.model_family != "gaussian_hmm":
+            raise ValueError("SFFS feature scores must use the Gaussian HMM selector")
+        if self.state_count is not None and self.state_count not in (2, 3, 4, 5):
+            raise ValueError("SFFS feature score state_count must be 2, 3, 4, or 5")
 
 
 @dataclass(frozen=True, slots=True)

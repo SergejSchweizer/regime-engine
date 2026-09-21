@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from functools import partial
 
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.sffs import (
@@ -16,6 +15,22 @@ from market_regime_engine.feature_discovery.sffs import (
 LEGAL_K = (2, 3, 4, 5)
 GAUSSIAN_HMM = "gaussian_hmm"
 KSubsetScore = Callable[[int, tuple[str, ...]], FeatureSubsetScore | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedKScore:
+    evaluator: KSubsetScore
+    state_count: int
+
+    def __call__(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
+        result = self.evaluator(self.state_count, features)
+        if result is None:
+            return None
+        if result.state_count != self.state_count or result.model_family != GAUSSIAN_HMM:
+            raise ValueError(
+                "K SFFS evaluator must return a Gaussian-HMM score for the requested K"
+            )
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +76,7 @@ def select_k_slot_sffs(
     candidate_tuple = tuple(candidates)
     results: list[KSlotSFFSResult] = []
     for state_count in requested:
-        fixed_k_score = partial(evaluate_gaussian_subset, state_count)
+        fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
         selected = select_sffs(
             candidate_tuple,
             fixed_k_score,
