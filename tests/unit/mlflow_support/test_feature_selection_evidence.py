@@ -53,6 +53,7 @@ def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(tmp_path:
         source_build_id="source-build",
         fold_id="fold-001",
         output_dir=tmp_path / "first",
+        feature_values=values,
     )
     second = render_feature_selection_evidence(
         result,
@@ -61,6 +62,7 @@ def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(tmp_path:
         source_build_id="source-build",
         fold_id="fold-001",
         output_dir=tmp_path / "second",
+        feature_values=values,
     )
 
     assert {path.name for path in first} == {path.name for path in second}

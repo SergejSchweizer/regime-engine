@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -15,6 +16,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from market_regime_engine.feature_discovery.family_reduction import _absolute_pearson
 from market_regime_engine.feature_discovery.feature_roles import FeatureRoleContract
 from market_regime_engine.feature_discovery.pipeline import FeatureSelectionPipelineResult
 from market_regime_engine.mlflow_support.ports import TrackingPort
@@ -95,6 +97,7 @@ def render_feature_selection_evidence(
     source_build_id: str,
     fold_id: str,
     output_dir: str | Path,
+    feature_values: Mapping[str, Sequence[float | None]] | None = None,
 ) -> tuple[Path, ...]:
     """Render deterministic preprocessing plots and complete companion tables."""
 
@@ -210,6 +213,15 @@ def render_feature_selection_evidence(
     matrix = np.zeros((len(selected), len(selected)), dtype=np.float64)
     for index, name in enumerate(selected):
         matrix[index, index] = groups[name]
+    if feature_values is not None:
+        for left_index, left_name in enumerate(selected):
+            for right_index, right_name in enumerate(selected[:left_index]):
+                correlation = _absolute_pearson(
+                    feature_values[left_name], feature_values[right_name]
+                )
+                value = 0.0 if correlation is None else correlation[0]
+                matrix[left_index, right_index] = value
+                matrix[right_index, left_index] = value
     figure, axis = plt.subplots(figsize=(8.0, 7.0))
     try:
         image = axis.imshow(matrix, aspect="auto")
