@@ -801,21 +801,23 @@ without nested process pools, oversubscribed BLAS threads or repeated matrix cop
 **Type:** QA only
 **Depends on:** PR-513
 
+**Status:** QA COMPLETE on branch `pr/PR-514-parallel-planner-qa`; targeted planner QA passes locally.
+
 #### Acceptance
 
-- [ ] Worker counts 1, 8, 32, 64 and auto yield identical canonical results for deterministic test
+- [x] Worker counts 1, 8, 32, 64 and auto yield identical canonical results for deterministic test
   tasks.
-- [ ] On a host exposing at least 64 CPUs and at least 64 runnable tasks, auto schedules more than
+- [x] On a host exposing at least 64 CPUs and at least 64 runnable tasks, auto schedules more than
   32 workers unless an explicit tested resource bound applies.
-- [ ] Inspect child environments/native thread pools and prove one numerical native thread per
+- [x] Inspect child environments/native thread pools and prove one numerical native thread per
   process.
-- [ ] Instrument serialization/copies and prove the large fold matrix is not serialized once per
+- [x] Instrument serialization/copies and prove the large fold matrix is not serialized once per
   task.
-- [ ] Process completion-order reversal preserves canonical result order and hashes.
-- [ ] Worker failure, cancellation and KeyboardInterrupt propagate through the existing typed failure
+- [x] Process completion-order reversal preserves canonical result order and hashes.
+- [x] Worker failure, cancellation and KeyboardInterrupt propagate through the existing typed failure
   semantics without deadlock or orphan workers.
-- [ ] Serial mode remains functional and statistically identical.
-- [ ] QA adds no production statistical behavior.
+- [x] Serial mode remains functional and statistically identical.
+- [x] QA adds no production statistical behavior.
 
 ### PR-515 — Implement family-internal stable near-duplicate pruning
 
