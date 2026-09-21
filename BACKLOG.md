@@ -847,16 +847,19 @@ family-reduction tests pass locally. PR-516 remains the independent oracle/edge-
 **Type:** QA only
 **Depends on:** PR-515
 
+**Status:** QA COMPLETE on branch `pr/PR-516-family-reduction-qa`; independent boundary/chain/PCA
+preservation tests pass locally.
+
 #### Acceptance
 
-- [ ] Independent reference implementation reproduces every family leader/mapping.
-- [ ] Cover +0.995, -0.995, 0.994999..., 0.99 subwindow and support boundaries.
-- [ ] Cover an A-B-C chain where A-B and B-C pass but A-C fails; A and C cannot be collapsed through
+- [x] Independent reference implementation reproduces every family leader/mapping.
+- [x] Cover +0.995, -0.995, 0.994999..., 0.99 subwindow and support boundaries.
+- [x] Cover an A-B-C chain where A-B and B-C pass but A-C fails; A and C cannot be collapsed through
   B.
-- [ ] Prove a 0.95-correlated but not near-duplicate transformation pair remains available to PCA.
-- [ ] Outer-TEST mutation cannot change any family mapping.
-- [ ] Row/column/process order cannot alter result or hash.
-- [ ] QA adds no production behavior.
+- [x] Prove a 0.95-correlated but not near-duplicate transformation pair remains available to PCA.
+- [x] Outer-TEST mutation cannot change any family mapping.
+- [x] Row/column/process order cannot alter result or hash.
+- [x] QA adds no production behavior.
 
 ### PR-484 — Implement family-local standardization and PCA for transformations
 
