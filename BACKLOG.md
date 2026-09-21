@@ -1216,9 +1216,11 @@ longer attempt nested multistart pools. Multistart frontier tasks open one immut
 TRAIN matrix per batch and carry only its path/shape/dtype identity. Frontier results are restored
 to submission identity before coordinator aggregation; the frontier submits only a bounded
 in-flight window and replenishes it as workers finish. A batch API now flattens all jobs' eight
-seeds into one frontier and aggregates each job canonically. Automatic parent-level integration
-of that batch across candidate scoring, inner folds and K slots, plus candidate-scoring matrix
-wiring, remain open. No full evaluation was run.
+seeds into one frontier and aggregates each job canonically. The canonical provisional-teacher
+candidate coordinator now owns one Frontier across all K candidates; each candidate batches its
+inner folds and eight seeds through that same pool, and the old candidate-local process-pool path
+is removed. Full feature-subset/SFFS candidate scoring integration and candidate-scoring matrix
+wiring remain open. No full evaluation was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.

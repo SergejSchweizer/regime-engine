@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -34,8 +35,9 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.scheduling import randomized_order
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.contracts import (
     INNER_ALLOW_PARTIAL_FINAL_TEST,
     INNER_STEP_SOURCE_OBSERVATIONS,
@@ -50,7 +52,7 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import (
     CandidateAggregate,
@@ -71,44 +73,6 @@ ProvisionalCandidateRunner = Callable[
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class _ProvisionalProcessTask:
-    """Pickle-safe immutable input for one provisional teacher candidate."""
-
-    source_rows: pd.DataFrame
-    plan: WalkForwardPlan
-    profile: ModelProfile
-    candidate: ResolvedCandidateProfile
-    max_workers: int
-    pca_raw_feature_order: tuple[str, ...]
-    pca_variance_threshold: float
-    runner: ProvisionalCandidateRunner
-
-
-def _evaluate_provisional_in_process(task: _ProvisionalProcessTask) -> WalkForwardEvaluation:
-    """Run one provisional candidate in a separate interpreter."""
-
-    candidate_adapter = cast(AdapterFactory, adapter_factory(task.profile, task.candidate))
-    if task.runner is run_provisional_gaussian_candidate:
-        return run_provisional_gaussian_candidate(
-            task.source_rows,
-            task.plan,
-            task.profile,
-            task.candidate,
-            candidate_adapter,
-            max_workers=task.max_workers,
-            pca_raw_feature_order=task.pca_raw_feature_order,
-            pca_variance_threshold=task.pca_variance_threshold,
-        )
-    return task.runner(
-        task.source_rows,
-        task.plan,
-        task.profile,
-        task.candidate,
-        candidate_adapter,
-    )
-
-
 def _evaluate_candidates(
     source_rows: pd.DataFrame,
     plan: WalkForwardPlan,
@@ -125,9 +89,11 @@ def _evaluate_candidates(
     if pca_raw_feature_order is None:
         raise ValueError("PCA provisional evaluation requires a raw feature order")
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidates))
-    total_worker_budget = cpu_worker_count(max_workers)
 
-    def evaluate(candidate: ResolvedCandidateProfile) -> WalkForwardEvaluation:
+    def evaluate(
+        candidate: ResolvedCandidateProfile,
+        shared_frontier: SharedTaskFrontier[Any, Any] | None = None,
+    ) -> WalkForwardEvaluation:
         if seed_checkpoint_factory is not None and runner is run_provisional_gaussian_candidate:
             seed_checkpoint = seed_checkpoint_factory(
                 candidate.candidate_id,
@@ -196,35 +162,29 @@ def _evaluate_candidates(
             max_workers=max_workers,
             pca_raw_feature_order=pca_raw_feature_order,
             pca_variance_threshold=pca_variance_threshold,
+            frontier=shared_frontier,
         )
 
-    use_processes = (
+    use_shared_frontier = (
         seed_checkpoint_factory is None
-        and worker_limit > 1
-        and is_pickleable(runner)
         and runner is run_provisional_gaussian_candidate
-    )
-    if use_processes:
-        nested_limits = nested_worker_limits(total_worker_budget, worker_limit)
-        tasks = tuple(
-            _ProvisionalProcessTask(
-                source_rows,
-                plan,
-                profile,
-                candidate,
-                nested_limits[index % worker_limit],
-                pca_raw_feature_order,
-                pca_variance_threshold,
-                runner,
-            )
-            for index, candidate in enumerate(candidates)
+        and worker_limit > 1
+        and os.environ.get("REGIME_CPU_PROCESS_WORKER") != "1"
+        and all(
+            is_pickleable(adapter_factory(profile, candidate)) for candidate in candidates
         )
-        with cpu_process_pool(worker_limit) as executor:
+    )
+    if use_shared_frontier:
+        with (
+            SharedTaskFrontier[Any, Any](max_workers) as shared_frontier,
+            ThreadPoolExecutor(max_workers=len(candidates)) as coordinator,
+        ):
             futures = {
-                task.candidate.candidate_id: executor.submit(_evaluate_provisional_in_process, task)
-                for task in tasks
+                candidate.candidate_id: coordinator.submit(evaluate, candidate, shared_frontier)
+                for candidate in candidates
             }
             return {candidate_id: futures[candidate_id].result() for candidate_id in futures}
+
     if worker_limit == 1:
         return {candidate.candidate_id: evaluate(candidate) for candidate in candidates}
     if seed_checkpoint_factory is None or runner is not run_provisional_gaussian_candidate:
@@ -428,6 +388,7 @@ def run_provisional_gaussian_candidate(
     *,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    frontier: SharedTaskFrontier[Any, Any] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
 ) -> WalkForwardEvaluation:
@@ -441,6 +402,7 @@ def run_provisional_gaussian_candidate(
         adapter_factory=candidate_adapter_factory,
         max_workers=max_workers,
         seed_checkpoint_factory=seed_checkpoint_factory,
+        frontier=frontier,
         pca_raw_feature_order=pca_raw_feature_order,
         pca_variance_threshold=pca_variance_threshold,
     )
