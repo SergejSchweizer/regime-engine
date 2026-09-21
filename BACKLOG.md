@@ -1046,23 +1046,27 @@ multi-worker parity and independent-edge tests pass locally. No full evaluation 
 **Type:** implementation / observability
 **Depends on:** PR-520
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-488-mlflow-preprocessing-evidence`; the
+deterministic evidence bundle, FileStore upload test, artifact identity binding, and MLflow
+failure-isolation contract pass locally. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Log one feature_funnel plot with counts for discovered, quality-eligible, family-PC/core,
+- [x] Log one feature_funnel plot with counts for discovered, quality-eligible, family-PC/core,
   correlation-representative and later final stages when available.
-- [ ] Log one family_survival plot with source count, quality count, retained PCs and representative
+- [x] Log one family_survival plot with source count, quality count, retained PCs and representative
   count per family.
-- [ ] Log one explained-variance curve per PCA family under a deterministic pca/ artifact path.
-- [ ] Log top-loading plots for every family PC that survives correlation pruning; top 20 absolute
+- [x] Log one explained-variance curve per PCA family under a deterministic pca/ artifact path.
+- [x] Log top-loading plots for every family PC that survives correlation pruning; top 20 absolute
   loadings are shown, with the full loading table persisted separately.
-- [ ] Log correlation group-size ranking for every retained leader.
-- [ ] Log representative correlation heatmap for at most 80 representatives, chosen by descending
+- [x] Log correlation group-size ranking for every retained leader.
+- [x] Log representative correlation heatmap for at most 80 representatives, chosen by descending
   covered-group size then canonical identity; the complete correlation mapping remains available
   as a table artifact regardless of plot truncation.
-- [ ] Log exact profile/source/fold hashes beside every artifact bundle.
-- [ ] Plot generation never changes selection results.
-- [ ] QA/local tests use MLflow FileStore; production runs use the configured external tracking URI.
-- [ ] DuckDB remains the metadata source of truth if MLflow logging is disabled or fails before an
+- [x] Log exact profile/source/fold hashes beside every artifact bundle.
+- [x] Plot generation never changes selection results.
+- [x] QA/local tests use MLflow FileStore; production runs use the configured external tracking URI.
+- [x] DuckDB remains the metadata source of truth if MLflow logging is disabled or fails before an
   authorized external run.
 
 ### PR-489 — QA: MLflow preprocessing evidence completeness and plot determinism
