@@ -402,8 +402,11 @@ open; the statistical stage contracts marked below are implemented and tested.
 **External source audit:** read-only login as `macro-loader` succeeds, but the current NAS
 connection exposes neither the `macro_loader` nor `macro_loader_sync` schema; consequently both
 `macro_loader.macro_features` and `macro_loader_sync.gold_sync_state` are currently missing. The
-source cutover therefore cannot be accepted until macro-loader provisions the canonical view and
-publishes matching `macro_features` lineage/fingerprint; no fallback to a legacy row is permitted.
+read-only probe on 2026-09-21 returned `macro-loader` followed by four empty
+`to_regnamespace`/`to_regclass` values, and `scripts/verify_feature_postgres.sh` fails with
+`InvalidSchemaName` at the canonical privilege query. The source cutover therefore cannot be
+accepted until macro-loader provisions the canonical view and publishes matching `macro_features`
+lineage/fingerprint; no fallback to a legacy row is permitted.
 
 **Type:** contract / configuration
 **Depends on:** PR-508
