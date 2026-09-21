@@ -137,6 +137,15 @@ def test_bootstrap_has_exact_durable_schema_and_global_view(tmp_path: Path) -> N
     assert store.view_names() == ("feature_global_stats",)
 
 
+def test_sffs_steps_can_be_committed_before_the_fold_model_bundle(tmp_path: Path) -> None:
+    store = FeatureSelectionMetadataStore(tmp_path)
+    rows = make_bundle().sffs_steps
+
+    assert store.commit_sffs_steps(rows) is True
+    assert store.commit_sffs_steps(rows) is True
+    assert query_count(store, "sffs_steps") == 1
+
+
 def test_fold_commit_is_atomic_idempotent_and_rejects_conflicting_replay(tmp_path: Path) -> None:
     store = FeatureSelectionMetadataStore(tmp_path)
     bundle = make_bundle()

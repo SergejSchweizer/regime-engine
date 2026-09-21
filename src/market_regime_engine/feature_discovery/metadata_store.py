@@ -457,6 +457,50 @@ class FeatureSelectionMetadataStore:
                 connection.execute("ROLLBACK")
                 raise
 
+    def commit_sffs_steps(self, rows: tuple[SFFSStepRecord, ...]) -> bool:
+        """Atomically persist SFFS evaluations without requiring model rows yet."""
+
+        if not rows:
+            return False
+        identities = {
+            (row.fold_id, row.profile_hash, row.source_build_id, row.state_count) for row in rows
+        }
+        if len(identities) != 1:
+            raise ValueError("SFFS step rows must share one fold identity")
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                for row in rows:
+                    values = list(asdict(row).values())
+                    key = values[:7]
+                    existing = connection.execute(
+                        """
+                        SELECT fold_id, profile_hash, source_build_id, state_count,
+                               step_number, action, candidate, selected_tuple_hash,
+                               forecast_score, calibration_score, stability_score,
+                               robustness_score, total_score, eligible, rejection_reason
+                        FROM sffs_steps
+                        WHERE fold_id = ? AND profile_hash = ? AND source_build_id = ?
+                          AND state_count = ? AND step_number = ? AND action = ?
+                          AND candidate = ?
+                        """,
+                        key,
+                    ).fetchone()
+                    if existing is not None and tuple(existing) != tuple(values):
+                        raise ValueError("conflicting immutable SFFS step identity")
+                    connection.execute(
+                        """
+                        INSERT INTO sffs_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        values,
+                    )
+                connection.execute("COMMIT")
+                return True
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     @staticmethod
     def _insert_fold_rows(
         connection: duckdb.DuckDBPyConnection,

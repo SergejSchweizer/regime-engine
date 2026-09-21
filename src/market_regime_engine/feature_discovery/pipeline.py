@@ -34,6 +34,10 @@ from market_regime_engine.feature_discovery.global_reduction import (
     GlobalCorrelationResult,
     prune_global_correlated_features,
 )
+from market_regime_engine.feature_discovery.metadata_store import (
+    FeatureSelectionMetadataStore,
+    sffs_step_records,
+)
 from market_regime_engine.feature_discovery.sffs import SFFSResult, select_sffs
 from market_regime_engine.runtime.parallel import (
     FoldParallelExecutor,
@@ -163,6 +167,10 @@ def run_canonical_feature_selection(
     max_sffs_features: int | None = None,
     profile: FeatureSelectionProfile | None = None,
     max_workers: int | None = None,
+    metadata_store: FeatureSelectionMetadataStore | None = None,
+    metadata_fold_id: str | None = None,
+    metadata_source_build_id: str | None = None,
+    metadata_state_count: int | None = None,
 ) -> FeatureSelectionPipelineResult:
     """Run all currently implemented selection stages on one TRAIN snapshot.
 
@@ -287,6 +295,24 @@ def run_canonical_feature_selection(
         ),
         max_workers=max_workers,
     )
+    if metadata_store is not None:
+        if (
+            metadata_fold_id is None
+            or metadata_source_build_id is None
+            or metadata_state_count is None
+        ):
+            raise ValueError(
+                "metadata_fold_id, metadata_source_build_id and metadata_state_count are required"
+            )
+        metadata_store.commit_sffs_steps(
+            sffs_step_records(
+                sffs,
+                fold_id=metadata_fold_id,
+                profile_hash=resolved_profile.profile_hash,
+                source_build_id=metadata_source_build_id,
+                state_count=metadata_state_count,
+            )
+        )
     ablation = run_one_feature_hmm_ablation(
         sffs.selected_features,
         evaluate_hmm_subset,
