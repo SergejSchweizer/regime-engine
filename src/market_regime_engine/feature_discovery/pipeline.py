@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
+from tempfile import TemporaryDirectory
+
+import numpy as np
 
 from market_regime_engine.feature_discovery.ablation import (
     AblationResult,
@@ -32,6 +35,11 @@ from market_regime_engine.feature_discovery.global_reduction import (
     prune_global_correlated_features,
 )
 from market_regime_engine.feature_discovery.sffs import SFFSResult, select_sffs
+from market_regime_engine.runtime.parallel import (
+    FoldParallelExecutor,
+    ParallelExecutionPlan,
+    ReadOnlyMatrix,
+)
 
 
 def _empty_family_reduction(profile_hash: str) -> FamilyNearDuplicateResult:
@@ -81,6 +89,69 @@ class FeatureSelectionPipelineResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _FamilyStageTask:
+    family: str
+    feature_names: tuple[str, ...]
+    column_indices: tuple[int, ...]
+    matrix_path: str
+    matrix_shape: tuple[int, int]
+    matrix_dtype: str
+    contract: FeatureRoleContract
+    profile: FeatureSelectionProfile
+
+
+@dataclass(frozen=True, slots=True)
+class _FamilyStageResult:
+    family: str
+    reduction: FamilyNearDuplicateResult
+    artifact: FamilyPCAArtifact | None
+    generated_values: tuple[tuple[str, tuple[float, ...]], ...]
+    statistically_invalid: bool
+
+
+def _run_family_stage(task: _FamilyStageTask) -> _FamilyStageResult:
+    mapped = np.memmap(
+        task.matrix_path,
+        dtype=np.dtype(task.matrix_dtype),
+        mode="r",
+        shape=task.matrix_shape,
+    )
+    feature_values = {
+        name: tuple(float(value) for value in mapped[:, column])
+        for name, column in zip(task.feature_names, task.column_indices, strict=True)
+    }
+    del mapped
+    reduction = prune_family_near_duplicates(
+        feature_values,
+        task.contract,
+        profile=task.profile,
+    )
+    retained_names = reduction.retained_features
+    matrix = tuple(
+        tuple(feature_values[name][row] for name in retained_names)
+        for row in range(len(feature_values[retained_names[0]]))
+    )
+    try:
+        artifact = fit_family_pca(
+            matrix,
+            retained_names,
+            task.contract,
+            profile=task.profile,
+        )
+    except FamilyPCAStatisticalInvalid:
+        return _FamilyStageResult(task.family, reduction, None, (), True)
+    transformed = artifact.transform(matrix)
+    generated = tuple(
+        (
+            name,
+            tuple(float(row[column]) for row in transformed),
+        )
+        for column, name in enumerate(artifact.generated_feature_names)
+    )
+    return _FamilyStageResult(task.family, reduction, artifact, generated, False)
+
+
 def run_canonical_feature_selection(
     feature_values: Mapping[str, Sequence[float | None]],
     contract: FeatureRoleContract,
@@ -91,6 +162,7 @@ def run_canonical_feature_selection(
     hmm_selector_contract_hash: str,
     max_sffs_features: int | None = None,
     profile: FeatureSelectionProfile | None = None,
+    max_workers: int | None = None,
 ) -> FeatureSelectionPipelineResult:
     """Run all currently implemented selection stages on one TRAIN snapshot.
 
@@ -110,48 +182,92 @@ def run_canonical_feature_selection(
     family_values = {
         name: values[name] for name in eligible if contract.assignment(name).family is not None
     }
-    family_reduction = (
-        prune_family_near_duplicates(family_values, contract, profile=resolved_profile)
-        if family_values
-        else _empty_family_reduction(resolved_profile.profile_hash)
-    )
-
     pca_artifacts: list[FamilyPCAArtifact] = []
     invalid_families: list[str] = []
     generated_values: dict[str, tuple[float, ...]] = {}
-    families = tuple(
-        sorted(
-            {
-                family
-                for name in family_reduction.retained_features
-                if (family := contract.assignment(name).family) is not None
-            }
-        )
-    )
-    for family in families:
-        family_names = tuple(
-            name
-            for name in family_reduction.retained_features
-            if contract.assignment(name).family == family
-        )
-        matrix = tuple(
-            tuple(values[name][row] for name in family_names)
-            for row in range(len(values[family_names[0]]))
-        )
-        try:
-            artifact = fit_family_pca(
-                matrix,
-                family_names,
-                contract,
-                profile=resolved_profile,
+    if family_values:
+        family_names_by_family: dict[str, tuple[str, ...]] = {}
+        families = tuple(
+            sorted(
+                {
+                    family
+                    for name in family_values
+                    if (family := contract.assignment(name).family) is not None
+                }
             )
-        except FamilyPCAStatisticalInvalid:
-            invalid_families.append(family)
-            continue
-        pca_artifacts.append(artifact)
-        transformed = artifact.transform(matrix)
-        for column, name in enumerate(artifact.generated_feature_names):
-            generated_values[name] = tuple(float(row[column]) for row in transformed)
+        )
+        for family in families:
+            family_names_by_family[family] = tuple(
+                assignment.feature_name
+                for assignment in contract.assignments
+                if assignment.feature_name in family_values and assignment.family == family
+            )
+        all_family_names = tuple(
+            name for family in family_names_by_family.values() for name in family
+        )
+        matrix = np.asarray(
+            tuple(
+                tuple(values[name][row] for name in all_family_names)
+                for row in range(len(values[all_family_names[0]]))
+            ),
+            dtype=np.float64,
+        )
+        with (
+            TemporaryDirectory(prefix="regime-family-stage-") as matrix_directory,
+            ReadOnlyMatrix.create(matrix, matrix_directory) as shared,
+        ):
+            column_lookup = {name: index for index, name in enumerate(all_family_names)}
+            tasks = tuple(
+                _FamilyStageTask(
+                    family=family,
+                    feature_names=family_names,
+                    column_indices=tuple(column_lookup[name] for name in family_names),
+                    matrix_path=str(shared.path),
+                    matrix_shape=matrix.shape,
+                    matrix_dtype=matrix.dtype.str,
+                    contract=contract,
+                    profile=resolved_profile,
+                )
+                for family, family_names in sorted(family_names_by_family.items())
+            )
+            plan = ParallelExecutionPlan.create(
+                len(tasks),
+                requested_workers=max_workers,
+                shared_matrix_identity=shared.identity,
+            )
+            executor: FoldParallelExecutor[_FamilyStageTask, _FamilyStageResult] = (
+                FoldParallelExecutor(plan, max_pending=len(tasks))
+            )
+            with executor:
+                family_results = executor.map_ordered(_run_family_stage, tasks)
+        retained = tuple(
+            name
+            for name in eligible
+            if name
+            in {item for result in family_results for item in result.reduction.retained_features}
+        )
+        removed = tuple(
+            name
+            for name in eligible
+            if name
+            in {item for result in family_results for item in result.reduction.removed_features}
+        )
+        evidence = tuple(item for result in family_results for item in result.reduction.evidence)
+        family_reduction = FamilyNearDuplicateResult(
+            retained,
+            removed,
+            tuple(sorted(evidence, key=lambda item: (item.family, item.leader, item.duplicate))),
+            resolved_profile.profile_hash,
+        )
+        for result in family_results:
+            if result.statistically_invalid:
+                invalid_families.append(result.family)
+            if result.artifact is not None:
+                pca_artifacts.append(result.artifact)
+            generated_values.update(dict(result.generated_values))
+        pca_artifacts.sort(key=lambda artifact: artifact.family)
+    else:
+        family_reduction = _empty_family_reduction(resolved_profile.profile_hash)
 
     core_names = tuple(
         name for name in eligible if contract.assignment(name).role is FeatureRole.CORE
