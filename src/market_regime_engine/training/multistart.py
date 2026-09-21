@@ -15,6 +15,7 @@ import numpy.typing as npt
 
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_count
@@ -85,6 +86,15 @@ class MultistartResult:
 AdapterFactory = Callable[[], GaussianHMMAdapter]
 
 
+@dataclass(frozen=True, slots=True)
+class _FrontierStartPayload:
+    train_rows: npt.ArrayLike
+    state_count: int
+    adapter_factory: AdapterFactory
+    seed: int
+    retryable_technical_failure: bool
+
+
 def _successful_diagnostic(result: FitResult) -> StartDiagnostic:
     return StartDiagnostic(
         seed=result.seed,
@@ -137,6 +147,19 @@ def _evaluate_start(
         raise
 
 
+def _evaluate_start_in_frontier(
+    task: FrontierTask[_FrontierStartPayload],
+) -> tuple[StartDiagnostic, FitResult | None]:
+    payload = task.payload
+    return _evaluate_start(
+        payload.train_rows,
+        state_count=payload.state_count,
+        adapter_factory=payload.adapter_factory,
+        seed=payload.seed,
+        retryable_technical_failure=payload.retryable_technical_failure,
+    )
+
+
 def _anchored_winner(valid_results: list[FitResult]) -> FitResult:
     """Choose from starts tied to the exact global maximum likelihood."""
 
@@ -179,6 +202,8 @@ def run_multistart(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     checkpoint: HMMSeedCheckpoint | None = None,
+    frontier: SharedTaskFrontier[_FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]]
+    | None = None,
 ) -> MultistartResult:
     """Fit exactly eight starts and choose the valid TRAIN-loglik winner deterministically."""
 
@@ -203,7 +228,39 @@ def run_multistart(
     if pending_seeds:
         pending_worker_limit = min(worker_limit, len(pending_seeds))
         save_results_in_parent = False
-        if pending_worker_limit == 1:
+        if frontier is not None:
+            frontier_tasks = tuple(
+                FrontierTask(
+                    task_id=f"multistart:{state_count}:{seed}",
+                    state_count=state_count,
+                    fold_id="multistart",
+                    candidate_subset=(f"seed:{seed}",),
+                    seed=index,
+                    profile_hash="0" * 64,
+                    matrix_identity="multistart-train-matrix",
+                    row_indices=(0,),
+                    column_indices=(0,),
+                    payload=_FrontierStartPayload(
+                        train_rows,
+                        state_count,
+                        adapter_factory,
+                        seed,
+                        checkpoint is not None,
+                    ),
+                )
+                for index, seed in enumerate(pending_seeds)
+            )
+            frontier_result = frontier.map(frontier_tasks, _evaluate_start_in_frontier)
+            by_task_id = {task.task_id: item for task, item in frontier_result.values}
+            pending_results = {
+                seed: by_task_id[f"multistart:{state_count}:{seed}"] for seed in pending_seeds
+            }
+            if checkpoint is not None:
+                from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
+
+                for seed, outcome in pending_results.items():
+                    checkpoint.save(seed, SeedFitOutcome(*outcome))
+        elif pending_worker_limit == 1:
             pending_results = {}
             for seed in pending_seeds:
                 outcome = _evaluate_start(

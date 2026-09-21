@@ -9,6 +9,7 @@ import pytest
 
 import market_regime_engine.training.multistart as multistart_module
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.training.multistart import (
@@ -211,6 +212,21 @@ def test_pickleable_custom_adapter_factory_uses_process_workers(
 
     assert worker_counts == [2]
     assert result.winner.seed == 131
+
+
+def test_multistart_can_use_a_caller_owned_shared_frontier() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    with SharedTaskFrontier(max_workers=2) as frontier:
+        result = run_multistart(
+            [[0.0], [1.0]],
+            state_count=2,
+            adapter_factory=PickleableAdapterFactory(outcomes),
+            max_workers=2,
+            frontier=frontier,
+        )
+
+    assert result.winner.seed == 131
+    assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS
 
 
 def test_non_pickleable_adapter_factory_fails_before_thread_fallback() -> None:

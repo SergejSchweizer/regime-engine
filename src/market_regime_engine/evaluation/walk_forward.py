@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from math import isfinite
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -26,6 +26,7 @@ from market_regime_engine.evaluation.diagnostics import (
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardFold, WalkForwardPlan
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.inference.predictive_likelihood import (
     continued_test_predictive_likelihood,
@@ -39,7 +40,7 @@ from market_regime_engine.preprocessing.two_stage import (
     fit_pca_hmm_scaler,
 )
 from market_regime_engine.profiles.config import ModelProfile
-from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.states.alignment import (
     StateAlignment,
     align_first_fold,
@@ -661,6 +662,7 @@ def run_walk_forward_candidate(
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
     seed_checkpoint_factory: Callable[[str], HMMSeedCheckpoint] | None = None,
+    frontier: SharedTaskFrontier[Any, Any] | None = None,
     pca_raw_feature_order: tuple[str, ...] | None = None,
     pca_variance_threshold: float = 0.90,
     _single_fold_execution: bool = False,
@@ -713,18 +715,17 @@ def run_walk_forward_candidate(
     # evidence hashes remain deterministic.  Checkpointed runs retain the
     # existing serial path because their factory may own a non-pickleable
     # durable ledger handle.
-    total_worker_budget = cpu_worker_count(max_workers)
     fold_worker_limit = cpu_worker_count(max_workers, task_count=len(plan.folds))
     use_parallel_folds = (
         len(plan.folds) > 1
         and fold_worker_limit > 1
         and seed_checkpoint_factory is None
+        and frontier is None
         and is_pickleable(adapter_factory)
         and is_pickleable(candidate)
         and is_pickleable(profile)
     )
     if use_parallel_folds:
-        child_limits = nested_worker_limits(total_worker_budget, fold_worker_limit)
         tasks = tuple(
             _SingleFoldTask(
                 source_rows=source_rows,
@@ -733,7 +734,9 @@ def run_walk_forward_candidate(
                 profile=profile,
                 candidate=candidate,
                 adapter_factory=adapter_factory,
-                max_workers=child_limits[index % fold_worker_limit],
+                    # Fold workers own the process parallelism.  Multistart
+                    # must not create a child pool inside one of them.
+                    max_workers=1,
                 pca_raw_feature_order=pca_raw_order,
                 pca_variance_threshold=pca_variance_threshold,
             )
@@ -830,36 +833,19 @@ def run_walk_forward_candidate(
             checkpoint = (
                 None if seed_checkpoint_factory is None else seed_checkpoint_factory(fold.fold_id)
             )
-            if max_workers is None:
-                if checkpoint is None:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                    )
-                else:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        checkpoint=checkpoint,
-                    )
-            else:
-                if checkpoint is None:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        max_workers=max_workers,
-                    )
-                else:
-                    multistart = run_multistart(
-                        scaled_train,
-                        state_count=candidate.state_count,
-                        adapter_factory=adapter_factory,
-                        max_workers=max_workers,
-                        checkpoint=checkpoint,
-                    )
+            multistart_kwargs: dict[str, Any] = {}
+            if max_workers is not None:
+                multistart_kwargs["max_workers"] = max_workers
+            if checkpoint is not None:
+                multistart_kwargs["checkpoint"] = checkpoint
+            if frontier is not None:
+                multistart_kwargs["frontier"] = frontier
+            multistart = run_multistart(
+                scaled_train,
+                state_count=candidate.state_count,
+                adapter_factory=adapter_factory,
+                **multistart_kwargs,
+            )
             artifact = multistart.winner.artifact
             if artifact.feature_order != candidate.feature_order:
                 raise RecoverableEvaluationInvalidity(
