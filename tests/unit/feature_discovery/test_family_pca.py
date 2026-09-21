@@ -68,3 +68,24 @@ def test_family_pca_rejects_mixed_families_and_incomplete_train_rows() -> None:
             (vix,),
             build_feature_role_contract((TEMPORAL_KEY, vix)),
         )
+
+
+def test_family_pca_signs_are_canonical_and_all_loadings_are_exportable() -> None:
+    names = _names(2)
+    index = np.arange(120, dtype=np.float64)
+    rows = np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0)))
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    artifact = fit_family_pca(rows, names, contract)
+
+    for component in artifact.components:
+        maximum = max(abs(value) for value in component)
+        tied = [
+            (name, value)
+            for name, value in zip(names, component, strict=True)
+            if abs(abs(value) - maximum) <= 1.0e-15
+        ]
+        assert next(value for name, value in tied if name == min(name for name, _ in tied)) > 0.0
+    loadings = artifact.pca_loadings("fold-001", "source-build")
+    assert len(loadings) == artifact.retained_component_count * len(names)
+    assert all(item.profile_hash == contract.profile.profile_hash for item in loadings)
+    assert all(item.squared_loading == pytest.approx(item.loading**2) for item in loadings)

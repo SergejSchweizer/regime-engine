@@ -18,6 +18,7 @@ from market_regime_engine.feature_discovery.feature_roles import (
     FeatureStage,
     family_pc_name,
 )
+from market_regime_engine.feature_discovery.metadata_store import PcaLoading
 from market_regime_engine.preprocessing.scaling import (
     StandardScalerArtifact,
     fit_standard_scaler,
@@ -25,6 +26,10 @@ from market_regime_engine.preprocessing.scaling import (
 
 ArrayF64 = npt.NDArray[np.float64]
 _RANK_TOLERANCE = 1.0e-12
+
+
+class FamilyPCAStatisticalInvalid(ValueError):
+    """A family has no usable TRAIN variation; unrelated families may continue."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +95,7 @@ class FamilyPCAArtifact:
         payload = {
             "family": self.family,
             "feature_order": self.feature_order,
+            "scaler": self.scaler.to_canonical_json(),
             "components": self.components,
             "explained_variance_ratio": self.explained_variance_ratio,
             "numerical_rank": self.numerical_rank,
@@ -97,6 +103,25 @@ class FamilyPCAArtifact:
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return sha256(encoded).hexdigest()
+
+    def pca_loadings(self, fold_id: str, source_build_id: str) -> tuple[PcaLoading, ...]:
+        """Return all retained loading evidence for the local fold artifact."""
+
+        return tuple(
+            PcaLoading(
+                fold_id=fold_id,
+                profile_hash=self.profile_hash,
+                source_build_id=source_build_id,
+                family=self.family,
+                pc_ordinal=component_index,
+                source_feature=feature_name,
+                loading=loading,
+                squared_loading=loading * loading,
+                explained_variance=self.explained_variance_ratio[component_index - 1],
+            )
+            for component_index, component in enumerate(self.components, start=1)
+            for feature_name, loading in zip(self.feature_order, component, strict=True)
+        )
 
     def transform(self, rows: npt.ArrayLike) -> ArrayF64:
         matrix = np.asarray(rows, dtype=np.float64)
@@ -107,10 +132,13 @@ class FamilyPCAArtifact:
         return self.scaler.transform(matrix) @ np.asarray(self.components, dtype=np.float64).T
 
 
-def _canonicalize_signs(components: ArrayF64) -> ArrayF64:
+def _canonicalize_signs(components: ArrayF64, feature_order: tuple[str, ...]) -> ArrayF64:
     oriented = np.array(components, dtype=np.float64, copy=True)
     for index in range(oriented.shape[0]):
-        pivot = int(np.argmax(np.abs(oriented[index])))
+        absolute = np.abs(oriented[index])
+        maximum = float(np.max(absolute))
+        pivots = np.flatnonzero(absolute == maximum)
+        pivot = min(pivots, key=lambda position: feature_order[int(position)])
         if oriented[index, pivot] < 0.0:
             oriented[index] *= -1.0
     return oriented
@@ -147,21 +175,25 @@ def fit_family_pca(
         raise ValueError("family PCA TRAIN rows must match the exact feature order")
     if matrix.shape[0] < 1 or np.any(~np.isfinite(matrix)):
         raise ValueError("family PCA requires non-empty complete finite TRAIN rows")
+    if np.any(np.var(matrix, axis=0, ddof=0) <= 1.0e-12):
+        raise FamilyPCAStatisticalInvalid("family PCA contains a zero-variation TRAIN feature")
     scaler = fit_standard_scaler(matrix, order)
     standardized = scaler.transform(matrix)
     _u, singular_values, vt = np.linalg.svd(standardized, full_matrices=False)
     if singular_values.size == 0 or singular_values[0] <= 0.0:
-        raise ValueError("family PCA requires positive TRAIN variation")
+        raise FamilyPCAStatisticalInvalid("family PCA requires positive TRAIN variation")
     rank_tolerance = max(standardized.shape) * singular_values[0] * _RANK_TOLERANCE
     numerical_rank = int(np.count_nonzero(singular_values > rank_tolerance))
     if numerical_rank < 1:
-        raise ValueError("family PCA numerical rank is zero")
+        raise FamilyPCAStatisticalInvalid("family PCA numerical rank is zero")
     retained_count = min(numerical_rank, resolved_profile.family_pca_max_components)
-    components = _canonicalize_signs(vt[:retained_count])
+    components = _canonicalize_signs(vt[:retained_count], order)
     explained = np.square(singular_values, dtype=np.float64)
     total = float(np.sum(explained, dtype=np.float64))
     if not isfinite(total) or total <= 0.0:
-        raise ValueError("family PCA explained variance must be positive and finite")
+        raise FamilyPCAStatisticalInvalid(
+            "family PCA explained variance must be positive and finite"
+        )
     ratios = explained / total
     return FamilyPCAArtifact(
         family=family,
@@ -174,4 +206,4 @@ def fit_family_pca(
     )
 
 
-__all__ = ["FamilyPCAArtifact", "fit_family_pca"]
+__all__ = ["FamilyPCAArtifact", "FamilyPCAStatisticalInvalid", "fit_family_pca"]

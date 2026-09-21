@@ -866,23 +866,26 @@ preservation tests pass locally.
 **Type:** implementation / dimensionality reduction
 **Depends on:** PR-516
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-484-family-local-pca`; targeted PCA and
+pipeline tests pass locally. PR-485 remains the independent mathematical/leakage QA proof.
+
 #### Acceptance
 
-- [ ] PCA is applied separately to each transformation family; no global PCA is used.
-- [ ] Core features bypass PCA unchanged.
-- [ ] Each family uses its own TRAIN-only complete-case model clock; no cross-family complete-case
+- [x] PCA is applied separately to each transformation family; no global PCA is used.
+- [x] Core features bypass PCA unchanged.
+- [x] Each family uses its own TRAIN-only complete-case model clock; no cross-family complete-case
   intersection is required.
-- [ ] Standardization parameters are fitted from that family TRAIN clock only using the repository
+- [x] Standardization parameters are fitted from that family TRAIN clock only using the repository
   population-variance convention.
-- [ ] Retain PC1 through PCm where m=min(8, numerical rank); explained variance does not choose m.
-- [ ] PC order is descending explained variance with deterministic tie handling.
-- [ ] Canonicalize every PC sign by making its largest-absolute loading positive; loading ties use
+- [x] Retain PC1 through PCm where m=min(8, numerical rank); explained variance does not choose m.
+- [x] PC order is descending explained variance with deterministic tie handling.
+- [x] Canonicalize every PC sign by making its largest-absolute loading positive; loading ties use
   canonical source-feature identity.
-- [ ] PC semantic identity is family plus ordinal, independent of fold-specific loading values.
-- [ ] TEST and later timestamps are transformed only with frozen TRAIN scaler/loadings.
-- [ ] Persist scaler/PCA identities, explained-variance diagnostics and all loadings needed for
+- [x] PC semantic identity is family plus ordinal, independent of fold-specific loading values.
+- [x] TEST and later timestamps are transformed only with frozen TRAIN scaler/loadings.
+- [x] Persist scaler/PCA identities, explained-variance diagnostics and all loadings needed for
   feature-credit attribution.
-- [ ] A family with zero usable numerical rank is statistically invalid for that family only; it
+- [x] A family with zero usable numerical rank is statistically invalid for that family only; it
   does not crash unrelated families.
 
 ### PR-485 — QA: family-PCA math, leakage and deterministic identity
