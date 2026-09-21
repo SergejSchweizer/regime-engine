@@ -5,6 +5,8 @@ import time
 from dataclasses import asdict
 from hashlib import sha256
 
+import pytest
+
 from market_regime_engine.feature_discovery.ablation import (
     AblationResult,
     HMMSubsetEvaluation,
@@ -80,6 +82,22 @@ def test_reversed_completion_order_preserves_rows_and_hashes() -> None:
     )
     assert parallel == serial
     assert _canonical_hash(parallel) == _canonical_hash(serial)
+
+
+@pytest.mark.parametrize("worker_count", [1, 8, 32, 64, None])
+def test_worker_counts_preserve_ablation_tuple_and_hash(worker_count: int | None) -> None:
+    selected = ("a", "b", "c", "d")
+    reference = run_one_feature_hmm_ablation(
+        selected, _oracle_evaluation, selector_contract_hash=SELECTOR_HASH, max_workers=1
+    )
+    result = run_one_feature_hmm_ablation(
+        selected,
+        _delayed_oracle_evaluation,
+        selector_contract_hash=SELECTOR_HASH,
+        max_workers=worker_count,
+    )
+    assert result == reference
+    assert _canonical_hash(result) == _canonical_hash(reference)
 
 
 def test_outer_test_mutation_cannot_change_ablation_results() -> None:

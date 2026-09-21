@@ -1205,7 +1205,7 @@ oracle and completion-order QA are production-code-free. No full evaluation was 
 **Type:** implementation / performance
 **Depends on:** PR-493
 
-**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-521-shared-hmm-task-frontier`; the
+**Status:** MERGED as PR #483 into `origin/main`; the
 persistent `SharedTaskFrontier` boundary now provides canonical task ordering, completion-order
 independence, fail-fast worker errors and queue/runnable/utilization metrics. K-slot SFFS now
 reuses one caller-owned frontier across all K slots and SFFS steps, and the canonical selection
@@ -1253,28 +1253,35 @@ that control boundary is flattened onto the one shared process pool.
 - [x] Serial reference mode remains statistically identical.
 - [x] Record queue depth, runnable tasks, worker utilization proxy, fit count and stage wall time.
 
-Current git status at implementation closure: branch
-`pr/PR-521-shared-hmm-task-frontier`, implementation commit created and working tree clean; the
-local Hermetic integration hook passed, no full evaluation was run, and no integration test is
-run as a GitHub merge gate.
+Current git status at closure: local `main` and `origin/main` point to the merged PR; the
+PR-521 source branch was deleted locally and remotely. The local Hermetic integration hook passed,
+no full evaluation was run, and no integration test ran as a GitHub merge gate.
 
 ### PR-522 — QA: HMM frontier saturation, nested-pool prohibition and parity
 
 **Type:** QA only
 **Depends on:** PR-521
 
+**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-522-hmm-frontier-qa`; all acceptance
+evidence is implemented locally, no full evaluation was run, and the branch has not yet been
+pushed or opened as a GitHub PR.
+
 #### Acceptance
 
-- [ ] A synthetic selection fixture exposes at least 2x the available CPU count of independent HMM
+- [x] A synthetic selection fixture exposes at least 2x the available CPU count of independent HMM
   fit tasks and proves auto keeps the shared pool supplied until the frontier contracts.
-- [ ] Worker counts 1, 8, 32, 64 and auto produce identical SFFS paths, selected tuples, ablations
+- [x] Worker counts 1, 8, 32, 64 and auto produce identical SFFS paths, selected tuples, ablations
   and canonical hashes.
-- [ ] Static/runtime inspection proves no HMM worker creates a child process pool or >1 native
+- [x] Static/runtime inspection proves no HMM worker creates a child process pool or >1 native
   numerical thread.
-- [ ] Randomized task delays and completion order cannot alter selected tuples.
-- [ ] Unexpected worker failure aborts the run; typed invalid fits remain candidate evidence only.
-- [ ] Matrix-transfer instrumentation proves task fan-out does not copy the full fold matrix per fit.
-- [ ] QA adds no new statistical behavior.
+- [x] Randomized task delays and completion order cannot alter selected tuples.
+- [x] Unexpected worker failure aborts the run; typed invalid fits remain candidate evidence only.
+- [x] Matrix-transfer instrumentation proves task fan-out does not copy the full fold matrix per fit.
+- [x] QA adds no new statistical behavior.
+
+Current git status at QA closure: branch `pr/PR-522-hmm-frontier-qa` is pushed with QA-only
+changes and PR #484 is open; targeted QA tests pass, no full evaluation was run, and no
+integration test is run as a GitHub merge gate.
 
 ### PR-494 — Persist PCA credit and cumulative cross-fold feature statistics
 

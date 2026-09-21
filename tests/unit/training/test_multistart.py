@@ -8,7 +8,11 @@ import pytest
 
 import market_regime_engine.training.multistart as multistart_module
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
-from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
+from market_regime_engine.evaluations.task_frontier import (
+    FrontierMetrics,
+    FrontierResult,
+    SharedTaskFrontier,
+)
 from market_regime_engine.feature_discovery.feature_subset_score import (
     FeatureSubsetFoldEvidence,
 )
@@ -30,6 +34,7 @@ from market_regime_engine.training.multistart import (
     StartDiagnostic,
     _anchored_winner,
     _evaluate_start,
+    _FrontierStartPayload,
     run_multistart,
     run_multistart_batch,
 )
@@ -263,6 +268,48 @@ def test_multistart_batch_flattens_all_fold_seeds_on_one_frontier() -> None:
 
     assert tuple(item.winner.seed for item in parallel) == (131, 131)
     assert parallel == serial
+
+
+def test_batch_typed_invalidity_is_fold_evidence_when_requested() -> None:
+    outcomes: dict[int, FitResult | Exception] = {
+        seed: RecoverableEvaluationInvalidity(f"fail-{seed}") for seed in MULTISTART_SEEDS
+    }
+    for seed in MULTISTART_SEEDS[:5]:
+        outcomes[seed] = fit_result(seed, float(seed))
+    job = MultistartBatchJob("fold-invalid", [[0.0], [1.0]], 2, PickleableAdapterFactory(outcomes))
+
+    with pytest.raises(RecoverableEvaluationInvalidity):
+        run_multistart_batch((job,), max_workers=1)
+    assert run_multistart_batch((job,), max_workers=1, allow_invalid=True) == (None,)
+
+
+def test_batch_frontier_tasks_carry_matrix_metadata_not_full_rows() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    job = MultistartBatchJob("fold-metadata", [[0.0], [1.0]], 2, PickleableAdapterFactory(outcomes))
+    captured: list[object] = []
+
+    class CaptureFrontier:
+        def map(self, tasks, worker):
+            ordered = tuple(tasks)
+            captured.extend(task.payload for task in ordered)
+            values = tuple((task, worker(task)) for task in ordered)
+            return FrontierResult(
+                values,
+                FrontierMetrics(
+                    submitted_count=len(values),
+                    completed_count=len(values),
+                    max_queue_depth=len(values),
+                    runnable_tasks=len(values),
+                    elapsed_seconds=0.0,
+                    worker_utilization_proxy=1.0,
+                ),
+            )
+
+    result = run_multistart_batch((job,), max_workers=2, frontier=CaptureFrontier())
+    assert result[0] is not None
+    assert len(captured) == len(MULTISTART_SEEDS)
+    assert all(isinstance(payload, _FrontierStartPayload) for payload in captured)
+    assert all(not hasattr(payload, "train_rows") for payload in captured)
 
 
 def test_frontier_feature_subset_evaluator_feeds_sffs_from_fold_evidence() -> None:

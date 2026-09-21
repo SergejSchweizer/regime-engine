@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict
 from hashlib import sha256
 from math import tanh
@@ -166,12 +167,24 @@ def test_dimension_independent_score_cannot_be_overridden_by_raw_pll() -> None:
     assert result.selected_features == ("better_score",)
 
 
-@pytest.mark.parametrize("worker_count", [1, 8, 32, None])
+@pytest.mark.parametrize("worker_count", [1, 8, 32, 64, None])
 def test_worker_counts_have_identical_paths_and_hashes(worker_count: int | None) -> None:
     result = select_sffs(("a", "b", "c"), _score_for_workers, max_workers=worker_count)
     reference = select_sffs(("a", "b", "c"), _score_for_workers, max_workers=1)
     assert result == reference
     assert _result_hash(result) == _result_hash(reference)
+
+
+def _delayed_score_for_workers(features: tuple[str, ...]) -> FeatureSubsetScore:
+    time.sleep((4 - len(features)) * 0.003)
+    return _score_for_workers(features)
+
+
+def test_randomized_completion_delays_preserve_sffs_identity() -> None:
+    delayed = select_sffs(("a", "b", "c"), _delayed_score_for_workers, max_workers=8)
+    reference = select_sffs(("a", "b", "c"), _score_for_workers, max_workers=1)
+    assert delayed == reference
+    assert _result_hash(delayed) == _result_hash(reference)
 
 
 def test_process_worker_limits_native_numerical_threads_to_one() -> None:
