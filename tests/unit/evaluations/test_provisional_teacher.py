@@ -192,7 +192,9 @@ def test_teacher_runs_only_gaussian_candidates_on_one_shared_prototype_contract(
         f"gaussian_hmm_k{state_count}_full" for state_count in V4_PROVISIONAL_STATE_COUNTS
     }
     assert all(call[1] == FEATURES for call in calls)
-    assert all(call[2] == ("fold_001",) for call in calls)
+    expected_inner_folds = tuple(fold.fold_id for fold in result.inner_plan.folds)
+    assert expected_inner_folds
+    assert all(call[2] == expected_inner_folds for call in calls)
     assert result.provisional_candidate_id == winner
     assert result.provisional_state_count == 3
     assert result.model_clock.status.value == "valid"

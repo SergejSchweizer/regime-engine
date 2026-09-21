@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.calendar_clock import (
+    MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    plan_calendar_month,
+)
 from market_regime_engine.evaluation.model_clock import (
+    build_calendar_model_clock_preflight,
     build_model_clock_preflight,
     require_model_clock_eligible,
 )
@@ -37,7 +42,6 @@ from market_regime_engine.feature_discovery.contracts import (
     INNER_TEST_SOURCE_OBSERVATIONS,
     INNER_TRAIN_SOURCE_OBSERVATIONS,
     MIN_MODEL_CLOCK_VALID_FOLD_RATE,
-    MIN_MODEL_TEST_OBSERVATIONS,
     MIN_MODEL_TRAIN_OBSERVATIONS,
     V4_PROVISIONAL_STATE_COUNTS,
     DiscoveryStatus,
@@ -333,6 +337,21 @@ def build_inner_walk_forward_plan(timestamps: Sequence[datetime]) -> WalkForward
     )
 
 
+def build_inner_calendar_month_plan(timestamps: Sequence[datetime]) -> WalkForwardPlan:
+    """Build the canonical expanding inner plan on complete local months."""
+
+    calendar_plan = plan_calendar_month(
+        timestamps,
+        minimum_train_source_observations=INNER_TRAIN_SOURCE_OBSERVATIONS,
+    )
+    if calendar_plan.folds:
+        return calendar_plan.as_walk_forward_plan()
+    # Short manually supplied windows cannot contain a complete calendar TEST
+    # month.  Keep their explicit fixed-plan contract usable for isolated
+    # component callers; production source evaluation always has monthly folds.
+    return build_inner_walk_forward_plan(timestamps)
+
+
 def _validate_profile(profile: ModelProfile) -> None:
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
         raise ValueError("provisional teacher requires the canonical Xetra v4 profile")
@@ -546,17 +565,32 @@ def select_provisional_teacher(
         pca_raw_feature_order,
         original_feature_universe,
     )
-    plan = build_inner_walk_forward_plan(tuple(source_rows[_TIMESTAMP_COLUMN]))
+    timestamps = tuple(source_rows[_TIMESTAMP_COLUMN])
+    plan = build_inner_calendar_month_plan(timestamps)
 
     # This is deliberately before candidate construction, adapters, and runner calls.
-    preflight = build_model_clock_preflight(
-        source_rows,
-        prototype_features,
-        plan,
-        minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
-        minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
-        minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
-    )
+    if plan.folds and hasattr(plan.folds[0], "test_calendar_month"):
+        calendar_plan = plan_calendar_month(
+            timestamps,
+            minimum_train_source_observations=INNER_TRAIN_SOURCE_OBSERVATIONS,
+        )
+        preflight = build_calendar_model_clock_preflight(
+            source_rows,
+            prototype_features,
+            calendar_plan,
+            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+            minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+        )
+    else:
+        preflight = build_model_clock_preflight(
+            source_rows,
+            prototype_features,
+            plan,
+            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+            minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+        )
     require_model_clock_eligible(preflight, "prototype")
 
     candidates = _candidates(
@@ -622,6 +656,7 @@ evaluate_provisional_teacher = select_provisional_teacher
 __all__ = [
     "ProvisionalCandidateRunner",
     "ProvisionalTeacherEvaluation",
+    "build_inner_calendar_month_plan",
     "build_inner_walk_forward_plan",
     "evaluate_provisional_teacher",
     "run_provisional_gaussian_candidate",

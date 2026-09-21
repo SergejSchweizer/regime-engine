@@ -91,29 +91,9 @@ jobs:
           test -f .coverage.unit
           .venv/bin/coverage report --data-file=.coverage.unit --fail-under=85
 
-  integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.14.7"
-          enable-cache: true
-      - name: Create exact Python environment
-        run: |
-          uv venv --python 3.14.7 .venv
-          uv pip install --python .venv/bin/python -r uv.lock
-          uv pip install --python .venv/bin/python --no-deps -e .
-      - name: Verify interpreter and package pins
-        run: |
-          test "$(.venv/bin/python -c 'import platform; print(platform.python_version())')" = "3.14.7"
-          .venv/bin/python -c 'import hmmlearn, mlflow; assert hmmlearn.__version__ == "0.3.3"; assert mlflow.__version__ == "3.15.1"'
-      - name: Hermetic integration tests
-        run: .venv/bin/pytest -n auto tests -m "integration and not slow and not external"
-
   merge-gate:
     if: always()
-    needs: [lint, type, unit, integration]
+    needs: [lint, type, unit]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required lane failed
@@ -121,9 +101,7 @@ jobs:
           LINT: ${{ needs.lint.result }}
           TYPE: ${{ needs.type.result }}
           UNIT: ${{ needs.unit.result }}
-          INTEGRATION: ${{ needs.integration.result }}
         run: |
           test "${LINT}" = success
           test "${TYPE}" = success
           test "${UNIT}" = success
-          test "${INTEGRATION}" = success

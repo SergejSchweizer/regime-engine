@@ -23,8 +23,8 @@ from market_regime_engine.commands.lifecycle import (
     RegistrationOutcome,
 )
 from market_regime_engine.contracts import PredictionMode
+from market_regime_engine.evaluation.calendar_clock import plan_calendar_month
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
-from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
 from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
 from market_regime_engine.evaluations.deployment_selection import (
@@ -315,9 +315,12 @@ class V4LifecycleBackend:
         validation_rows = frame.loc[
             frame["timestamp_m1"] <= validation.validation_evaluation_cutoff
         ].copy()
-        validation_plan = plan_walk_forward(
-            tuple(validation_rows["timestamp_m1"]), self.profile.walk_forward
-        )
+        validation_plan = plan_calendar_month(
+            tuple(validation_rows["timestamp_m1"]),
+            minimum_train_source_observations=(
+                self.profile.walk_forward.minimum_train_source_observations
+            ),
+        ).as_walk_forward_plan()
         winning_evaluation = run_walk_forward_candidate(
             validation_rows,
             plan=validation_plan,

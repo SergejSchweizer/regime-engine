@@ -424,6 +424,12 @@ class ModelClockFold:
     test_complete_observations: int
     structurally_valid: bool
     invalid_reason: str | None = None
+    train_through_month: str | None = None
+    test_calendar_month: str | None = None
+    train_cutoff_timestamp: datetime | None = None
+    test_first_timestamp: datetime | None = None
+    test_last_timestamp: datetime | None = None
+    month_clock_hash: str | None = None
 
     def __post_init__(self) -> None:
         _trimmed(self.fold_id, "fold_id")
@@ -442,6 +448,23 @@ class ModelClockFold:
             raise ValueError(
                 "valid model-clock fold must have no reason and invalid fold must have one"
             )
+        monthly = (
+            self.train_through_month,
+            self.test_calendar_month,
+            self.train_cutoff_timestamp,
+            self.test_first_timestamp,
+            self.test_last_timestamp,
+            self.month_clock_hash,
+        )
+        if any(value is not None for value in monthly) and not all(
+            value is not None for value in monthly
+        ):
+            raise ValueError("monthly model-clock evidence must be complete")
+        if self.month_clock_hash is not None and (
+            len(self.month_clock_hash) != 64
+            or any(char not in "0123456789abcdef" for char in self.month_clock_hash)
+        ):
+            raise ValueError("month_clock_hash must be a lowercase SHA-256")
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,8 +17,14 @@ from typing import cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
+from market_regime_engine.evaluation.calendar_clock import (
+    MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    CalendarMonthFold,
+    plan_calendar_month,
+)
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluation.model_clock import (
+    build_calendar_model_clock_preflight,
     build_model_clock_preflight,
     require_model_clock_eligible,
 )
@@ -30,11 +36,12 @@ from market_regime_engine.evaluations.k_champion_contract import (
 )
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.evaluations.provisional_teacher import (
-    build_inner_walk_forward_plan,
+    build_inner_calendar_month_plan,
     run_provisional_gaussian_candidate,
 )
 from market_regime_engine.feature_discovery.clustering import select_global_clusters
 from market_regime_engine.feature_discovery.contracts import (
+    INNER_TRAIN_SOURCE_OBSERVATIONS,
     MIN_MODEL_CLOCK_VALID_FOLD_RATE,
     MIN_MODEL_TEST_OBSERVATIONS,
     MIN_MODEL_TRAIN_OBSERVATIONS,
@@ -53,6 +60,10 @@ from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
 from market_regime_engine.training.adapter_factory import adapter_factory
+
+# Retain the established module seam for test doubles while routing the
+# canonical selector through the calendar-month implementation.
+build_inner_walk_forward_plan = build_inner_calendar_month_plan
 
 LEGAL_K = (2, 3, 4, 5)
 K_FEATURE_SELECTION_VERSION = "k_specific_feature_selection.v1"
@@ -208,14 +219,29 @@ def select_k_specific_feature_configuration(
     clusters = select_global_clusters(distance, max_workers=max_workers)
     prototypes = select_temporary_prototypes(clusters, distance)
     inner_plan = build_inner_walk_forward_plan(timestamps)
-    preflight = build_model_clock_preflight(
-        train_rows,
-        prototypes.prototypes,
-        inner_plan,
-        minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
-        minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
-        minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
-    )
+    inner_folds = getattr(inner_plan, "folds", ())
+    if inner_folds and isinstance(inner_folds[0], CalendarMonthFold):
+        calendar_plan = plan_calendar_month(
+            timestamps,
+            minimum_train_source_observations=INNER_TRAIN_SOURCE_OBSERVATIONS,
+        )
+        preflight = build_calendar_model_clock_preflight(
+            train_rows,
+            prototypes.prototypes,
+            calendar_plan,
+            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+            minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+        )
+    else:
+        preflight = build_model_clock_preflight(
+            train_rows,
+            prototypes.prototypes,
+            inner_plan,
+            minimum_model_train_observations=MIN_MODEL_TRAIN_OBSERVATIONS,
+            minimum_model_test_observations=MIN_MODEL_TEST_OBSERVATIONS,
+            minimum_valid_fold_rate=MIN_MODEL_CLOCK_VALID_FOLD_RATE,
+        )
     require_model_clock_eligible(preflight, "prototype")
     teacher_candidate = ResolvedCandidateProfile(
         candidate_id=f"gaussian_hmm_k{state_count}_full",
@@ -246,21 +272,24 @@ def select_k_specific_feature_configuration(
     )
     scores = score_all_raw_features(snapshot, quality, teacher, max_workers=max_workers)
     winners = select_cluster_winners(clusters, scores)
-    prefixes = search_ranked_prefixes(
-        train_rows,
-        ranked_features=winners.ranked_features,
-        teacher=teacher,
-        profile=profile,
-        inner_plan=inner_plan,
-        source_build_id=source_build_id,
-        original_feature_universe=catalog.feature_names,
-        feature_selection_definition_hash=definition_hash,
-        feature_selection_execution_hash=execution_hash,
-        max_workers=max_workers,
-        pca_raw_feature_order=mandatory_raw_order,
-        pca_variance_threshold=profile.pca.variance_threshold,
-        state_counts=(state_count,),
-    )
+    try:
+        prefixes = search_ranked_prefixes(
+            train_rows,
+            ranked_features=winners.ranked_features,
+            teacher=teacher,
+            profile=profile,
+            inner_plan=inner_plan,
+            source_build_id=source_build_id,
+            original_feature_universe=catalog.feature_names,
+            feature_selection_definition_hash=definition_hash,
+            feature_selection_execution_hash=execution_hash,
+            max_workers=max_workers,
+            pca_raw_feature_order=mandatory_raw_order,
+            pca_variance_threshold=profile.pca.variance_threshold,
+            state_counts=(state_count,),
+        )
+    except ValueError as error:
+        raise RecoverableEvaluationInvalidity(str(error)) from error
     selected_prefix = prefixes.evaluations[prefixes.selected_prefix_length - 2]
     if not selected_prefix.valid:
         raise RecoverableEvaluationInvalidity("fixed-K prefix selection returned an invalid prefix")

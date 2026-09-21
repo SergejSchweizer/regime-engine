@@ -15,8 +15,9 @@ from itertools import pairwise
 from pathlib import Path
 from typing import cast
 
+from market_regime_engine.evaluation.calendar_clock import plan_calendar_month
 from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
-from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan, plan_walk_forward
+from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_statistics.contracts import (
     GLOBAL_V4_EVALUATION_ID,
     GlobalV4Evidence,
@@ -617,9 +618,10 @@ def build_global_v4_evidence(
         raise ValueError("global v4 evidence snapshot columns differ from catalog")
     if not repository_commit_sha or repository_commit_sha.strip() != repository_commit_sha:
         raise ValueError("repository commit identity must be non-empty and trimmed")
-    outer_plan = plan_walk_forward(
-        tuple(row.timestamp for row in snapshot.rows), profile.walk_forward
-    )
+    outer_plan = plan_calendar_month(
+        tuple(row.timestamp for row in snapshot.rows),
+        minimum_train_source_observations=(profile.walk_forward.minimum_train_source_observations),
+    ).as_walk_forward_plan()
     fold_tasks = tuple((fold, selections.get(fold.fold_index)) for fold in result.outer_folds)
     worker_limit = cpu_worker_count(max_workers, task_count=len(fold_tasks))
     if worker_limit == 1:

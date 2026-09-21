@@ -6,7 +6,7 @@ import multiprocessing
 import pickle
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 from statistics import fmean, pstdev
@@ -15,7 +15,14 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
-from market_regime_engine.evaluation.model_clock import build_model_clock_preflight
+from market_regime_engine.evaluation.calendar_clock import (
+    MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
+    CalendarMonthFold,
+    plan_calendar_month,
+)
+from market_regime_engine.evaluation.model_clock import (
+    build_calendar_model_clock_preflight,
+)
 from market_regime_engine.evaluation.walk_forward import (
     AdapterFactory,
     WalkForwardEvaluation,
@@ -23,7 +30,6 @@ from market_regime_engine.evaluation.walk_forward import (
 from market_regime_engine.evaluation.walk_forward_splits import (
     WalkForwardFold,
     WalkForwardPlan,
-    plan_walk_forward,
 )
 from market_regime_engine.evaluation_runs.contracts import (
     DatasetSnapshotIdentity,
@@ -46,7 +52,6 @@ from market_regime_engine.evaluations.process_parallel import cpu_process_pool, 
 from market_regime_engine.evaluations.provisional_teacher import (
     ProvisionalCandidateRunner,
     ProvisionalTeacherEvaluation,
-    build_inner_walk_forward_plan,
     run_provisional_gaussian_candidate,
     select_provisional_teacher,
 )
@@ -108,6 +113,16 @@ _MIN_OUTER_TEST_SUPPORT = 42
 PrefixEvaluationPayloadSink = Callable[[int, int, str, WalkForwardEvaluation], None]
 
 
+def plan_walk_forward(timestamps: tuple[datetime, ...], walk_forward: object) -> WalkForwardPlan:
+    """Construct the canonical monthly plan through the historical seam name."""
+
+    minimum_train = getattr(walk_forward, "minimum_train_source_observations", 1260)
+    return plan_calendar_month(
+        timestamps,
+        minimum_train_source_observations=minimum_train,
+    ).as_walk_forward_plan()
+
+
 def _require_production_eligible_source_clock(
     catalog: FeatureCatalogSnapshot,
     snapshot: FeatureSnapshot,
@@ -134,7 +149,11 @@ def _require_production_eligible_source_clock(
         }
     )
     timestamps = tuple(row.timestamp for row in snapshot.rows)
-    outer_plan = plan_walk_forward(timestamps, profile.walk_forward)
+    outer_calendar_plan = plan_calendar_month(
+        timestamps,
+        minimum_train_source_observations=profile.feature_discovery.outer_train_source_observations,
+    )
+    outer_plan = outer_calendar_plan.as_walk_forward_plan()
     discovery = profile.feature_discovery
     if len(outer_plan.folds) < discovery.minimum_outer_valid_folds:
         raise RuntimeError(
@@ -143,24 +162,27 @@ def _require_production_eligible_source_clock(
             f"minimum_required={discovery.minimum_outer_valid_folds}"
         )
 
-    outer_clock = build_model_clock_preflight(
+    outer_clock = build_calendar_model_clock_preflight(
         rows,
         raw_feature_order,
-        outer_plan,
+        outer_calendar_plan,
         minimum_model_train_observations=profile.walk_forward.minimum_model_train_observations,
-        minimum_model_test_observations=profile.walk_forward.minimum_model_test_observations,
+        minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
         # The complete production gate is evaluated below together with the
         # inner selection clock. Keep this shared primitive descriptive here.
         minimum_valid_fold_rate=0.0,
     )
     latest_outer_train_count = outer_plan.folds[-1].train_source_observations
-    inner_plan = build_inner_walk_forward_plan(timestamps[:latest_outer_train_count])
-    inner_clock = build_model_clock_preflight(
+    inner_calendar_plan = plan_calendar_month(
+        timestamps[:latest_outer_train_count],
+        minimum_train_source_observations=discovery.inner_train_source_observations,
+    )
+    inner_clock = build_calendar_model_clock_preflight(
         rows.iloc[:latest_outer_train_count],
         raw_feature_order,
-        inner_plan,
+        inner_calendar_plan,
         minimum_model_train_observations=discovery.minimum_model_train_observations,
-        minimum_model_test_observations=discovery.minimum_model_test_observations,
+        minimum_model_test_observations=MIN_CALENDAR_MODEL_TEST_OBSERVATIONS,
         minimum_valid_fold_rate=0.0,
     )
     first_inner_train_valid = (
@@ -870,22 +892,26 @@ def select_v4_configuration(
 _DEFAULT_SELECT_V4_CONFIGURATION = select_v4_configuration
 
 
-def _outer_fold_plan(fold: WalkForwardFold) -> WalkForwardPlan:
+def _outer_fold_plan(fold: WalkForwardFold | CalendarMonthFold) -> WalkForwardPlan:
     # The existing runner validates fold positions relative to the supplied
     # plan.  A one-fold execution therefore uses a local fold identity while
     # retaining the outer fold's exact timestamps and source-row bounds.
-    local_fold = WalkForwardFold(
-        fold_index=1,
-        fold_id="fold_001",
-        train_start=fold.train_start,
-        train_end=fold.train_end,
-        test_start=fold.test_start,
-        test_end=fold.test_end,
-        train_source_observations=fold.train_source_observations,
-        test_source_observations=fold.test_source_observations,
-    )
+    local_fold: WalkForwardFold | CalendarMonthFold
+    if isinstance(fold, CalendarMonthFold):
+        local_fold = replace(fold, fold_index=1, fold_id="fold_001")
+    else:
+        local_fold = WalkForwardFold(
+            fold_index=1,
+            fold_id="fold_001",
+            train_start=fold.train_start,
+            train_end=fold.train_end,
+            test_start=fold.test_start,
+            test_end=fold.test_end,
+            train_source_observations=fold.train_source_observations,
+            test_source_observations=fold.test_source_observations,
+        )
     return WalkForwardPlan(
-        folds=(local_fold,),
+        folds=cast(tuple[WalkForwardFold, ...], (local_fold,)),
         evaluation_cutoff=fold.test_end,
         plan_hash=content_hash(
             (
@@ -1066,12 +1092,17 @@ def _valid_outer_fold(
         teacher_refit.test_timestamps,
         teacher_refit.test_filtered_probabilities,
     )
-    if agreement.shared_timestamp_count < _MIN_OUTER_TEST_SUPPORT:
+    minimum_shared_support = (
+        MIN_CALENDAR_MODEL_TEST_OBSERVATIONS
+        if hasattr(fold, "test_calendar_month")
+        else _MIN_OUTER_TEST_SUPPORT
+    )
+    if agreement.shared_timestamp_count < minimum_shared_support:
         return _invalid_outer_fold(
             fold,
             configuration,
             "outer teacher shared support "
-            f"{agreement.shared_timestamp_count} below {_MIN_OUTER_TEST_SUPPORT}",
+            f"{agreement.shared_timestamp_count} below {minimum_shared_support}",
         )
     return OuterFoldResult(
         fold_index=fold.fold_index,
