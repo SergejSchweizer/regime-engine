@@ -248,10 +248,50 @@ def render_feature_selection_evidence(
         {
             "identity": identity.as_dict(),
             "artifacts": artifact_records,
+            "heatmap_representatives": list(selected),
         },
     )
     paths.append(manifest)
     return tuple(paths)
+
+
+def verify_feature_selection_evidence_bundle(root_dir: str | Path) -> dict[str, object]:
+    """Fail closed when a required preprocessing artifact or hash is missing."""
+
+    root = Path(root_dir) / "feature_selection"
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("feature-selection evidence manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError("feature-selection evidence manifest has no artifacts")
+    required = {
+        "feature_funnel.png",
+        "feature_funnel.json",
+        "family_survival.png",
+        "family_survival.json",
+        "correlation_groups.json",
+        "correlation_group_sizes.png",
+        "correlation_representatives_heatmap.png",
+    }
+    paths: set[str] = set()
+    for item in artifacts:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise ValueError("invalid feature-selection artifact record")
+        relative = item["path"]
+        path = root / relative
+        if not path.is_file() or sha256(path.read_bytes()).hexdigest() != item.get("sha256"):
+            raise ValueError(f"feature-selection artifact hash mismatch: {relative}")
+        paths.add(relative)
+        if item.get("identity") != manifest.get("identity"):
+            raise ValueError(f"feature-selection artifact identity mismatch: {relative}")
+    if not required.issubset({Path(path).name for path in paths}):
+        raise ValueError("required feature-selection artifact is missing")
+    selected = manifest.get("heatmap_representatives")
+    if not isinstance(selected, list) or len(selected) > 80 or len(selected) != len(set(selected)):
+        raise ValueError("invalid representative heatmap selection")
+    return cast(dict[str, object], manifest)
 
 
 def log_feature_selection_evidence(
@@ -275,4 +315,5 @@ __all__ = [
     "FeatureSelectionEvidenceIdentity",
     "log_feature_selection_evidence",
     "render_feature_selection_evidence",
+    "verify_feature_selection_evidence_bundle",
 ]
