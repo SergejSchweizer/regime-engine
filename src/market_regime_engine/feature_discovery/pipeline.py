@@ -14,6 +14,7 @@ from market_regime_engine.feature_discovery.ablation import (
 )
 from market_regime_engine.feature_discovery.family_pca import (
     FamilyPCAArtifact,
+    FamilyPCAStatisticalInvalid,
     fit_family_pca,
 )
 from market_regime_engine.feature_discovery.family_reduction import (
@@ -56,6 +57,7 @@ class FeatureSelectionPipelineResult:
     ablation: AblationResult
     profile_hash: str
     role_contract_hash: str
+    invalid_families: tuple[str, ...] = ()
 
     @property
     def selected_features(self) -> tuple[str, ...]:
@@ -68,6 +70,7 @@ class FeatureSelectionPipelineResult:
             "feature_role_contract_hash": self.role_contract_hash,
             "family_reduction_hash": self.family_reduction.result_hash,
             "family_pca_fit_hashes": tuple(item.fit_hash for item in self.family_pca),
+            "family_pca_invalid_families": self.invalid_families,
             "global_reduction_hash": self.global_reduction.result_hash,
             "sffs_selected_features": self.sffs.selected_features,
             "ablation_feature_count": len(self.ablation.one_feature_results),
@@ -114,6 +117,7 @@ def run_canonical_feature_selection(
     )
 
     pca_artifacts: list[FamilyPCAArtifact] = []
+    invalid_families: list[str] = []
     generated_values: dict[str, tuple[float, ...]] = {}
     families = tuple(
         sorted(
@@ -134,12 +138,16 @@ def run_canonical_feature_selection(
             tuple(values[name][row] for name in family_names)
             for row in range(len(values[family_names[0]]))
         )
-        artifact = fit_family_pca(
-            matrix,
-            family_names,
-            contract,
-            profile=resolved_profile,
-        )
+        try:
+            artifact = fit_family_pca(
+                matrix,
+                family_names,
+                contract,
+                profile=resolved_profile,
+            )
+        except FamilyPCAStatisticalInvalid:
+            invalid_families.append(family)
+            continue
         pca_artifacts.append(artifact)
         transformed = artifact.transform(matrix)
         for column, name in enumerate(artifact.generated_feature_names):
@@ -176,6 +184,7 @@ def run_canonical_feature_selection(
         ablation=ablation,
         profile_hash=resolved_profile.profile_hash,
         role_contract_hash=contract.contract_hash,
+        invalid_families=tuple(invalid_families),
     )
 
 

@@ -1,3 +1,5 @@
+from hashlib import sha256
+
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
@@ -112,3 +114,39 @@ def test_canonical_pipeline_can_run_without_transformations() -> None:
     assert result.family_reduction.retained_features == ()
     assert result.family_pca == ()
     assert result.selected_features == names
+
+
+def test_zero_rank_family_is_invalid_without_blocking_core_selection() -> None:
+    names = ("vix_log_level", "us_10y_log_level", "vix_delta_1obs")
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    values = {
+        "vix_log_level": tuple(float(index) for index in range(30)),
+        "us_10y_log_level": tuple(float((index % 4) ** 2) for index in range(30)),
+        "vix_delta_1obs": (1.0,) * 30,
+    }
+
+    def evaluate(features: tuple[str, ...]) -> FeatureSubsetScore:
+        return FeatureSubsetScore(features, float(len(features)))
+
+    def evaluate_hmm(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        return HMMSubsetEvaluation(
+            FeatureSubsetScore(features, float(len(features))),
+            "gaussian_hmm",
+            2,
+            SELECTOR_HASH,
+            sha256("|".join(features).encode()).hexdigest(),
+        )
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=evaluate,
+        evaluate_hmm_subset=evaluate_hmm,
+        hmm_selector_contract_hash=SELECTOR_HASH,
+        max_sffs_features=2,
+    )
+
+    assert result.invalid_families == ("vix",)
+    assert result.family_pca == ()
+    assert result.selected_features == ("vix_log_level", "us_10y_log_level")
