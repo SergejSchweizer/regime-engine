@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import Any
 
+from market_regime_engine.evaluations.process_parallel import is_pickleable
+from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.sffs import (
     FeatureSubsetScore,
@@ -75,15 +79,22 @@ def select_k_slot_sffs(
 
     candidate_tuple = tuple(candidates)
     results: list[KSlotSFFSResult] = []
-    for state_count in requested:
-        fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
-        selected = select_sffs(
-            candidate_tuple,
-            fixed_k_score,
-            max_features=max_features,
-            max_workers=max_workers,
-        )
-        results.append(KSlotSFFSResult(state_count, GAUSSIAN_HMM, selected))
+    use_frontier = max_workers != 1 and is_pickleable(evaluate_gaussian_subset)
+    frontier_context: Any = (
+        SharedTaskFrontier(max_workers) if use_frontier else nullcontext(None)
+    )
+    with frontier_context as frontier:
+        for state_count in requested:
+            fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
+            selected = select_sffs(
+                candidate_tuple,
+                fixed_k_score,
+                max_features=max_features,
+                max_workers=max_workers,
+                frontier=frontier,
+                frontier_state_count=state_count,
+            )
+            results.append(KSlotSFFSResult(state_count, GAUSSIAN_HMM, selected))
     return tuple(results)
 
 

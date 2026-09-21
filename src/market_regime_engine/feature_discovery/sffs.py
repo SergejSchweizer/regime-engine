@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.feature_subset_score import SCORE_ABS_TOLERANCE
 from market_regime_engine.runtime.cpu import cpu_worker_count
@@ -88,6 +89,12 @@ def _score_in_process(
     return _score(score, features)
 
 
+def _score_in_frontier(
+    task: FrontierTask[ScoreFunction],
+) -> FeatureSubsetScore | None:
+    return _score(task.payload, task.candidate_subset)
+
+
 def _canonical_subset(names: Iterable[str]) -> tuple[str, ...]:
     result = tuple(names)
     if not result or len(result) != len(set(result)):
@@ -150,6 +157,8 @@ def select_sffs(
     *,
     max_features: int = SFFS_MAX_FEATURES,
     max_workers: int | None = None,
+    frontier: SharedTaskFrontier[ScoreFunction, FeatureSubsetScore | None] | None = None,
+    frontier_state_count: int = 2,
 ) -> SFFSResult:
     """Run deterministic sequential floating forward selection.
 
@@ -168,8 +177,12 @@ def select_sffs(
 
     parallel = max_workers != 1 and is_pickleable(score)
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidate_tuple)) if parallel else 1
+    if frontier is not None and frontier_state_count not in (2, 3, 4, 5):
+        raise ValueError("frontier_state_count must be 2, 3, 4, or 5")
     pool_context = (
-        cpu_process_pool(worker_limit) if parallel and worker_limit > 1 else nullcontext()
+        cpu_process_pool(worker_limit)
+        if frontier is None and parallel and worker_limit > 1
+        else nullcontext()
     )
     with pool_context as executor:
         evaluations: list[SFFSEvaluation] = []
@@ -181,7 +194,26 @@ def select_sffs(
             selected_features: tuple[str, ...],
         ) -> tuple[FeatureSubsetScore | None, ...]:
             tasks = tuple((score, features) for features in feature_sets)
-            if executor is None:
+            if frontier is not None:
+                frontier_tasks = tuple(
+                    FrontierTask(
+                        task_id=f"{action}:{index}:{','.join(features)}",
+                        state_count=frontier_state_count,
+                        fold_id="sffs",
+                        candidate_subset=features,
+                        seed=index,
+                        profile_hash="a" * 64,
+                        matrix_identity="sffs-candidate-frontier",
+                        row_indices=(0,),
+                        column_indices=(0,),
+                        payload=score,
+                    )
+                    for index, features in enumerate(feature_sets)
+                )
+                results = tuple(
+                    item for _task, item in frontier.map(frontier_tasks, _score_in_frontier).values
+                )
+            elif executor is None:
                 results = tuple(_score_in_process(task) for task in tasks)
             else:
                 results = tuple(executor.map(_score_in_process, tasks))
