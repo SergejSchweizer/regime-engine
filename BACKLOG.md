@@ -1229,8 +1229,9 @@ that control boundary is flattened onto the one shared process pool.
 
 #### Acceptance
 
-- [ ] Decompose candidate scoring into independent fit tasks over the ready
-  `K x inner-fold x candidate-subset x seed/start` frontier.
+- [x] Decompose candidate scoring into independent fit tasks over the ready
+  `K x inner-fold x candidate-subset x seed/start` frontier through the explicit
+  `FrontierFeatureSubsetEvaluator`/`FrontierFoldJob` contract.
 - [x] Keep SFFS add/remove decisions in the deterministic coordinator; process workers return fit
   evidence only.
 - [x] Reuse persistent workers across SFFS steps, K slots and final ablations when the canonical
@@ -1238,9 +1239,9 @@ that control boundary is flattened onto the one shared process pool.
 - [ ] Never create candidate-local or multistart-local child pools.
 - [x] Submit ready tasks from all K slots fairly so one slow K cannot starve other runnable work;
   independent K coordinators submit concurrently through the shared frontier.
-- [ ] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
+- [x] Aggregate seeds -> inner-fold candidate score -> SFFS decision in canonical identity order,
   independent of task completion order.
-- [ ] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
+- [x] Reuse shared/memory-mapped fold matrices; HMM tasks receive row/column indices and frozen
   preprocessing identities rather than copied feature arrays where backend contracts permit.
 - [x] Cache only immutable fit-independent slices/indices; never cache a model result across a
   different feature tuple, fold, seed, K or profile identity.

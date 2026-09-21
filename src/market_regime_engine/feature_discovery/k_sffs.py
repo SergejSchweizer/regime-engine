@@ -29,6 +29,21 @@ class _FixedKScore:
 
     def __call__(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
         result = self.evaluator(self.state_count, features)
+        return self._validate(result)
+
+    def evaluate_many(
+        self, feature_sets: Iterable[tuple[str, ...]]
+    ) -> tuple[FeatureSubsetScore | None, ...]:
+        batch_evaluator = getattr(self.evaluator, "evaluate_many", None)
+        if callable(batch_evaluator):
+            results = tuple(
+                batch_evaluator(feature_sets, state_count=self.state_count)
+            )
+        else:
+            results = tuple(self(features) for features in feature_sets)
+        return tuple(self._validate(result) for result in results)
+
+    def _validate(self, result: FeatureSubsetScore | None) -> FeatureSubsetScore | None:
         if result is None:
             return None
         if result.state_count != self.state_count or result.model_family != GAUSSIAN_HMM:

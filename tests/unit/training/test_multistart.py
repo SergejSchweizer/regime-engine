@@ -9,6 +9,15 @@ import pytest
 import market_regime_engine.training.multistart as multistart_module
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
+from market_regime_engine.feature_discovery.feature_subset_score import (
+    FeatureSubsetFoldEvidence,
+)
+from market_regime_engine.feature_discovery.k_sffs import select_k_slot_sffs
+from market_regime_engine.feature_discovery.sffs import (
+    FrontierFeatureSubsetEvaluator,
+    FrontierFoldJob,
+    select_sffs,
+)
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
 from market_regime_engine.training.multistart import (
@@ -79,6 +88,41 @@ class PickleableAdapterFactory:
         initial_filtered_probabilities: tuple[float, ...] | None = None,
     ) -> object:
         raise AssertionError(f"unused: {rows}, {initial_filtered_probabilities}")
+
+
+def _frontier_sffs_jobs(
+    state_count: int, features: tuple[str, ...]
+) -> tuple[FrontierFoldJob, ...]:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    return tuple(
+        FrontierFoldJob(
+            features,
+            fold_id,
+            MultistartBatchJob(
+                f"{fold_id}:{','.join(features)}",
+                [[0.0], [1.0]],
+                state_count,
+                PickleableAdapterFactory(outcomes),
+            ),
+        )
+        for fold_id in ("fold-001", "fold-002", "fold-003")
+    )
+
+
+def _frontier_sffs_evidence(
+    job: FrontierFoldJob, result: MultistartResult
+) -> FeatureSubsetFoldEvidence:
+    assert result.valid_start_count == 8
+    return FeatureSubsetFoldEvidence(
+        job.fold_id,
+        True,
+        latest=job.fold_id == "fold-003",
+        target_log_score=float(len(job.candidate_subset)),
+        baseline_target_log_score=0.0,
+        calibration_error=0.2,
+        stability_score=0.8,
+        support_score=0.9,
+    )
 
 
 def factory(outcomes: Mapping[int, FitResult | Exception]):
@@ -221,6 +265,51 @@ def test_multistart_batch_flattens_all_fold_seeds_on_one_frontier() -> None:
 
     assert tuple(item.winner.seed for item in parallel) == (131, 131)
     assert parallel == serial
+
+
+def test_frontier_feature_subset_evaluator_feeds_sffs_from_fold_evidence() -> None:
+    with SharedTaskFrontier(max_workers=2) as frontier:
+        evaluator = FrontierFeatureSubsetEvaluator(
+            _frontier_sffs_jobs,
+            _frontier_sffs_evidence,
+            "a" * 64,
+            "build-001",
+            "b" * 64,
+            "fold-003",
+            2,
+            max_workers=2,
+            frontier=frontier,
+        )
+        result = select_sffs(("a", "b"), evaluator, max_features=2, max_workers=2)
+
+    assert result.selected_features == ("a", "b")
+    assert len(result.evaluations) >= 3
+
+
+def test_frontier_feature_subset_evaluator_supports_independent_k_slots() -> None:
+    with SharedTaskFrontier(max_workers=2) as frontier:
+        evaluator = FrontierFeatureSubsetEvaluator(
+            _frontier_sffs_jobs,
+            _frontier_sffs_evidence,
+            "a" * 64,
+            "build-001",
+            "b" * 64,
+            "fold-003",
+            2,
+            max_workers=2,
+            frontier=frontier,
+        )
+        results = select_k_slot_sffs(
+            ("a", "b"),
+            evaluator,
+            state_counts=(2, 3),
+            max_features=2,
+            max_workers=2,
+            frontier=frontier,
+        )
+
+    assert tuple(item.state_count for item in results) == (2, 3)
+    assert all(item.selected_features == ("a", "b") for item in results)
 
 
 def test_non_pickleable_adapter_factory_fails_before_thread_fallback() -> None:
