@@ -397,7 +397,10 @@ pruning so PCA still receives economically meaningful within-family covariance s
 **Acceptance note:** Runtime source-universe integration, raw-source exclusion in the canonical
 adapter, and role/profile hash transport into fold/model evidence are implemented and tested.
 External lineage publication, HMM-backed ablation, and independent QA/provenance proofs remain
-open; the statistical stage contracts marked below are implemented and tested.
+open; the statistical stage contracts marked below are implemented and tested. Production HMM
+ablation is intentionally not wired to a surrogate valid-fold-rate score: it must consume the
+canonical `feature_subset_score.v1` contract introduced by PR-490, otherwise the implementation
+would silently violate the dimension-independent SFFS semantics.
 
 **External source audit:** read-only login as `macro-loader` succeeds, but the current NAS
 connection exposes neither the `macro_loader` nor `macro_loader_sync` schema; consequently both
