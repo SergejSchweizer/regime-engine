@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
 import duckdb
 
+from market_regime_engine.feature_discovery.ablation import AblationResult
 from market_regime_engine.feature_discovery.sffs import SFFSResult
 
 _TABLES = (
@@ -170,6 +171,33 @@ class FoldModelStat:
     valid: bool
     diagnostics: Mapping[str, object]
     mlflow_run_id: str | None = None
+
+
+def apply_ablation_to_feature_stats(
+    rows: tuple[FoldFeatureStat, ...], result: AblationResult
+) -> tuple[FoldFeatureStat, ...]:
+    """Attach unclipped marginal losses to the committed fold feature rows."""
+
+    by_feature = {item.removed_feature: item for item in result.one_feature_results}
+    if set(by_feature) != set(result.selected_features):
+        raise ValueError("ablation rows must cover every selected feature exactly once")
+    row_names = {row.feature_name for row in rows}
+    if not set(result.selected_features) <= row_names:
+        raise ValueError("feature-stat rows are missing an ablated selected feature")
+    output: list[FoldFeatureStat] = []
+    for row in rows:
+        observation = by_feature.get(row.feature_name)
+        if observation is None:
+            output.append(row)
+            continue
+        output.append(
+            replace(
+                row,
+                final_selection=True,
+                ablation_loss=observation.ablation_loss,
+            )
+        )
+    return tuple(output)
 
 
 def sffs_step_records(
@@ -501,6 +529,42 @@ class FeatureSelectionMetadataStore:
                 connection.execute("ROLLBACK")
                 raise
 
+    def commit_fold_feature_stats(self, rows: tuple[FoldFeatureStat, ...]) -> bool:
+        """Persist feature participation and unclipped ablation losses."""
+
+        if not rows:
+            return False
+        identities = {(row.fold_id, row.profile_hash, row.source_build_id) for row in rows}
+        if len(identities) != 1:
+            raise ValueError("feature-stat rows must share one fold identity")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                for row in rows:
+                    connection.execute(
+                        """
+                        INSERT INTO fold_feature_stats
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (fold_id, profile_hash, source_build_id, feature_name)
+                        DO UPDATE SET
+                            eligible = excluded.eligible,
+                            quality_reason = excluded.quality_reason,
+                            direct_participation = excluded.direct_participation,
+                            pc_participation = excluded.pc_participation,
+                            pca_credit = excluded.pca_credit,
+                            representative = excluded.representative,
+                            sffs_participation = excluded.sffs_participation,
+                            final_selection = excluded.final_selection,
+                            ablation_loss = excluded.ablation_loss
+                        """,
+                        list(asdict(row).values()),
+                    )
+                connection.execute("COMMIT")
+                return True
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     @staticmethod
     def _insert_fold_rows(
         connection: duckdb.DuckDBPyConnection,
@@ -602,5 +666,6 @@ __all__ = [
     "FoldModelStat",
     "PcaLoading",
     "SFFSStepRecord",
+    "apply_ablation_to_feature_stats",
     "sffs_step_records",
 ]

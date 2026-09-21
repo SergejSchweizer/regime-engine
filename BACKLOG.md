@@ -1165,18 +1165,22 @@ production-code-free and the acceptance suite is implemented locally. No full ev
 **Type:** implementation / marginal contribution
 **Depends on:** PR-491
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-492-final-feature-ablation`; signed
+ablation-loss computation, bounded process execution, invalid-fit evidence and feature-stat
+persistence are implemented and under focused verification. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] For each final SFFS tuple, refit/re-evaluate exactly one model per selected feature removed.
-- [ ] Use the same K, selector family, inner-fold plan, seeds and feature_subset_score.v1 contract as
+- [x] For each final SFFS tuple, refit/re-evaluate exactly one model per selected feature removed.
+- [x] Use the same K, selector family, inner-fold plan, seeds and feature_subset_score.v1 contract as
   the final SFFS model.
-- [ ] Define ablation_loss as final_total_score minus removed_feature_total_score.
-- [ ] Persist negative, zero and positive ablation_loss values without clipping.
-- [ ] An invalid ablated model receives an explicit invalid reason and cannot fabricate a numeric
+- [x] Define ablation_loss as final_total_score minus removed_feature_total_score.
+- [x] Persist negative, zero and positive ablation_loss values without clipping.
+- [x] An invalid ablated model receives an explicit invalid reason and cannot fabricate a numeric
   total score.
-- [ ] Ablations run in bounded process workers and assemble results in canonical feature order.
-- [ ] Persist every result in fold_feature_stats.
-- [ ] Do not automatically remove an SFFS-selected feature merely because its measured ablation
+- [x] Ablations run in bounded process workers and assemble results in canonical feature order.
+- [x] Persist every result in fold_feature_stats.
+- [x] Do not automatically remove an SFFS-selected feature merely because its measured ablation
   loss is non-positive in one fold.
 
 ### PR-493 — QA: ablation completeness and independent marginal-loss oracle

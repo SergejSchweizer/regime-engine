@@ -42,6 +42,8 @@ from market_regime_engine.feature_discovery.k_sffs import (
 )
 from market_regime_engine.feature_discovery.metadata_store import (
     FeatureSelectionMetadataStore,
+    FoldFeatureStat,
+    apply_ablation_to_feature_stats,
     sffs_step_records,
 )
 from market_regime_engine.feature_discovery.sffs import SFFSResult, select_sffs
@@ -104,6 +106,10 @@ class FeatureSelectionPipelineResult:
             "ablation_model_family": self.ablation.model_family,
             "ablation_state_count": self.ablation.state_count,
             "ablation_fit_execution_hashes": self.ablation.fit_execution_hashes,
+            "ablation_losses": self.ablation.ablation_losses,
+            "ablation_invalid_reasons": tuple(
+                item.hmm_evaluation.invalid_reason for item in self.ablation.one_feature_results
+            ),
         }
 
 
@@ -187,6 +193,7 @@ def run_canonical_feature_selection(
     metadata_state_count: int | None = None,
     evaluate_gaussian_subset_by_k: KSubsetScore | None = None,
     state_counts: tuple[int, ...] = LEGAL_K,
+    metadata_fold_feature_stats: tuple[FoldFeatureStat, ...] | None = None,
 ) -> FeatureSelectionPipelineResult:
     """Run all currently implemented selection stages on one TRAIN snapshot.
 
@@ -352,7 +359,14 @@ def run_canonical_feature_selection(
         sffs.selected_features,
         evaluate_hmm_subset,
         selector_contract_hash=hmm_selector_contract_hash,
+        max_workers=max_workers,
     )
+    if metadata_fold_feature_stats is not None:
+        if metadata_store is None:
+            raise ValueError("metadata_store is required for feature-stat persistence")
+        metadata_store.commit_fold_feature_stats(
+            apply_ablation_to_feature_stats(metadata_fold_feature_stats, ablation)
+        )
     return FeatureSelectionPipelineResult(
         quality_eligible_features=eligible,
         family_reduction=family_reduction,
