@@ -1046,21 +1046,26 @@ multi-worker parity and independent-edge tests pass locally. No full evaluation 
 **Type:** implementation / observability
 **Depends on:** PR-520
 
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-488-mlflow-preprocessing-evidence`; the
+deterministic funnel/family/PCA/group evidence bundle and local rendering test are implemented.
+Top-loading plots, representative heatmaps, per-artifact identity binding, and DuckDB fallback
+remain open. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Log one feature_funnel plot with counts for discovered, quality-eligible, family-PC/core,
+- [x] Log one feature_funnel plot with counts for discovered, quality-eligible, family-PC/core,
   correlation-representative and later final stages when available.
-- [ ] Log one family_survival plot with source count, quality count, retained PCs and representative
+- [x] Log one family_survival plot with source count, quality count, retained PCs and representative
   count per family.
-- [ ] Log one explained-variance curve per PCA family under a deterministic pca/ artifact path.
+- [x] Log one explained-variance curve per PCA family under a deterministic pca/ artifact path.
 - [ ] Log top-loading plots for every family PC that survives correlation pruning; top 20 absolute
   loadings are shown, with the full loading table persisted separately.
-- [ ] Log correlation group-size ranking for every retained leader.
+- [x] Log correlation group-size ranking for every retained leader.
 - [ ] Log representative correlation heatmap for at most 80 representatives, chosen by descending
   covered-group size then canonical identity; the complete correlation mapping remains available
   as a table artifact regardless of plot truncation.
 - [ ] Log exact profile/source/fold hashes beside every artifact bundle.
-- [ ] Plot generation never changes selection results.
+- [x] Plot generation never changes selection results.
 - [ ] QA/local tests use MLflow FileStore; production runs use the configured external tracking URI.
 - [ ] DuckDB remains the metadata source of truth if MLflow logging is disabled or fails before an
   authorized external run.
