@@ -666,17 +666,20 @@ DuckDB contract tests pass locally. PR-479 remains the separate durability/QA pr
 **Type:** QA only
 **Depends on:** PR-478
 
+**Status:** QA COMPLETE on branch `pr/PR-479-duckdb-durability-qa`; targeted durability and
+schema-contract tests pass locally.
+
 #### Acceptance
 
-- [ ] Fresh-state bootstrap creates exactly the six tables and one view declared by PR-478.
-- [ ] Reopening the same state root preserves byte-equivalent logical rows.
-- [ ] Replaying the same fold is idempotent and creates no duplicate logical records.
-- [ ] Injected failure before transaction commit leaves zero partial fold rows.
-- [ ] Conflicting immutable feature identity fails closed.
-- [ ] Concurrent readers observe only committed fold states.
-- [ ] feature_global_stats is reproduced independently from base tables.
-- [ ] DuckDB state contains no raw time-series vectors or credentials.
-- [ ] QA uses a temporary local state root only.
+- [x] Fresh-state bootstrap creates exactly the six tables and one view declared by PR-478.
+- [x] Reopening the same state root preserves byte-equivalent logical rows.
+- [x] Replaying the same fold is idempotent and creates no duplicate logical records.
+- [x] Injected failure before transaction commit leaves zero partial fold rows.
+- [x] Conflicting immutable feature identity fails closed.
+- [x] Concurrent readers observe only committed fold states.
+- [x] feature_global_stats is reproduced independently from base tables.
+- [x] DuckDB state contains no raw time-series vectors or credentials.
+- [x] QA uses a temporary local state root only.
 
 ### PR-480 — Materialize the PR-476 role/family contract as canonical provenance
 
