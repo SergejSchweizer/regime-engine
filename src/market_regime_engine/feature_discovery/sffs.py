@@ -112,9 +112,7 @@ def select_sffs(
     candidate_order = {name: index for index, name in enumerate(candidate_tuple)}
 
     parallel = max_workers != 1 and is_pickleable(score)
-    worker_limit = (
-        cpu_worker_count(max_workers, task_count=len(candidate_tuple)) if parallel else 1
-    )
+    worker_limit = cpu_worker_count(max_workers, task_count=len(candidate_tuple)) if parallel else 1
     pool_context = (
         cpu_process_pool(worker_limit) if parallel and worker_limit > 1 else nullcontext()
     )
