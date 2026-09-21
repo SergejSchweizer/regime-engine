@@ -75,13 +75,14 @@ PR-448
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
 - The authorized full evaluation was attempted on 2026-09-20 and stopped
-  before HMM/PCA/MLflow writes because NAS PostgreSQL has no
-  `macro_loader_sync.gold_sync_state` relation; read-only login as
-  `macro-loader` succeeds, but `macro_loader` and `macro_loader_sync` expose
-  no tables. NAS MLflow health is `OK` and no `regime-xetra` model exists.
+  before HMM/PCA/MLflow writes because the canonical NAS source was then
+  unavailable. The source is now reachable read-only as `macro-loader` and
+  exposes the canonical 168-column materialized view; its lineage table still
+  lacks the required `dataset_id='macro_features'` row. NAS MLflow health is
+  `OK` and no `regime-xetra` model exists.
 - No production PostgreSQL, MLflow, model, registry or alias mutation has been
-  performed. Full evaluation remains externally blocked until the source
-  schema is provisioned and its lineage is revalidated.
+  performed. Full evaluation remains externally blocked until the canonical
+  `macro_features` lineage row is published and revalidated.
 - PR-449 is merged as GitHub PR #448 at `56885cb`; PR-450 is merged as
   GitHub PR #449 at `b0856c7`; PR-451 is merged as GitHub PR #450 at
   `758c5a7`; PR-452 is merged as GitHub PR #451 at `026b3a2`. Their
@@ -390,7 +391,7 @@ pruning so PCA still receives economically meaningful within-family covariance s
 
 ### PR-476 — Define canonical feature roles and the scalable selection contract
 
-**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-476-feature-role-selection-contract` is at the current pushed `HEAD` with a clean working tree; GitHub PR #456 remains open with Git-Policy, Lint, Type, Unit and Merge-Gate green. The canonical role/family module is publicly exported, validates the complete temporal/core catalog identity, and includes fail-closed stage boundaries for quality, family PCA, correlation, SFFS, and HMM inputs. Deterministic TRAIN-only family near-duplicate reduction, family-local standardization/PCA, global stable absolute-Pearson redundancy pruning, capped dimension-independent SFFS, one-feature-at-a-time ablation, explicit role/profile evidence metadata, a sequential composition pipeline, and `build_feature_role_contract_from_catalog()` for discovered source catalogs are implemented; PCA retains the first non-zero-rank components up to eight and stores explained variance diagnostically only. A prior read-only NAS catalog audit classified 168 `macro_loader.macro_features` columns (20 CORE, 147 transformations, 1 temporal key); the current read-only connection now exposes neither canonical schema, so that historical catalog cannot serve as current acceptance evidence. The production composition and one-step evaluation script now instantiate the sole `macro_features` materialized-view adapter; schema-wide relation enumeration, `PostgresFeatureSource`, compatibility aliases, caller-selected schemas and legacy `macro_features_daily` test identities were removed. The source contract is `read_with_catalog()` only and rejects raw-source substitution. Global V4 evidence and MLflow parent/fold model dossiers now carry the role-contract and selection-profile hashes when the canonical catalog path is used. The pipeline runs quality boundary → family reduction → family PCA → global redundancy → SFFS → HMM-backed ablation without TEST inputs; final ablation now requires same-contract/model fresh-fit SHA-256 evidence and rejects reused fits. Hermetic role-contract QA now covers all 13 families, canonical defaults, forbidden policies and fail-closed mutation paths. Eager heavy-module exports were removed from the package initializer to keep multiprocessing spawn imports hermetic. Full unit tests (1002), Ruff and Mypy pass; six affected HMM/source integration tests pass in 8:31 with 24 workers. No full evaluation has run. Acceptance remains open for external `macro_features` lineage publication, production HMM-ablation execution, and the independent QA/provenance proofs listed below.
+**Status:** IMPLEMENTATION IN PROGRESS — branch `pr/PR-476-feature-role-selection-contract` is at the current pushed `HEAD` with a clean working tree; GitHub PR #456 remains open with Git-Policy, Lint, Type, Unit and Merge-Gate green. The canonical role/family module is publicly exported, validates the complete temporal/core catalog identity, and includes fail-closed stage boundaries for quality, family PCA, correlation, SFFS, and HMM inputs. Deterministic TRAIN-only family near-duplicate reduction, family-local standardization/PCA, global stable absolute-Pearson redundancy pruning, capped dimension-independent SFFS, one-feature-at-a-time ablation, explicit role/profile evidence metadata, a sequential composition pipeline, and `build_feature_role_contract_from_catalog()` for discovered source catalogs are implemented; PCA retains the first non-zero-rank components up to eight and stores explained variance diagnostically only. The current read-only NAS catalog contains 168 `macro_loader.macro_features` columns (20 CORE, 147 transformations, 1 temporal key), and the repository role contract classifies all 167 non-temporal columns across all 13 families. Its lineage table still contains only `macro_features_daily`, so the canonical `macro_features` lineage row remains open. The production composition and one-step evaluation script now instantiate the sole `macro_features` materialized-view adapter; schema-wide relation enumeration, `PostgresFeatureSource`, compatibility aliases, caller-selected schemas and legacy `macro_features_daily` test identities were removed. The source contract is `read_with_catalog()` only and rejects raw-source substitution. Global V4 evidence and MLflow parent/fold model dossiers now carry the role-contract and selection-profile hashes when the canonical catalog path is used. The pipeline runs quality boundary → family reduction → family PCA → global redundancy → SFFS → HMM-backed ablation without TEST inputs; final ablation now requires same-contract/model fresh-fit SHA-256 evidence and rejects reused fits. Hermetic role-contract QA now covers all 13 families, canonical defaults, forbidden policies and fail-closed mutation paths. Eager heavy-module exports were removed from the package initializer to keep multiprocessing spawn imports hermetic. Full unit tests (1002), Ruff and Mypy pass; six affected HMM/source integration tests pass in 8:31 with 24 workers. No full evaluation has run. Acceptance remains open for external `macro_features` lineage publication, production HMM-ablation execution, and the independent QA/provenance proofs listed below.
 
 **Branch:** `pr/PR-476-feature-role-selection-contract`
 
@@ -402,14 +403,13 @@ ablation is intentionally not wired to a surrogate valid-fold-rate score: it mus
 canonical `feature_subset_score.v1` contract introduced by PR-490, otherwise the implementation
 would silently violate the dimension-independent SFFS semantics.
 
-**External source audit:** read-only login as `macro-loader` succeeds, but the current NAS
-connection exposes neither the `macro_loader` nor `macro_loader_sync` schema; consequently both
-`macro_loader.macro_features` and `macro_loader_sync.gold_sync_state` are currently missing. The
-read-only probe on 2026-09-21 returned `macro-loader` followed by four empty
-`to_regnamespace`/`to_regclass` values, and `scripts/verify_feature_postgres.sh` fails with
-`InvalidSchemaName` at the canonical privilege query. The source cutover therefore cannot be
-accepted until macro-loader provisions the canonical view and publishes matching `macro_features`
-lineage/fingerprint; no fallback to a legacy row is permitted.
+**External source audit:** read-only login as `macro-loader` now succeeds against database
+`macro_loader`; `macro_loader.macro_features` is a materialized view with 168 columns and
+`macro-loader` has `SELECT` but no write privilege. `macro_loader_sync.gold_sync_state` exists,
+but its only row has `dataset_id='macro_features_daily'`; the required canonical
+`dataset_id='macro_features'` lineage row is absent. The source cutover therefore cannot be
+accepted until macro-loader publishes matching canonical `macro_features` lineage/fingerprint;
+no fallback to a legacy row is permitted.
 
 **Type:** contract / configuration
 **Depends on:** PR-508
@@ -541,9 +541,10 @@ closed and requires an explicit contract update.
 **Type:** QA only
 **Depends on:** PR-476
 
-**Status:** QA implementation is present in PR-476 and covered by hermetic unit tests; acceptance
-remains open for the currently exposed NAS catalog inventory, which cannot be verified while the
-canonical NAS schemas are absent.
+**Status:** ACCEPTANCE COMPLETE — QA implementation is present in PR-476 and covered by hermetic
+unit tests. The current NAS catalog inventory was verified read-only: 168 columns total (20 CORE,
+147 transformations, and 1 temporal key), with all 13 transformation families represented. No
+production behavior was changed.
 
 #### Acceptance
 
@@ -552,7 +553,7 @@ canonical NAS schemas are absent.
 - [x] Assert `timestamp_m1` has only the temporal-key role.
 - [x] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
   `usd_broad_log_return_20obs` feature is a transformation in exactly one of the 13 families.
-- [ ] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
+- [x] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
   temporal-key, CORE or TRANSFORMATION classification with no overlap.
 - [x] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
   or an arbitrary family.
