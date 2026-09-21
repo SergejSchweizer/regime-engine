@@ -25,7 +25,9 @@ def test_global_pruning_keeps_the_canonical_first_stable_representative() -> Non
     assert result.removed_features == (names[1], family_pc)
     assert len(result.evidence) == 2
     assert result.evidence[0].full_absolute_pearson == pytest.approx(1.0)
+    assert result.evidence[0].full_support_count == 30
     assert result.evidence[0].subwindow_absolute_pearsons == pytest.approx((1.0, 1.0, 1.0))
+    assert result.evidence[0].subwindow_support_counts == (10, 10, 10)
 
 
 def test_global_pruning_rejects_transformations_and_is_stable_only() -> None:
