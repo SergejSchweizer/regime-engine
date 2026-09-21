@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from math import nan
 
@@ -21,7 +20,6 @@ from market_regime_engine.training.multistart import (
     StartDiagnostic,
     _anchored_winner,
     _evaluate_start,
-    _reserve_cpu_slots,
     run_multistart,
 )
 
@@ -181,28 +179,8 @@ def test_invalid_state_count_fails_before_adapter_use() -> None:
         run_multistart([[0.0]], state_count=6, adapter_factory=factory({}))
 
 
-def test_pickleable_custom_adapter_factory_uses_process_workers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pickleable_custom_adapter_factory_uses_the_shared_frontier() -> None:
     outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
-    worker_counts: list[int] = []
-
-    class _InlineProcessPool:
-        def __init__(self, max_workers: int, **_kwargs: object) -> None:
-            worker_counts.append(max_workers)
-
-        def __enter__(self) -> _InlineProcessPool:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def submit(self, function, *args: object, **kwargs: object) -> Future[object]:
-            future: Future[object] = Future()
-            future.set_result(function(*args, **kwargs))
-            return future
-
-    monkeypatch.setattr(multistart_module, "cpu_process_pool", _InlineProcessPool)
     result = run_multistart(
         [[0.0], [1.0]],
         state_count=2,
@@ -210,7 +188,6 @@ def test_pickleable_custom_adapter_factory_uses_process_workers(
         max_workers=2,
     )
 
-    assert worker_counts == [2]
     assert result.winner.seed == 131
 
 
@@ -290,12 +267,6 @@ def test_multistart_contracts_reject_invalid_diagnostics_and_results() -> None:
         MultistartResult(1, winner, diagnostics)
     with pytest.raises(ValueError, match="winner"):
         MultistartResult(2, fit_result(999, 1.0), diagnostics)  # type: ignore[arg-type]
-
-
-def test_multistart_cpu_slot_reservation_is_bounded() -> None:
-    with _reserve_cpu_slots(10_000) as reserved:
-        assert reserved >= 1
-        assert reserved <= multistart_module._CPU_SLOT_COUNT
 
 
 def test_evaluate_start_does_not_hide_unexpected_adapter_contract_failures() -> None:

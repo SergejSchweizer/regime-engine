@@ -1210,7 +1210,8 @@ persistent `SharedTaskFrontier` boundary now provides canonical task ordering, c
 independence, fail-fast worker errors and queue/runnable/utilization metrics. K-slot SFFS now
 reuses one caller-owned frontier across all K slots and SFFS steps, and the canonical selection
 pipeline reuses that same frontier for final ablation when both evaluator seams are pickleable.
-Multistart and walk-forward now accept the same caller-owned frontier; parallel fold workers no
+Multistart and walk-forward now accept the same caller-owned frontier; direct multistart uses the
+same frontier boundary instead of a private process-pool path, and parallel fold workers no
 longer attempt nested multistart pools. Multistart frontier tasks open one immutable memmapped
 TRAIN matrix per batch and carry only its path/shape/dtype identity. Frontier results are restored
 to submission identity before coordinator aggregation; the frontier submits only a bounded
