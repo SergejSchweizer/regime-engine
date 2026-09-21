@@ -956,7 +956,7 @@ concurrency/parity tests pass locally.
 **Depends on:** PR-518
 
 **Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-486-global-correlation-leaders`; targeted
-global-reduction tests pass locally. PR-487 remains the independent oracle/adversarial-chain QA.
+global-reduction tests pass locally. PR-487 is the active independent oracle/adversarial-chain QA.
 
 The input universe is exactly quality-eligible core features plus family PCs.
 
@@ -985,17 +985,20 @@ The input universe is exactly quality-eligible core features plus family PCs.
 **Type:** QA only
 **Depends on:** PR-486
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-487-global-correlation-qa`; independent
+oracle and adversarial-chain tests pass locally. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Independent implementation reproduces all retained leaders and mappings.
-- [ ] Cover +0.95, -0.95, just-below-threshold and insufficient-support boundaries.
-- [ ] Cover a chain where A-B and B-C pass but A-C fails; C must survive when A is leader.
-- [ ] Cover a case with high crisis-only full-sample correlation but unstable thirds; both features
+- [x] Independent implementation reproduces all retained leaders and mappings.
+- [x] Cover +0.95, -0.95, just-below-threshold and insufficient-support boundaries.
+- [x] Cover a chain where A-B and B-C pass but A-C fails; C survives when A is leader.
+- [x] Cover a case with high crisis-only full-sample correlation but unstable thirds; both features
   must survive.
-- [ ] Cover exact leader tie-breaks including core-versus-PC and canonical-name fallback.
-- [ ] Row/column/process completion order cannot alter the result or hash.
-- [ ] Outer-TEST mutation cannot alter any correlation result.
-- [ ] QA adds no production behavior.
+- [x] Cover exact leader tie-breaks including core-versus-PC and canonical-name fallback.
+- [x] Row/column/process completion order cannot alter the result or hash.
+- [x] Outer-TEST mutation cannot alter any correlation result.
+- [x] QA adds no production behavior.
 
 ### PR-519 — Parallelize global correlation as upper-triangle tiles
 
