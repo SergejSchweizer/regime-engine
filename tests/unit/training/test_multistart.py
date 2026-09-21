@@ -16,11 +16,13 @@ from market_regime_engine.training.multistart import (
     MINIMUM_VALID_STARTS,
     MULTISTART_SEEDS,
     TRAIN_LOGLIK_TIE_ABS_TOLERANCE,
+    MultistartBatchJob,
     MultistartResult,
     StartDiagnostic,
     _anchored_winner,
     _evaluate_start,
     run_multistart,
+    run_multistart_batch,
 )
 
 
@@ -204,6 +206,21 @@ def test_multistart_can_use_a_caller_owned_shared_frontier() -> None:
 
     assert result.winner.seed == 131
     assert tuple(item.seed for item in result.diagnostics) == MULTISTART_SEEDS
+
+
+def test_multistart_batch_flattens_all_fold_seeds_on_one_frontier() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    jobs = (
+        MultistartBatchJob("fold-001", [[0.0], [1.0]], 2, PickleableAdapterFactory(outcomes)),
+        MultistartBatchJob("fold-002", [[2.0], [3.0]], 2, PickleableAdapterFactory(outcomes)),
+    )
+
+    with SharedTaskFrontier(max_workers=2) as frontier:
+        parallel = run_multistart_batch(jobs, max_workers=2, frontier=frontier)
+    serial = run_multistart_batch(jobs, max_workers=1)
+
+    assert tuple(item.winner.seed for item in parallel) == (131, 131)
+    assert parallel == serial
 
 
 def test_non_pickleable_adapter_factory_fails_before_thread_fallback() -> None:

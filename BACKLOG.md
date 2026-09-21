@@ -1215,9 +1215,10 @@ same frontier boundary instead of a private process-pool path, and parallel fold
 longer attempt nested multistart pools. Multistart frontier tasks open one immutable memmapped
 TRAIN matrix per batch and carry only its path/shape/dtype identity. Frontier results are restored
 to submission identity before coordinator aggregation; the frontier submits only a bounded
-in-flight window and replenishes it as workers finish. Automatic parent-level fold/multistart
-flattening, inner-fold task decomposition and candidate-scoring matrix wiring remain open. No
-full evaluation was run.
+in-flight window and replenishes it as workers finish. A batch API now flattens all jobs' eight
+seeds into one frontier and aggregates each job canonically. Automatic parent-level integration
+of that batch across candidate scoring, inner folds and K slots, plus candidate-scoring matrix
+wiring, remain open. No full evaluation was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
