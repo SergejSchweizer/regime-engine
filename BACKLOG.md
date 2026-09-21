@@ -541,28 +541,32 @@ closed and requires an explicit contract update.
 **Type:** QA only
 **Depends on:** PR-476
 
+**Status:** QA implementation is present in PR-476 and covered by hermetic unit tests; acceptance
+remains open for the currently exposed NAS catalog inventory, which cannot be verified while the
+canonical NAS schemas are absent.
+
 #### Acceptance
 
-- [ ] Assert the CORE set contains exactly the 20 identities declared by PR-476 and no additional
+- [x] Assert the CORE set contains exactly the 20 identities declared by PR-476 and no additional
   column.
-- [ ] Assert `timestamp_m1` has only the temporal-key role.
-- [ ] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
+- [x] Assert `timestamp_m1` has only the temporal-key role.
+- [x] Assert every current delta, z-score, momentum-autocorrelation, geometric-return and
   `usd_broad_log_return_20obs` feature is a transformation in exactly one of the 13 families.
 - [ ] Assert every currently exposed `macro_loader.macro_features` column is accounted for by
   temporal-key, CORE or TRANSFORMATION classification with no overlap.
-- [ ] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
+- [x] Adding an unclassifiable future feature column fails closed rather than defaulting it to CORE
   or an arbitrary family.
-- [ ] Mutation of a role, family, CORE identity or canonical default changes the profile hash.
-- [ ] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
+- [x] Mutation of a role, family, CORE identity or canonical default changes the profile hash.
+- [x] Assert every canonical default exactly, including 0.995/0.99 family near-duplicate thresholds,
   8 PCA components, 0.95/0.90 global-correlation thresholds, three subwindows, 30/10 support minima
   and the 10-feature SFFS cap.
-- [ ] Reject a profile that routes a generated transformation directly to the HMM.
-- [ ] Reject a profile that forces all core features through PCA.
-- [ ] Reject Spearman, signed-only correlation or target-aware representative selection.
-- [ ] Reject explained-variance-driven PC-count selection.
-- [ ] Reject raw PLL/AIC/BIC as a cross-dimension SFFS objective.
-- [ ] Prove Outer-TEST access is absent from the feature-selection contract.
-- [ ] QA is hermetic and changes no production behavior.
+- [x] Reject a profile that routes a generated transformation directly to the HMM.
+- [x] Reject a profile that forces all core features through PCA.
+- [x] Reject Spearman, signed-only correlation or target-aware representative selection.
+- [x] Reject explained-variance-driven PC-count selection.
+- [x] Reject raw PLL/AIC/BIC as a cross-dimension SFFS objective.
+- [x] Prove Outer-TEST access is absent from the feature-selection contract.
+- [x] QA is hermetic and changes no production behavior.
 
 ### PR-509 — Cut the canonical feature source over to macro_loader.macro_features
 
