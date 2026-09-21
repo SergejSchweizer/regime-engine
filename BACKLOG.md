@@ -914,19 +914,22 @@ locally.
 **Type:** implementation / performance
 **Depends on:** PR-485
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-517-parallel-family-stage`; targeted pipeline
+parity tests pass locally. PR-518 remains the separate family-stage concurrency QA proof.
+
 #### Acceptance
 
-- [ ] Execute independent transformation families concurrently through the shared PR-513 process
+- [x] Execute independent transformation families concurrently through the shared PR-513 process
   pool.
-- [ ] One family task owns near-duplicate pruning, scaler fit/transform and PCA for that family only;
+- [x] One family task owns near-duplicate pruning, scaler fit/transform and PCA for that family only;
   core candidates remain coordinator data.
-- [ ] Submit all eligible family tasks before blocking for completion.
-- [ ] Reassemble family outputs strictly by canonical family identity, never completion order.
-- [ ] Reuse the shared fold matrix and pass only family column indices/metadata to workers.
-- [ ] No nested process/native-thread parallelism is introduced.
-- [ ] Families with typed statistical invalidity do not cancel unrelated family tasks; unexpected
+- [x] Submit all eligible family tasks before blocking for completion.
+- [x] Reassemble family outputs strictly by canonical family identity, never completion order.
+- [x] Reuse the shared fold matrix and pass only family column indices/metadata to workers.
+- [x] No nested process/native-thread parallelism is introduced.
+- [x] Families with typed statistical invalidity do not cancel unrelated family tasks; unexpected
   software failures abort the stage.
-- [ ] Serial execution remains available and byte/canonical-hash equivalent.
+- [x] Serial execution remains available and byte/canonical-hash equivalent.
 
 ### PR-518 — QA: family-stage concurrency, utilization and deterministic parity
 
