@@ -345,7 +345,7 @@ def build_inner_calendar_month_plan(timestamps: Sequence[datetime]) -> WalkForwa
         minimum_train_source_observations=INNER_TRAIN_SOURCE_OBSERVATIONS,
     )
     if calendar_plan.folds:
-        return cast(WalkForwardPlan, calendar_plan.as_walk_forward_plan())
+        return calendar_plan.as_walk_forward_plan()
     # Short manually supplied windows cannot contain a complete calendar TEST
     # month.  Keep their explicit fixed-plan contract usable for isolated
     # component callers; production source evaluation always has monthly folds.

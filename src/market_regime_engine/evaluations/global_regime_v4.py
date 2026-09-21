@@ -117,13 +117,10 @@ def plan_walk_forward(timestamps: tuple[datetime, ...], walk_forward: object) ->
     """Construct the canonical monthly plan through the historical seam name."""
 
     minimum_train = getattr(walk_forward, "minimum_train_source_observations", 1260)
-    return cast(
-        WalkForwardPlan,
-        plan_calendar_month(
-            timestamps,
-            minimum_train_source_observations=minimum_train,
-        ).as_walk_forward_plan(),
-    )
+    return plan_calendar_month(
+        timestamps,
+        minimum_train_source_observations=minimum_train,
+    ).as_walk_forward_plan()
 
 
 def _require_production_eligible_source_clock(
@@ -895,10 +892,11 @@ def select_v4_configuration(
 _DEFAULT_SELECT_V4_CONFIGURATION = select_v4_configuration
 
 
-def _outer_fold_plan(fold: WalkForwardFold) -> WalkForwardPlan:
+def _outer_fold_plan(fold: WalkForwardFold | CalendarMonthFold) -> WalkForwardPlan:
     # The existing runner validates fold positions relative to the supplied
     # plan.  A one-fold execution therefore uses a local fold identity while
     # retaining the outer fold's exact timestamps and source-row bounds.
+    local_fold: WalkForwardFold | CalendarMonthFold
     if isinstance(fold, CalendarMonthFold):
         local_fold = replace(fold, fold_index=1, fold_id="fold_001")
     else:
@@ -913,7 +911,7 @@ def _outer_fold_plan(fold: WalkForwardFold) -> WalkForwardPlan:
             test_source_observations=fold.test_source_observations,
         )
     return WalkForwardPlan(
-        folds=(local_fold,),
+        folds=cast(tuple[WalkForwardFold, ...], (local_fold,)),
         evaluation_cutoff=fold.test_end,
         plan_hash=content_hash(
             (

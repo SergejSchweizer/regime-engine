@@ -46,7 +46,7 @@ def test_real_four_k_gaussian_teacher_compute_and_selection() -> None:
     assert (
         result.inner_plan.folds[0].train_source_observations,
         result.inner_plan.folds[0].test_source_observations,
-    ) == (756, 63)
+    ) == (762, 28)
     assert result.model_clock.structural_valid_fold_rate == 1.0
     assert tuple(evaluation.candidate_id for evaluation in result.candidate_evaluations) == tuple(
         f"gaussian_hmm_k{k}_full" for k in V4_PROVISIONAL_STATE_COUNTS

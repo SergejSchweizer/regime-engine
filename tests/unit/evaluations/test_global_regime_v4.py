@@ -526,9 +526,7 @@ def test_pickleable_custom_outer_callbacks_use_process_workers(
     )
 
     assert process_worker_counts == [2]
-    expected_plan = global_v4.plan_walk_forward(
-        tuple(rows["timestamp_m1"]), profile.walk_forward
-    )
+    expected_plan = global_v4.plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     assert len(result.outer_folds) == len(expected_plan.folds)
     assert result.valid_fold_count == 0
 
@@ -598,9 +596,7 @@ def test_outer_policy_passes_only_train_rows_to_each_selection(
         max_workers=1,
     )
 
-    expected_plan = global_v4.plan_walk_forward(
-        tuple(rows["timestamp_m1"]), profile.walk_forward
-    )
+    expected_plan = global_v4.plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     assert sorted(seen_lengths) == sorted(
         fold.train_source_observations for fold in expected_plan.folds
     )
@@ -630,17 +626,14 @@ def test_failed_outer_selection_does_not_reuse_a_previous_configuration(
         max_workers=1,
     )
 
-    expected_plan = global_v4.plan_walk_forward(
-        tuple(rows["timestamp_m1"]), profile.walk_forward
-    )
+    expected_plan = global_v4.plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
     assert calls == len(expected_plan.folds)
     assert result.valid_fold_count == 0
     assert result.production_eligible is False
     assert all(not fold.valid for fold in result.outer_folds)
-    assert (
-        len({fold.final_configuration.feature_discovery_hash for fold in result.outer_folds})
-        == len(expected_plan.folds)
-    )
+    assert len(
+        {fold.final_configuration.feature_discovery_hash for fold in result.outer_folds}
+    ) == len(expected_plan.folds)
     assert all(
         "TRAIN-only v4 selection failed" in (fold.failure_reason or "")
         for fold in result.outer_folds

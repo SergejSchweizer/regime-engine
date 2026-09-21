@@ -803,8 +803,7 @@ def run_walk_forward_candidate(
                     else f"pinned minimum {minimum_test_observations}"
                 )
                 raise RecoverableEvaluationInvalidity(
-                    f"retained TEST observations are below {minimum_label}: "
-                    f"{test_model_count}"
+                    f"retained TEST observations are below {minimum_label}: {test_model_count}"
                 )
 
             pca_scaler = fit_pca_hmm_scaler(

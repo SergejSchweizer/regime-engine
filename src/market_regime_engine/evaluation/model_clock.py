@@ -349,9 +349,9 @@ def build_calendar_model_clock_preflight(
     assert first_train_count is not None
     assert first_train_variances is not None
     valid_rate = sum(fold.structurally_valid for fold in fold_evidence) / len(fold_evidence)
-    reasons: list[str] = []
+    preflight_reasons: list[str] = []
     if first_train_count < minimum_model_train_observations:
-        reasons.append(
+        preflight_reasons.append(
             f"first TRAIN complete observations {first_train_count} below "
             f"{minimum_model_train_observations}"
         )
@@ -359,9 +359,13 @@ def build_calendar_model_clock_preflight(
         name for name, variance in first_train_variances if variance <= MIN_FEATURE_VARIANCE
     )
     if low_variance:
-        reasons.append(f"first TRAIN feature variance is not greater than 1e-12: {low_variance}")
+        preflight_reasons.append(
+            f"first TRAIN feature variance is not greater than 1e-12: {low_variance}"
+        )
     if valid_rate < minimum_valid_fold_rate:
-        reasons.append(f"structural valid-fold rate {valid_rate} below {minimum_valid_fold_rate}")
+        preflight_reasons.append(
+            f"structural valid-fold rate {valid_rate} below {minimum_valid_fold_rate}"
+        )
     return ModelClockPreflight(
         feature_order=feature_order,
         plan_hash=plan.plan_hash,
@@ -369,8 +373,8 @@ def build_calendar_model_clock_preflight(
         first_train_feature_variances=first_train_variances,
         folds=tuple(fold_evidence),
         structural_valid_fold_rate=valid_rate,
-        status=DiscoveryStatus.VALID if not reasons else DiscoveryStatus.INVALID,
-        invalid_reason="; ".join(reasons) or None,
+        status=DiscoveryStatus.VALID if not preflight_reasons else DiscoveryStatus.INVALID,
+        invalid_reason="; ".join(preflight_reasons) or None,
     )
 
 

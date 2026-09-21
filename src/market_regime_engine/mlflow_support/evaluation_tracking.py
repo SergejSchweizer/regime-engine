@@ -620,9 +620,7 @@ def build_global_v4_evidence(
         raise ValueError("repository commit identity must be non-empty and trimmed")
     outer_plan = plan_calendar_month(
         tuple(row.timestamp for row in snapshot.rows),
-        minimum_train_source_observations=(
-            profile.walk_forward.minimum_train_source_observations
-        ),
+        minimum_train_source_observations=(profile.walk_forward.minimum_train_source_observations),
     ).as_walk_forward_plan()
     fold_tasks = tuple((fold, selections.get(fold.fold_index)) for fold in result.outer_folds)
     worker_limit = cpu_worker_count(max_workers, task_count=len(fold_tasks))
