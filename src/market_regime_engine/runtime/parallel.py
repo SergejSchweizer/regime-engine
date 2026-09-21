@@ -180,12 +180,17 @@ class FoldParallelExecutor[T, R]:
                 pending[pool.submit(function, task)] = index
 
         fill()
-        while pending:
-            completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
-            for future in completed:
-                index = pending.pop(future)
-                results[index] = future.result()
-            fill()
+        try:
+            while pending:
+                completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+                for future in completed:
+                    index = pending.pop(future)
+                    results[index] = future.result()
+                fill()
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
         return tuple(cast(R, result) for result in results)
 
 
