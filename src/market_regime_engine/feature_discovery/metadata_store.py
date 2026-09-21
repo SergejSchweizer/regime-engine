@@ -363,6 +363,30 @@ class FeatureSelectionMetadataStore:
                     connection.execute("COMMIT")
                     return False
                 for row in bundle.feature_registry:
+                    existing_feature = connection.execute(
+                        """
+                        SELECT source_dataset, source_build_id, source_catalog_hash,
+                               feature_name, role, family, transformation_name,
+                               transformation_parameters_json, first_seen_utc, lifecycle_status
+                        FROM feature_registry
+                        WHERE feature_identity = ?
+                        """,
+                        [row.feature_identity],
+                    ).fetchone()
+                    expected_feature = (
+                        row.source_dataset,
+                        row.source_build_id,
+                        row.source_catalog_hash,
+                        row.feature_name,
+                        row.role,
+                        row.family,
+                        row.transformation_name,
+                        _json(row.transformation_parameters),
+                        row.first_seen_utc,
+                        row.lifecycle_status,
+                    )
+                    if existing_feature is not None and existing_feature != expected_feature:
+                        raise ValueError("conflicting immutable feature identity")
                     connection.execute(
                         """
                         INSERT INTO feature_registry VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
