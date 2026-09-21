@@ -11,6 +11,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite, tanh
 from statistics import fmean
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 
 FEATURE_SUBSET_SCORE_VERSION = "feature_subset_score.v1"
 INNER_FOLD_PLAN_ID = "monthly_inner_within_outer_train.v1"
@@ -309,6 +313,25 @@ def rank_feature_subset_scores(
     )
 
 
+def to_sffs_score(breakdown: FeatureSubsetBreakdown) -> FeatureSubsetScore | None:
+    """Adapt the immutable v1 breakdown to the SFFS coordinator contract."""
+
+    if not breakdown.eligible or breakdown.total_score is None:
+        return None
+    # Import lazily to keep the score contract independent from the coordinator.
+    from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+
+    return FeatureSubsetScore(
+        breakdown.feature_names,
+        breakdown.total_score,
+        forecast_score=breakdown.forecast_score,
+        worst_fold_forecast_score=breakdown.worst_fold_forecast_score,
+        calibration_score=breakdown.calibration_score,
+        stability_score=breakdown.stability_score,
+        robustness_score=breakdown.robustness_score,
+    )
+
+
 __all__ = [
     "FEATURE_SUBSET_SCORE_VERSION",
     "INNER_FOLD_PLAN_ID",
@@ -317,4 +340,5 @@ __all__ = [
     "FeatureSubsetFoldEvidence",
     "rank_feature_subset_scores",
     "score_feature_subset",
+    "to_sffs_score",
 ]

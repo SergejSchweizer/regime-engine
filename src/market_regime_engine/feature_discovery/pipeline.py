@@ -285,6 +285,7 @@ def run_canonical_feature_selection(
         max_features=(
             resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
         ),
+        max_workers=max_workers,
     )
     ablation = run_one_feature_hmm_ablation(
         sffs.selected_features,

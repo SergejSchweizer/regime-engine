@@ -1,5 +1,6 @@
 import pytest
 
+from market_regime_engine.feature_discovery.metadata_store import sffs_step_records
 from market_regime_engine.feature_discovery.sffs import (
     DIMENSION_INDEPENDENT_SCORE,
     FeatureSubsetScore,
@@ -44,17 +45,18 @@ def test_sffs_floating_step_can_remove_a_feature_when_score_improves() -> None:
     values = {
         ("a",): 1.0,
         ("b",): 3.0,
-        ("c",): 2.0,
+        ("c",): 1.0,
         ("b", "a"): 4.0,
         ("b", "c"): 2.5,
-        ("b", "a", "c"): 3.0,
+        ("b", "a", "c"): 5.0,
+        ("a", "c"): 6.0,
     }
 
     def score(features: tuple[str, ...]) -> FeatureSubsetScore:
         return FeatureSubsetScore(features, values.get(features, 0.0))
 
     result = select_sffs(("a", "b", "c"), score, max_features=3)
-    assert result.selected_features == ("b", "a")
+    assert result.selected_features == ("a", "c")
     assert any(step.action == "remove" for step in result.steps)
 
 
@@ -76,3 +78,23 @@ def test_sffs_uses_process_workers_for_picklable_score_and_preserves_order() -> 
     result = select_sffs(("a", "b"), _picklable_score, max_features=2, max_workers=2)
     assert result.selected_features == ("b", "a")
     assert tuple(step.action for step in result.steps) == ("start", "add")
+
+
+def test_sffs_exposes_every_candidate_for_durable_step_metadata() -> None:
+    result = select_sffs(
+        ("a", "b"),
+        lambda features: FeatureSubsetScore(features, 1.0 if len(features) == 1 else 2.0),
+        max_features=2,
+        max_workers=1,
+    )
+    rows = sffs_step_records(
+        result,
+        fold_id="fold-001",
+        profile_hash="a" * 64,
+        source_build_id="build-001",
+        state_count=2,
+    )
+    assert len(rows) == len(result.evaluations)
+    assert rows[0].action == "singleton"
+    assert any(row.action == "forward" for row in rows)
+    assert all(row.selected_tuple_hash and len(row.selected_tuple_hash) == 64 for row in rows)

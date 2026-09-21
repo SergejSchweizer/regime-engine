@@ -1094,9 +1094,12 @@ locally. No NAS MLflow write and no full evaluation were performed.
 **Depends on:** PR-489
 
 **Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-490-process-parallel-hmm-sffs`; the
-existing process-parallel SFFS path now enforces the strict `1e-12` backward-improvement rule.
-K-slot HMM wiring, complete tie ranking and `sffs_steps` persistence remain open. No full
-evaluation was run.
+branch is clean only after the pending commit/push and remains open. The SFFS coordinator now
+enforces the strict `1e-12` forward and backward improvement rules, carries all canonical score
+tie-break components, forwards the configured worker budget, and exposes every evaluated
+candidate for durable metadata conversion. A fixed-K Gaussian selector boundary for K=2,3,4,5
+is covered by focused tests. Production HMM callback wiring, complete pipeline K-slot integration,
+and actual `sffs_steps` commit integration remain open. No full evaluation was run.
 
 **Current implementation note:** the immutable `feature_subset_score.v1` data contract and pure
 scoring/ranking implementation now exist on the pushed PR-476 branch and are covered by 8 focused
@@ -1123,11 +1126,11 @@ acceptance completion.
   evidence.
 - [x] Start from the best eligible singleton; after every forward add, perform backward removals
   while the canonical score strictly improves by more than 1e-12.
-- [ ] Stop when no forward addition improves the score by more than 1e-12 or 10 features are
+- [x] Stop when no forward addition improves the score by more than 1e-12 or 10 features are
   selected.
-- [ ] Ranking ties use total score, forecast score, worst-fold forecast, calibration, stability,
+- [x] Ranking ties use total score, forecast score, worst-fold forecast, calibration, stability,
   robustness, fewer features and finally canonical tuple identity.
-- [ ] All candidate additions/removals within one SFFS step run in bounded process workers with
+- [x] All candidate additions/removals within one SFFS step run in bounded process workers with
   deterministic result assembly.
 - [ ] Reuse existing affinity/cgroup-aware worker sizing; cap native BLAS/OpenMP threads to one per
   worker and forbid nested process-pool oversubscription.
