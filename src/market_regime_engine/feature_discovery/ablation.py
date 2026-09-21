@@ -16,6 +16,12 @@ def _require_text(value: str, field: str) -> None:
         raise ValueError(f"{field} must be a non-empty trimmed string")
 
 
+def _require_sha256(value: str, field: str) -> None:
+    _require_text(value, field)
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{field} must be a lowercase SHA-256")
+
+
 @dataclass(frozen=True, slots=True)
 class AblationObservation:
     removed_feature: str | None
@@ -38,8 +44,8 @@ class HMMSubsetEvaluation:
         _require_text(self.model_family, "model_family")
         if isinstance(self.state_count, bool) or self.state_count < 2:
             raise ValueError("HMM ablation state_count must be at least two")
-        _require_text(self.selector_contract_hash, "selector_contract_hash")
-        _require_text(self.fit_execution_hash, "fit_execution_hash")
+        _require_sha256(self.selector_contract_hash, "selector_contract_hash")
+        _require_sha256(self.fit_execution_hash, "fit_execution_hash")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +112,7 @@ def run_one_feature_hmm_ablation(
     """
 
     selected = _canonical_subset(selected_features)
-    _require_text(selector_contract_hash, "selector_contract_hash")
+    _require_sha256(selector_contract_hash, "selector_contract_hash")
 
     def validate_evaluation(
         features: tuple[str, ...],

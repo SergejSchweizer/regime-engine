@@ -6,6 +6,8 @@ from market_regime_engine.feature_discovery.feature_roles import (
 from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 
+SELECTOR_HASH = "a" * 64
+
 
 def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
     names = (
@@ -44,8 +46,8 @@ def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
             FeatureSubsetScore(features, sum(weights[name] for name in features)),
             "gaussian_hmm",
             2,
-            "selector-v1",
-            f"fit-{fit_count}",
+            SELECTOR_HASH,
+            f"{fit_count:064x}",
         )
 
     result = run_canonical_feature_selection(
@@ -54,7 +56,7 @@ def test_canonical_pipeline_composes_train_only_stages_in_order() -> None:
         quality_eligible_features=names,
         evaluate_subset=evaluate,
         evaluate_hmm_subset=evaluate_hmm,
-        hmm_selector_contract_hash="selector-v1",
+        hmm_selector_contract_hash=SELECTOR_HASH,
         max_sffs_features=2,
     )
 
@@ -93,8 +95,8 @@ def test_canonical_pipeline_can_run_without_transformations() -> None:
             FeatureSubsetScore(features, float(len(features))),
             "gaussian_hmm",
             2,
-            "selector-v1",
-            f"fit-{fit_count}",
+            SELECTOR_HASH,
+            f"{fit_count:064x}",
         )
 
     result = run_canonical_feature_selection(
@@ -103,7 +105,7 @@ def test_canonical_pipeline_can_run_without_transformations() -> None:
         quality_eligible_features=names,
         evaluate_subset=evaluate,
         evaluate_hmm_subset=evaluate_hmm,
-        hmm_selector_contract_hash="selector-v1",
+        hmm_selector_contract_hash=SELECTOR_HASH,
         max_sffs_features=2,
     )
 
