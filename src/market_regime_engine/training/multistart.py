@@ -233,7 +233,7 @@ def run_multistart(
                         state_count=state_count,
                         fold_id="multistart",
                         candidate_subset=(f"seed:{seed}",),
-                        seed=index,
+                        seed=seed,
                         profile_hash="0" * 64,
                         matrix_identity=shared_matrix.identity,
                         row_indices=(0, matrix.shape[0] - 1),
@@ -248,7 +248,7 @@ def run_multistart(
                             checkpoint is not None,
                         ),
                     )
-                    for index, seed in enumerate(pending_seeds)
+                    for seed in pending_seeds
                 )
                 frontier_result = active_frontier.map(frontier_tasks, _evaluate_start_in_frontier)
                 by_task_id = {task.task_id: item for task, item in frontier_result.values}
