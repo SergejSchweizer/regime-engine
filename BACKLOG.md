@@ -1027,16 +1027,19 @@ serial/process parity and global-correlation tests pass locally. No full evaluat
 **Type:** QA only
 **Depends on:** PR-519
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-520-correlation-parallel-qa`; targeted
+multi-worker parity and independent-edge tests pass locally. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Independent serial oracle reproduces every qualifying edge and final leader on fixtures.
-- [ ] Worker counts 1, 8, 32, 64 and auto produce identical mappings/hashes.
-- [ ] A high-dimensional fixture generates at least four times as many tiles as available workers
+- [x] Independent serial oracle reproduces every qualifying edge and final leader on fixtures.
+- [x] Worker counts 1, 8, 32, 64 and auto produce identical mappings/hashes.
+- [x] A high-dimensional fixture generates at least four times as many tiles as available workers
   when pair count permits, proving the pool can stay fed.
-- [ ] Delayed/reordered tile completion cannot alter leader selection.
-- [ ] Peak correlation-stage memory stays bounded without a dense persisted 10,000x10,000 matrix.
-- [ ] Injected worker failure aborts unexpected-error runs and leaves no partial committed mapping.
-- [ ] QA adds no production statistical behavior.
+- [x] Delayed/reordered tile completion cannot alter leader selection.
+- [x] Peak correlation-stage memory stays bounded without a dense persisted 10,000x10,000 matrix.
+- [x] Injected worker failure aborts unexpected-error runs and leaves no partial committed mapping.
+- [x] QA adds no production statistical behavior.
 
 ### PR-488 — Add MLflow audit artifacts for quality, PCA and correlation stages
 
