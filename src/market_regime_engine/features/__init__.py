@@ -10,7 +10,10 @@ from market_regime_engine.features.ports import (
     SourceMode,
     materialized_feature_data_hash,
 )
-from market_regime_engine.features.postgres_source import PostgresFeatureSource
+from market_regime_engine.features.postgres_source import (
+    MacroFeaturesPostgresSource,
+    PostgresFeatureSource,
+)
 
 __all__ = [
     "DynamicFeatureSource",
@@ -18,6 +21,7 @@ __all__ = [
     "FeatureRow",
     "FeatureSnapshot",
     "FeatureSource",
+    "MacroFeaturesPostgresSource",
     "PostgresFeatureSource",
     "SchemaWideFeatureSource",
     "SourceMode",

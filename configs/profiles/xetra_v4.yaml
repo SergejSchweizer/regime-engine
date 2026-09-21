@@ -3,6 +3,22 @@ profile_config_version: 4
 registered_model: regime-xetra
 production_alias: champion
 challenger_alias: challenger
+feature_selection:
+  version: macro_regime_feature_selection_v1
+  family_near_duplicate_abs_threshold: 0.995
+  family_near_duplicate_subwindow_abs_threshold: 0.99
+  family_pca_max_components: 8
+  correlation_abs_threshold: 0.95
+  correlation_subwindow_abs_threshold: 0.90
+  correlation_subwindows: 3
+  correlation_min_pair_rows: 30
+  correlation_min_subwindow_rows: 10
+  sffs_max_features: 10
+  correlation_measure: absolute_pearson
+  correlation_selection: redundancy_only_stable_leader
+  pc_count_policy: first_nonzero_rank_components
+  sffs_score_policy: dimension_independent_feature_subset_score
+  outer_test_policy: evaluation_only
 pca:
   variance_threshold: 0.90
   component_count: 8

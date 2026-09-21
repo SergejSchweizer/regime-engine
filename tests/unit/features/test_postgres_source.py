@@ -7,7 +7,12 @@ import pytest
 from psycopg import IsolationLevel
 
 from market_regime_engine.contracts import SourceLineage
-from market_regime_engine.features import FeatureRequest, PostgresFeatureSource, SourceMode
+from market_regime_engine.features import (
+    FeatureRequest,
+    MacroFeaturesPostgresSource,
+    PostgresFeatureSource,
+    SourceMode,
+)
 
 NOW = datetime(2026, 8, 24, tzinfo=UTC)
 
@@ -323,4 +328,38 @@ def test_schema_catalog_contract_failures_are_explicit(
                 "table",
                 NOW,
             ),
+        )
+
+
+def test_canonical_macro_features_source_reads_only_materialized_view_catalog() -> None:
+    columns = [
+        ("timestamp_m1", 1, "timestamp with time zone", "timestamptz"),
+        ("f1", 2, "double precision", "float8"),
+    ]
+    cursor = DynamicCatalogCursor(lineage_row(), columns, [(NOW, 1.0)])
+    connection = FakeConnection(cursor)
+
+    catalog, snapshot = MacroFeaturesPostgresSource(lambda: connection).read_with_catalog(
+        FeatureRequest.all_features()
+    )
+
+    assert catalog.feature_names == ("f1",)
+    assert catalog.entries[0].relation_name == "macro_features"
+    assert catalog.entries[0].relation_kind == "MATERIALIZED VIEW"
+    assert snapshot.feature_names == ("f1",)
+    assert cursor.executed[0][1] == ("macro_features",)
+    assert "pg_catalog.pg_class" in str(cursor.executed[1][0])
+    assert "macro_features_daily" not in str(cursor.executed[1][0])
+
+
+def test_canonical_macro_features_source_rejects_allowlists_and_other_schemas() -> None:
+    source = MacroFeaturesPostgresSource(lambda: None)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="does not accept a feature allowlist"):
+        source.read_schema_wide_with_catalog(
+            FeatureRequest(("f1",), None, None, SourceMode.SCHEMA_DISCOVERY)
+        )
+    with pytest.raises(ValueError, match="fixed to macro_loader"):
+        source.read_schema_wide_with_catalog(
+            FeatureRequest.all_features(), feature_schema="other_schema"
         )

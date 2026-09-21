@@ -72,11 +72,24 @@ class PostgresFeatureSource:
         *,
         expected_schema_version: int = _CURRENT_SOURCE_SCHEMA_VERSION,
         expected_feature_version: int = _CURRENT_SOURCE_FEATURE_VERSION,
+        dataset_id: str = _DATASET_ID,
+        relation_name: str = "macro_features_daily",
+        relation_kind: str = "BASE TABLE",
     ) -> None:
         self._connect = connect
         self._registered = frozenset(registered_feature_names or ())
         self._expected_schema_version = expected_schema_version
         self._expected_feature_version = expected_feature_version
+        self._dataset_id = dataset_id
+        self._relation_name = relation_name
+        self._relation_kind = relation_kind
+        if (
+            _IDENTIFIER_RE.fullmatch(dataset_id) is None
+            or _IDENTIFIER_RE.fullmatch(relation_name) is None
+        ):
+            raise ValueError("source dataset and relation names must be safe identifiers")
+        if relation_kind not in _RELATION_KINDS.values():
+            raise ValueError("source relation kind is unsupported")
         if any(_IDENTIFIER_RE.fullmatch(name) is None for name in self._registered):
             raise ValueError("registered feature names must be safe SQL identifiers")
         if expected_schema_version < 1 or expected_feature_version < 1:
@@ -211,10 +224,10 @@ class PostgresFeatureSource:
             "row_count, min_timestamp, max_timestamp, synced_at_utc "
             "FROM {} WHERE dataset_id = %s"
         ).format(_SYNC_TABLE)
-        cursor.execute(query, (_DATASET_ID,))
+        cursor.execute(query, (self._dataset_id,))
         row = cursor.fetchone()
         if row is None:
-            raise ValueError("missing sync-state for macro_features_daily")
+            raise ValueError(f"missing sync-state for {self._dataset_id}")
         if len(row) != 8:
             raise ValueError("unexpected sync-state shape")
         (
@@ -242,12 +255,12 @@ class PostgresFeatureSource:
             raise ValueError("source timestamp bounds are inverted")
         synced_at = _utc_datetime(synced, "source synced_at_utc")
         return SourceLineage(
-            source_dataset="macro_loader.macro_features_daily",
+            source_dataset=f"macro_loader.{self._relation_name}",
             source_build_id=str(source_build_id),
             data_sha256=str(digest),
             schema_version=schema_version_int,
             feature_version=feature_version_int,
-            source_table="macro_loader.macro_features_daily",
+            source_table=f"macro_loader.{self._relation_name}",
             synced_at_utc=synced_at,
             data_time_semantics=DATA_TIME_SEMANTICS,
             row_count=row_count_int,
@@ -539,8 +552,8 @@ class PostgresFeatureSource:
             skipped_incomplete_row_count=skipped,
         )
 
-    @staticmethod
     def _read_rows(
+        self,
         cursor: CursorLike,
         request: FeatureRequest,
     ) -> Sequence[Sequence[Any]]:
@@ -559,7 +572,9 @@ class PostgresFeatureSource:
         if clauses:
             where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
         query = (
-            sql.SQL("SELECT {} FROM {}").format(columns, _FEATURE_TABLE)
+            sql.SQL("SELECT {} FROM {}").format(
+                columns, sql.Identifier("macro_loader", self._relation_name)
+            )
             + where
             + sql.SQL(" ORDER BY timestamp_m1 ASC")
         )
@@ -607,6 +622,85 @@ class PostgresFeatureSource:
             rows=tuple(rows),
             skipped_incomplete_row_count=skipped,
         )
+
+
+class MacroFeaturesPostgresSource(PostgresFeatureSource):
+    """Canonical read-only source for the macro-loader materialized view."""
+
+    def __init__(
+        self,
+        connect: Callable[[], ConnectionLike],
+        registered_feature_names: Iterable[str] | None = None,
+        *,
+        expected_schema_version: int = _CURRENT_SOURCE_SCHEMA_VERSION,
+        expected_feature_version: int = _CURRENT_SOURCE_FEATURE_VERSION,
+    ) -> None:
+        super().__init__(
+            connect,
+            registered_feature_names,
+            expected_schema_version=expected_schema_version,
+            expected_feature_version=expected_feature_version,
+            dataset_id="macro_features",
+            relation_name="macro_features",
+            relation_kind="MATERIALIZED VIEW",
+        )
+
+    def read_schema_wide_with_catalog(
+        self,
+        request: FeatureRequest,
+        *,
+        feature_schema: str = _FEATURE_SCHEMA,
+    ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]:
+        if feature_schema != _FEATURE_SCHEMA:
+            raise ValueError("canonical source discovery is fixed to macro_loader")
+        if request.feature_names:
+            raise ValueError("canonical source discovery does not accept a feature allowlist")
+        return self.read_with_catalog(request)
+
+    @staticmethod
+    def _read_catalog(cursor: CursorLike, lineage: SourceLineage) -> FeatureCatalogSnapshot:
+        query = sql.SQL(
+            "SELECT a.attname, a.attnum, pg_catalog.format_type(a.atttypid, a.atttypmod), "
+            "t.typname FROM pg_catalog.pg_class AS c "
+            "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+            "JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid "
+            "JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid "
+            "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'm' "
+            "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum ASC"
+        )
+        cursor.execute(query, ("macro_loader", "macro_features"))
+        columns = cursor.fetchall()
+        if not columns:
+            raise ValueError("macro_features materialized-view catalog is empty or missing")
+        timestamp_columns = [row for row in columns if row[0] == "timestamp_m1"]
+        if len(timestamp_columns) != 1 or timestamp_columns[0][3] != "timestamptz":
+            raise ValueError("macro_features timestamp_m1 must be timestamptz")
+        entries: list[FeatureCatalogEntry] = []
+        for row in columns:
+            if len(row) != 4:
+                raise ValueError("unexpected macro_features catalog shape")
+            name, ordinal, data_type, udt_name = row
+            if name == "timestamp_m1":
+                continue
+            if data_type != "double precision" or udt_name != "float8":
+                raise ValueError(f"unsupported macro_features type for {name}: {data_type}")
+            if not isinstance(name, str) or _IDENTIFIER_RE.fullmatch(name) is None:
+                raise ValueError("macro_features contains an unsafe feature identifier")
+            if not isinstance(ordinal, int) or isinstance(ordinal, bool):
+                raise ValueError("macro_features ordinal must be an integer")
+            entries.append(
+                FeatureCatalogEntry(
+                    name,
+                    ordinal,
+                    schema_name="macro_loader",
+                    relation_name="macro_features",
+                    relation_kind="MATERIALIZED VIEW",
+                    ordinal_position=ordinal,
+                )
+            )
+        if not entries:
+            raise ValueError("macro_features has no dynamic feature columns")
+        return FeatureCatalogSnapshot.from_entries(lineage, "timestamp_m1", entries)
 
 
 def _utc_datetime(value: Any, field: str) -> datetime:

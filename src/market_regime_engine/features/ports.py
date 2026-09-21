@@ -29,7 +29,7 @@ class FeatureCatalogEntry:
     canonical_ordinal: int
     postgres_type: str = "DOUBLE PRECISION"
     schema_name: str = "macro_loader"
-    relation_name: str = "macro_features_daily"
+    relation_name: str = "macro_features"
     relation_kind: str = "BASE TABLE"
     ordinal_position: int | None = None
 

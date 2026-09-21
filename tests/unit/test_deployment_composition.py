@@ -37,7 +37,7 @@ def test_compose_serving_dependencies_is_external_and_readiness_ready(monkeypatc
     )
     monkeypatch.setattr(
         deployment,
-        "PostgresFeatureSource",
+        "MacroFeaturesPostgresSource",
         lambda connect: calls.append(("source", connect)) or "source",
     )
     monkeypatch.setattr(
