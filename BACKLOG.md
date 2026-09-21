@@ -579,26 +579,30 @@ production behavior was changed.
 **Type:** implementation / data-source contract
 **Depends on:** PR-477
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-509-macro-features-source-contract`; the
+canonical adapter, source lineage, catalog validation and production source wiring were merged
+with PR-476 and are now independently audited by this PR. No legacy relation fallback remains.
+
 The source is the exact PostgreSQL materialized view `macro_loader.macro_features`, produced and
 versioned by `macro-loader`.
 
 #### Acceptance
 
-- [ ] Replace the canonical Xetra-v4 candidate source with exactly
+- [x] Replace the canonical Xetra-v4 candidate source with exactly
   `macro_loader.macro_features`.
-- [ ] Reject `macro_loader.macro_features_daily`, `macro_loader.macro_raw`, arbitrary tables,
+- [x] Reject `macro_loader.macro_features_daily`, `macro_loader.macro_raw`, arbitrary tables,
   schema-wide relation discovery and caller-supplied feature-table overrides on the new profile.
-- [ ] Read `timestamp_m1` plus every non-timestamp `DOUBLE PRECISION` column in PostgreSQL ordinal
+- [x] Read `timestamp_m1` plus every non-timestamp `DOUBLE PRECISION` column in PostgreSQL ordinal
   order from the one materialized view.
-- [ ] Validate relation kind is materialized view and fail closed on missing view, wrong timestamp
+- [x] Validate relation kind is materialized view and fail closed on missing view, wrong timestamp
   type, wrong feature type, duplicate column identity or unsupported extra column type.
-- [ ] Capture the upstream macro-feature view version/fingerprint exposed by macro-loader and bind
+- [x] Capture the upstream macro-feature view version/fingerprint exposed by macro-loader and bind
   it into source/evaluation identity.
-- [ ] Keep `macro_loader_sync.gold_sync_state` as lineage/control evidence only; it is not a
+- [x] Keep `macro_loader_sync.gold_sync_state` as lineage/control evidence only; it is not a
   candidate-feature relation.
-- [ ] Snapshot acquisition remains REPEATABLE READ / READ ONLY and closes before PCA/HMM work.
-- [ ] No feature-name allowlist narrows valid materialized-view columns before TRAIN-only quality.
-- [ ] Production inference from an already frozen package continues to request only that package's
+- [x] Snapshot acquisition remains REPEATABLE READ / READ ONLY and closes before PCA/HMM work.
+- [x] No feature-name allowlist narrows valid materialized-view columns before TRAIN-only quality.
+- [x] Production inference from an already frozen package continues to request only that package's
   exact feature dependencies.
 
 ### PR-510 — QA: macro_features source, lineage and zero-legacy relation proof
