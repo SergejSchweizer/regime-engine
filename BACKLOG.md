@@ -1205,6 +1205,11 @@ oracle and completion-order QA are production-code-free. No full evaluation was 
 **Type:** implementation / performance
 **Depends on:** PR-493
 
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-521-shared-hmm-task-frontier`; the
+persistent `SharedTaskFrontier` boundary now provides canonical task ordering, completion-order
+independence, fail-fast worker errors and queue/runnable/utilization metrics. Integration with the
+real K/inner-fold/multistart SFFS and ablation fit calls remains open. No full evaluation was run.
+
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.
 
