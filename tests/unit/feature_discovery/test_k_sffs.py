@@ -46,6 +46,13 @@ def test_k_sffs_rejects_a_score_from_the_wrong_model_or_k() -> None:
 
 
 def test_k_sffs_reuses_the_shared_frontier_for_pickleable_scores() -> None:
+    serial = select_k_slot_sffs(
+        ("a", "b"),
+        _picklable_k_score,
+        state_counts=(2, 3, 4, 5),
+        max_features=2,
+        max_workers=1,
+    )
     result = select_k_slot_sffs(
         ("a", "b"),
         _picklable_k_score,
@@ -55,3 +62,4 @@ def test_k_sffs_reuses_the_shared_frontier_for_pickleable_scores() -> None:
     )
     assert tuple(item.state_count for item in result) == (2, 3, 4, 5)
     assert all(item.selected_features == ("a", "b") for item in result)
+    assert result == serial

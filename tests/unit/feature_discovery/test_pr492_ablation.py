@@ -93,6 +93,12 @@ def test_ablation_rejects_changed_inner_plan_or_seed_identity() -> None:
 
 
 def test_ablation_can_reuse_a_caller_owned_shared_frontier() -> None:
+    serial = run_one_feature_hmm_ablation(
+        ("a", "b", "c"),
+        _evaluation,
+        selector_contract_hash=SELECTOR_HASH,
+        max_workers=1,
+    )
     with SharedTaskFrontier[HMMSubsetEvaluator, HMMSubsetEvaluation | None](
         max_workers=2
     ) as frontier:
@@ -103,6 +109,7 @@ def test_ablation_can_reuse_a_caller_owned_shared_frontier() -> None:
             frontier=frontier,
         )
     assert result.ablation_losses == (1.0, 0.0, -1.0)
+    assert result == serial
 
 
 def test_ablation_losses_are_persisted_without_clipping(tmp_path: Path) -> None:
