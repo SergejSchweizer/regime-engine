@@ -17,6 +17,7 @@ from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 from market_regime_engine.mlflow_support.feature_selection_evidence import (
     log_feature_selection_evidence,
     render_feature_selection_evidence,
+    verify_feature_selection_evidence_bundle,
 )
 from market_regime_engine.mlflow_support.ports import TrackingPort
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
@@ -82,6 +83,9 @@ def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(
     assert any(path.name == "feature_funnel.png" for path in first)
     assert any(path.name == "family_survival.png" for path in first)
     assert any(path.name == "manifest.json" for path in first)
+    verified = verify_feature_selection_evidence_bundle(tmp_path / "first")
+    assert isinstance(verified["identity"], dict)
+    assert verified["identity"]["fold_id"] == "fold-001"
 
     tracking_uri = (tmp_path / "mlruns").as_uri()
     port = FileMlflowTrackingPort(tracking_uri, experiment_name="feature-selection-evidence")
@@ -97,3 +101,6 @@ def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(
     selected_before_failure = result.selected_features
     assert not log_feature_selection_evidence(cast(TrackingPort, FailingPort()), run_id, first)
     assert result.selected_features == selected_before_failure
+    first[0].unlink()
+    with pytest.raises(ValueError, match=r"artifact hash mismatch|required"):
+        verify_feature_selection_evidence_bundle(tmp_path / "first")

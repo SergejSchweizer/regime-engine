@@ -1074,15 +1074,19 @@ failure-isolation contract pass locally. No full evaluation was run.
 **Type:** QA only
 **Depends on:** PR-488
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-489-mlflow-preprocessing-evidence-qa`;
+hermetic FileStore, hash, completeness, missing-artifact, and MLflow-failure-isolation tests pass
+locally. No NAS MLflow write and no full evaluation were performed.
+
 #### Acceptance
 
-- [ ] A hermetic FileStore run contains every required plot/table for a multi-family fixture.
-- [ ] Artifact names and payload hashes are deterministic under process completion-order reversal.
-- [ ] Full loading and correlation tables contain every underlying row even when plots show top-N.
-- [ ] Heatmap selection obeys the exact 80-representative rule.
-- [ ] Missing required preprocessing artifacts fail the completeness verifier.
-- [ ] Plot rendering failures cannot silently alter statistical results.
-- [ ] No NAS MLflow write occurs in this QA PR.
+- [x] A hermetic FileStore run contains every required plot/table for a multi-family fixture.
+- [x] Artifact names and payload hashes are deterministic under process completion-order reversal.
+- [x] Full loading and correlation tables contain every underlying row even when plots show top-N.
+- [x] Heatmap selection obeys the exact 80-representative rule.
+- [x] Missing required preprocessing artifacts fail the completeness verifier.
+- [x] Plot rendering failures cannot silently alter statistical results.
+- [x] No NAS MLflow write occurs in this QA PR.
 
 ### PR-490 — Implement process-parallel HMM SFFS on correlation representatives
 
