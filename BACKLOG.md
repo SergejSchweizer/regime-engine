@@ -1220,9 +1220,11 @@ seeds into one frontier and aggregates each job canonically. The canonical provi
 candidate coordinator now owns one Frontier across all K candidates; each candidate batches its
   inner folds and eight seeds through that same pool, and the old candidate-local process-pool path
   is removed. The production provisional-teacher path is therefore flattened through
-  `candidate × inner-fold × seed`; the canonical SFFS API still accepts a generic completed-score
-  callback, so mandatory fit-evidence aggregation for feature-subset candidates and its matrix
-  wiring remain open. No full evaluation was run.
+  `candidate × inner-fold × seed`; the canonical SFFS API now also exposes the explicit
+  `FrontierFeatureSubsetEvaluator` for candidate-subset fit evidence. SFFS and final ablation no
+  longer create direct candidate-local process pools. The remaining child-pool audit covers the
+  candidate-grid/fold orchestration boundaries, and serial numerical parity still requires its
+  dedicated QA closure. No full evaluation was run.
 
 SFFS control remains sequential where mathematically dependent, but every independent HMM fit below
 that control boundary is flattened onto the one shared process pool.

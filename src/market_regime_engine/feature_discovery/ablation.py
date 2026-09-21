@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.sffs import (
     FeatureSubsetScore,
@@ -120,13 +122,6 @@ SubsetEvaluator = Callable[[tuple[str, ...]], FeatureSubsetScore | None]
 HMMSubsetEvaluator = Callable[[tuple[str, ...]], HMMSubsetEvaluation | None]
 
 
-def _evaluate_ablation_in_process(
-    task: tuple[HMMSubsetEvaluator, tuple[str, ...]],
-) -> HMMSubsetEvaluation | None:
-    evaluate, features = task
-    return evaluate(features)
-
-
 def _evaluate_ablation_in_frontier(
     task: FrontierTask[HMMSubsetEvaluator],
 ) -> HMMSubsetEvaluation | None:
@@ -202,35 +197,35 @@ def run_one_feature_hmm_ablation(
         and is_pickleable(evaluate)
     )
     worker_limit = cpu_worker_count(max_workers, task_count=len(removal_tasks)) if parallel else 1
-    if frontier is not None:
-        frontier_tasks = tuple(
-            FrontierTask(
-                task_id=f"ablation:{index}:{feature}",
-                state_count=baseline_evaluation.state_count,
-                fold_id="ablation",
-                candidate_subset=remaining,
-                seed=index,
-                profile_hash=selector_contract_hash,
-                matrix_identity="ablation-candidate-frontier",
-                row_indices=(0,),
-                column_indices=(0,),
-                payload=evaluate,
-            )
-            for index, (feature, remaining) in enumerate(removal_tasks)
-        )
-        frontier_result = frontier.map(frontier_tasks, _evaluate_ablation_in_frontier)
-        by_task_id = {task.task_id: item for task, item in frontier_result.values}
-        evaluated_removals = tuple(by_task_id[task.task_id] for task in frontier_tasks)
-    elif worker_limit > 1:
-        with cpu_process_pool(worker_limit) as executor:
-            evaluated_removals = tuple(
-                executor.map(
-                    _evaluate_ablation_in_process,
-                    tuple((evaluate, remaining) for _, remaining in removal_tasks),
+    frontier_context: Any = (
+        nullcontext(frontier)
+        if frontier is not None
+        else SharedTaskFrontier(worker_limit) if parallel else nullcontext(None)
+    )
+    with frontier_context as execution_frontier:
+        if execution_frontier is not None:
+            frontier_tasks = tuple(
+                FrontierTask(
+                    task_id=f"ablation:{index}:{feature}",
+                    state_count=baseline_evaluation.state_count,
+                    fold_id="ablation",
+                    candidate_subset=remaining,
+                    seed=index,
+                    profile_hash=selector_contract_hash,
+                    matrix_identity="ablation-candidate-frontier",
+                    row_indices=(0,),
+                    column_indices=(0,),
+                    payload=evaluate,
                 )
+                for index, (feature, remaining) in enumerate(removal_tasks)
             )
-    else:
-        evaluated_removals = tuple(evaluate(remaining) for _, remaining in removal_tasks)
+            frontier_result = execution_frontier.map(
+                frontier_tasks, _evaluate_ablation_in_frontier
+            )
+            by_task_id = {task.task_id: item for task, item in frontier_result.values}
+            evaluated_removals = tuple(by_task_id[task.task_id] for task in frontier_tasks)
+        else:
+            evaluated_removals = tuple(evaluate(remaining) for _, remaining in removal_tasks)
     for (feature, remaining), raw_evaluation in zip(removal_tasks, evaluated_removals, strict=True):
         evaluation = validate_evaluation(remaining, raw_evaluation, baseline=baseline_evaluation)
         if evaluation.fit_execution_hash in fit_hashes:

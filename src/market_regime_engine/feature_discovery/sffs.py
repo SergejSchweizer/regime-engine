@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
+from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.feature_subset_score import (
@@ -283,12 +283,12 @@ def select_sffs(
     worker_limit = cpu_worker_count(max_workers, task_count=len(candidate_tuple)) if parallel else 1
     if frontier is not None and frontier_state_count not in (2, 3, 4, 5):
         raise ValueError("frontier_state_count must be 2, 3, 4, or 5")
-    pool_context = (
-        cpu_process_pool(worker_limit)
+    frontier_context: Any = (
+        SharedTaskFrontier(worker_limit)
         if frontier is None and parallel and worker_limit > 1
-        else nullcontext()
+        else nullcontext(frontier)
     )
-    with pool_context as executor:
+    with frontier_context as execution_frontier:
         evaluations: list[SFFSEvaluation] = []
 
         def evaluate_many(
@@ -309,7 +309,8 @@ def select_sffs(
                         )
             else:
                 tasks = tuple((score, features) for features in feature_sets)
-                if frontier is not None:
+                active_frontier = frontier or execution_frontier
+                if active_frontier is not None:
                     frontier_tasks = tuple(
                         FrontierTask(
                             task_id=f"{action}:{index}:{','.join(features)}",
@@ -325,13 +326,11 @@ def select_sffs(
                         )
                         for index, features in enumerate(feature_sets)
                     )
-                    frontier_result = frontier.map(frontier_tasks, _score_in_frontier)
+                    frontier_result = active_frontier.map(frontier_tasks, _score_in_frontier)
                     by_task_id = {task.task_id: item for task, item in frontier_result.values}
                     results = tuple(by_task_id[task.task_id] for task in frontier_tasks)
-                elif executor is None:
-                    results = tuple(_score_in_process(task) for task in tasks)
                 else:
-                    results = tuple(executor.map(_score_in_process, tasks))
+                    results = tuple(_score_in_process(task) for task in tasks)
             evaluations.extend(
                 SFFSEvaluation(action, features, selected_features, evaluated)
                 for features, evaluated in zip(feature_sets, results, strict=True)
