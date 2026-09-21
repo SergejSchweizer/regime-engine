@@ -1145,17 +1145,20 @@ TRAIN-only Gaussian-HMM callback; raw likelihood and information criteria cannot
 **Type:** QA only
 **Depends on:** PR-490
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-491-qa-sffs-score-floating`; QA is
+production-code-free and the acceptance suite is implemented locally. No full evaluation was run.
+
 #### Acceptance
 
-- [ ] Independently recompute feature_subset_score.v1 component by component.
-- [ ] Cover no-winner, eligibility-boundary, singleton, forward-add and backward-remove paths.
-- [ ] A synthetic example proves floating backward removal can remove an earlier selected feature.
-- [ ] No result may exceed the 10-feature cap.
-- [ ] Raw PLL/AIC/BIC improvements cannot override a worse dimension-independent score.
-- [ ] Worker counts 1, 8, 32 and auto produce identical selected tuples, steps and hashes.
-- [ ] Native thread-pool inspection proves one BLAS/OpenMP thread per process during the QA run.
-- [ ] Outer-TEST mutation cannot alter SFFS selection.
-- [ ] QA adds no production behavior.
+- [x] Independently recompute feature_subset_score.v1 component by component.
+- [x] Cover no-winner, eligibility-boundary, singleton, forward-add and backward-remove paths.
+- [x] A synthetic example proves floating backward removal can remove an earlier selected feature.
+- [x] No result may exceed the 10-feature cap.
+- [x] Raw PLL/AIC/BIC improvements cannot override a worse dimension-independent score.
+- [x] Worker counts 1, 8, 32 and auto produce identical selected tuples, steps and hashes.
+- [x] Native thread-pool inspection proves one BLAS/OpenMP thread per process during the QA run.
+- [x] Outer-TEST mutation cannot alter SFFS selection.
+- [x] QA adds no production behavior.
 
 ### PR-492 — Implement final one-at-a-time feature ablation
 
