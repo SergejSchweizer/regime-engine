@@ -224,7 +224,7 @@ with the dependency-ordered scalable feature-selection plan below.
 
 ### PR-454 — QA: adversarial failure-classification matrix
 
-**Status:** ACCEPTANCE COMPLETE — merged as GitHub PR #453 at `ce41867`; all required local and GitHub gates green
+**Status:** OPEN — acceptance pending; the implementation was merged as GitHub PR #453 at `ce41867`, but the acceptance checklist below is not complete
 
 **Branch:** `pr/PR-454-adversarial-failure-classification`
 
@@ -893,18 +893,21 @@ pipeline tests pass locally. PR-485 remains the independent mathematical/leakage
 **Type:** QA only
 **Depends on:** PR-484
 
+**Status:** QA COMPLETE on branch `pr/PR-485-family-pca-qa`; independent SVD/rank/leakage QA passes
+locally.
+
 #### Acceptance
 
-- [ ] Independent NumPy/SVD reference reproduces scaling, rank, PC scores and loadings on fixtures.
-- [ ] Mutation of Outer-TEST rows cannot alter TRAIN scaler, rank, loading or PC identity.
-- [ ] Families with 1, 2, 8, 9 and more than 100 transformation features cover the rank/cap
+- [x] Independent NumPy/SVD reference reproduces scaling, rank, PC scores and loadings on fixtures.
+- [x] Mutation of Outer-TEST rows cannot alter TRAIN scaler, rank, loading or PC identity.
+- [x] Families with 1, 2, 8, 9 and more than 100 transformation features cover the rank/cap
   boundaries.
-- [ ] No family emits more than eight PCs.
-- [ ] Explained-variance threshold mutations cannot change retained PC count.
-- [ ] Column-order and SVD sign reversals preserve canonical PC identities and hashes.
-- [ ] Two independent families never share a complete-case mask or PCA fit.
-- [ ] Core features are byte-identical before and after the PCA stage.
-- [ ] QA adds no production behavior.
+- [x] No family emits more than eight PCs.
+- [x] Explained-variance threshold mutations cannot change retained PC count.
+- [x] Column-order and SVD sign reversals preserve canonical PC identities and hashes.
+- [x] Two independent families never share a complete-case mask or PCA fit.
+- [x] Core features are byte-identical before and after the PCA stage.
+- [x] QA adds no production behavior.
 
 ### PR-517 — Parallelize independent family pruning/scaling/PCA work
 
