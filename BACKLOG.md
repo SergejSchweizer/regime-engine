@@ -730,20 +730,23 @@ regression tests pass locally.
 **Type:** implementation / statistical preprocessing
 **Depends on:** PR-481
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-482-train-quality-filter`; targeted quality
+tests pass locally. PR-483 remains the separate leakage/high-dimensional QA proof.
+
 #### Acceptance
 
-- [ ] Reuse the current canonical v4 feature-quality thresholds exactly; this PR does not change
+- [x] Reuse the current canonical v4 feature-quality thresholds exactly; this PR does not change
   their numeric values.
-- [ ] Compute quality statistics from the current fold TRAIN partition only.
-- [ ] Evaluate coverage, finite-value validity and variance in vectorized/chunked form suitable for
+- [x] Compute quality statistics from the current fold TRAIN partition only.
+- [x] Evaluate coverage, finite-value validity and variance in vectorized/chunked form suitable for
   several thousand columns.
-- [ ] No pairwise NxN matrix is allocated in the quality stage.
-- [ ] Every rejected feature receives one deterministic reason code.
-- [ ] Every accepted feature remains traceable to feature_registry.
-- [ ] No fill, interpolation, forward carry or synthetic observation is permitted.
-- [ ] Outer TEST values cannot change any quality decision or quality statistic.
-- [ ] Quality results are persisted to fold_feature_stats.
-- [ ] Serial and process-enabled execution produce the same ordered result.
+- [x] No pairwise NxN matrix is allocated in the quality stage.
+- [x] Every rejected feature receives one deterministic reason code.
+- [x] Every accepted feature remains traceable to feature_registry.
+- [x] No fill, interpolation, forward carry or synthetic observation is permitted.
+- [x] Outer TEST values cannot change any quality decision or quality statistic.
+- [x] Quality results are persisted to fold_feature_stats.
+- [x] Serial and process-enabled execution produce the same ordered result.
 
 ### PR-483 — QA: quality-filter leakage and high-dimensional parity
 
