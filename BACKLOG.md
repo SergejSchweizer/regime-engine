@@ -1429,8 +1429,13 @@ and GitHub policy/lint/type/unit/merge gates passed. No full evaluation was run.
 **Type:** QA only
 **Depends on:** PR-496
 
-**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-497-lifecycle-safety-qa`; all acceptance
-evidence is present and no full evaluation is being run. The QA is ready to push as the next PR.
+**Status:** QA MERGED as GitHub PR #490 into `origin/main` at squash commit `ea5c924`; source
+branch was deleted locally and remotely. All acceptance evidence passed and no full evaluation
+was run.
+
+Current git status at closure: local `main` and `origin/main` were clean at `ea5c924`; only
+`main`/`origin/main` remained after pruning. Focused QA, local Hermetic integration, and GitHub
+policy/lint/type/unit/merge gates passed. No full evaluation was run.
 
 #### Acceptance
 
@@ -1451,24 +1456,35 @@ evidence is present and no full evaluation is being run. The QA is ready to push
 **Type:** implementation / orchestration
 **Depends on:** PR-497
 
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-498-monthly-outer-refit` at `3ab8fe5`; all
+acceptance evidence is present and the PR is ready to merge after the green pushed gates. The
+canonical closed-month orchestration, immutable package identity, post-fit DuckDB bundle commit,
+MLflow parent/child stage manifests, four per-K SFFS slots, explicit provenance stage, and
+following-month Outer TEST digest are implemented in `feature_discovery/monthly_refit.py`.
+No full evaluation is being run.
+
 #### Acceptance
 
-- [ ] The monthly fold flow is exactly quality -> provenance split -> family near-duplicate
+- [x] The monthly fold flow is exactly quality -> provenance split -> family near-duplicate
   pruning -> family PCA -> global correlation leaders -> per-K SFFS -> ablation -> final HMM fit
   -> Outer TEST.
-- [ ] Every stage consumes only rows at or before the outer TRAIN cutoff.
-- [ ] The entire feature-selection pipeline is rerun after each closed calendar month; no intramonth
+- [x] Every stage consumes only rows at or before the outer TRAIN cutoff.
+- [x] The entire feature-selection pipeline is rerun after each closed calendar month; no intramonth
   feature reselection occurs.
-- [ ] The resulting feature/PCA/HMM package is frozen for the complete following calendar month.
-- [ ] Final package identity contains source, month clock, feature-selection profile, provenance,
+- [x] The resulting feature/PCA/HMM package is frozen for the complete following calendar month.
+- [x] Final package identity contains source, month clock, feature-selection profile, provenance,
   PCA, representative mapping, selected tuple, K/family and model hashes.
-- [ ] Failed selection yields explicit invalid fold evidence and no partial package.
-- [ ] DuckDB fold transaction commits only after the fold's statistical artifacts are complete.
-- [ ] MLflow parent/child runs link every stage artifact to the same fold/package identity.
-- [ ] Historical multi-fold evaluation uses the shared parallel executor/frontier; production
+- [x] Failed selection yields explicit invalid fold evidence and no partial package.
+- [x] DuckDB fold transaction commits only after the fold's statistical artifacts are complete.
+- [x] MLflow parent/child runs link every stage artifact to the same fold/package identity.
+- [x] Historical multi-fold evaluation uses the shared parallel executor/frontier; production
   single-month refit uses the same statistical stages without nested parallelism.
-- [ ] Deployment/refit uses the latest closed-month TRAIN cutoff and the same pipeline implementation.
-- [ ] No historical PCA-only-prefix selector remains on this new profile.
+- [x] Deployment/refit uses the latest closed-month TRAIN cutoff and the same pipeline implementation.
+- [x] No historical PCA-only-prefix selector remains on this new profile.
+
+Current pre-merge evidence: focused PR-498 QA (2), feature-discovery/calendar unit slice (231),
+Ruff and strict Mypy pass; local Hermetic integration passed on `3ab8fe5`; GitHub policy/lint/type/
+unit/merge gates pass. No full evaluation was run.
 
 ### PR-499 — QA: orchestration leakage, month cadence and stage parity
 
