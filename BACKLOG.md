@@ -1328,25 +1328,32 @@ run had six pre-existing E2E fixture failures; no full evaluation was run.
 **Type:** QA only
 **Depends on:** PR-494
 
-**Status:** QA IMPLEMENTATION IN PROGRESS on branch `pr/PR-495-cumulative-stats-qa`.
-The branch also carries the required protected-`main` Backlog status update for merged PR-494.
-No full evaluation is being run.
+**Status:** MERGED as GitHub PR #486 into `origin/main` at squash commit `66ddcda`; source branch
+was deleted locally and remotely. No full evaluation was run.
 
 #### Acceptance
 
-- [ ] Independent SQL/Python aggregation reproduces feature_global_stats exactly.
-- [ ] Squared loadings for each normalized selected PC distribute exactly its absolute ablation
+- [x] Independent SQL/Python aggregation reproduces feature_global_stats exactly.
+- [x] Squared loadings for each normalized selected PC distribute exactly its absolute ablation
   contribution within numerical tolerance.
-- [ ] Fold replay cannot change cumulative counts.
-- [ ] Failed/uncommitted folds contribute zero cumulative statistics.
-- [ ] Selection-frequency, ablation and PCA-credit MLflow plots match DuckDB source rows exactly.
-- [ ] Process/order reversal preserves cumulative hashes.
-- [ ] QA adds no production behavior.
+- [x] Fold replay cannot change cumulative counts.
+- [x] Failed/uncommitted folds contribute zero cumulative statistics.
+- [x] Selection-frequency, ablation and PCA-credit MLflow plots match DuckDB source rows exactly.
+- [x] Process/order reversal preserves cumulative hashes.
+- [x] QA adds no production behavior.
+
+Current git status at closure: local `main` and `origin/main` are clean at `66ddcda`; only
+`main`/`origin/main` remain after pruning. QA tests, local Hermetic integration, and GitHub
+unit/type/lint/policy gates passed. No full evaluation was run.
 
 ### PR-524 — Parallelize independent outer-fold controllers over the shared executor
 
 **Type:** implementation / performance orchestration
 **Depends on:** PR-495
+
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-524-parallel-outer-fold-controllers`.
+The outer process controller now uses the shared outer process pool as its only process executor;
+fold workers are single-lane and cannot create nested child pools. No full evaluation is being run.
 
 #### Acceptance
 
