@@ -1429,8 +1429,13 @@ and GitHub policy/lint/type/unit/merge gates passed. No full evaluation was run.
 **Type:** QA only
 **Depends on:** PR-496
 
-**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-497-lifecycle-safety-qa`; all acceptance
-evidence is present and no full evaluation is being run. The QA is ready to push as the next PR.
+**Status:** QA MERGED as GitHub PR #490 into `origin/main` at squash commit `ea5c924`; source
+branch was deleted locally and remotely. All acceptance evidence passed and no full evaluation
+was run.
+
+Current git status at closure: local `main` and `origin/main` were clean at `ea5c924`; only
+`main`/`origin/main` remained after pruning. Focused QA, local Hermetic integration, and GitHub
+policy/lint/type/unit/merge gates passed. No full evaluation was run.
 
 #### Acceptance
 
@@ -1450,6 +1455,13 @@ evidence is present and no full evaluation is being run. The QA is ready to push
 
 **Type:** implementation / orchestration
 **Depends on:** PR-497
+
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-498-monthly-outer-refit` from
+`origin/main` at `ea5c924`. The canonical closed-month orchestration, immutable package identity,
+post-fit DuckDB bundle commit, and MLflow parent/child stage manifests are implemented in
+`feature_discovery/monthly_refit.py`; focused QA and the complete feature-discovery/calendar unit
+slice pass locally. PR acceptance remains open until the pushed gates pass. No full evaluation is
+being run.
 
 #### Acceptance
 
