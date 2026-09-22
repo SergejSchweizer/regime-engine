@@ -8,7 +8,7 @@ set of CPU/model callbacks for every stage.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -36,16 +36,14 @@ class CanonicalStageCallbacks:
     evaluate_subset: Callable[[tuple[str, ...]], FeatureSubsetScore | None]
     evaluate_hmm_subset: Callable[[tuple[str, ...]], HMMSubsetEvaluation | None]
     hmm_selector_contract_hash: str
-    fit_final_hmm: Callable[[pd.DataFrame, tuple[str, ...], int], str | tuple[str, ...]]
+    fit_final_hmm: Callable[[pd.DataFrame, tuple[str, ...], int], str | Sequence[str]]
     evaluate_gaussian_subset_by_k: Callable[[int, tuple[str, ...]], FeatureSubsetScore | None]
     evaluate_outer_test: Callable[
         [pd.DataFrame, pd.DataFrame, tuple[str, ...], int, tuple[str, ...]], str
     ]
 
 
-StageCallbackFactory = Callable[
-    [pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks
-]
+StageCallbackFactory = Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]
 
 
 @dataclass(frozen=True, slots=True)

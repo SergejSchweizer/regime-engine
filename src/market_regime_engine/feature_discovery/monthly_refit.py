@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol, cast
 
+import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.evaluation.calendar_clock import (
@@ -247,6 +248,38 @@ def _feature_values(
 ) -> dict[str, tuple[float | None, ...]]:
     positions = {name: index for index, name in enumerate(snapshot.feature_names)}
     return {name: tuple(row.values[positions[name]] for row in snapshot.rows) for name in names}
+
+
+def _materialize_family_pca(
+    frame: pd.DataFrame,
+    contract: FeatureRoleContract,
+    pipeline: FeatureSelectionPipelineResult,
+) -> pd.DataFrame:
+    """Apply TRAIN-fitted family PCA artifacts to one source frame."""
+
+    output = frame.copy()
+    for artifact in pipeline.family_pca:
+        input_names = tuple(
+            assignment.feature_name
+            for assignment in contract.assignments
+            if assignment.family == artifact.family
+        )
+        complete = output.loc[:, list(input_names)].notna().all(axis=1)
+        generated: dict[str, list[float | None]] = {
+            name: [None] * len(output) for name in artifact.generated_feature_names
+        }
+        if complete.any():
+            matrix = output.loc[complete, list(input_names)].to_numpy(dtype=np.float64)
+            transformed = artifact.transform(matrix)
+            complete_positions = tuple(output.index[complete])
+            for column, name in enumerate(artifact.generated_feature_names):
+                for row_position, source_index in enumerate(complete_positions):
+                    generated[name][output.index.get_loc(source_index)] = float(
+                        transformed[row_position, column]
+                    )
+        for name, values in generated.items():
+            output[name] = values
+    return output
 
 
 def _registry_rows(
@@ -576,6 +609,15 @@ def run_monthly_outer_refit(
                 selection_by_k = {item.state_count: item.sffs for item in pipeline.k_sffs}
                 selected_sffs = selection_by_k.get(state_count, pipeline.sffs)
                 selected_features = selected_sffs.selected_features
+                fit_callbacks = (
+                    stage_callback_factory(
+                        _materialize_family_pca(train, contract, pipeline),
+                        _materialize_family_pca(test, contract, pipeline),
+                        fold,
+                    )
+                    if stage_callback_factory is not None
+                    else None
+                )
                 if parent_run_id is not None:
                     assert tracking is not None
                     for stage, params in (
@@ -590,7 +632,14 @@ def run_monthly_outer_refit(
                         child_runs.append(
                             _track_stage(tracking, parent_run_id, fold, stage, params)
                         )
-                fitted_hashes = current_fit_final_hmm(train, selected_features, state_count)
+                if fit_callbacks is not None:
+                    fitted_hashes = cast(Any, fit_callbacks.fit_final_hmm)(
+                        _materialize_family_pca(train, contract, pipeline),
+                        selected_features,
+                        state_count,
+                    )
+                else:
+                    fitted_hashes = current_fit_final_hmm(train, selected_features, state_count)
                 model_hashes = (
                     (fitted_hashes,) if isinstance(fitted_hashes, str) else tuple(fitted_hashes)
                 )
@@ -598,6 +647,8 @@ def run_monthly_outer_refit(
                     raise ValueError("final HMM fit returned no model hash")
                 for model_hash in model_hashes:
                     _sha(model_hash, "final HMM model hash")
+                if fit_callbacks is not None:
+                    current_evaluate_outer_test = cast(Any, fit_callbacks.evaluate_outer_test)
                 outer_test_hash = current_evaluate_outer_test(
                     train,
                     test,

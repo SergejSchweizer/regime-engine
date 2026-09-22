@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import pickle
-import platform
 import subprocess
 from hashlib import sha256
 from pathlib import Path
@@ -15,6 +14,14 @@ import pandas as pd  # type: ignore[import-untyped]
 import psycopg
 from mlflow.exceptions import MlflowException
 
+from market_regime_engine.commands.canonical_model_callbacks import (
+    CanonicalModelCallbacks,
+    build_canonical_stage_factory,
+)
+from market_regime_engine.commands.canonical_xetra import (
+    CanonicalXetraEvaluation,
+    run_canonical_xetra_evaluation,
+)
 from market_regime_engine.commands.lifecycle import (
     EvaluationOutcome,
     FinalRefitOutcome,
@@ -25,26 +32,20 @@ from market_regime_engine.commands.lifecycle import (
 from market_regime_engine.contracts import PredictionMode
 from market_regime_engine.evaluation.calendar_clock import plan_calendar_month
 from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
-from market_regime_engine.evaluation_runs.snapshot import ArrowDatasetSnapshotStore
-from market_regime_engine.evaluation_statistics.writer import StatisticsWriter
-from market_regime_engine.evaluations.deployment_selection import (
-    select_deployment_configuration,
+from market_regime_engine.feature_discovery.contracts import (
+    DeploymentSelection,
+    FinalSelectedConfiguration,
+    content_hash,
 )
-from market_regime_engine.evaluations.global_regime_v4 import (
-    V4ConfigurationSelection,
-    evaluate_global_regime_v4_from_source,
+from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
+from market_regime_engine.features.ports import (
+    FeatureCatalogSnapshot,
+    FeatureRequest,
+    FeatureRow,
+    FeatureSnapshot,
 )
-from market_regime_engine.feature_discovery.contracts import AdaptiveEvaluationResult
-from market_regime_engine.feature_discovery.feature_roles import (
-    build_feature_role_contract_from_catalog,
-)
-from market_regime_engine.features.ports import FeatureRequest, FeatureSnapshot
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
-from market_regime_engine.mlflow_support.evaluation_tracking import (
-    build_global_v4_evidence,
-    track_global_v4_evaluation,
-)
 from market_regime_engine.mlflow_support.model_package import (
     load_production_package,
     save_production_package,
@@ -104,6 +105,33 @@ def _rows(snapshot: FeatureSnapshot) -> pd.DataFrame:
     frame = pd.DataFrame([row.values for row in snapshot.rows], columns=snapshot.feature_names)
     frame.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
     return frame
+
+
+def _canonical_source(
+    catalog: FeatureCatalogSnapshot, snapshot: FeatureSnapshot
+) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]:
+    """Drop the historical global-PCA append before family-PCA selection."""
+
+    raw_positions = tuple(
+        index for index, name in enumerate(snapshot.feature_names) if not name.startswith("pca_pc_")
+    )
+    raw_names = tuple(snapshot.feature_names[index] for index in raw_positions)
+    if raw_names == snapshot.feature_names:
+        return catalog, snapshot
+    raw_rows = tuple(
+        FeatureRow(row.timestamp, tuple(row.values[index] for index in raw_positions))
+        for row in snapshot.rows
+    )
+    raw_snapshot = FeatureSnapshot(snapshot.lineage, raw_names, raw_rows)
+    raw_entries = tuple(
+        entry for entry in catalog.entries if not entry.feature_name.startswith("pca_pc_")
+    )
+    raw_catalog = FeatureCatalogSnapshot.from_entries(
+        catalog.lineage,
+        catalog.timestamp_column,
+        raw_entries,
+    ).with_materialization(raw_snapshot)
+    return raw_catalog, raw_snapshot
 
 
 def _candidate(configuration: Any, catalog: Any) -> ResolvedCandidateProfile:
@@ -236,68 +264,64 @@ class V4LifecycleBackend:
         if profile_id != "xetra":
             raise ValueError("only xetra is supported")
         if self._evaluation_path.is_file():
-            result = _read_pickle(self._evaluation_path, AdaptiveEvaluationResult)
+            result = _read_pickle(self._evaluation_path, CanonicalXetraEvaluation)
             if result.source_build_id != source_build_id:
                 raise ValueError("saved evaluation source build differs from cycle build")
+            package = result.latest_package
             return EvaluationOutcome(
                 "global_regime_v4",
                 source_build_id,
-                next(
-                    fold.final_configuration.candidate_id
-                    for fold in reversed(result.outer_folds)
-                    if fold.valid
-                ),
+                f"gaussian_hmm_k{package.state_count}_full",
             )
         recording = _RecordingSource(self.source)
         recording.read_with_catalog(FeatureRequest.all_features())
         if recording.catalog is None or recording.snapshot is None:
             raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = self._capture_source()
+        catalog, snapshot = _canonical_source(catalog, snapshot)
         _atomic_pickle(self._source_path, (catalog, snapshot))
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
-        selections: dict[int, V4ConfigurationSelection] = {}
-        result = evaluate_global_regime_v4_from_source(
-            self.source,
+        rows = _rows(snapshot)
+        worker_count = max(1, os.cpu_count() or 1)
+        base_callbacks = CanonicalModelCallbacks(
+            train=rows,
+            test=rows.iloc[:0].copy(),
             profile=self.profile,
-            snapshot_store=ArrowDatasetSnapshotStore(self.state_root / "snapshots"),
-            repository_commit_sha=_commit(self.root),
-            uv_lock_sha256=_file_sha256(self.root / "uv.lock"),
-            python_version=platform.python_version(),
-            selection_sink=selections.__setitem__,
+            catalog=catalog,
+            source_build_id=source_build_id,
+            max_workers=worker_count,
+        )
+        result = run_canonical_xetra_evaluation(
+            rows,
+            catalog=catalog,
+            profile=self.profile,
+            callbacks=base_callbacks.as_callbacks(),
+            stage_callback_factory=build_canonical_stage_factory(
+                profile=self.profile,
+                catalog=catalog,
+                source_build_id=source_build_id,
+                max_workers=worker_count,
+            ),
+            metadata_store=FeatureSelectionMetadataStore(
+                self.state_root / "feature-selection.duckdb"
+            ),
+            tracking=FileMlflowTrackingPort(
+                self.mlflow_settings.tracking_uri,
+                experiment_name="macro-regime-evaluation",
+            ),
+            max_workers=worker_count,
         )
         if result.source_build_id != source_build_id:
             raise ValueError("source build changed during evaluation")
         if not result.production_eligible:
-            raise ValueError("v4 evaluation failed production-eligibility gates")
-        evidence = build_global_v4_evidence(
-            result,
-            catalog=catalog,
-            snapshot=snapshot,
-            profile=self.profile,
-            selections=selections,
-            repository_commit_sha=_commit(self.root),
-            feature_role_contract=build_feature_role_contract_from_catalog(catalog),
-        )
-        track_global_v4_evaluation(
-            FileMlflowTrackingPort(
-                self.mlflow_settings.tracking_uri,
-                experiment_name="macro-regime-evaluation",
-            ),
-            StatisticsWriter(self.state_root / "statistics"),
-            evidence=evidence,
-            result=result,
-            selections=selections,
-        )
+            raise ValueError("canonical Xetra evaluation failed production-eligibility gates")
         _atomic_pickle(self._evaluation_path, result)
+        package = result.latest_package
         return EvaluationOutcome(
             "global_regime_v4",
             source_build_id,
-            next(
-                fold.final_configuration.candidate_id
-                for fold in reversed(result.outer_folds)
-                if fold.valid
-            ),
+            f"gaussian_hmm_k{package.state_count}_full",
         )
 
     def final_refit(self, profile_id: str, evaluation_id: str) -> FinalRefitOutcome:
@@ -306,18 +330,40 @@ class V4LifecycleBackend:
         if (self._package_path / "MLmodel").is_file():
             load_production_package(self._package_path)
             return FinalRefitOutcome(str(self._package_path))
-        validation = _read_pickle(self._evaluation_path, AdaptiveEvaluationResult)
+        validation = _read_pickle(self._evaluation_path, CanonicalXetraEvaluation)
         catalog, snapshot = self._saved_source()
         frame = _rows(snapshot)
-        deployment = select_deployment_configuration(
-            frame,
-            catalog=catalog,
-            profile=self.profile,
-            validation=validation,
+        package_identity = validation.latest_package
+        if len(package_identity.selected_features) < 2:
+            raise ValueError("canonical package must contain at least two selected features")
+        definition_hash = package_identity.feature_selection_profile_hash
+        execution_hash = content_hash(
+            (package_identity.package_hash, package_identity.selected_features)
         )
-        candidate = _candidate(deployment.configuration, catalog)
+        configuration = FinalSelectedConfiguration(
+            feature_order=package_identity.selected_features,
+            candidate_id=f"gaussian_hmm_k{package_identity.state_count}_full",
+            state_count=package_identity.state_count,
+            model_family="gaussian_hmm",
+            selected_prefix_length=len(package_identity.selected_features),
+            feature_discovery_hash=package_identity.package_hash,
+            source_build_id=package_identity.source_build_id,
+            catalog_hash=package_identity.source_catalog_hash,
+            selection_definition_hash=definition_hash,
+            selection_execution_hash=execution_hash,
+            state_identity_scope="model_version_local",
+        )
+        deployment = DeploymentSelection(
+            source_build_id=package_identity.source_build_id,
+            source_catalog_hash=package_identity.source_catalog_hash,
+            validation_evaluation_cutoff=validation.monthly.plan.evaluation_cutoff,
+            deployment_selection_cutoff=catalog.lineage.max_timestamp,
+            configuration=configuration,
+            discovery_hash=package_identity.package_hash,
+        )
+        candidate = _candidate(configuration, catalog)
         validation_rows = frame.loc[
-            frame["timestamp_m1"] <= validation.validation_evaluation_cutoff
+            frame["timestamp_m1"] <= validation.monthly.plan.evaluation_cutoff
         ].copy()
         validation_plan = plan_calendar_month(
             tuple(validation_rows["timestamp_m1"]),
@@ -351,21 +397,41 @@ class V4LifecycleBackend:
     def publish_oos(self, profile_id: str, evaluation_id: str) -> OOSPublicationOutcome:
         if profile_id != "xetra" or evaluation_id != "global_regime_v4":
             raise ValueError("OOS publication requires the completed global_regime_v4 evaluation")
-        result = _read_pickle(self._evaluation_path, AdaptiveEvaluationResult)
+        result = _read_pickle(self._evaluation_path, CanonicalXetraEvaluation)
         build_id = sha256(f"walk_forward_oos:{result.result_hash}".encode()).hexdigest()
         store = PredictionStore(self._oos_path)
         try:
             store.load_manifest("xetra", build_id)
         except FileNotFoundError:
             rows: list[dict[str, object]] = []
-            for fold in result.outer_folds:
-                if not fold.valid:
-                    continue
-                for timestamp, probabilities in zip(
-                    fold.oos_timestamps,
-                    fold.oos_filtered_probabilities,
-                    strict=True,
-                ):
+            catalog, snapshot = self._saved_source()
+            source_rows = _rows(snapshot)
+            worker_count = max(1, os.cpu_count() or 1)
+            for fold_result in result.monthly.valid_folds:
+                fold = fold_result.fold
+                package = fold_result.package
+                if package is None:
+                    raise ValueError("valid canonical fold is missing its package") from None
+                train = source_rows.iloc[: fold.train_source_observations].copy()
+                test = source_rows.iloc[
+                    fold.train_source_observations : fold.train_source_observations
+                    + fold.test_source_observations
+                ].copy()
+                callbacks = CanonicalModelCallbacks(
+                    train=train,
+                    test=test,
+                    profile=self.profile,
+                    catalog=catalog,
+                    source_build_id=result.source_build_id,
+                    max_workers=worker_count,
+                )
+                timestamps, probabilities_by_row = callbacks.outer_test_probabilities(
+                    package.selected_features,
+                    package.state_count,
+                    package.model_hashes,
+                )
+                execution_hash = content_hash((package.package_hash, package.selected_features))
+                for timestamp, probabilities in zip(timestamps, probabilities_by_row, strict=True):
                     state_ids = tuple(f"state_{index:03d}" for index in range(len(probabilities)))
                     dominant_index = max(range(len(probabilities)), key=probabilities.__getitem__)
                     rows.append(
@@ -379,19 +445,16 @@ class V4LifecycleBackend:
                             "dominant_state": state_ids[dominant_index],
                             "confidence": probabilities[dominant_index],
                             "entropy": 0.0,
-                            "candidate_id": fold.final_configuration.candidate_id,
-                            "fold_id": f"outer_fold_{fold.fold_index:03d}",
-                            "evaluation_plan_hash": result.policy_hash,
+                            "candidate_id": f"gaussian_hmm_k{package.state_count}_full",
+                            "fold_id": fold.fold_id,
+                            "evaluation_plan_hash": result.monthly.plan.plan_hash,
                             "feature_selection_definition_hash": (
-                                fold.final_configuration.selection_definition_hash
+                                package.feature_selection_profile_hash
                             ),
-                            "feature_selection_execution_hash": (
-                                fold.final_configuration.selection_execution_hash
-                            ),
+                            "feature_selection_execution_hash": execution_hash,
                         }
                     )
             rows.sort(key=lambda row: cast(Any, row)["timestamp"])
-            catalog, _snapshot = self._saved_source()
             store.publish(
                 build_id=build_id,
                 profile_id="xetra",
