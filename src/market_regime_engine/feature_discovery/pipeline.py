@@ -190,6 +190,93 @@ def _run_family_stage(task: _FamilyStageTask) -> _FamilyStageResult:
     return _FamilyStageResult(task.family, reduction, artifact, generated, False)
 
 
+def fit_family_pca_stages(
+    feature_values: Mapping[str, Sequence[float | None]],
+    contract: FeatureRoleContract,
+    *,
+    quality_eligible_features: Sequence[str],
+    profile: FeatureSelectionProfile | None = None,
+    max_workers: int | None = None,
+) -> tuple[FamilyPCAArtifact, ...]:
+    """Fit the canonical family reduction/PCA stage without rerunning SFFS.
+
+    This is used by the final production refit: selection is already frozen,
+    but the fold-local preprocessing artifacts must still be refit on the full
+    deployment TRAIN window.
+    """
+
+    eligible = tuple(quality_eligible_features)
+    contract.validate_stage_features(FeatureStage.QUALITY, eligible)
+    resolved_profile = contract.profile if profile is None else profile
+    if resolved_profile.profile_hash != contract.profile.profile_hash:
+        raise ValueError("family PCA profile must match the role contract profile")
+    family_values = {
+        name: _complete_vector(name, feature_values[name])
+        for name in eligible
+        if contract.assignment(name).family is not None
+    }
+    if not family_values:
+        return ()
+    families = tuple(
+        sorted(
+            {
+                family
+                for name in family_values
+                if (family := contract.assignment(name).family) is not None
+            }
+        )
+    )
+    family_names = {
+        family: tuple(
+            assignment.feature_name
+            for assignment in contract.assignments
+            if assignment.feature_name in family_values and assignment.family == family
+        )
+        for family in families
+    }
+    all_names = tuple(name for family in family_names.values() for name in family)
+    matrix = np.asarray(
+        tuple(
+            tuple(family_values[name][row] for name in all_names)
+            for row in range(len(family_values[all_names[0]]))
+        ),
+        dtype=np.float64,
+    )
+    with (
+        TemporaryDirectory(prefix="regime-family-refit-") as matrix_directory,
+        ReadOnlyMatrix.create(matrix, matrix_directory) as shared,
+    ):
+        lookup = {name: index for index, name in enumerate(all_names)}
+        tasks = tuple(
+            _FamilyStageTask(
+                family=family,
+                feature_names=names,
+                column_indices=tuple(lookup[name] for name in names),
+                matrix_path=str(shared.path),
+                matrix_shape=matrix.shape,
+                matrix_dtype=matrix.dtype.str,
+                contract=contract,
+                profile=resolved_profile,
+            )
+            for family, names in sorted(family_names.items())
+        )
+        plan = ParallelExecutionPlan.create(
+            len(tasks), requested_workers=max_workers, shared_matrix_identity=shared.identity
+        )
+        executor: FoldParallelExecutor[_FamilyStageTask, _FamilyStageResult] = FoldParallelExecutor(
+            plan, max_pending=len(tasks)
+        )
+        with executor:
+            results = executor.map_ordered(_run_family_stage, tasks)
+    invalid = tuple(item.family for item in results if item.statistically_invalid)
+    if invalid:
+        raise ValueError(f"production family PCA is invalid for families: {', '.join(invalid)}")
+    artifacts = tuple(item.artifact for item in results if item.artifact is not None)
+    if len(artifacts) != len(results):
+        raise ValueError("production family PCA did not produce one artifact per family")
+    return tuple(sorted(artifacts, key=lambda item: item.family))
+
+
 def run_canonical_feature_selection(
     feature_values: Mapping[str, Sequence[float | None]],
     contract: FeatureRoleContract,
@@ -431,4 +518,8 @@ def run_canonical_feature_selection(
     )
 
 
-__all__ = ["FeatureSelectionPipelineResult", "run_canonical_feature_selection"]
+__all__ = [
+    "FeatureSelectionPipelineResult",
+    "fit_family_pca_stages",
+    "run_canonical_feature_selection",
+]

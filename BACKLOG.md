@@ -1522,12 +1522,16 @@ tests. Per-fold callback factories now bind model evaluation to each closed
 month's TRAIN/TEST boundary. The backend now routes evaluation, canonical
 package-based refit and OOS publication through that boundary. Raw-source/
 implemented, including binding generated Family-PCA TRAIN values into the
-process-safe SFFS callbacks; production-path call-graph QA and complete
+process-safe SFFS callbacks. The production refit/serving package now also
+supports serialized Family-PCA artifacts and refits the canonical family
+transform on the deployment TRAIN window; focused round-trip and backend
+package tests cover the new path. Production-path call-graph QA and complete
 acceptance evidence remain open.
-Current evidence: 15 backend/boundary tests plus 58 affected command and
-feature-discovery tests, one production call-graph contract test, Ruff and
-strict Mypy pass, and the local Hermetic integration hook passed on the previous
-commit. No full evaluation and no NAS data run.
+Current evidence: 19 backend/boundary tests plus 58 affected command and
+feature-discovery tests, one production call-graph contract test, four
+Family-PCA/two-stage tests, Ruff and strict Mypy pass, and the local Hermetic
+integration hook passed on the previous commit. No full evaluation and no NAS
+data run.
 
 This PR changes authority, not repository cleanup. It makes the new pipeline the only supported
 runtime path first; the following PRs then delete now-unreachable legacy and compatibility code.

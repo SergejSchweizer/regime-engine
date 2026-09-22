@@ -19,12 +19,15 @@ from market_regime_engine.preprocessing.scaling import (
     fit_standard_scaler,
 )
 from market_regime_engine.preprocessing.two_stage import (
+    FamilyPCATwoStageScalerArtifact,
     PCATwoStageScalerArtifact,
+    fit_family_pca_hmm_scaler,
     fit_pca_hmm_scaler,
 )
 
 __all__ = [
     "PCA_SOURCE_UNIVERSE",
+    "FamilyPCATwoStageScalerArtifact",
     "PCAArtifact",
     "PCAFitClock",
     "PCAFitResult",
@@ -32,6 +35,7 @@ __all__ = [
     "PCATwoStageScalerArtifact",
     "StandardScalerArtifact",
     "fit_and_materialize_pca_source",
+    "fit_family_pca_hmm_scaler",
     "fit_pca_hmm_scaler",
     "fit_pca_inner_train",
     "fit_pca_transformer",

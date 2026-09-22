@@ -16,11 +16,17 @@ from market_regime_engine.evaluation.diagnostics import (
 )
 from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.feature_discovery.contracts import DeploymentSelection, content_hash
+from market_regime_engine.feature_discovery.family_pca import FamilyPCAArtifact
 from market_regime_engine.inference.filtering import causal_filter
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.pca_policy import validate_pca_source_universe
-from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
+from market_regime_engine.preprocessing.two_stage import (
+    FamilyPCATwoStageScalerArtifact,
+    PCATwoStageScalerArtifact,
+    fit_family_pca_hmm_scaler,
+    fit_pca_hmm_scaler,
+)
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_first_fold
@@ -133,6 +139,7 @@ def final_production_refit(
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
     pca_raw_feature_order: tuple[str, ...],
     pca_variance_threshold: float | None = None,
+    family_pca_artifacts: tuple[FamilyPCAArtifact, ...] = (),
 ) -> ProductionModelArtifact:
     """Fit one fresh production artifact without rerunning selection or candidate ranking."""
 
@@ -196,17 +203,26 @@ def final_production_refit(
     pca_threshold = (
         profile.pca.variance_threshold if pca_variance_threshold is None else pca_variance_threshold
     )
-    pca_scaler = fit_pca_hmm_scaler(
-        retained_timestamps,
-        matrix,
-        raw_feature_order=pca_raw_feature_order,
-        inner_fold_id="production",
-        fit_start=retained_timestamps[0],
-        fit_end=retained_timestamps[-1],
-        variance_threshold=pca_threshold,
-        component_count=profile.pca.component_count,
-        model_feature_order=candidate.feature_order,
-    )
+    pca_scaler: PCATwoStageScalerArtifact | FamilyPCATwoStageScalerArtifact
+    if family_pca_artifacts:
+        pca_scaler = fit_family_pca_hmm_scaler(
+            matrix,
+            raw_feature_order=pca_raw_feature_order,
+            family_pca=family_pca_artifacts,
+            model_feature_order=candidate.feature_order,
+        )
+    else:
+        pca_scaler = fit_pca_hmm_scaler(
+            retained_timestamps,
+            matrix,
+            raw_feature_order=pca_raw_feature_order,
+            inner_fold_id="production",
+            fit_start=retained_timestamps[0],
+            fit_end=retained_timestamps[-1],
+            variance_threshold=pca_threshold,
+            component_count=profile.pca.component_count,
+            model_feature_order=candidate.feature_order,
+        )
     if pca_scaler.model_feature_order != candidate.feature_order:
         raise ValueError("production PCA generated feature order differs from candidate")
     scaler = pca_scaler.hmm_scaler
