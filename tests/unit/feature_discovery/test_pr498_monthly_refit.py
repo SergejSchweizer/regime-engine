@@ -9,6 +9,7 @@ import pytest
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.feature_discovery import monthly_refit as module
 from market_regime_engine.feature_discovery.feature_roles import CORE_FEATURES, TEMPORAL_KEY
+from market_regime_engine.feature_discovery.sffs import SFFSResult
 from market_regime_engine.features.ports import FeatureCatalogEntry, FeatureCatalogSnapshot
 from market_regime_engine.profiles.loader import load_profile
 
@@ -56,7 +57,7 @@ def _fake_pipeline(names: tuple[str, ...]) -> SimpleNamespace:
             representatives=names[:3],
             evidence=(),
         ),
-        sffs=SimpleNamespace(selected_features=names[:3]),
+        sffs=SFFSResult(names[:3], names[0], ()),
         k_sffs=(),
         selected_features=names[:3],
         ablation=SimpleNamespace(fit_execution_hashes=("f" * 64,)),
