@@ -1515,6 +1515,15 @@ run. Acceptance remains open until the pushed local/GitHub gates pass.
 **Type:** implementation / controlled cutover
 **Depends on:** PR-499
 
+**Status:** IN PROGRESS on branch `pr/PR-500-canonical-xetra-cutover`, based on
+`origin/main` at `f8a83a4`. The public canonical orchestration boundary is now
+implemented in `commands/canonical_xetra.py` and is covered by focused unit
+tests. Per-fold callback factories now bind model evaluation to each closed
+month's TRAIN/TEST boundary. The lifecycle backend still needs to be wired to
+production model callbacks and the refit/package path before this PR can be
+accepted. Current focused evidence: 4 tests, Ruff and strict Mypy pass; no
+full evaluation and no NAS data run.
+
 This PR changes authority, not repository cleanup. It makes the new pipeline the only supported
 runtime path first; the following PRs then delete now-unreachable legacy and compatibility code.
 
