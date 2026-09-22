@@ -1288,8 +1288,8 @@ no integration test ran as a GitHub merge gate.
 **Type:** implementation / cumulative metadata
 **Depends on:** PR-522
 
-**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-494-pca-credit-cumulative-stats` at commit
-`48537ca` (a documentation-only status commit follows this implementation commit).
+**Status:** MERGED as GitHub PR #485 into `origin/main` at squash commit `9274458`; source branch
+was deleted locally and remotely.
 PCA-loading persistence, deterministic PCA-credit attribution, cumulative DuckDB view fields,
 replay-safe upserts, and cumulative MLflow plot projection are implemented locally. No full
 evaluation has been run; integration tests remain local-only and are not a GitHub merge gate.
@@ -1302,25 +1302,35 @@ green.
 
 #### Acceptance
 
-- [ ] For each selected family PC, attribute its fold contribution to source transformations by
+- [x] For each selected family PC, attribute its fold contribution to source transformations by
   squared loading weight.
-- [ ] Define source_feature_pca_credit as the sum over selected PCs of
+- [x] Define source_feature_pca_credit as the sum over selected PCs of
   abs(selected_pc_ablation_loss) multiplied by loading_squared.
-- [ ] Directly selected core features receive direct_selection_count and their own ablation_loss;
+- [x] Directly selected core features receive direct_selection_count and their own ablation_loss;
   they do not receive synthetic PCA credit.
-- [ ] feature_global_stats exposes eligible_folds, quality_pass_folds, representative_folds,
+- [x] feature_global_stats exposes eligible_folds, quality_pass_folds, representative_folds,
   selected_folds, selection_rate, mean/median ablation_loss, total/mean PCA credit,
   last_selected_fold and consecutive_unused_folds.
-- [ ] Aggregation is deterministic and derived only from committed fold rows.
-- [ ] Replaying a fold replaces/reuses the same logical fold contribution and never double counts.
-- [ ] MLflow logs cumulative selection-frequency, mean-ablation and PCA-credit plots after each
+- [x] Aggregation is deterministic and derived only from committed fold rows.
+- [x] Replaying a fold replaces/reuses the same logical fold contribution and never double counts.
+- [x] MLflow logs cumulative selection-frequency, mean-ablation and PCA-credit plots after each
   completed fold.
-- [ ] DuckDB remains authoritative; MLflow plots are projections of committed local statistics.
+- [x] DuckDB remains authoritative; MLflow plots are projections of committed local statistics.
+
+Current git status at closure before the protected-branch status-only follow-up: local `main`
+contained `9274458` and its source branch was deleted locally/remotely; the status-only commit is
+being carried into the dependent PR-495 branch. Targeted tests, mypy, Ruff, local Hermetic
+integration, and GitHub unit/type/lint/policy gates passed. The repository-wide non-integration
+run had six pre-existing E2E fixture failures; no full evaluation was run.
 
 ### PR-495 — QA: cumulative statistics and PCA-credit conservation
 
 **Type:** QA only
 **Depends on:** PR-494
+
+**Status:** QA IMPLEMENTATION IN PROGRESS on branch `pr/PR-495-cumulative-stats-qa`.
+The branch also carries the required protected-`main` Backlog status update for merged PR-494.
+No full evaluation is being run.
 
 #### Acceptance
 
