@@ -56,7 +56,8 @@ def _fake_pipeline(names: tuple[str, ...]) -> SimpleNamespace:
             representatives=names[:3],
             evidence=(),
         ),
-        sffs={"selected": names[:3]},
+        sffs=SimpleNamespace(selected_features=names[:3]),
+        k_sffs=(),
         selected_features=names[:3],
         ablation=SimpleNamespace(fit_execution_hashes=("f" * 64,)),
     )
@@ -118,6 +119,8 @@ def test_monthly_refit_uses_only_closed_train_prefix_and_freezes_package_identit
         evaluate_hmm_subset=lambda _: None,
         hmm_selector_contract_hash="2" * 64,
         fit_final_hmm=fit,
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "5" * 64,
         max_workers=86,
         tracking=tracking,  # type: ignore[arg-type]
     )
@@ -138,8 +141,8 @@ def test_monthly_refit_uses_only_closed_train_prefix_and_freezes_package_identit
     )
     assert tracking.starts[0] == ("run-0", None)
     assert all(parent == "run-0" for _, parent in tracking.starts[1:])
-    assert len(tracking.starts) == 1 + len(result.folds) * 6
-    assert len(tracking.artifacts) == len(result.folds) * 6
+    assert len(tracking.starts) == 1 + len(result.folds) * 8
+    assert len(tracking.artifacts) == len(result.folds) * 8
     assert set(tracking.ended) == {f"run-{index}" for index in range(len(tracking.starts))}
     assert tracking.ended[-1] == "run-0"
 
@@ -185,6 +188,8 @@ def test_failed_monthly_fit_is_invalid_and_is_not_committed(
         evaluate_hmm_subset=lambda _: None,
         hmm_selector_contract_hash="4" * 64,
         fit_final_hmm=fit,
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "6" * 64,
         metadata_store=store,  # type: ignore[arg-type]
     )
 

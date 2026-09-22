@@ -1459,9 +1459,10 @@ policy/lint/type/unit/merge gates passed. No full evaluation was run.
 **Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-498-monthly-outer-refit` from
 `origin/main` at `ea5c924`. The canonical closed-month orchestration, immutable package identity,
 post-fit DuckDB bundle commit, and MLflow parent/child stage manifests are implemented in
-`feature_discovery/monthly_refit.py`; focused QA and the complete feature-discovery/calendar unit
-slice pass locally. PR acceptance remains open until the pushed gates pass. No full evaluation is
-being run.
+`feature_discovery/monthly_refit.py`; the implementation now requires the four per-K SFFS slots,
+an explicit provenance stage, and a following-month Outer TEST callback whose digest is bound into
+the frozen package. Focused QA and the complete feature-discovery/calendar unit slice pass locally.
+PR acceptance remains open until the amended pushed gates pass. No full evaluation is being run.
 
 #### Acceptance
 

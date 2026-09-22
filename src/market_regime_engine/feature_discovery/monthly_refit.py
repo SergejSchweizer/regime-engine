@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -45,6 +45,7 @@ from market_regime_engine.feature_discovery.quality import (
     filter_outer_train_quality,
     quality_to_fold_feature_stats,
 )
+from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore, SFFSResult
 from market_regime_engine.features.ports import (
     FeatureCatalogSnapshot,
     FeatureRow,
@@ -79,6 +80,34 @@ def _tuple_hash(values: Sequence[object]) -> str:
     return content_hash(tuple(values))
 
 
+def _sffs_hash(result: object) -> str:
+    """Hash SFFS evidence using only its canonical primitive fields."""
+
+    selected = tuple(getattr(result, "selected_features", ()))
+    best_singleton = str(getattr(result, "best_singleton", ""))
+    steps: list[object] = []
+    for step in getattr(result, "steps", ()):
+        score = getattr(step, "score", None)
+        score_payload = (
+            None
+            if score is None
+            else (
+                cast(Any, score).feature_names,
+                cast(Any, score).value,
+                cast(Any, score).metric,
+                cast(Any, score).state_count,
+            )
+        )
+        steps.append(
+            (
+                str(getattr(step, "action", "")),
+                tuple(getattr(step, "selected_features", ())),
+                score_payload,
+            )
+        )
+    return content_hash((selected, best_singleton, steps))
+
+
 @dataclass(frozen=True, slots=True)
 class MonthlyPackageIdentity:
     """Identity of the package fitted through one closed-month TRAIN cutoff."""
@@ -95,6 +124,7 @@ class MonthlyPackageIdentity:
     selected_features: tuple[str, ...]
     state_count: int
     model_hashes: tuple[str, ...]
+    outer_test_hash: str
 
     def __post_init__(self) -> None:
         if not self.source_build_id.strip():
@@ -105,6 +135,7 @@ class MonthlyPackageIdentity:
             (self.feature_role_contract_hash, "feature_role_contract_hash"),
             (self.provenance_hash, "provenance_hash"),
             (self.representative_hash, "representative_hash"),
+            (self.outer_test_hash, "outer_test_hash"),
         ):
             _sha(value, field)
         for value in (*self.family_pca_fit_hashes, *self.model_hashes):
@@ -178,6 +209,10 @@ class MonthlyRefitResult:
 SubsetEvaluator = Callable[[tuple[str, ...]], Any]
 HMMSubsetEvaluator = Callable[[tuple[str, ...]], HMMSubsetEvaluation | None]
 FinalHMMFitter = Callable[[pd.DataFrame, tuple[str, ...], int], str | Sequence[str]]
+PerKSubsetEvaluator = Callable[[int, tuple[str, ...]], FeatureSubsetScore | None]
+OuterTestEvaluator = Callable[
+    [pd.DataFrame, pd.DataFrame, tuple[str, ...], int, tuple[str, ...]], str
+]
 
 
 def _snapshot(frame: pd.DataFrame, catalog: FeatureCatalogSnapshot) -> FeatureSnapshot:
@@ -269,8 +304,10 @@ def _metadata_bundle(
     package: MonthlyPackageIdentity,
     model_family: str,
     model_run_id: str | None,
+    sffs_result: SFFSResult,
+    outer_test_hash: str,
 ) -> FoldMetadataBundle:
-    selected_hash = _tuple_hash(pipeline.selected_features)
+    selected_hash = _tuple_hash(sffs_result.selected_features)
     model_stat = FoldModelStat(
         fold_id=fold.fold_id,
         profile_hash=pipeline.profile_hash,
@@ -281,13 +318,14 @@ def _metadata_bundle(
         valid=True,
         diagnostics={
             "package_hash": package.package_hash,
+            "outer_test_hash": outer_test_hash,
             "train_cutoff": fold.train_cutoff_timestamp.isoformat(),
             "test_calendar_month": fold.test_calendar_month,
         },
         mlflow_run_id=model_run_id,
     )
     steps: tuple[SFFSStepRecord, ...] = sffs_step_records(
-        pipeline.sffs,
+        sffs_result,
         fold_id=fold.fold_id,
         profile_hash=pipeline.profile_hash,
         source_build_id=catalog.lineage.source_build_id,
@@ -372,6 +410,8 @@ def run_monthly_outer_refit(
     evaluate_hmm_subset: HMMSubsetEvaluator,
     hmm_selector_contract_hash: str,
     fit_final_hmm: FinalHMMFitter,
+    evaluate_gaussian_subset_by_k: PerKSubsetEvaluator,
+    evaluate_outer_test: OuterTestEvaluator,
     metadata_store: FeatureSelectionMetadataStore | None = None,
     tracking: TrackingPort | None = None,
     max_workers: int | None = None,
@@ -393,6 +433,8 @@ def run_monthly_outer_refit(
         raise ValueError("monthly refit source requires timestamp and catalog features")
     if profile.profile_id != "xetra" or profile.profile_config_version != 4:
         raise ValueError("monthly refit requires canonical Xetra v4 profile")
+    if not callable(evaluate_gaussian_subset_by_k) or not callable(evaluate_outer_test):
+        raise TypeError("monthly refit requires per-K selection and Outer TEST evaluators")
     timestamps = tuple(_utc(value, "source timestamp") for value in source_rows[_TIMESTAMP])
     if any(right <= left for left, right in pairwise(timestamps)):
         raise ValueError("monthly refit timestamps must be strictly increasing")
@@ -429,6 +471,22 @@ def run_monthly_outer_refit(
                 raise ValueError("monthly TRAIN prefix does not end at the calendar cutoff")
             child_runs: list[str] = []
             try:
+                provenance = build_feature_provenance(contract)
+                if parent_run_id is not None:
+                    assert tracking is not None
+                    child_runs.append(
+                        _track_stage(
+                            tracking,
+                            parent_run_id,
+                            fold,
+                            "provenance",
+                            {
+                                "hash": _tuple_hash(
+                                    tuple(item.canonical_dict for item in provenance)
+                                )
+                            },
+                        )
+                    )
                 snapshot = _snapshot(train, catalog)
                 quality = filter_outer_train_quality(
                     catalog,
@@ -458,9 +516,14 @@ def run_monthly_outer_refit(
                     evaluate_subset=evaluate_subset,
                     evaluate_hmm_subset=evaluate_hmm_subset,
                     hmm_selector_contract_hash=hmm_selector_contract_hash,
+                    evaluate_gaussian_subset_by_k=evaluate_gaussian_subset_by_k,
+                    state_counts=(2, 3, 4, 5),
                     profile=contract.profile,
                     max_workers=max_workers,
                 )
+                selection_by_k = {item.state_count: item.sffs for item in pipeline.k_sffs}
+                selected_sffs = selection_by_k.get(state_count, pipeline.sffs)
+                selected_features = selected_sffs.selected_features
                 if parent_run_id is not None:
                     assert tracking is not None
                     for stage, params in (
@@ -469,13 +532,13 @@ def run_monthly_outer_refit(
                             {"hashes": tuple(item.fit_hash for item in pipeline.family_pca)},
                         ),
                         ("correlation", {"hash": pipeline.global_reduction.result_hash}),
-                        ("sffs", {"hash": content_hash(pipeline.sffs)}),
+                        ("sffs", {"hash": _sffs_hash(selected_sffs)}),
                         ("ablation", {"hashes": pipeline.ablation.fit_execution_hashes}),
                     ):
                         child_runs.append(
                             _track_stage(tracking, parent_run_id, fold, stage, params)
                         )
-                fitted_hashes = fit_final_hmm(train, pipeline.selected_features, state_count)
+                fitted_hashes = fit_final_hmm(train, selected_features, state_count)
                 model_hashes = (
                     (fitted_hashes,) if isinstance(fitted_hashes, str) else tuple(fitted_hashes)
                 )
@@ -483,6 +546,18 @@ def run_monthly_outer_refit(
                     raise ValueError("final HMM fit returned no model hash")
                 for model_hash in model_hashes:
                     _sha(model_hash, "final HMM model hash")
+                test = source_rows.iloc[
+                    fold.train_source_observations : fold.train_source_observations
+                    + fold.test_source_observations
+                ].copy()
+                outer_test_hash = evaluate_outer_test(
+                    train,
+                    test,
+                    selected_features,
+                    state_count,
+                    model_hashes,
+                )
+                _sha(outer_test_hash, "outer TEST hash")
                 package = MonthlyPackageIdentity(
                     source_build_id=catalog.lineage.source_build_id,
                     source_catalog_hash=catalog.catalog_hash,
@@ -495,9 +570,10 @@ def run_monthly_outer_refit(
                     ),
                     family_pca_fit_hashes=tuple(item.fit_hash for item in pipeline.family_pca),
                     representative_hash=content_hash(pipeline.global_reduction.representatives),
-                    selected_features=pipeline.selected_features,
+                    selected_features=selected_features,
                     state_count=state_count,
                     model_hashes=model_hashes,
+                    outer_test_hash=outer_test_hash,
                 )
                 model_run_id: str | None = None
                 if parent_run_id is not None:
@@ -513,6 +589,15 @@ def run_monthly_outer_refit(
                         },
                     )
                     child_runs.append(model_run_id)
+                    child_runs.append(
+                        _track_stage(
+                            tracking,
+                            parent_run_id,
+                            fold,
+                            "outer_test",
+                            {"hash": outer_test_hash},
+                        )
+                    )
                 if metadata_store is not None:
                     metadata_store.commit_fold(
                         _metadata_bundle(
@@ -529,6 +614,8 @@ def run_monthly_outer_refit(
                             package=package,
                             model_family="gaussian_hmm",
                             model_run_id=model_run_id,
+                            sffs_result=selected_sffs,
+                            outer_test_hash=outer_test_hash,
                         )
                     )
                 results.append(MonthlyRefitFoldResult(fold, package, pipeline, True))
