@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pickle
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from hashlib import sha256
 from math import tanh
 from typing import Any, cast
@@ -53,6 +53,20 @@ class CanonicalModelCallbacks:
     catalog: FeatureCatalogSnapshot
     source_build_id: str
     max_workers: int | None = None
+    _bound_feature_values: Mapping[str, Sequence[float]] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
+        object.__setattr__(self, "_bound_feature_values", dict(values))
+
+    def _effective_train(self) -> pd.DataFrame:
+        if self._bound_feature_values is None:
+            return self.train
+        frame = self.train.copy()
+        for name, values in self._bound_feature_values.items():
+            frame[name] = tuple(values)
+        return frame
 
     @property
     def hmm_selector_contract_hash(self) -> str:
@@ -68,7 +82,7 @@ class CanonicalModelCallbacks:
         return cast(np.ndarray[Any, Any], values)
 
     def _fit(self, features: tuple[str, ...], state_count: int) -> MultistartResult:
-        matrix = self._matrix(self.train, features)
+        matrix = self._matrix(self._effective_train(), features)
         return run_multistart(
             matrix,
             state_count=state_count,
@@ -102,7 +116,8 @@ class CanonicalModelCallbacks:
     def _inner_score(
         self, features: tuple[str, ...], state_count: int
     ) -> FeatureSubsetScore | None:
-        timestamps = tuple(self.train.loc[:, "timestamp_m1"].tolist())
+        source_train = self._effective_train()
+        timestamps = tuple(source_train.loc[:, "timestamp_m1"].tolist())
         plan = plan_calendar_month(
             timestamps,
             minimum_train_source_observations=(
@@ -111,8 +126,8 @@ class CanonicalModelCallbacks:
         )
         evidence: list[FeatureSubsetFoldEvidence] = []
         for fold in plan.folds:
-            train = self.train.iloc[: fold.train_source_observations].copy()
-            test = self.train.iloc[
+            train = source_train.iloc[: fold.train_source_observations].copy()
+            test = source_train.iloc[
                 fold.train_source_observations : fold.train_source_observations
                 + fold.test_source_observations
             ].copy()

@@ -72,6 +72,15 @@ def _complete_vector(name: str, values: Sequence[float | None]) -> tuple[float, 
     return result
 
 
+def _bind_feature_values(callback: object, values: Mapping[str, Sequence[float]]) -> None:
+    """Expose pipeline-generated TRAIN values to a callback owner when supported."""
+
+    owner = getattr(callback, "__self__", None)
+    binder = getattr(owner, "bind_feature_values", None)
+    if callable(binder):
+        binder(values)
+
+
 @dataclass(frozen=True, slots=True)
 class FeatureSelectionPipelineResult:
     quality_eligible_features: tuple[str, ...]
@@ -317,6 +326,9 @@ def run_canonical_feature_selection(
     )
     candidate_values = {name: values[name] for name in core_names}
     candidate_values.update(generated_values)
+    _bind_feature_values(evaluate_subset, candidate_values)
+    _bind_feature_values(evaluate_hmm_subset, candidate_values)
+    _bind_feature_values(evaluate_gaussian_subset_by_k, candidate_values)
     global_reduction = prune_global_correlated_features(
         candidate_values,
         contract,
