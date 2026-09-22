@@ -765,6 +765,77 @@ class FeatureSelectionMetadataStore:
             ).fetchall()
         return tuple(row[0] for row in rows)
 
+    def lifecycle_report(
+        self,
+        *,
+        feature_selection_profile_hash: str,
+        policy: object | None = None,
+    ) -> object:
+        """Build a recommendation report from this store's committed rows only."""
+
+        from market_regime_engine.feature_discovery.lifecycle_recommendations import (
+            FeatureLifecyclePolicy,
+            build_lifecycle_report,
+        )
+
+        resolved_policy = FeatureLifecyclePolicy() if policy is None else policy
+        if not isinstance(resolved_policy, FeatureLifecyclePolicy):
+            raise TypeError("policy must be a FeatureLifecyclePolicy")
+        with self._lock, self._connect() as connection:
+            registry_values = connection.execute(
+                """
+                SELECT feature_identity, source_dataset, source_build_id,
+                       source_catalog_hash, feature_name, role, family,
+                       transformation_name, transformation_parameters_json,
+                       first_seen_utc, lifecycle_status
+                FROM feature_registry ORDER BY feature_name
+                """
+            ).fetchall()
+            stat_values = connection.execute(
+                """
+                SELECT fold_id, profile_hash, source_build_id, feature_name,
+                       eligible, quality_reason, direct_participation,
+                       pc_participation, pca_credit, representative,
+                       sffs_participation, final_selection, ablation_loss
+                FROM fold_feature_stats ORDER BY fold_id, feature_name
+                """
+            ).fetchall()
+        registry_rows = tuple(
+            FeatureRegistryRow(
+                identity,
+                dataset,
+                build,
+                catalog_hash,
+                name,
+                role,
+                family,
+                transformation,
+                json.loads(parameters),
+                first_seen.astimezone(UTC),
+                status,
+            )
+            for (
+                identity,
+                dataset,
+                build,
+                catalog_hash,
+                name,
+                role,
+                family,
+                transformation,
+                parameters,
+                first_seen,
+                status,
+            ) in registry_values
+        )
+        stat_rows = tuple(FoldFeatureStat(*values) for values in stat_values)
+        return build_lifecycle_report(
+            registry_rows,
+            stat_rows,
+            feature_selection_profile_hash=feature_selection_profile_hash,
+            policy=resolved_policy,
+        )
+
     def close(self) -> None:
         """The store opens short-lived connections per operation; kept for API symmetry."""
 
