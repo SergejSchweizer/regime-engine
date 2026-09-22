@@ -1342,7 +1342,7 @@ was deleted locally and remotely. No full evaluation was run.
 - [x] Process/order reversal preserves cumulative hashes.
 - [x] QA adds no production behavior.
 
-Current git status at closure: local `main` and `origin/main` are clean at `879d0e9`; only
+Current git status at closure: local `main` and `origin/main` are clean at `05e1830`; only
 `main`/`origin/main` remained after pruning. QA tests, local Hermetic integration, and GitHub
 unit/type/lint/policy gates passed. No full evaluation was run.
 
@@ -1377,29 +1377,33 @@ follow-up implementation if required. No full evaluation was run.
 **Type:** QA only
 **Depends on:** PR-524
 
-**Status:** QA IMPLEMENTATION IN PROGRESS on branch `pr/PR-525-multi-fold-concurrency-qa`.
-The branch carries the protected-`main` Backlog closure update for PR-524. No full evaluation is
-being run.
+**Status:** QA MERGED as GitHub PR #488 into `origin/main` at squash commit `05e1830`; source
+branch was deleted locally and remotely. No full evaluation was run.
 
 #### Acceptance
 
-- [ ] At least eight outer folds with deliberately varied runtimes execute concurrently when CPU
+- [x] At least eight outer folds with deliberately varied runtimes execute concurrently when CPU
   capacity is available.
-- [ ] Force reverse completion order and prove DuckDB/cumulative outputs equal canonical serial fold
+- [x] Force reverse completion order and prove DuckDB/cumulative outputs equal canonical serial fold
   order.
-- [ ] Worker counts 1, 8, 32, 64 and auto produce identical final statistical results.
-- [ ] Unexpected fold failure prevents later committed aggregate state; typed invalid fold does not.
-- [ ] Single-month deployment/refit path remains unchanged and does not create unnecessary fold
+- [x] Worker counts 1, 8, 32, 64 and auto produce identical final statistical results.
+- [x] Unexpected fold failure prevents later committed aggregate state; typed invalid fold does not.
+- [x] Single-month deployment/refit path remains unchanged and does not create unnecessary fold
   controllers.
-- [ ] No nested process pool exists at fold, K, candidate or seed level.
-- [ ] QA adds no new statistical behavior.
+- [x] No nested process pool exists at fold, K, candidate or seed level.
+- [x] QA adds no new statistical behavior.
+
+Current git status at QA closure: local `main` and `origin/main` are clean at `05e1830`; only
+`main`/`origin/main` remain after pruning. QA tests, local Hermetic integration, and GitHub
+policy/lint/type/unit/merge gates passed. No full evaluation was run.
 
 ### PR-496 — Add semiautomatic feature lifecycle recommendations
 
 **Type:** implementation / governance
 **Depends on:** PR-525
 
-No production PostgreSQL column is dropped by this PR.
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-496-feature-lifecycle-recommendations`.
+No production PostgreSQL column is dropped by this PR, and no full evaluation is being run.
 
 #### Acceptance
 
