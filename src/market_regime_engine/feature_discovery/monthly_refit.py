@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import pandas as pd  # type: ignore[import-untyped]
 
@@ -215,6 +215,18 @@ OuterTestEvaluator = Callable[
 ]
 
 
+class StageCallbacks(Protocol):
+    evaluate_subset: SubsetEvaluator
+    evaluate_hmm_subset: HMMSubsetEvaluator
+    hmm_selector_contract_hash: str
+    fit_final_hmm: FinalHMMFitter
+    evaluate_gaussian_subset_by_k: PerKSubsetEvaluator
+    evaluate_outer_test: OuterTestEvaluator
+
+
+StageCallbackFactory = Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]
+
+
 def _snapshot(frame: pd.DataFrame, catalog: FeatureCatalogSnapshot) -> FeatureSnapshot:
     rows = tuple(
         FeatureRow(
@@ -417,6 +429,7 @@ def run_monthly_outer_refit(
     max_workers: int | None = None,
     evaluation_cutoff: datetime | None = None,
     state_count: int = 2,
+    stage_callback_factory: StageCallbackFactory | None = None,
 ) -> MonthlyRefitResult:
     """Rerun canonical selection at every closed month and freeze each package.
 
@@ -509,14 +522,53 @@ def run_monthly_outer_refit(
                         )
                     )
                 values = _feature_values(snapshot, quality.eligible_features)
+                test = source_rows.iloc[
+                    fold.train_source_observations : fold.train_source_observations
+                    + fold.test_source_observations
+                ].copy()
+                stage_callbacks = (
+                    stage_callback_factory(train, test, fold)
+                    if stage_callback_factory is not None
+                    else None
+                )
+                current_evaluate_subset = (
+                    cast(Any, stage_callbacks.evaluate_subset)
+                    if stage_callbacks is not None
+                    else evaluate_subset
+                )
+                current_evaluate_hmm_subset = (
+                    cast(Any, stage_callbacks.evaluate_hmm_subset)
+                    if stage_callbacks is not None
+                    else evaluate_hmm_subset
+                )
+                current_selector_hash = (
+                    str(stage_callbacks.hmm_selector_contract_hash)
+                    if stage_callbacks is not None
+                    else hmm_selector_contract_hash
+                )
+                current_fit_final_hmm = (
+                    cast(Any, stage_callbacks.fit_final_hmm)
+                    if stage_callbacks is not None
+                    else fit_final_hmm
+                )
+                current_evaluate_gaussian_subset_by_k = (
+                    cast(Any, stage_callbacks.evaluate_gaussian_subset_by_k)
+                    if stage_callbacks is not None
+                    else evaluate_gaussian_subset_by_k
+                )
+                current_evaluate_outer_test = (
+                    cast(Any, stage_callbacks.evaluate_outer_test)
+                    if stage_callbacks is not None
+                    else evaluate_outer_test
+                )
                 pipeline = run_canonical_feature_selection(
                     values,
                     contract,
                     quality_eligible_features=quality.eligible_features,
-                    evaluate_subset=evaluate_subset,
-                    evaluate_hmm_subset=evaluate_hmm_subset,
-                    hmm_selector_contract_hash=hmm_selector_contract_hash,
-                    evaluate_gaussian_subset_by_k=evaluate_gaussian_subset_by_k,
+                    evaluate_subset=current_evaluate_subset,
+                    evaluate_hmm_subset=current_evaluate_hmm_subset,
+                    hmm_selector_contract_hash=current_selector_hash,
+                    evaluate_gaussian_subset_by_k=current_evaluate_gaussian_subset_by_k,
                     state_counts=(2, 3, 4, 5),
                     profile=contract.profile,
                     max_workers=max_workers,
@@ -538,7 +590,7 @@ def run_monthly_outer_refit(
                         child_runs.append(
                             _track_stage(tracking, parent_run_id, fold, stage, params)
                         )
-                fitted_hashes = fit_final_hmm(train, selected_features, state_count)
+                fitted_hashes = current_fit_final_hmm(train, selected_features, state_count)
                 model_hashes = (
                     (fitted_hashes,) if isinstance(fitted_hashes, str) else tuple(fitted_hashes)
                 )
@@ -546,11 +598,7 @@ def run_monthly_outer_refit(
                     raise ValueError("final HMM fit returned no model hash")
                 for model_hash in model_hashes:
                     _sha(model_hash, "final HMM model hash")
-                test = source_rows.iloc[
-                    fold.train_source_observations : fold.train_source_observations
-                    + fold.test_source_observations
-                ].copy()
-                outer_test_hash = evaluate_outer_test(
+                outer_test_hash = current_evaluate_outer_test(
                     train,
                     test,
                     selected_features,
