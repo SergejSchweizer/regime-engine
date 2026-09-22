@@ -1342,8 +1342,8 @@ was deleted locally and remotely. No full evaluation was run.
 - [x] Process/order reversal preserves cumulative hashes.
 - [x] QA adds no production behavior.
 
-Current git status at closure: local `main` and `origin/main` are clean at `66ddcda`; only
-`main`/`origin/main` remain after pruning. QA tests, local Hermetic integration, and GitHub
+Current git status at closure: local `main` and `origin/main` are clean at `879d0e9`; only
+`main`/`origin/main` remained after pruning. QA tests, local Hermetic integration, and GitHub
 unit/type/lint/policy gates passed. No full evaluation was run.
 
 ### PR-524 — Parallelize independent outer-fold controllers over the shared executor
@@ -1351,9 +1351,10 @@ unit/type/lint/policy gates passed. No full evaluation was run.
 **Type:** implementation / performance orchestration
 **Depends on:** PR-495
 
-**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-524-parallel-outer-fold-controllers`.
-The outer process controller now uses the shared outer process pool as its only process executor;
-fold workers are single-lane and cannot create nested child pools. No full evaluation is being run.
+**Status:** IMPLEMENTATION MERGED as GitHub PR #487 at squash commit `879d0e9`. The source branch
+was deleted locally and remotely. The implementation closes the outer-pool/no-nested-pool
+boundary; global frontier/ordered-commit follow-up evidence remains tracked by PR-525 and a
+follow-up implementation if required. No full evaluation was run.
 
 #### Acceptance
 
@@ -1375,6 +1376,10 @@ fold workers are single-lane and cannot create nested child pools. No full evalu
 
 **Type:** QA only
 **Depends on:** PR-524
+
+**Status:** QA IMPLEMENTATION IN PROGRESS on branch `pr/PR-525-multi-fold-concurrency-qa`.
+The branch carries the protected-`main` Backlog closure update for PR-524. No full evaluation is
+being run.
 
 #### Acceptance
 
