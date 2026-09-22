@@ -37,7 +37,12 @@ from market_regime_engine.feature_discovery.contracts import (
     FinalSelectedConfiguration,
     content_hash,
 )
+from market_regime_engine.feature_discovery.feature_roles import (
+    build_feature_role_contract_from_catalog,
+)
 from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
+from market_regime_engine.feature_discovery.pipeline import fit_family_pca_stages
+from market_regime_engine.feature_discovery.quality import filter_outer_train_quality
 from market_regime_engine.features.ports import (
     FeatureCatalogSnapshot,
     FeatureRequest,
@@ -362,6 +367,29 @@ class V4LifecycleBackend:
             discovery_hash=package_identity.package_hash,
         )
         candidate = _candidate(configuration, catalog)
+        worker_count = max(1, os.cpu_count() or 1)
+        raw_feature_values = {
+            name: tuple(row.values[index] for row in snapshot.rows)
+            for index, name in enumerate(snapshot.feature_names)
+        }
+        contract = build_feature_role_contract_from_catalog(
+            catalog,
+            profile=self.profile.feature_selection,
+        )
+        quality = filter_outer_train_quality(
+            catalog,
+            snapshot,
+            snapshot.rows[0].timestamp,
+            snapshot.rows[-1].timestamp,
+            max_workers=worker_count,
+        )
+        family_pca_artifacts = fit_family_pca_stages(
+            raw_feature_values,
+            contract,
+            quality_eligible_features=quality.eligible_features,
+            profile=self.profile.feature_selection,
+            max_workers=worker_count,
+        )
         validation_rows = frame.loc[
             frame["timestamp_m1"] <= validation.monthly.plan.evaluation_cutoff
         ].copy()
@@ -389,6 +417,7 @@ class V4LifecycleBackend:
                 name for name in catalog.feature_names if not name.startswith("pca_pc_")
             ),
             pca_variance_threshold=self.profile.pca.variance_threshold,
+            family_pca_artifacts=family_pca_artifacts,
         )
         package = save_production_package(artifact, self._package_path)
         _atomic_pickle(self._selection_path, deployment)

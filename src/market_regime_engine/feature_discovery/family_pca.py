@@ -131,6 +131,60 @@ class FamilyPCAArtifact:
             raise ValueError("family PCA transform rows must be complete and finite")
         return self.scaler.transform(matrix) @ np.asarray(self.components, dtype=np.float64).T
 
+    def to_canonical_json(self) -> str:
+        """Serialize the complete fold-fitted family transform losslessly."""
+
+        return json.dumps(
+            {
+                "artifact_schema": "RegimeEngineFamilyPCA.v1",
+                "components": [list(row) for row in self.components],
+                "explained_variance_ratio": list(self.explained_variance_ratio),
+                "family": self.family,
+                "feature_order": list(self.feature_order),
+                "numerical_rank": self.numerical_rank,
+                "profile_hash": self.profile_hash,
+                "scaler": json.loads(self.scaler.to_canonical_json()),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+
+    @classmethod
+    def from_canonical_json(cls, payload: str) -> FamilyPCAArtifact:
+        raw = json.loads(payload)
+        expected = {
+            "artifact_schema",
+            "components",
+            "explained_variance_ratio",
+            "family",
+            "feature_order",
+            "numerical_rank",
+            "profile_hash",
+            "scaler",
+        }
+        if not isinstance(raw, dict) or set(raw) != expected:
+            raise ValueError("unknown/missing family PCA fields")
+        if raw["artifact_schema"] != "RegimeEngineFamilyPCA.v1":
+            raise ValueError("unsupported family PCA schema")
+        scaler_payload = raw["scaler"]
+        if not isinstance(scaler_payload, dict):
+            raise ValueError("family PCA scaler must be an object")
+        scaler = StandardScalerArtifact.from_canonical_json(
+            json.dumps(scaler_payload, sort_keys=True, separators=(",", ":"))
+        )
+        return cls(
+            family=str(raw["family"]),
+            feature_order=tuple(raw["feature_order"]),
+            scaler=scaler,
+            components=tuple(tuple(float(value) for value in row) for row in raw["components"]),
+            explained_variance_ratio=tuple(
+                float(value) for value in raw["explained_variance_ratio"]
+            ),
+            numerical_rank=int(raw["numerical_rank"]),
+            profile_hash=str(raw["profile_hash"]),
+        )
+
 
 def _canonicalize_signs(components: ArrayF64, feature_order: tuple[str, ...]) -> ArrayF64:
     oriented = np.array(components, dtype=np.float64, copy=True)

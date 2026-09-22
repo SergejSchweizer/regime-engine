@@ -10,7 +10,10 @@ from typing import Any
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
-from market_regime_engine.preprocessing.two_stage import PCATwoStageScalerArtifact
+from market_regime_engine.preprocessing.two_stage import (
+    FamilyPCATwoStageScalerArtifact,
+    PCATwoStageScalerArtifact,
+)
 
 PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v4"
 PACKAGE_DATA_FILE = "production_model.json"
@@ -197,9 +200,18 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
         raise ValueError("unknown or missing production HMM fields")
     pca_payload = payload["pca_scaler"]
     if isinstance(pca_payload, dict):
-        pca_scaler = PCATwoStageScalerArtifact.from_canonical_json(
-            json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
-        )
+        artifact_schema = pca_payload.get("artifact_schema")
+        pca_scaler: PCATwoStageScalerArtifact | FamilyPCATwoStageScalerArtifact
+        if artifact_schema == "RegimeEnginePCATwoStageScaler.v1":
+            pca_scaler = PCATwoStageScalerArtifact.from_canonical_json(
+                json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
+            )
+        elif artifact_schema == "RegimeEngineFamilyPCATwoStageScaler.v1":
+            pca_scaler = FamilyPCATwoStageScalerArtifact.from_canonical_json(
+                json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
+            )
+        else:
+            raise ValueError("unsupported production PCA scaler schema")
     else:
         raise ValueError("production PCA scaler payload is mandatory and must be a mapping")
 
