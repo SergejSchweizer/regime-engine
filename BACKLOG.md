@@ -1525,9 +1525,9 @@ family-PCA materialization and the monthly inner-fold score contract are now
 implemented; production-path call-graph QA and complete acceptance evidence
 remain open.
 Current evidence: 15 backend/boundary tests plus 58 affected command and
-feature-discovery tests, Ruff and strict Mypy pass, and the local Hermetic
-integration hook passed on the previous commit. No full evaluation and no NAS
-data run.
+feature-discovery tests, one production call-graph contract test, Ruff and
+strict Mypy pass, and the local Hermetic integration hook passed on the previous
+commit. No full evaluation and no NAS data run.
 
 This PR changes authority, not repository cleanup. It makes the new pipeline the only supported
 runtime path first; the following PRs then delete now-unreachable legacy and compatibility code.
