@@ -1402,8 +1402,13 @@ policy/lint/type/unit/merge gates passed. No full evaluation was run.
 **Type:** implementation / governance
 **Depends on:** PR-525
 
-**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-496-feature-lifecycle-recommendations`.
-No production PostgreSQL column is dropped by this PR, and no full evaluation is being run.
+**Status:** IMPLEMENTATION MERGED as GitHub PR #489 into `origin/main` at squash commit `550ecd1`;
+source branch was deleted locally and remotely. No production PostgreSQL column is dropped by
+this PR, and no full evaluation was run.
+
+Current git status at closure: local `main` and `origin/main` are clean at `550ecd1`; only
+`main`/`origin/main` remain after pruning. Lifecycle tests, mypy, Ruff, local Hermetic integration,
+and GitHub policy/lint/type/unit/merge gates passed. No full evaluation was run.
 
 #### Acceptance
 
@@ -1424,15 +1429,18 @@ No production PostgreSQL column is dropped by this PR, and no full evaluation is
 **Type:** QA only
 **Depends on:** PR-496
 
+**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-497-lifecycle-safety-qa`; all acceptance
+evidence is present and no full evaluation is being run. The QA is ready to push as the next PR.
+
 #### Acceptance
 
-- [ ] Boundary fixtures cover 19 versus 20 eligible folds and every lifecycle predicate.
-- [ ] Any recent selection, representative use or material PCA credit blocks deprecation candidacy.
-- [ ] Core/raw features cannot become automatically DROPPABLE.
-- [ ] Search the production feature-selection path and prove no PostgreSQL DROP/ALTER action exists.
-- [ ] Operator-approved state changes are explicit, auditable and reversible before physical DB
+- [x] Boundary fixtures cover 19 versus 20 eligible folds and every lifecycle predicate.
+- [x] Any recent selection, representative use or material PCA credit blocks deprecation candidacy.
+- [x] Core/raw features cannot become automatically DROPPABLE.
+- [x] Search the production feature-selection path and prove no PostgreSQL DROP/ALTER action exists.
+- [x] Operator-approved state changes are explicit, auditable and reversible before physical DB
   maintenance occurs outside this pipeline.
-- [ ] QA adds no production behavior.
+- [x] QA adds no production behavior.
 
 ---
 
