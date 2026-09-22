@@ -1456,8 +1456,9 @@ policy/lint/type/unit/merge gates passed. No full evaluation was run.
 **Type:** implementation / orchestration
 **Depends on:** PR-497
 
-**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-498-monthly-outer-refit` at `3ab8fe5`; all
-acceptance evidence is present and the PR is ready to merge after the green pushed gates. The
+**Status:** IMPLEMENTATION MERGED as GitHub PR #491 into `origin/main` at squash commit `6aee1b3`;
+source branch was deleted locally and remotely. All
+acceptance evidence passed and the
 canonical closed-month orchestration, immutable package identity, post-fit DuckDB bundle commit,
 MLflow parent/child stage manifests, four per-K SFFS slots, explicit provenance stage, and
 following-month Outer TEST digest are implemented in `feature_discovery/monthly_refit.py`.
@@ -1482,24 +1483,32 @@ No full evaluation is being run.
 - [x] Deployment/refit uses the latest closed-month TRAIN cutoff and the same pipeline implementation.
 - [x] No historical PCA-only-prefix selector remains on this new profile.
 
-Current pre-merge evidence: focused PR-498 QA (2), feature-discovery/calendar unit slice (231),
-Ruff and strict Mypy pass; local Hermetic integration passed on `3ab8fe5`; GitHub policy/lint/type/
-unit/merge gates pass. No full evaluation was run.
+Current closure evidence: focused PR-498 QA (2), feature-discovery/calendar unit slice (231),
+Ruff and strict Mypy passed; local Hermetic integration passed on `3ab8fe5`; GitHub
+policy/lint/type/unit/merge gates passed. Local `main`/`origin/main` are clean at `6aee1b3` after
+pruning. No full evaluation was run.
 
 ### PR-499 — QA: orchestration leakage, month cadence and stage parity
 
 **Type:** QA only
 **Depends on:** PR-498
 
+**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-499-orchestration-cadence-qa` from
+`origin/main` at `6aee1b3`; all acceptance evidence is present and no full evaluation is being
+run. The QA is ready to push.
+
 #### Acceptance
 
-- [ ] Golden test exercises two consecutive month-end refits and two complete OOS months.
-- [ ] Mutating month m+1 cannot alter the package fitted through month m.
-- [ ] A midmonth request resolves to the latest closed-month package without refitting.
-- [ ] Stage identities in DuckDB, package metadata and MLflow are mutually consistent.
-- [ ] Inject failure after each stage and prove no later stage is presented as complete.
-- [ ] Serial/process orchestration produces identical canonical package/statistical hashes.
-- [ ] No generated raw transformation column reaches the HMM directly.
+- [x] Golden test exercises two consecutive month-end refits and two complete OOS months.
+- [x] Mutating month m+1 cannot alter the package fitted through month m.
+- [x] A midmonth request resolves to the latest closed-month package without refitting.
+- [x] Stage identities in DuckDB, package metadata and MLflow are mutually consistent.
+- [x] Inject failure after each stage and prove no later stage is presented as complete.
+- [x] Serial/process orchestration produces identical canonical package/statistical hashes.
+- [x] No generated raw transformation column reaches the HMM directly.
+
+Current evidence: 12 focused QA tests, Ruff and strict Mypy pass; no full evaluation is being
+run. Acceptance remains open until the pushed local/GitHub gates pass.
 
 ### PR-500 — Cut over Xetra to the scalable canonical pipeline
 
