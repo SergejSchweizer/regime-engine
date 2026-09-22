@@ -1262,9 +1262,9 @@ no full evaluation was run, and no integration test ran as a GitHub merge gate.
 **Type:** QA only
 **Depends on:** PR-521
 
-**Status:** QA IMPLEMENTATION COMPLETE on branch `pr/PR-522-hmm-frontier-qa`; all acceptance
-evidence is implemented locally, no full evaluation was run, and the branch has not yet been
-pushed or opened as a GitHub PR.
+**Status:** MERGED as GitHub PR #484 into `origin/main`; source branch was deleted locally and
+remotely. No full evaluation was run, and integration tests were not part of the GitHub merge
+gate.
 
 #### Acceptance
 
@@ -1279,14 +1279,19 @@ pushed or opened as a GitHub PR.
 - [x] Matrix-transfer instrumentation proves task fan-out does not copy the full fold matrix per fit.
 - [x] QA adds no new statistical behavior.
 
-Current git status at QA closure: branch `pr/PR-522-hmm-frontier-qa` is pushed with QA-only
-changes and PR #484 is open; targeted QA tests pass, no full evaluation was run, and no
-integration test is run as a GitHub merge gate.
+Current git status at QA closure: local `main` and `origin/main` point to the merged PR; only
+those branches remain after pruning. Targeted QA tests passed, no full evaluation was run, and
+no integration test ran as a GitHub merge gate.
 
 ### PR-494 — Persist PCA credit and cumulative cross-fold feature statistics
 
 **Type:** implementation / cumulative metadata
 **Depends on:** PR-522
+
+**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-494-pca-credit-cumulative-stats`.
+PCA-loading persistence, deterministic PCA-credit attribution, cumulative DuckDB view fields,
+replay-safe upserts, and cumulative MLflow plot projection are implemented locally. No full
+evaluation has been run; integration tests remain local-only and are not a GitHub merge gate.
 
 #### Acceptance
 

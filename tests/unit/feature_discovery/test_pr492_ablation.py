@@ -15,7 +15,10 @@ from market_regime_engine.feature_discovery.ablation import (
 )
 from market_regime_engine.feature_discovery.metadata_store import (
     FeatureSelectionMetadataStore,
+    FoldFeatureStat,
+    PcaLoading,
     apply_ablation_to_feature_stats,
+    apply_pca_credit_to_feature_stats,
 )
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 from tests.unit.feature_discovery.test_metadata_store import make_bundle
@@ -132,3 +135,136 @@ def test_ablation_losses_are_persisted_without_clipping(tmp_path: Path) -> None:
             "SELECT feature_name, ablation_loss FROM fold_feature_stats ORDER BY feature_name"
         ).fetchall()
     assert values == [("a", 1.0), ("b", 0.0), ("c", -1.0)]
+
+
+def test_pca_credit_uses_squared_loading_and_excludes_direct_features() -> None:
+    selected = ("family_pc_vix_1", "direct_feature")
+
+    def evaluate(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        values = {
+            selected: 5.0,
+            ("direct_feature",): 1.0,
+            ("family_pc_vix_1",): 3.0,
+        }
+        return HMMSubsetEvaluation(
+            FeatureSubsetScore(features, values[features]),
+            "gaussian_hmm",
+            2,
+            SELECTOR_HASH,
+            sha256("|".join(features).encode()).hexdigest(),
+        )
+
+    result = run_one_feature_hmm_ablation(
+        selected, evaluate, selector_contract_hash=SELECTOR_HASH, max_workers=1
+    )
+    profile_hash = "b" * 64
+    rows = (
+        FoldFeatureStat(
+            "fold-001",
+            profile_hash,
+            "build",
+            "family_pc_vix_1",
+            True,
+            None,
+            False,
+            True,
+            None,
+            True,
+            True,
+            False,
+            None,
+        ),
+        FoldFeatureStat(
+            "fold-001",
+            profile_hash,
+            "build",
+            "source_a",
+            True,
+            None,
+            False,
+            True,
+            None,
+            False,
+            True,
+            False,
+            None,
+        ),
+        FoldFeatureStat(
+            "fold-001",
+            profile_hash,
+            "build",
+            "direct_feature",
+            True,
+            None,
+            True,
+            False,
+            None,
+            True,
+            True,
+            False,
+            None,
+        ),
+    )
+    loadings = (
+        PcaLoading("fold-001", profile_hash, "build", "vix", 1, "source_a", 0.5, 0.25, 0.8),
+    )
+    credited = apply_pca_credit_to_feature_stats(
+        apply_ablation_to_feature_stats(rows, result), loadings, result
+    )
+
+    assert credited[1].pca_credit == 1.0
+    assert credited[2].pca_credit is None
+    assert credited[2].ablation_loss == 2.0
+
+
+def test_global_stats_are_cumulative_and_replay_safe(tmp_path: Path) -> None:
+    store = FeatureSelectionMetadataStore(tmp_path)
+    profile_hash = "b" * 64
+    first = (
+        FoldFeatureStat(
+            "fold-001",
+            profile_hash,
+            "build",
+            "source_a",
+            True,
+            None,
+            False,
+            True,
+            1.0,
+            False,
+            True,
+            True,
+            4.0,
+        ),
+    )
+    second = (
+        FoldFeatureStat(
+            "fold-002",
+            profile_hash,
+            "build",
+            "source_a",
+            True,
+            None,
+            False,
+            True,
+            2.0,
+            False,
+            True,
+            False,
+            None,
+        ),
+    )
+    assert store.commit_fold_feature_stats(first) is True
+    assert store.commit_fold_feature_stats(second) is True
+    assert store.commit_fold_feature_stats(second) is True
+    with duckdb.connect(str(store.database), read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT eligible_folds, quality_pass_folds, selected_folds,
+                   selection_rate, mean_ablation_loss, median_ablation_loss,
+                   total_pca_credit, mean_pca_credit, last_selected_fold,
+                   consecutive_unused_folds
+            FROM feature_global_stats WHERE feature_name = 'source_a'
+            """
+        ).fetchone()
+    assert row == (2, 2, 1, 0.5, 4.0, 4.0, 3.0, 1.5, "fold-001", 1)

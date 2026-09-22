@@ -12,15 +12,18 @@ from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
     build_feature_role_contract,
 )
+from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
 from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 from market_regime_engine.mlflow_support.feature_selection_evidence import (
     log_feature_selection_evidence,
+    render_cumulative_feature_stats,
     render_feature_selection_evidence,
     verify_feature_selection_evidence_bundle,
 )
 from market_regime_engine.mlflow_support.ports import TrackingPort
 from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
+from tests.unit.feature_discovery.test_metadata_store import make_bundle
 
 
 def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(
@@ -104,3 +107,16 @@ def test_feature_selection_evidence_bundle_is_complete_and_hash_stable(
     first[0].unlink()
     with pytest.raises(ValueError, match=r"artifact hash mismatch|required"):
         verify_feature_selection_evidence_bundle(tmp_path / "first")
+
+
+def test_cumulative_feature_stats_plots_read_only_from_committed_view(tmp_path: Path) -> None:
+    store = FeatureSelectionMetadataStore(tmp_path / "metadata")
+    assert store.commit_fold(make_bundle()) is True
+    paths = render_cumulative_feature_stats(store, fold_id="fold-001", output_dir=tmp_path)
+
+    assert {path.name for path in paths} == {
+        "feature_global_stats.json",
+        "selection_frequency.png",
+        "mean_ablation_loss.png",
+        "pca_credit.png",
+    }

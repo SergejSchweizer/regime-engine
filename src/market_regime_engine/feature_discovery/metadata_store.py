@@ -8,11 +8,13 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 
 import duckdb
 
 from market_regime_engine.feature_discovery.ablation import AblationResult
+from market_regime_engine.feature_discovery.feature_roles import family_pc_name
 from market_regime_engine.feature_discovery.sffs import SFFSResult
 
 _TABLES = (
@@ -200,6 +202,47 @@ def apply_ablation_to_feature_stats(
     return tuple(output)
 
 
+def apply_pca_credit_to_feature_stats(
+    rows: tuple[FoldFeatureStat, ...],
+    loadings: tuple[PcaLoading, ...],
+    result: AblationResult,
+) -> tuple[FoldFeatureStat, ...]:
+    """Attribute selected PCA-component ablation loss to source features.
+
+    Credits are intentionally based on the absolute component ablation loss and
+    squared loading.  Direct features keep their own ablation loss and never
+    receive synthetic PCA credit.
+    """
+
+    identities = {(row.fold_id, row.profile_hash, row.source_build_id) for row in rows} | {
+        (item.fold_id, item.profile_hash, item.source_build_id) for item in loadings
+    }
+    if len(identities) > 1:
+        raise ValueError("feature stats and PCA loadings must share one fold identity")
+    losses = {
+        observation.removed_feature: observation.ablation_loss
+        for observation in result.one_feature_results
+        if observation.ablation_loss is not None
+    }
+    credits: dict[str, float] = {}
+    for loading in loadings:
+        if not isfinite(loading.squared_loading) or loading.squared_loading < 0.0:
+            raise ValueError("PCA squared loading must be finite and non-negative")
+        component = family_pc_name(loading.family, loading.pc_ordinal)
+        loss = losses.get(component)
+        if loss is not None:
+            credits[loading.source_feature] = credits.get(loading.source_feature, 0.0) + (
+                abs(loss) * loading.squared_loading
+            )
+    return tuple(
+        replace(
+            row,
+            pca_credit=(credits.get(row.feature_name, 0.0) if row.pc_participation else None),
+        )
+        for row in rows
+    )
+
+
 def sffs_step_records(
     result: SFFSResult,
     *,
@@ -385,14 +428,43 @@ class FeatureSelectionMetadataStore:
                 PRIMARY KEY (fold_id, profile_hash, source_build_id, state_count, model_family)
             );
             CREATE OR REPLACE VIEW feature_global_stats AS
+            WITH ordered AS (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY feature_name ORDER BY fold_id DESC
+                    ) AS reverse_fold_number
+                FROM fold_feature_stats
+            )
             SELECT
                 feature_name,
                 count(*) AS fold_count,
                 count(*) FILTER (WHERE eligible) AS eligible_fold_count,
+                count(*) FILTER (WHERE eligible) AS eligible_folds,
+                count(*) FILTER (WHERE eligible) AS quality_pass_folds,
                 count(*) FILTER (WHERE final_selection) AS final_selection_count,
+                count(*) FILTER (WHERE final_selection) AS selected_folds,
                 count(*) FILTER (WHERE representative) AS representative_fold_count,
-                avg(ablation_loss) FILTER (WHERE ablation_loss IS NOT NULL) AS mean_ablation_loss
-            FROM fold_feature_stats
+                count(*) FILTER (WHERE representative) AS representative_folds,
+                count(*) FILTER (WHERE direct_participation AND final_selection)
+                    AS direct_selection_count,
+                CASE
+                    WHEN count(*) FILTER (WHERE eligible) = 0 THEN NULL
+                    ELSE CAST(count(*) FILTER (WHERE final_selection) AS DOUBLE)
+                         / count(*) FILTER (WHERE eligible)
+                END AS selection_rate,
+                avg(ablation_loss) FILTER (WHERE ablation_loss IS NOT NULL)
+                    AS mean_ablation_loss,
+                median(ablation_loss) FILTER (WHERE ablation_loss IS NOT NULL)
+                    AS median_ablation_loss,
+                sum(pca_credit) FILTER (WHERE pca_credit IS NOT NULL) AS total_pca_credit,
+                avg(pca_credit) FILTER (WHERE pca_credit IS NOT NULL) AS mean_pca_credit,
+                max(fold_id) FILTER (WHERE final_selection) AS last_selected_fold,
+                coalesce(
+                    min(reverse_fold_number) FILTER (WHERE final_selection) - 1,
+                    count(*)
+                ) AS consecutive_unused_folds
+            FROM ordered
             GROUP BY feature_name;
             """
         )
@@ -565,6 +637,46 @@ class FeatureSelectionMetadataStore:
                 connection.execute("ROLLBACK")
                 raise
 
+    def commit_pca_loadings(self, rows: tuple[PcaLoading, ...]) -> bool:
+        """Persist immutable PCA loading evidence for one fold."""
+
+        if not rows:
+            return False
+        identities = {(row.fold_id, row.profile_hash, row.source_build_id) for row in rows}
+        if len(identities) != 1:
+            raise ValueError("PCA loading rows must share one fold identity")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                for row in rows:
+                    values = list(asdict(row).values())
+                    key = values[:6]
+                    existing = connection.execute(
+                        """
+                        SELECT fold_id, profile_hash, source_build_id, family,
+                               pc_ordinal, source_feature, loading, squared_loading,
+                               explained_variance
+                        FROM pca_loadings
+                        WHERE fold_id = ? AND profile_hash = ? AND source_build_id = ?
+                          AND family = ? AND pc_ordinal = ? AND source_feature = ?
+                        """,
+                        key,
+                    ).fetchone()
+                    if existing is not None and tuple(existing) != tuple(values):
+                        raise ValueError("conflicting immutable PCA loading identity")
+                    connection.execute(
+                        """
+                        INSERT INTO pca_loadings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        values,
+                    )
+                connection.execute("COMMIT")
+                return True
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     @staticmethod
     def _insert_fold_rows(
         connection: duckdb.DuckDBPyConnection,
@@ -667,5 +779,6 @@ __all__ = [
     "PcaLoading",
     "SFFSStepRecord",
     "apply_ablation_to_feature_stats",
+    "apply_pca_credit_to_feature_stats",
     "sffs_step_records",
 ]
