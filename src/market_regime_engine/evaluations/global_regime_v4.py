@@ -346,9 +346,9 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
 
     The default production path uses process workers at the outer-fold level.
     That keeps Python feature-discovery/scoring work outside the GIL while
-    reducing nested numerical pools to one lane per process. The eight
-    independent folds in a full run then occupy the machine globally instead
-    of competing inside one interpreter's thread pool.
+    keeping every controller single-lane: the process pool is the only process
+    executor. Independent outer folds therefore occupy the shared pool instead
+    of creating nested child pools inside a fold worker.
     """
 
     context = _OUTER_PROCESS_CONTEXT
@@ -363,9 +363,7 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
             build_id=context.build_id,
             outer_runner=context.outer_runner,
             teacher_refitter=context.teacher_refitter,
-            max_workers=_nested_worker_limit_for_fold(
-                context.nested_worker_limits, fold.fold_index
-            ),
+            max_workers=1,
             pca_raw_feature_order=context.pca_raw_feature_order,
             pca_variance_threshold=context.pca_variance_threshold,
         )
@@ -395,7 +393,7 @@ def _evaluate_outer_fold_process(fold: WalkForwardFold) -> OuterFoldResult:
         build_id=context.build_id,
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
-        max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
+        max_workers=1,
         pca_raw_feature_order=context.pca_raw_feature_order,
         pca_variance_threshold=context.pca_variance_threshold,
         stage_checkpoint=StageCheckpoint(context.run_identity, store, fold.fold_id),
@@ -458,7 +456,7 @@ def _evaluate_outer_fold_process_with_selection(
         build_id=context.build_id,
         outer_runner=context.outer_runner,
         teacher_refitter=context.teacher_refitter,
-        max_workers=_nested_worker_limit_for_fold(context.nested_worker_limits, fold.fold_index),
+        max_workers=1,
         pca_raw_feature_order=context.pca_raw_feature_order,
         pca_variance_threshold=context.pca_variance_threshold,
         selection_sink=lambda _fold_index, selection: captured.append(selection),

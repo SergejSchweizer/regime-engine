@@ -531,6 +531,43 @@ def test_pickleable_custom_outer_callbacks_use_process_workers(
     assert result.valid_fold_count == 0
 
 
+def test_outer_process_controller_never_creates_a_nested_worker_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    rows = _rows()
+    fold = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward).folds[0]
+    calls: list[int | None] = []
+
+    def fake_outer_fold(*args: object, **kwargs: object) -> OuterFoldResult:
+        del args
+        calls.append(cast(int | None, kwargs["max_workers"]))
+        configuration = global_v4._fallback_configuration(catalog, "build-1", fold, "synthetic")
+        return global_v4._invalid_outer_fold(fold, configuration, "synthetic controller test")
+
+    context = SimpleNamespace(
+        source_rows=rows,
+        catalog=catalog,
+        profile=profile,
+        build_id="build-1",
+        outer_runner=_pickleable_outer_callback,
+        teacher_refitter=_pickleable_teacher_callback,
+        nested_worker_limits=(86,),
+        run_store_root=None,
+        run_identity=None,
+        pca_raw_feature_order=tuple(catalog.feature_names),
+        pca_variance_threshold=profile.pca.variance_threshold,
+    )
+    monkeypatch.setattr(global_v4, "_OUTER_PROCESS_CONTEXT", context)
+    monkeypatch.setattr(global_v4, "_evaluate_outer_fold", fake_outer_fold)
+
+    result = global_v4._evaluate_outer_fold_process(fold)
+
+    assert result.valid is False
+    assert calls == [1]
+
+
 def test_failure_configuration_requires_two_catalog_features() -> None:
     lineage = _catalog().lineage
     one_feature = FeatureCatalogSnapshot.from_entries(
