@@ -1521,8 +1521,9 @@ implemented in `commands/canonical_xetra.py` and is covered by focused unit
 tests. Per-fold callback factories now bind model evaluation to each closed
 month's TRAIN/TEST boundary. The backend now routes evaluation, canonical
 package-based refit and OOS publication through that boundary. Raw-source/
-family-PCA materialization, the full inner-fold score/evidence contract and
-production-path call-graph QA remain open.
+family-PCA materialization and the monthly inner-fold score contract are now
+implemented; production-path call-graph QA and complete acceptance evidence
+remain open.
 Current evidence: 15 backend/boundary tests plus 58 affected command and
 feature-discovery tests, Ruff and strict Mypy pass, and the local Hermetic
 integration hook passed on the previous commit. No full evaluation and no NAS

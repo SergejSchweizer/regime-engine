@@ -13,9 +13,15 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.commands.canonical_xetra import CanonicalStageCallbacks
-from market_regime_engine.evaluation.calendar_clock import CalendarMonthFold
+from market_regime_engine.evaluation.calendar_clock import CalendarMonthFold, plan_calendar_month
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
+from market_regime_engine.feature_discovery.feature_subset_score import (
+    FeatureSubsetCandidate,
+    FeatureSubsetFoldEvidence,
+    score_feature_subset,
+    to_sffs_score,
+)
 from market_regime_engine.feature_discovery.monthly_refit import StageCallbacks
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 from market_regime_engine.features.ports import FeatureCatalogSnapshot
@@ -93,9 +99,71 @@ class CanonicalModelCallbacks:
             state_count=state_count,
         )
 
+    def _inner_score(
+        self, features: tuple[str, ...], state_count: int
+    ) -> FeatureSubsetScore | None:
+        timestamps = tuple(self.train.loc[:, "timestamp_m1"].tolist())
+        plan = plan_calendar_month(
+            timestamps,
+            minimum_train_source_observations=(
+                self.profile.feature_discovery.inner_train_source_observations
+            ),
+        )
+        evidence: list[FeatureSubsetFoldEvidence] = []
+        for fold in plan.folds:
+            train = self.train.iloc[: fold.train_source_observations].copy()
+            test = self.train.iloc[
+                fold.train_source_observations : fold.train_source_observations
+                + fold.test_source_observations
+            ].copy()
+            fold_callbacks = CanonicalModelCallbacks(
+                train=train,
+                test=test,
+                profile=self.profile,
+                catalog=self.catalog,
+                source_build_id=self.source_build_id,
+                max_workers=self.max_workers,
+            )
+            try:
+                fit = fold_callbacks._fit(features, state_count)
+                adapter = CandidateAdapterFactory("gaussian_hmm", features)()
+                adapter.reconstruct(fit.winner.artifact)
+                filtered = adapter.causal_filter(fold_callbacks._matrix(test, features))
+                target = filtered.log_likelihood / max(1, len(test))
+                bounded = (tanh(abs(target)) + 1.0) / 2.0
+                evidence.append(
+                    FeatureSubsetFoldEvidence(
+                        fold_id=fold.fold_id,
+                        valid=True,
+                        latest=fold is plan.folds[-1],
+                        target_log_score=target,
+                        baseline_target_log_score=0.0,
+                        calibration_error=1.0 - bounded,
+                        stability_score=fit.success_rate,
+                        support_score=min(1.0, len(test) / 42.0),
+                    )
+                )
+            except (RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError) as exc:
+                evidence.append(
+                    FeatureSubsetFoldEvidence(
+                        fold_id=fold.fold_id,
+                        valid=False,
+                        latest=fold is plan.folds[-1],
+                        invalid_reason=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+        candidate = FeatureSubsetCandidate(
+            feature_names=features,
+            feature_order_hash=_hash(features),
+            source_build_id=self.source_build_id,
+            evaluation_plan_hash=plan.plan_hash,
+            folds=tuple(evidence),
+        )
+        return to_sffs_score(score_feature_subset(candidate, latest_fold_id=plan.folds[-1].fold_id))
+
     def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
         try:
-            return self._score(features, 2, self._fit(features, 2))
+            return self._inner_score(features, 2)
         except RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError:
             return None
 
@@ -103,7 +171,7 @@ class CanonicalModelCallbacks:
         self, state_count: int, features: tuple[str, ...]
     ) -> FeatureSubsetScore | None:
         try:
-            return self._score(features, state_count, self._fit(features, state_count))
+            return self._inner_score(features, state_count)
         except RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError:
             return None
 
@@ -111,7 +179,7 @@ class CanonicalModelCallbacks:
         try:
             fit = self._fit(features, 2)
             return HMMSubsetEvaluation(
-                score=self._score(features, 2, fit),
+                score=self._inner_score(features, 2),
                 model_family="gaussian_hmm",
                 state_count=2,
                 selector_contract_hash=self.hmm_selector_contract_hash,
