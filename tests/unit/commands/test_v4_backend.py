@@ -49,11 +49,20 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
     backend.root = Path(__file__).parents[3]
     backend.state_root = tmp_path / "lifecycle"
     backend.profile = SimpleNamespace(
+        profile_hash="a" * 64,
         pca=SimpleNamespace(variance_threshold=0.90, component_count=8),
     )
     backend.mlflow_settings = SimpleNamespace(tracking_uri="file:///tmp/mlflow")
     catalog = SimpleNamespace(lineage=SimpleNamespace(source_build_id="build-1"))
-    snapshot = SimpleNamespace()
+    snapshot = SimpleNamespace(
+        feature_names=("f0",),
+        rows=(
+            SimpleNamespace(
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                values=(1.0,),
+            ),
+        ),
+    )
 
     class Source:
         def read_with_catalog(self, request):
@@ -61,14 +70,11 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
             return catalog, snapshot
 
     backend._source = Source()
-    fold = SimpleNamespace(
-        valid=True,
-        final_configuration=SimpleNamespace(candidate_id="gaussian_hmm_k2_full"),
-    )
+    package = SimpleNamespace(state_count=2)
     result = SimpleNamespace(
         source_build_id="build-1",
         production_eligible=True,
-        outer_folds=(fold,),
+        latest_package=package,
     )
     captured: dict[str, object] = {}
 
@@ -80,29 +86,20 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
         assert source_snapshot is snapshot
         return SimpleNamespace(catalog=catalog, snapshot=snapshot)
 
-    def fake_evaluate(source, **kwargs):
-        captured["source"] = source
+    def fake_evaluate(rows, **kwargs):
+        captured["rows"] = rows
         captured.update(kwargs)
         return result
 
-    monkeypatch.setattr(module, "evaluate_global_regime_v4_from_source", fake_evaluate)
+    monkeypatch.setattr(module, "run_canonical_xetra_evaluation", fake_evaluate)
     monkeypatch.setattr(module, "fit_and_materialize_pca_source", fake_materialize)
-    monkeypatch.setattr(
-        module,
-        "build_feature_role_contract_from_catalog",
-        lambda catalog: object(),
-    )
-    monkeypatch.setattr(module, "build_global_v4_evidence", lambda *args, **kwargs: object())
-    monkeypatch.setattr(module, "track_global_v4_evaluation", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "FileMlflowTrackingPort", lambda *args, **kwargs: object())
-    monkeypatch.setattr(module, "_commit", lambda root: "c" * 40)
-    monkeypatch.setattr(module, "_file_sha256", lambda path: "d" * 64)
 
     outcome = backend.evaluate("xetra", "build-1")
 
     assert outcome.statistical_champion_candidate_id == "gaussian_hmm_k2_full"
-    assert "run_store" not in captured
-    assert isinstance(captured["snapshot_store"], module.ArrowDatasetSnapshotStore)
+    assert captured["rows"].empty is False
+    assert isinstance(captured["metadata_store"], module.FeatureSelectionMetadataStore)
     assert pca_calls == [{"variance_threshold": 0.90, "component_count": 8}]
     assert not (backend.state_root / "evaluation-runs").exists()
 
@@ -156,6 +153,7 @@ def test_lifecycle_backend_source_capture_and_saved_state(
 ) -> None:
     backend = object.__new__(module.V4LifecycleBackend)
     backend.state_root = tmp_path / "lifecycle"
+    backend.profile = SimpleNamespace()
     backend.profile = SimpleNamespace(
         pca=SimpleNamespace(variance_threshold=0.95, component_count=None),
     )
@@ -188,14 +186,19 @@ def test_lifecycle_backend_cached_evaluation_and_registry_resolution(
     backend = object.__new__(module.V4LifecycleBackend)
     backend.state_root = tmp_path / "lifecycle"
     backend.mlflow_settings = SimpleNamespace(tracking_uri="file:///tmp/mlflow")
-    fold = SimpleNamespace(
-        valid=True,
-        final_configuration=SimpleNamespace(candidate_id="candidate"),
+    package = SimpleNamespace(state_count=3)
+    monthly = SimpleNamespace(valid_folds=(SimpleNamespace(package=package),))
+    result = module.CanonicalXetraEvaluation(
+        monthly=monthly,
+        source_build_id="build",
+        feature_selection_profile_hash="a" * 64,
+        selected_features_by_fold=(("vix_log_level", "move_log_level"),),
     )
-    result = SimpleNamespace(source_build_id="build", outer_folds=(fold,))
     module._atomic_pickle(backend._evaluation_path, result)
-    monkeypatch.setattr(module, "AdaptiveEvaluationResult", type(result))
-    assert backend.evaluate("xetra", "build").statistical_champion_candidate_id == "candidate"
+    assert (
+        backend.evaluate("xetra", "build").statistical_champion_candidate_id
+        == "gaussian_hmm_k3_full"
+    )
     with pytest.raises(ValueError, match="differs"):
         backend.evaluate("xetra", "other")
     with pytest.raises(ValueError, match="only xetra"):
@@ -306,28 +309,37 @@ def test_lifecycle_oos_publication_builds_and_persists_canonical_rows(
 ) -> None:
     backend = object.__new__(module.V4LifecycleBackend)
     backend.state_root = tmp_path / "lifecycle"
+    backend.profile = SimpleNamespace()
     timestamp = datetime(2024, 1, 1, tzinfo=UTC)
-    configuration = SimpleNamespace(
-        candidate_id="gaussian_hmm_k2_full",
-        selection_definition_hash="a" * 64,
-        selection_execution_hash="b" * 64,
+    package = SimpleNamespace(
+        selected_features=("vix_log_level", "move_log_level"),
+        state_count=2,
+        model_hashes=("a" * 64,),
+        package_hash="b" * 64,
+        feature_selection_profile_hash="c" * 64,
     )
     fold = SimpleNamespace(
-        valid=True,
-        fold_index=1,
-        final_configuration=configuration,
-        oos_timestamps=(timestamp,),
-        oos_filtered_probabilities=((0.25, 0.75),),
+        fold=SimpleNamespace(
+            fold_id="outer_fold_001",
+            train_source_observations=1,
+            test_source_observations=1,
+        ),
+        package=package,
     )
-    result = SimpleNamespace(
+    monthly = SimpleNamespace(
         result_hash="result-hash",
-        source_build_id="build-1",
-        policy_hash="policy-hash",
-        outer_folds=(fold,),
+        plan=SimpleNamespace(plan_hash="policy-hash"),
+        valid_folds=(fold,),
     )
-    monkeypatch.setattr(module, "AdaptiveEvaluationResult", type(result))
+    result = module.CanonicalXetraEvaluation(
+        monthly=monthly,
+        source_build_id="build-1",
+        feature_selection_profile_hash="c" * 64,
+        selected_features_by_fold=package.selected_features,
+    )
     module._atomic_pickle(backend._evaluation_path, result)
     catalog = SimpleNamespace(
+        feature_names=("vix_log_level", "move_log_level"),
         catalog_hash="catalog-hash",
         lineage=SimpleNamespace(
             data_sha256="data-hash",
@@ -336,7 +348,19 @@ def test_lifecycle_oos_publication_builds_and_persists_canonical_rows(
             synced_at_utc=timestamp,
         ),
     )
-    backend._saved_source = lambda: (catalog, object())
+    snapshot = SimpleNamespace(
+        feature_names=("vix_log_level", "move_log_level"),
+        rows=(
+            SimpleNamespace(timestamp=timestamp, values=(1.0, 2.0)),
+            SimpleNamespace(timestamp=datetime(2024, 1, 2, tzinfo=UTC), values=(1.0, 2.0)),
+        ),
+    )
+    backend._saved_source = lambda: (catalog, snapshot)
+    monkeypatch.setattr(
+        module.CanonicalModelCallbacks,
+        "outer_test_probabilities",
+        lambda self, features, state_count, model_hashes: ((timestamp,), ((0.25, 0.75),)),
+    )
     published: dict[str, object] = {}
 
     class Store:

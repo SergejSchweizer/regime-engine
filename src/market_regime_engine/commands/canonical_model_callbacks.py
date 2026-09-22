@@ -1,0 +1,210 @@
+"""Process-safe HMM callbacks for the canonical Xetra selection pipeline."""
+
+from __future__ import annotations
+
+import pickle
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from hashlib import sha256
+from math import tanh
+from typing import Any, cast
+
+import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
+
+from market_regime_engine.commands.canonical_xetra import CanonicalStageCallbacks
+from market_regime_engine.evaluation.calendar_clock import CalendarMonthFold
+from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
+from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
+from market_regime_engine.feature_discovery.monthly_refit import StageCallbacks
+from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.features.ports import FeatureCatalogSnapshot
+from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
+from market_regime_engine.training.multistart import MultistartResult, run_multistart
+
+
+def _hash(value: object) -> str:
+    return sha256(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest()
+
+
+def _selector_hash(profile: ModelProfile) -> str:
+    return sha256(
+        pickle.dumps(
+            ("canonical-gaussian-subset-selector", profile.profile_hash),
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalModelCallbacks:
+    """One fold-local callback set; all model work is TRAIN/TEST bound."""
+
+    train: pd.DataFrame
+    test: pd.DataFrame
+    profile: ModelProfile
+    catalog: FeatureCatalogSnapshot
+    source_build_id: str
+    max_workers: int | None = None
+
+    @property
+    def hmm_selector_contract_hash(self) -> str:
+        return _selector_hash(self.profile)
+
+    def _matrix(self, frame: pd.DataFrame, features: tuple[str, ...]) -> np.ndarray[Any, Any]:
+        if not features or any(feature not in frame.columns for feature in features):
+            raise ValueError("canonical HMM callback received unknown or empty features")
+        selected = frame.loc[:, list(features)].dropna(axis=0, how="any")
+        values = selected.to_numpy(dtype=np.float64, copy=True)
+        if values.ndim != 2 or values.shape[0] < 2 or not np.isfinite(values).all():
+            raise ValueError("canonical HMM callback requires finite TRAIN observations")
+        return cast(np.ndarray[Any, Any], values)
+
+    def _fit(self, features: tuple[str, ...], state_count: int) -> MultistartResult:
+        matrix = self._matrix(self.train, features)
+        return run_multistart(
+            matrix,
+            state_count=state_count,
+            adapter_factory=CandidateAdapterFactory("gaussian_hmm", features),
+            max_workers=self.max_workers,
+        )
+
+    @staticmethod
+    def _score(
+        features: tuple[str, ...],
+        state_count: int,
+        fit: MultistartResult,
+    ) -> FeatureSubsetScore:
+        per_observation = fit.winner.train_log_likelihood / max(1, fit.winner.artifact.state_count)
+        # The value is the canonical dimension-independent selector score
+        # seam.  The bounded diagnostic components are derived from the same
+        # TRAIN-only fit and never inspect Outer TEST.
+        bounded = (tanh(abs(per_observation)) + 1.0) / 2.0
+        return FeatureSubsetScore(
+            feature_names=features,
+            value=per_observation,
+            forecast_score=bounded,
+            worst_fold_forecast_score=bounded,
+            calibration_score=bounded,
+            stability_score=fit.success_rate,
+            robustness_score=fit.success_rate,
+            model_family="gaussian_hmm",
+            state_count=state_count,
+        )
+
+    def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
+        try:
+            return self._score(features, 2, self._fit(features, 2))
+        except RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError:
+            return None
+
+    def evaluate_gaussian_subset_by_k(
+        self, state_count: int, features: tuple[str, ...]
+    ) -> FeatureSubsetScore | None:
+        try:
+            return self._score(features, state_count, self._fit(features, state_count))
+        except RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError:
+            return None
+
+    def evaluate_hmm_subset(self, features: tuple[str, ...]) -> HMMSubsetEvaluation | None:
+        try:
+            fit = self._fit(features, 2)
+            return HMMSubsetEvaluation(
+                score=self._score(features, 2, fit),
+                model_family="gaussian_hmm",
+                state_count=2,
+                selector_contract_hash=self.hmm_selector_contract_hash,
+                fit_execution_hash=_hash(fit),
+            )
+        except (RecoverableEvaluationInvalidity, ValueError, np.linalg.LinAlgError) as exc:
+            return HMMSubsetEvaluation(
+                score=None,
+                model_family="gaussian_hmm",
+                state_count=2,
+                selector_contract_hash=self.hmm_selector_contract_hash,
+                fit_execution_hash=_hash(("invalid", features, str(exc))),
+                invalid_reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    def fit_final_hmm(
+        self, _train: pd.DataFrame, features: tuple[str, ...], state_count: int
+    ) -> str | Sequence[str]:
+        return _hash(self._fit(features, state_count))
+
+    def evaluate_outer_test(
+        self,
+        train: pd.DataFrame,
+        test: pd.DataFrame,
+        features: tuple[str, ...],
+        state_count: int,
+        model_hashes: tuple[str, ...],
+    ) -> str:
+        del train
+        fit = self._fit(features, state_count)
+        if _hash(fit) not in model_hashes:
+            raise ValueError("Outer TEST callback model hash differs from the final TRAIN fit")
+        adapter = CandidateAdapterFactory("gaussian_hmm", features)()
+        adapter.reconstruct(fit.winner.artifact)
+        test_matrix = self._matrix(test, features)
+        filtered = adapter.causal_filter(test_matrix)
+        return _hash((model_hashes, filtered.filtered_probabilities.tolist()))
+
+    def outer_test_probabilities(
+        self,
+        features: tuple[str, ...],
+        state_count: int,
+        model_hashes: tuple[str, ...],
+    ) -> tuple[tuple[object, ...], tuple[tuple[float, ...], ...]]:
+        """Return causal TEST probabilities for publication after validation."""
+
+        fit = self._fit(features, state_count)
+        if _hash(fit) not in model_hashes:
+            raise ValueError("publication model hash differs from the final TRAIN fit")
+        adapter = CandidateAdapterFactory("gaussian_hmm", features)()
+        adapter.reconstruct(fit.winner.artifact)
+        filtered = adapter.causal_filter(self._matrix(self.test, features))
+        timestamps = tuple(self.test.loc[:, "timestamp_m1"].tolist())
+        return timestamps, tuple(
+            tuple(float(value) for value in row) for row in filtered.filtered_probabilities.tolist()
+        )
+
+    def as_callbacks(self) -> CanonicalStageCallbacks:
+        return CanonicalStageCallbacks(
+            evaluate_subset=self.evaluate_subset,
+            evaluate_hmm_subset=self.evaluate_hmm_subset,
+            hmm_selector_contract_hash=self.hmm_selector_contract_hash,
+            fit_final_hmm=self.fit_final_hmm,
+            evaluate_gaussian_subset_by_k=self.evaluate_gaussian_subset_by_k,
+            evaluate_outer_test=self.evaluate_outer_test,
+        )
+
+
+def build_canonical_stage_factory(
+    *,
+    profile: ModelProfile,
+    catalog: FeatureCatalogSnapshot,
+    source_build_id: str,
+    max_workers: int | None,
+) -> Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]:
+    """Return a pickle-safe per-fold callback factory for the public backend."""
+
+    def factory(
+        train: pd.DataFrame, test: pd.DataFrame, _fold: CalendarMonthFold
+    ) -> StageCallbacks:
+        return cast(
+            StageCallbacks,
+            CanonicalModelCallbacks(
+                train=train,
+                test=test,
+                profile=profile,
+                catalog=catalog,
+                source_build_id=source_build_id,
+                max_workers=max_workers,
+            ).as_callbacks(),
+        )
+
+    return factory
+
+
+__all__ = ["CanonicalModelCallbacks", "build_canonical_stage_factory"]

@@ -1519,10 +1519,14 @@ run. Acceptance remains open until the pushed local/GitHub gates pass.
 `origin/main` at `f8a83a4`. The public canonical orchestration boundary is now
 implemented in `commands/canonical_xetra.py` and is covered by focused unit
 tests. Per-fold callback factories now bind model evaluation to each closed
-month's TRAIN/TEST boundary. The lifecycle backend still needs to be wired to
-production model callbacks and the refit/package path before this PR can be
-accepted. Current focused evidence: 4 tests, Ruff and strict Mypy pass; no
-full evaluation and no NAS data run.
+month's TRAIN/TEST boundary. The backend now routes evaluation, canonical
+package-based refit and OOS publication through that boundary. Raw-source/
+family-PCA materialization, the full inner-fold score/evidence contract and
+production-path call-graph QA remain open.
+Current evidence: 15 backend/boundary tests plus 58 affected command and
+feature-discovery tests, Ruff and strict Mypy pass, and the local Hermetic
+integration hook passed on the previous commit. No full evaluation and no NAS
+data run.
 
 This PR changes authority, not repository cleanup. It makes the new pipeline the only supported
 runtime path first; the following PRs then delete now-unreachable legacy and compatibility code.
