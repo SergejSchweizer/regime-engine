@@ -14,10 +14,12 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import duckdb
 import matplotlib.pyplot as plt
 
 from market_regime_engine.feature_discovery.family_reduction import _absolute_pearson
 from market_regime_engine.feature_discovery.feature_roles import FeatureRoleContract
+from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
 from market_regime_engine.feature_discovery.pipeline import FeatureSelectionPipelineResult
 from market_regime_engine.mlflow_support.ports import TrackingPort
 
@@ -311,9 +313,92 @@ def log_feature_selection_evidence(
     return True
 
 
+def render_cumulative_feature_stats(
+    store: FeatureSelectionMetadataStore,
+    *,
+    fold_id: str,
+    output_dir: str | Path,
+) -> tuple[Path, ...]:
+    """Render the committed cumulative feature-statistics projection.
+
+    The DuckDB view is the sole source for these plots; no in-memory fold
+    accumulator is consulted.  Replaying a fold therefore produces the same
+    artifacts and cannot double-count a contribution.
+    """
+
+    root = Path(output_dir) / "feature_selection" / "cumulative"
+    root.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(store.database), read_only=True) as connection:
+        rows = connection.execute(
+            """
+            SELECT feature_name, selected_folds, selection_rate,
+                   mean_ablation_loss, total_pca_credit
+            FROM feature_global_stats
+            ORDER BY feature_name
+            """
+        ).fetchall()
+    payload = {
+        "fold_id": fold_id,
+        "features": [
+            {
+                "feature_name": name,
+                "selected_folds": selected,
+                "selection_rate": rate,
+                "mean_ablation_loss": mean_loss,
+                "total_pca_credit": credit,
+            }
+            for name, selected, rate, mean_loss, credit in rows
+        ],
+    }
+    table = root / "feature_global_stats.json"
+    _write_json(table, payload)
+    paths = [table]
+    chart_specs = (
+        ("selection_frequency.png", "Cumulative feature selection rate", 2),
+        ("mean_ablation_loss.png", "Cumulative mean ablation loss", 3),
+        ("pca_credit.png", "Cumulative PCA credit", 4),
+    )
+    labels = tuple(str(row[0]) for row in rows)
+    for filename, title, index in chart_specs:
+        figure, axis = plt.subplots(figsize=(12.0, 6.0))
+        try:
+            values = tuple(float(row[index] or 0.0) for row in rows)
+            axis.bar(labels, values)
+            axis.set_title(f"{title} — through {fold_id}")
+            axis.tick_params(axis="x", rotation=60)
+            figure.tight_layout()
+            path = root / filename
+            figure.savefig(path, dpi=180, format="png")
+        finally:
+            plt.close(figure)
+        paths.append(path)
+    return tuple(paths)
+
+
+def log_cumulative_feature_stats(
+    port: TrackingPort,
+    run_id: str,
+    store: FeatureSelectionMetadataStore,
+    *,
+    fold_id: str,
+    output_dir: str | Path,
+    artifact_path: str = "feature_selection/cumulative",
+) -> bool:
+    """Project committed cumulative stats to MLflow after a completed fold."""
+
+    try:
+        for path in render_cumulative_feature_stats(store, fold_id=fold_id, output_dir=output_dir):
+            port.log_artifact(run_id, str(path), artifact_path)
+    except Exception:
+        return False
+    return True
+
+
 __all__ = [
     "FeatureSelectionEvidenceIdentity",
+    "log_cumulative_feature_stats",
     "log_feature_selection_evidence",
+    "render_cumulative_feature_stats",
     "render_feature_selection_evidence",
     "verify_feature_selection_evidence_bundle",
 ]

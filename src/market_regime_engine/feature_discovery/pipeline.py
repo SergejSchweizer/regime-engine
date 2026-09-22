@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from math import isfinite
@@ -48,6 +48,7 @@ from market_regime_engine.feature_discovery.metadata_store import (
     FeatureSelectionMetadataStore,
     FoldFeatureStat,
     apply_ablation_to_feature_stats,
+    apply_pca_credit_to_feature_stats,
     sffs_step_records,
 )
 from market_regime_engine.feature_discovery.sffs import SFFSResult, select_sffs
@@ -198,6 +199,7 @@ def run_canonical_feature_selection(
     evaluate_gaussian_subset_by_k: KSubsetScore | None = None,
     state_counts: tuple[int, ...] = LEGAL_K,
     metadata_fold_feature_stats: tuple[FoldFeatureStat, ...] | None = None,
+    metadata_fold_commit_hook: Callable[[FeatureSelectionMetadataStore, str], None] | None = None,
 ) -> FeatureSelectionPipelineResult:
     """Run all currently implemented selection stages on one TRAIN snapshot.
 
@@ -213,6 +215,12 @@ def run_canonical_feature_selection(
     resolved_profile = contract.profile if profile is None else profile
     if resolved_profile.profile_hash != contract.profile.profile_hash:
         raise ValueError("pipeline profile must match the role contract profile")
+    if metadata_store is not None and (
+        metadata_fold_id is None or metadata_source_build_id is None or metadata_state_count is None
+    ):
+        raise ValueError(
+            "metadata_fold_id, metadata_source_build_id and metadata_state_count are required"
+        )
     values = {name: _complete_vector(name, feature_values[name]) for name in eligible}
     family_values = {
         name: values[name] for name in eligible if contract.assignment(name).family is not None
@@ -351,15 +359,8 @@ def run_canonical_feature_selection(
             )
             sffs = k_sffs[0].sffs
         if metadata_store is not None:
-            if (
-                metadata_fold_id is None
-                or metadata_source_build_id is None
-                or metadata_state_count is None
-            ):
-                raise ValueError(
-                    "metadata_fold_id, metadata_source_build_id and "
-                    "metadata_state_count are required"
-                )
+            assert metadata_fold_id is not None
+            assert metadata_source_build_id is not None
             assert metadata_state_count is not None
             records = (
                 tuple((item.state_count, item.sffs) for item in k_sffs)
@@ -383,12 +384,27 @@ def run_canonical_feature_selection(
             max_workers=max_workers,
             frontier=frontier,
         )
-    if metadata_fold_feature_stats is not None:
-        if metadata_store is None:
-            raise ValueError("metadata_store is required for feature-stat persistence")
-        metadata_store.commit_fold_feature_stats(
-            apply_ablation_to_feature_stats(metadata_fold_feature_stats, ablation)
+    if metadata_fold_feature_stats is not None and metadata_store is None:
+        raise ValueError("metadata_store is required for feature-stat persistence")
+    if metadata_store is not None:
+        assert metadata_fold_id is not None
+        assert metadata_source_build_id is not None
+        pca_loadings = tuple(
+            loading
+            for artifact in pca_artifacts
+            for loading in artifact.pca_loadings(metadata_fold_id, metadata_source_build_id)
         )
+        metadata_store.commit_pca_loadings(pca_loadings)
+        if metadata_fold_feature_stats is not None:
+            metadata_store.commit_fold_feature_stats(
+                apply_pca_credit_to_feature_stats(
+                    apply_ablation_to_feature_stats(metadata_fold_feature_stats, ablation),
+                    pca_loadings,
+                    ablation,
+                )
+            )
+        if metadata_fold_commit_hook is not None:
+            metadata_fold_commit_hook(metadata_store, metadata_fold_id)
     return FeatureSelectionPipelineResult(
         quality_eligible_features=eligible,
         family_reduction=family_reduction,
