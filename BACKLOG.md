@@ -1288,10 +1288,17 @@ no integration test ran as a GitHub merge gate.
 **Type:** implementation / cumulative metadata
 **Depends on:** PR-522
 
-**Status:** IMPLEMENTATION IN PROGRESS on branch `pr/PR-494-pca-credit-cumulative-stats`.
+**Status:** IMPLEMENTATION COMPLETE on branch `pr/PR-494-pca-credit-cumulative-stats` at commit
+`48537ca` (a documentation-only status commit follows this implementation commit).
 PCA-loading persistence, deterministic PCA-credit attribution, cumulative DuckDB view fields,
 replay-safe upserts, and cumulative MLflow plot projection are implemented locally. No full
 evaluation has been run; integration tests remain local-only and are not a GitHub merge gate.
+
+Current implementation evidence: targeted PR tests 22 passed; mypy, Ruff and formatting passed;
+the local Hermetic integration hook passed. The repository-wide non-integration run passed 1,216
+tests and exposed six unrelated pre-existing E2E failures in the synthetic PCA-universe and
+K-Champion cutoff fixtures. PR-494 remains open until its GitHub unit/type/lint/policy checks are
+green.
 
 #### Acceptance
 
