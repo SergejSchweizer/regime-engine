@@ -140,37 +140,59 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
     )
     contract = build_feature_role_contract((TEMPORAL_KEY, *names))
     rng = np.random.default_rng(501_1000)
-    matrix = rng.normal(size=(64, len(names)))
+    matrix = rng.normal(size=(256, len(names)))
     values = {
         name: tuple(float(value) for value in matrix[:, index]) for index, name in enumerate(names)
     }
 
-    def score(features: tuple[str, ...]) -> FeatureSubsetScore:
-        return FeatureSubsetScore(features, float(len(features)))
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    callbacks = CanonicalModelCallbacks(
+        train=pd.DataFrame(
+            {TEMPORAL_KEY: pd.date_range("2018-01-01", periods=len(matrix), freq="D", tz="UTC")}
+        ),
+        test=pd.DataFrame(
+            {TEMPORAL_KEY: pd.date_range("2018-06-01", periods=24, freq="D", tz="UTC")}
+        ),
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id="hermetic-501-thousand-feature-selection",
+        max_workers=None,
+    )
 
-    def hmm_score(features: tuple[str, ...]) -> HMMSubsetEvaluation:
-        fit_hash = sha256("|".join(features).encode()).hexdigest()
-        return HMMSubsetEvaluation(score(features), "gaussian_hmm", 2, "a" * 64, fit_hash)
+    class _RealHMMOracle:
+        def bind_feature_values(self, bound: dict[str, tuple[float, ...]]) -> None:
+            callbacks.bind_feature_values(bound)
+
+        def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore:
+            fit = callbacks._fit(features, 2)
+            score = callbacks._score(features, 2, fit)
+            return replace(score, value=score.value + 1_000_000.0 * len(features))
+
+        def evaluate_hmm_subset(self, features: tuple[str, ...]) -> HMMSubsetEvaluation:
+            fit = callbacks._fit(features, 2)
+            return HMMSubsetEvaluation(
+                self.evaluate_subset(features),
+                "gaussian_hmm",
+                2,
+                callbacks.hmm_selector_contract_hash,
+                sha256(pickle.dumps(fit, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest(),
+            )
+
+    oracle = _RealHMMOracle()
 
     result = run_canonical_feature_selection(
         values,
         contract,
         quality_eligible_features=names,
-        evaluate_subset=score,
-        evaluate_hmm_subset=hmm_score,
-        hmm_selector_contract_hash="a" * 64,
-        max_sffs_features=3,
+        evaluate_subset=oracle.evaluate_subset,
+        evaluate_hmm_subset=oracle.evaluate_hmm_subset,
+        hmm_selector_contract_hash=callbacks.hmm_selector_contract_hash,
+        max_sffs_features=2,
         max_workers=None,
         metadata_store=FeatureSelectionMetadataStore(tmp_path / "metadata"),
         metadata_fold_id="fold-501",
         metadata_source_build_id="build-501",
         metadata_state_count=2,
-        evaluate_gaussian_subset_by_k=lambda state_count, features: FeatureSubsetScore(
-            features,
-            float(len(features)),
-            model_family="gaussian_hmm",
-            state_count=state_count,
-        ),
     )
     assert len(names) == 1001
     assert result.quality_eligible_features == names
