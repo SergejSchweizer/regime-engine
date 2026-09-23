@@ -1756,6 +1756,10 @@ run the full evaluation. Merge to `origin/main` is the remaining gate.
 **Type:** documentation / architecture cleanup
 **Depends on:** PR-531
 
+**Status:** ACCEPTANCE COMPLETE — branch `pr/PR-511-documentation-onboarding-consolidation` is
+being validated locally; documentation changes contain no credentials, NAS access, MLflow access,
+or evaluation run. Merge to `origin/main` is the remaining gate.
+
 The final repository-authored contract/onboarding Markdown set is intentionally small:
 
 ~~~text
@@ -1771,36 +1775,36 @@ Other legal/license files are unaffected.
 
 #### Acceptance
 
-- [ ] README.md is the single entry point and onboards a new user step by step: purpose -> data source
+- [x] README.md is the single entry point and onboards a new user step by step: purpose -> data source
   -> bootstrap -> local test -> evaluation -> MLflow inspection -> production/refit -> where to read
   next.
-- [ ] ARCHITECTURE.md owns system boundaries, package/component structure, data flow, local DuckDB,
+- [x] ARCHITECTURE.md owns system boundaries, package/component structure, data flow, local DuckDB,
   MLflow ownership and the shared parallel-execution architecture; it does not restate statistical
   formulas.
-- [ ] EVALUATION.md owns monthly fold semantics, core/transformation roles, family near-duplicate
+- [x] EVALUATION.md owns monthly fold semantics, core/transformation roles, family near-duplicate
   pruning, family PCA, global correlation leaders, SFFS, ablation, HMM/K/family evaluation and
   statistical acceptance rules; it does not restate deployment commands.
-- [ ] OPERATIONS.md is created and owns the exact `macro_loader.macro_features` materialized-view
+- [x] OPERATIONS.md is created and owns the exact `macro_loader.macro_features` materialized-view
   source contract, configuration/secrets, dataset pinning, one-shot execution, MLflow/registry
   operations, deployment/refit/readback and failure/recovery runbooks.
-- [ ] CONTRIBUTING.md owns only developer setup, PR naming, tests/gates, code-quality rules and
+- [x] CONTRIBUTING.md owns only developer setup, PR naming, tests/gates, code-quality rules and
   atomic-PR workflow.
-- [ ] BACKLOG.md remains the only planning/acceptance document and does not duplicate normative
+- [x] BACKLOG.md remains the only planning/acceptance document and does not duplicate normative
   prose from the five user/developer docs.
-- [ ] Migrate still-valid content from DATA_SOURCE.md and EVALUATION_EXECUTION.md into OPERATIONS.md,
+- [x] Migrate still-valid content from DATA_SOURCE.md and EVALUATION_EXECUTION.md into OPERATIONS.md,
   then delete those two files.
-- [ ] Migrate still-valid rendering/MLflow plot rules from PLOT_STYLE.md into the diagnostics section
+- [x] Migrate still-valid rendering/MLflow plot rules from PLOT_STYLE.md into the diagnostics section
   of EVALUATION.md or ARCHITECTURE.md as appropriate, then delete PLOT_STYLE.md.
-- [ ] Remove stale/superseded architecture text and all compatibility instructions rather than
+- [x] Remove stale/superseded architecture text and all compatibility instructions rather than
   documenting removed code paths; Git history and the condensed historical backlog are the archive.
-- [ ] Every structural/process explanation uses Mermaid where a diagram is clearer than prose:
+- [x] Every structural/process explanation uses Mermaid where a diagram is clearer than prose:
   README onboarding, system architecture, feature-selection flow, monthly evaluation flow,
   parallel task graph, operations/deployment flow and contributing/CI flow.
-- [ ] Mermaid diagrams render with valid GitHub Mermaid syntax and contain no secrets/internal
+- [x] Mermaid diagrams render with valid GitHub Mermaid syntax and contain no secrets/internal
   credentials.
-- [ ] Cross-links form one acyclic reading path from README to the specialized owner document; no
+- [x] Cross-links form one acyclic reading path from README to the specialized owner document; no
   two files claim authority for the same contract.
-- [ ] Documentation explicitly names `macro_loader.macro_features`; no active documentation names
+- [x] Documentation explicitly names `macro_loader.macro_features`; no active documentation names
   `macro_features_daily` as the feature source.
 
 ### PR-512 — QA: documentation completeness, uniqueness and Mermaid validation

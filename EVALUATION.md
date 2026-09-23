@@ -1307,3 +1307,21 @@ all features
 This design deliberately separates redundancy, regime discrimination, feature-count selection, and latent-state/model selection.
 
 It remains simple enough to audit, scales to a much larger feature universe, does not require semantic groups or unrestricted feature-subset optimization, and provides a direct explanation for why each retained feature is present in the final regime model.
+## Diagnostic artifact contract
+
+Plots are diagnostic evidence, not a second statistical contract. Every plot
+uses a descriptive title, explicit units, canonical candidate/state labels,
+deterministic dimensions and a colorblind-safe palette. Fold histories use
+chronological `test_end` dates and preserve invalid folds as visible gaps; they
+never interpolate missing evidence. PNG artifacts use deterministic layout and
+at least 180 DPI, with labels and legends included in the MLflow artifact
+manifest. Numerical comparisons are logged as MLflow model metrics as well as
+being represented in evidence artifacts.
+
+```mermaid
+flowchart LR
+    Metrics[Canonical metric catalog] --> Plots[Deterministic PNG diagnostics]
+    Metrics --> Evidence[MLflow model metrics and evidence]
+    Plots --> Review[Research review]
+    Evidence --> Review
+```
