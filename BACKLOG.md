@@ -1674,6 +1674,10 @@ does not keep compatibility code to execute or reinterpret superseded contracts.
 **Type:** QA only
 **Depends on:** PR-528
 
+**Status:** IN PROGRESS — branch `pr/PR-529-current-contract-package-serving-qa` is based on
+`origin/main` at `d4036ef`; QA is local/synthetic-only and does not access NAS, PostgreSQL,
+MLflow, or run the full evaluation.
+
 #### Acceptance
 
 - [ ] Historical v1-v3 profile/config fixtures are rejected.
