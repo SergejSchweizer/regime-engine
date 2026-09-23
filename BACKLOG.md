@@ -1846,8 +1846,8 @@ oracle-proof commits, including two real PCA→HMM→Outer TEST folds with per-f
 a hermetic universe, plus two deterministic 1001-feature folds through real PCA, global
 reduction, HMM SFFS, ablation, Final-HMM and Outer-TEST. Canonical fold diagnostics now
 materialize the required JSON tables and PNG plots for tracking, and both folds verify all ten
-diagnostic artifacts through the tracker seam. Only independent final-HMM evidence remains open.
-The real multi-fold callback/artifact path is covered on the hermetic fixture.
+diagnostic artifacts through the tracker seam. The real multi-fold callback/artifact path and
+independent final-HMM hash evidence are covered on the hermetic fixture.
 No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
 
@@ -1864,13 +1864,13 @@ complete and merged.
   and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation. Two deterministic
   1001-feature folds now pass this path.
 - [x] Verify every required DuckDB row family and every required MLflow plot/table exists.
-- [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
+- [x] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
   final selected tuple and ablation losses. The current synthetic oracle covers quality, PCA,
-  correlation leaders, SFFS, tuple and ablation values; independent final-HMM evidence remains
-  open.
+  correlation leaders, SFFS, tuple and ablation values; the final-HMM hash is independently
+  recomputed through the pinned adapter/multistart path.
 - [x] Repeat the same pinned source and prove identical canonical statistical hashes.
 - [x] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
-- [ ] No network service or production mutation is required.
+- [x] No network service or production mutation is required.
 
 ### PR-502 — QA: 10,000-feature scale, CPU and memory acceptance
 
