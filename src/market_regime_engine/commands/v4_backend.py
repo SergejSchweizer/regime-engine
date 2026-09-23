@@ -30,8 +30,6 @@ from market_regime_engine.commands.lifecycle import (
     RegistrationOutcome,
 )
 from market_regime_engine.contracts import PredictionMode
-from market_regime_engine.evaluation.calendar_clock import plan_calendar_month
-from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
 from market_regime_engine.feature_discovery.contracts import (
     DeploymentSelection,
     FinalSelectedConfiguration,
@@ -63,8 +61,10 @@ from market_regime_engine.predictions.store import PredictionStore
 from market_regime_engine.preprocessing.pca_features import fit_and_materialize_pca_source
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
-from market_regime_engine.training.adapter_factory import adapter_factory
-from market_regime_engine.training.final_refit import final_production_refit
+from market_regime_engine.training.final_refit import (
+    CanonicalRefitValidation,
+    final_production_refit,
+)
 
 
 class _RecordingSource:
@@ -390,21 +390,18 @@ class V4LifecycleBackend:
             profile=self.profile.feature_selection,
             max_workers=worker_count,
         )
-        validation_rows = frame.loc[
-            frame["timestamp_m1"] <= validation.monthly.plan.evaluation_cutoff
-        ].copy()
-        validation_plan = plan_calendar_month(
-            tuple(validation_rows["timestamp_m1"]),
-            minimum_train_source_observations=(
-                self.profile.walk_forward.minimum_train_source_observations
-            ),
-        ).as_walk_forward_plan()
-        winning_evaluation = run_walk_forward_candidate(
-            validation_rows,
-            plan=validation_plan,
-            profile=self.profile,
-            candidate=candidate,
-            adapter_factory=cast(Any, adapter_factory(self.profile, candidate)),
+        winning_evaluation = CanonicalRefitValidation(
+            profile_id=self.profile.profile_id,
+            profile_config_version=self.profile.profile_config_version,
+            candidate_id=candidate.candidate_id,
+            state_count=candidate.state_count,
+            source_build_id=package_identity.source_build_id,
+            feature_order=package_identity.selected_features,
+            feature_selection_definition_hash=definition_hash,
+            feature_selection_execution_hash=execution_hash,
+            evaluation_plan_hash=validation.monthly.plan.plan_hash,
+            evaluation_cutoff=validation.monthly.plan.evaluation_cutoff,
+            evidence_hash=content_hash(validation),
         )
         artifact = final_production_refit(
             frame,
