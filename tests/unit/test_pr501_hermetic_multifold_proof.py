@@ -25,6 +25,8 @@ from market_regime_engine.mlflow_support.canonical_diagnostics import (
     write_canonical_diagnostics,
 )
 from market_regime_engine.profiles.loader import load_profile
+from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
+from market_regime_engine.training.multistart import run_multistart
 from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
 from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
 
@@ -496,6 +498,16 @@ def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline(
     )
     model_hash = final_callbacks.fit_final_hmm(train_with_candidates, result.selected_features, 2)
     assert isinstance(model_hash, str)
+    independent_fit = run_multistart(
+        final_callbacks._matrix(train_with_candidates, result.selected_features),
+        state_count=2,
+        adapter_factory=CandidateAdapterFactory("gaussian_hmm", result.selected_features),
+        max_workers=None,
+    )
+    independent_hash = sha256(
+        pickle.dumps(independent_fit, protocol=pickle.HIGHEST_PROTOCOL)
+    ).hexdigest()
+    assert independent_hash == model_hash
     outer_hash = final_callbacks.evaluate_outer_test(
         train_with_candidates,
         test_with_candidates,
