@@ -1613,6 +1613,11 @@ superseded statistical/source paths merely to preserve backwards compatibility.
 **Type:** QA only
 **Depends on:** PR-526
 
+**Status:** IN PROGRESS — branch `pr/PR-527-zero-legacy-statistical-source-qa` is based on
+`origin/main` at `56b5ce7`; no NAS or MLflow evaluation has been run. This QA is local and
+synthetic-only. It distinguishes retired selector/source fallback symbols from canonical
+feature-discovery terminology that remains part of the current profile contract.
+
 #### Acceptance
 
 - [ ] Static repository scan finds no production symbol/import/config key for PCA-only-prefix/L*,
