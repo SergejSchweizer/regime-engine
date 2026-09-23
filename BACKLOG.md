@@ -1564,8 +1564,8 @@ runtime path first; the following PRs then delete now-unreachable legacy and com
 **Type:** implementation / legacy removal
 **Depends on:** PR-500
 
-**Status:** IN PROGRESS as GitHub PR #494 on branch
-`pr/PR-526-legacy-runtime-removal`, pushed at `48848ef` and based on
+**Status:** ACCEPTANCE COMPLETE as GitHub PR #494 on branch
+`pr/PR-526-legacy-runtime-removal`, pushed at `00f9816` and based on
 `origin/main` at `47bf60b`. The obsolete candidate checkpoint store and
 multistart seed-resume hooks are removed from the runtime path. The canonical
 backend now uses a dedicated MLflow adapter that does not import the retired
@@ -1577,35 +1577,36 @@ adapters, and their sole-purpose tests are now removed from the working tree.
 The shared task frontier is also now under `runtime.task_frontier`; the former
 `evaluations` package has no active implementation left. Canonical import/bootstrap,
 Ruff, strict Mypy, and 29 focused backend/refit tests plus 24 runtime-frontier tests
-pass locally. PR-526 remains open pending the full acceptance audit and gate.
+pass locally. The local zero-legacy verifier and GitHub gates are green; no full
+NAS evaluation was run. PR-526 is ready to merge.
 
 Git history is the archive. The repository must not retain executable implementations for
 superseded statistical/source paths merely to preserve backwards compatibility.
 
 #### Acceptance
 
-- [ ] Delete the superseded PCA-only-prefix/L* selector implementation and every production wrapper,
+- [x] Delete the superseded PCA-only-prefix/L* selector implementation and every production wrapper,
   adapter, registry entry and feature flag used only by it.
-- [ ] Delete the old clustering, hierarchy-cut, medoid, teacher-HMM and backward-elimination
+- [x] Delete the old clustering, hierarchy-cut, medoid, teacher-HMM and backward-elimination
   discovery/selection implementations when they have no canonical use after PR-500.
-- [ ] Delete raw-plus-generated-PCA and caller-supplied PCA-switch compatibility paths that are not
+- [x] Delete raw-plus-generated-PCA and caller-supplied PCA-switch compatibility paths that are not
   part of the new family-PCA pipeline.
-- [ ] Delete canonical-source fallbacks for `macro_loader.macro_features_daily`,
+- [x] Delete canonical-source fallbacks for `macro_loader.macro_features_daily`,
   `macro_loader.macro_raw`, schema-wide relation enumeration and caller-selected feature relations.
-- [ ] Delete fixed-row/fixed-step walk-forward constructors that are superseded by the canonical
+- [x] Delete fixed-row/fixed-step walk-forward constructors that are superseded by the canonical
   calendar-month clock and are not used by generic test utilities with an explicit nonproduction
   purpose.
-- [ ] Delete deprecated computation-position/resume/checkpoint compatibility code from the full
+- [x] Delete deprecated computation-position/resume/checkpoint compatibility code from the full
   Xetra evaluator where the canonical contract is one-shot/non-resumable; keep only infrastructure
   that is still used by an explicitly current component.
-- [ ] Remove production imports, exports, dependency-injection bindings, factories, registries and
+- [x] Remove production imports, exports, dependency-injection bindings, factories, registries and
   CLI/config switches that reference any deleted implementation.
-- [ ] Remove tests and fixtures whose sole purpose is to validate deleted behavior; do not weaken
+- [x] Remove tests and fixtures whose sole purpose is to validate deleted behavior; do not weaken
   tests for shared/current primitives.
-- [ ] Do not leave forwarding stubs, deprecation shims, aliases or `NotImplemented` placeholders for
+- [x] Do not leave forwarding stubs, deprecation shims, aliases or `NotImplemented` placeholders for
   removed runtime paths.
-- [ ] Package import and bootstrap succeed after deletion with no optional import of deleted modules.
-- [ ] Canonical statistical behavior and hashes from PR-500 remain unchanged.
+- [x] Package import and bootstrap succeed after deletion with no optional import of deleted modules.
+- [x] Canonical statistical behavior and hashes from PR-500 remain unchanged.
 
 ### PR-527 — QA: prove zero legacy statistical/source runtime remains
 
