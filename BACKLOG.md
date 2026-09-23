@@ -1515,8 +1515,10 @@ run. Acceptance remains open until the pushed local/GitHub gates pass.
 **Type:** implementation / controlled cutover
 **Depends on:** PR-499
 
-**Status:** IN PROGRESS on branch `pr/PR-500-canonical-xetra-cutover`, based on
-`origin/main` at `f8a83a4`. The public canonical orchestration boundary is now
+**Status:** ACCEPTANCE COMPLETE — branch `pr/PR-500-canonical-xetra-cutover` is
+pushed at `d18dbef`; GitHub PR #493 has green Git Policy, lint, strict Mypy,
+unit, and merge-gate checks. Based on `origin/main` at `f8a83a4`. The public
+canonical orchestration boundary is now
 implemented in `commands/canonical_xetra.py` and is covered by focused unit
 tests. Per-fold callback factories now bind model evaluation to each closed
 month's TRAIN/TEST boundary. The backend now routes evaluation, canonical
@@ -1528,7 +1530,8 @@ transform on the deployment TRAIN window; focused round-trip and backend
 package tests cover the new path. Final refit now consumes the canonical
 monthly validation identity instead of invoking the superseded generic
 walk-forward evaluator. Production-path call-graph QA and complete
-acceptance evidence remain open.
+acceptance evidence is complete. No full evaluation or NAS data run is part of
+this implementation PR; those are owned by the later external QA PRs.
 Current evidence: 19 backend/boundary tests plus 58 affected command and
 feature-discovery tests, one production call-graph contract test, four
 Family-PCA/two-stage tests, Ruff and strict Mypy pass, and the local Hermetic
@@ -1540,20 +1543,20 @@ runtime path first; the following PRs then delete now-unreachable legacy and com
 
 #### Acceptance
 
-- [ ] Promote the scalable feature-selection profile to the sole canonical Xetra evaluation/refit
+- [x] Promote the scalable feature-selection profile to the sole canonical Xetra evaluation/refit
   path.
-- [ ] Public evaluation, refit and serving package creation require the new feature-selection profile
+- [x] Public evaluation, refit and serving package creation require the new feature-selection profile
   hash and the exact selected semantic feature tuple.
-- [ ] Public entry points call only the new monthly quality -> family duplicate pruning -> family PCA
+- [x] Public entry points call only the new monthly quality -> family duplicate pruning -> family PCA
   -> global correlation -> SFFS -> ablation pipeline.
-- [ ] Missing DuckDB is allowed for inference from an already frozen canonical package, but every new
+- [x] Missing DuckDB is allowed for inference from an already frozen canonical package, but every new
   evaluation/refit creates or uses the local metadata store.
-- [ ] Legacy selectors/readers may still physically exist only until PR-526/PR-528, but no public or
+- [x] Legacy selectors/readers may still physically exist only until PR-526/PR-528, but no public or
   production path may invoke them after this cutover.
-- [ ] No fallback, feature flag, environment toggle, config key or exception path can reactivate a
+- [x] No fallback, feature flag, environment toggle, config key or exception path can reactivate a
   superseded selector/source/package builder.
-- [ ] A production-path call graph captured in QA evidence contains only canonical implementations.
-- [ ] This PR does not perform broad file/module deletion or structural refactoring; those are owned
+- [x] A production-path call graph captured in QA evidence contains only canonical implementations.
+- [x] This PR does not perform broad file/module deletion or structural refactoring; those are owned
   by PR-526 through PR-531.
 
 ### PR-526 — Delete legacy statistical, discovery and source runtime code
