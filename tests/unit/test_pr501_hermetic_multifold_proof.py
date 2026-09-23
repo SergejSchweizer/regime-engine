@@ -132,8 +132,9 @@ def test_real_hmm_callback_fits_train_and_filters_outer_test() -> None:
     assert fit.winner.artifact is not None
 
 
+@pytest.mark.parametrize("fold_index", (1, 2))
 def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
-    tmp_path: Path,
+    tmp_path: Path, fold_index: int
 ) -> None:
     names = tuple(
         f"{family}_delta_{index}obs" for index in range(1, 78) for family in TRANSFORMATION_FAMILIES
@@ -155,7 +156,7 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
         ),
         profile=profile,
         catalog=_catalog(),
-        source_build_id="hermetic-501-thousand-feature-selection",
+        source_build_id=f"hermetic-501-thousand-feature-selection-{fold_index}",
         max_workers=None,
     )
 
@@ -190,8 +191,8 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
         max_sffs_features=2,
         max_workers=None,
         metadata_store=FeatureSelectionMetadataStore(tmp_path / "metadata"),
-        metadata_fold_id="fold-501",
-        metadata_source_build_id="build-501",
+        metadata_fold_id=f"fold-501-{fold_index}",
+        metadata_source_build_id=f"build-501-{fold_index}",
         metadata_state_count=2,
     )
     assert len(names) == 1001
@@ -303,7 +304,7 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
             **generated_train,
         }
     )
-    final_test_matrix = np.random.default_rng(501_1001).normal(size=(24, len(names)))
+    final_test_matrix = np.random.default_rng(501_1001 + fold_index).normal(size=(24, len(names)))
     final_test = pd.DataFrame(
         {
             TEMPORAL_KEY: pd.date_range("2018-05-01", periods=24, freq="D", tz="UTC"),
@@ -325,7 +326,7 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
         test=final_test,
         profile=load_profile("configs/profiles/xetra_v4.yaml"),
         catalog=_catalog(),
-        source_build_id="hermetic-501-thousand-feature",
+        source_build_id=f"hermetic-501-thousand-feature-{fold_index}",
         max_workers=None,
     )
     final_hash = final_callbacks.fit_final_hmm(final_train, result.selected_features, 2)
