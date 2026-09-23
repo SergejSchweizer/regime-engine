@@ -23,6 +23,15 @@ After feature selection is frozen, an HMM observation exists only when every sel
 
 ## Production serving topology
 
+```mermaid
+flowchart TD
+    Source[macro_loader.macro_features] --> Contracts[Source and lineage contracts]
+    Contracts --> Selection[Quality, family PCA, reduction, SFFS]
+    Selection --> Evaluation[Walk-forward HMM evaluation]
+    Evaluation --> Package[Package and lifecycle]
+    Package --> Serving[MLflow profile serving]
+```
+
 Production exposes exactly one MLflow 3.15.1 HTTP service on `10.10.1.3:5000`:
 
 - standard MLflow UI/tracking/registry/artifact routes;
@@ -48,6 +57,13 @@ Latest and fixed-model replay are causal forward-filter operations. Replay start
 
 ## Security and capacity
 
+```mermaid
+flowchart LR
+    Tasks[Independent folds and candidates] --> Frontier[Process task frontier]
+    Frontier --> Workers[Available CPU workers]
+    Workers --> Evidence[Deterministic ordered evidence]
+```
+
 The MVP is trusted-private-LAN only. Port 5000 must not be Internet exposed. Host/CORS configuration is explicit and non-wildcard. The canonical feature PostgreSQL endpoint does not offer TLS, so feature transport uses explicit `sslmode=disable`; secrets/credential-bearing DSNs/raw feature vectors/model binaries are excluded from logs and API errors.
 
 Each Gunicorn worker owns a process-local model cache and psycopg pool. With production defaults: 4 workers x 4 threads, pool max 4, feature-PG connection budget 16, and one admitted replay per worker. Replay uses bounded synchronous request-thread work with cooperative deadlines; there is no hidden unbounded executor.
@@ -56,8 +72,8 @@ Each Gunicorn worker owns a process-local model cache and psycopg pool. With pro
 
 - `BACKLOG.md`: PR scope/dependencies/API/deployment/operations plan
 - `CONTRIBUTING.md`: Git and weak-agent rules
-- `DATA_SOURCE.md`: source PostgreSQL/lineage/time/missing-value semantics
+- `OPERATIONS.md`: source PostgreSQL/lineage/time/missing-value semantics and runbooks
 - `EVALUATION.md`: feature selection/HMM/walk-forward/alignment/ranking/final refit
-- `PLOT_STYLE.md`: visualization rendering
+- `CONTRIBUTING.md`: developer setup, tests, and Git/CI policy
 
 Implementation must fail closed rather than inventing a fallback when these contracts cannot be met.

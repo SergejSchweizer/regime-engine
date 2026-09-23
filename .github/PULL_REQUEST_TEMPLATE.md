@@ -8,7 +8,8 @@ Describe the tests, quality gates, runtime evidence, or manual checks used to ve
 
 ## Documentation sidecar check
 
-All Markdown files in this repository are documentation sidecars governed by [`DOCUMENTATION_SIDECAR_POLICY.md`](../DOCUMENTATION_SIDECAR_POLICY.md).
+Documentation contracts are owned by `README.md`, `ARCHITECTURE.md`, `EVALUATION.md`,
+`OPERATIONS.md`, `CONTRIBUTING.md`, and `BACKLOG.md`; update the owning document when behavior changes.
 
 - [ ] I identified every Markdown sidecar affected by this change.
 - [ ] Affected Markdown reflects the resulting codebase, configuration, schemas, workflows, and runtime contracts.

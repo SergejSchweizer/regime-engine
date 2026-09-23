@@ -2,7 +2,7 @@
 
 `regime-engine` is the implementation repository for the Python distribution `market-regime-engine` and import package `market_regime_engine`.
 
-The MVP is a statistical regime service built around full-covariance Gaussian HMMs. It reads the external `macro-loader` feature PostgreSQL serving replica (`macro_loader.macro_features_daily`) and exposes predictions through the same MLflow 3.15.1 service that owns tracking, registry, and artifacts.
+The MVP is a statistical regime service built around full-covariance Gaussian HMMs. It reads the external `macro-loader` feature PostgreSQL serving view (`macro_loader.macro_features`) and exposes predictions through the same MLflow 3.15.1 service that owns tracking, registry, and artifacts.
 
 ## Canonical identity
 
@@ -26,6 +26,22 @@ Bootstrap is fail-closed:
 ```
 
 The script rejects any interpreter other than Python 3.14.7 and installs the exact pinned dependency roots from `uv.lock`. The HMM smoke must fit a K=2 `covariance_type="full"` model; there is no reduced-covariance/backend fallback.
+
+## Onboarding path
+
+```mermaid
+flowchart LR
+    Purpose[Purpose and boundaries] --> Source[External feature source]
+    Source --> Bootstrap[Bootstrap and local tests]
+    Bootstrap --> Evaluate[One-shot evaluation]
+    Evaluate --> Inspect[Inspect NAS MLflow]
+    Inspect --> Refit[Refit, register, and serve]
+```
+
+Read the specialized owner documents in this order: [ARCHITECTURE.md](ARCHITECTURE.md),
+[EVALUATION.md](EVALUATION.md), [OPERATIONS.md](OPERATIONS.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md). The project plan and acceptance state live only in
+[BACKLOG.md](BACKLOG.md).
 
 ## Data and scientific claim boundary
 
@@ -81,11 +97,9 @@ promotion remains an explicit operator action.
 
 - `BACKLOG.md`: implementation PR scope/dependencies/API/deployment/operations plan
 - `CONTRIBUTING.md`: Git/weak-agent rules
-- `DATA_SOURCE.md`: feature PostgreSQL, lineage, time/missing-value semantics
+- `OPERATIONS.md`: source, secrets, one-shot execution, MLflow and recovery runbooks
 - `EVALUATION.md`: feature selection, HMM fitting, walk-forward, alignment, ranking, final refit
-- `PLOT_STYLE.md`: diagnostic plot presentation
-- `ARCHITECTURE.md`: durable architecture overview
-- `docs/model_lifecycle.md`: lifecycle and serving continuation
-- `docs/model_lifecycle_operations.md`: external MLflow lifecycle operations
+- `ARCHITECTURE.md`: durable architecture overview and component boundaries
+- `CONTRIBUTING.md`: local development and Git/CI policy
 
 Consumer portfolio/economic evaluation belongs downstream and is deliberately outside this repository.

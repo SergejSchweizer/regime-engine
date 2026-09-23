@@ -90,22 +90,30 @@ If a pinned dependency such as Python 3.14.7, MLflow 3.15.1, or `hmmlearn==0.3.3
 These are normative contract-owner files:
 
 - `BACKLOG.md`: implementation scope, dependencies, constants, API/deployment contracts, execution plan;
-- `DATA_SOURCE.md`: upstream PostgreSQL source, lineage, time/missing-value semantics and credentials;
+- `OPERATIONS.md`: upstream PostgreSQL source, lineage, time/missing-value semantics and credentials;
 - `EVALUATION.md`: exact statistical/HMM/evaluation/final-refit semantics;
-- `PLOT_STYLE.md`: presentation/rendering only;
+- `ARCHITECTURE.md`: system boundaries and component structure;
 - `CONTRIBUTING.md`: Git/weak-agent execution rules.
 
 Weak implementation agents do not rewrite contract-owner files unless their PR explicitly lists that file and exact purpose.
 
-`PLOT_STYLE.md` can never alter statistical semantics. `DATA_SOURCE.md` can never alter feature-selection/model-selection semantics. `EVALUATION.md` can never introduce consumer portfolio metrics.
+`OPERATIONS.md` can never alter feature-selection/model-selection semantics. `EVALUATION.md` can never introduce consumer portfolio metrics.
 
 ## Production source and serving boundaries
 
-Production features come from the external `macro-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `macro-loader`. The consumer relation is `macro_loader.macro_features_daily`, owned by `macro-loader-owner`; direct upstream Parquet is not the production source.
+Production features come from the external `macro-loader` PostgreSQL serving replica at `10.10.1.3:54321` using the dedicated read-only user `macro-loader`. The consumer relation is `macro_loader.macro_features`, owned by `macro-loader-owner`; direct upstream Parquet is not the production source.
 
 Production serving is the existing external MLflow service at `http://10.10.1.3:5000`, extended by the `regime-engine` MLflow Flask app. This repository does not define or run a local MLflow/PostgreSQL Compose deployment. There is no separate FastAPI/Uvicorn application, reverse proxy, or Prometheus exposure.
 
 ## Required tests
+
+```mermaid
+flowchart TD
+    Edit[Edit and unit tests] --> Hook[Local pre-commit Hermetic integration hook]
+    Hook --> Push[Push branch]
+    Push --> Gates[Git-Policy, lint, type, unit, merge-gate]
+    Gates --> Review[Review and merge]
+```
 
 Push/merge required tests are hermetic. Only explicitly marked `external_service` smoke tests may contact:
 
