@@ -1882,7 +1882,9 @@ complete and merged.
 filter, retains 124 survivors, completes family PCA/global reduction, records local wall/RSS/
 candidate/worker metadata, and proves HMM selection sees only post-reduction candidates. The
 worker-budget parity, concurrent multi-fold saturation, and MLflow runtime-record completeness
-criteria remain open. No NAS, PostgreSQL, MLflow, or real-data evaluation has been run.
+criteria remain open. Full local validation is green (720 passed, 3 external tests skipped), and
+the working tree is clean at the current branch tip. No NAS, PostgreSQL, MLflow, or real-data
+evaluation has been run.
 
 Target host class: approximately 86 vCPUs and 256 GiB RAM.
 
