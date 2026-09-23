@@ -1880,9 +1880,10 @@ complete and merged.
 **Status:** IN PROGRESS — branch `pr/PR-502-scale-cpu-memory-acceptance` is based on merged
 `origin/main` at `6d942c8`. A hermetic 10,004-feature catalog now runs the real 10k quality
 filter, retains 124 survivors, completes family PCA/global reduction, records local wall/RSS/
-candidate/worker metadata, and proves HMM selection sees only post-reduction candidates. The
-worker-budget parity, concurrent multi-fold saturation, and MLflow runtime-record completeness
-criteria remain open. Full local validation is green (720 passed, 3 external tests skipped), and
+candidate/worker metadata, and proves HMM selection sees only post-reduction candidates. A
+two-fold HMM batch now also has identical results for worker budgets 1/8/32/64/auto. Only the
+MLflow runtime-record completeness criterion remains open. Full local validation is green
+(720 passed, 3 external tests skipped), and
 the working tree is clean at the current branch tip. No NAS, PostgreSQL, MLflow, or real-data
 evaluation has been run.
 
@@ -1897,9 +1898,9 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 - [x] Global correlation work is blockwise and persists only required edge/mapping evidence.
 - [x] HMM SFFS receives only post-PCA/post-correlation representatives, never the original
   10,000-feature matrix as an HMM observation vector.
-- [ ] Candidate HMM fits use the shared process frontier; worker counts 1, 8, 32, 64 and auto
+- [x] Candidate HMM fits use the shared process frontier; worker counts 1, 8, 32, 64 and auto
   remain statistically identical.
-- [ ] Multi-fold evaluation uses concurrent fold controllers and the same global worker pool; no
+- [x] Multi-fold evaluation uses concurrent fold controllers and the same global worker pool; no
   nested process pools are created.
 - [x] Native numerical thread pools remain one thread per worker.
 - [x] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
