@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.feature_subset_score import (
@@ -19,6 +18,7 @@ from market_regime_engine.feature_discovery.feature_subset_score import (
     to_sffs_score,
 )
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import is_pickleable
 from market_regime_engine.training.multistart import (
     MultistartBatchJob,
     MultistartResult,

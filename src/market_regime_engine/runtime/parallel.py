@@ -139,7 +139,7 @@ class FoldParallelExecutor[T, R]:
 
     def __enter__(self) -> FoldParallelExecutor[T, R]:
         if not self.plan.serial:
-            from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+            from market_regime_engine.runtime.processes import cpu_process_pool
 
             self._pool_context = cpu_process_pool(self.plan.worker_count)
             self._pool = self._pool_context.__enter__()

@@ -1568,7 +1568,9 @@ runtime path first; the following PRs then delete now-unreachable legacy and com
 `origin/main` at `47bf60b`. The obsolete candidate checkpoint store and
 multistart seed-resume hooks are removed from the runtime path. The canonical
 backend now uses a dedicated MLflow adapter that does not import the retired
-evaluation hierarchy. Remaining legacy selector/source modules and their
+evaluation hierarchy. CPU process-pool primitives used by canonical
+discovery/training stages now live under `runtime.processes` rather than the
+retired evaluation namespace. Remaining legacy selector/source modules and their
 sole-purpose tests are still being removed; PR-526 is not accepted yet.
 
 Git history is the archive. The repository must not retain executable implementations for

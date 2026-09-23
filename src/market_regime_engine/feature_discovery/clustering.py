@@ -10,7 +10,6 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering  # type: ignore[import-untyped]
 from sklearn.metrics import silhouette_samples  # type: ignore[import-untyped]
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     CLUSTER_COUNT_MAX,
     CLUSTER_COUNT_MIN,
@@ -20,6 +19,7 @@ from market_regime_engine.feature_discovery.contracts import (
     DistanceMatrixResult,
 )
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 @dataclass(frozen=True, slots=True)

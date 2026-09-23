@@ -31,7 +31,6 @@ from market_regime_engine.evaluation.walk_forward import (
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
 from market_regime_engine.evaluations.agreement_v4 import compute_soft_regime_nmi
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.evaluations.provisional_teacher import build_inner_walk_forward_plan
 from market_regime_engine.feature_discovery.contracts import (
     MAX_PREFIX_LENGTH,
@@ -50,6 +49,7 @@ from market_regime_engine.feature_discovery.contracts import (
 from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.runtime.cpu import cpu_worker_count, nested_worker_limits
+from market_regime_engine.runtime.processes import cpu_process_pool, is_pickleable
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.candidate_grid import aggregate_candidate
 
