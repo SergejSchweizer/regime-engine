@@ -1843,11 +1843,11 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
 `origin/main` at `f1ecc99`; the branch contains the pushed canonical diagnostics and independent
 oracle-proof commits, including two real PCA→HMM→Outer TEST folds with per-fold diagnostics on
-a hermetic universe, plus a 1001-feature fixture through real PCA, global reduction, HMM SFFS,
-ablation, Final-HMM and Outer-TEST. Canonical fold diagnostics now materialize the required JSON
-tables and PNG plots for tracking. The exact large-feature multi-fold run and independent
-recomputation of correlation leaders remain open. The real multi-fold callback/artifact path is
-covered on the hermetic fixture.
+a hermetic universe, plus two deterministic 1001-feature folds through real PCA, global
+reduction, HMM SFFS, ablation, Final-HMM and Outer-TEST. Canonical fold diagnostics now
+materialize the required JSON tables and PNG plots for tracking. The integrated MLflow artifact
+completeness and independent final-HMM evidence remain open. The real multi-fold callback/
+artifact path is covered on the hermetic fixture.
 No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
 
@@ -1860,14 +1860,14 @@ complete and merged.
 - [x] Static import/config/package scan proves no canonical entry point can select or load the old
   PCA-only-prefix, clustering, medoid, teacher, legacy-source, historical-profile or compatibility
   package paths.
-- [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
-  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation. A complete
-  single-fold 1001-feature run now passes this path; the multi-fold variant remains open.
+- [x] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
+  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation. Two deterministic
+  1001-feature folds now pass this path.
 - [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
 - [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
   final selected tuple and ablation losses. The current synthetic oracle covers quality, PCA,
-  SFFS, tuple and ablation values; the correlation-leader and final-HMM evidence still need the
-  integrated fold proof.
+  correlation leaders, SFFS, tuple and ablation values; independent final-HMM evidence remains
+  open.
 - [x] Repeat the same pinned source and prove identical canonical statistical hashes.
 - [x] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
 - [ ] No network service or production mutation is required.
