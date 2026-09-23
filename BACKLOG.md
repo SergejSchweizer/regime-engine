@@ -1731,25 +1731,25 @@ behavior.
 **Type:** QA only / structural acceptance
 **Depends on:** PR-530
 
-**Status:** IN PROGRESS — branch `pr/PR-531-canonical-only-import-graph-qa` is based on
-`origin/main` at `26cf90f`; QA is local/synthetic-only and does not access NAS, PostgreSQL,
-MLflow, or run the full evaluation.
+**Status:** ACCEPTANCE COMPLETE — branch `pr/PR-531-canonical-only-import-graph-qa` is
+validated locally; QA is local/synthetic-only and does not access NAS, PostgreSQL, MLflow, or
+run the full evaluation. Merge to `origin/main` is the remaining gate.
 
 #### Acceptance
 
-- [ ] Build an import/dependency graph and prove the canonical layer direction required by PR-530.
-- [ ] Reject circular imports and forbidden reverse dependencies.
-- [ ] Static dead-code scan plus explicit import/export inventory finds no orphan production modules,
+- [x] Build an import/dependency graph and prove the canonical layer direction required by PR-530.
+- [x] Reject circular imports and forbidden reverse dependencies.
+- [x] Static dead-code scan plus explicit import/export inventory finds no orphan production modules,
   public exports or configuration fields left by removed legacy paths.
-- [ ] Repository-wide search verifies no compatibility shim, forwarding alias or deprecated runtime
+- [x] Repository-wide search verifies no compatibility shim, forwarding alias or deprecated runtime
   switch can recreate deleted behavior.
-- [ ] Canonical CLI/evaluation/refit/serving smoke tests all exercise the same source and stage
+- [x] Canonical CLI/evaluation/refit/serving smoke tests all exercise the same source and stage
   implementations.
-- [ ] Pre-refactor pinned canonical fixtures reproduce identical statistical, package and evidence
+- [x] Pre-refactor pinned canonical fixtures reproduce identical statistical, package and evidence
   hashes.
-- [ ] Clean environment package build/install/import succeeds without historical modules.
-- [ ] Required lint/type/unit/integration/coverage gates pass.
-- [ ] QA adds no production behavior.
+- [x] Clean environment package build/install/import succeeds without historical modules.
+- [x] Required lint/type/unit/integration/coverage gates pass.
+- [x] QA adds no production behavior.
 
 ### PR-511 — Consolidate repository documentation into one guided onboarding path
 
