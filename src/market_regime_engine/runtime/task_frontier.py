@@ -1,4 +1,4 @@
-"""One persistent process frontier for independent CPU-bound HMM fit tasks."""
+"""Persistent process frontier for independent CPU-bound runtime tasks."""
 
 from __future__ import annotations
 
@@ -9,19 +9,12 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool, is_pickleable
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import cpu_process_pool, is_pickleable
 
 
 @dataclass(frozen=True, slots=True)
 class FrontierTask[T]:
-    """Immutable identity for one independent HMM fit.
-
-    Data transfer is intentionally represented by row/column indices and a
-    shared matrix identity.  A worker must resolve the slice from the shared
-    read-only source rather than receive a copied fold matrix.
-    """
-
     task_id: str
     state_count: int
     fold_id: str
@@ -47,7 +40,7 @@ class FrontierTask[T]:
         if self.seed < 0:
             raise ValueError("frontier seed must be non-negative")
         if len(self.profile_hash) != 64 or any(
-            char not in "0123456789abcdef" for char in self.profile_hash
+            c not in "0123456789abcdef" for c in self.profile_hash
         ):
             raise ValueError("frontier profile_hash must be a lowercase SHA-256")
         if not self.matrix_identity or self.matrix_identity.strip() != self.matrix_identity:
@@ -59,13 +52,7 @@ class FrontierTask[T]:
 
     @property
     def canonical_key(self) -> tuple[object, ...]:
-        return (
-            self.state_count,
-            self.fold_id,
-            self.candidate_subset,
-            self.seed,
-            self.task_id,
-        )
+        return (self.state_count, self.fold_id, self.candidate_subset, self.seed, self.task_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +76,7 @@ def _run_frontier_task[T, R](worker: Callable[[FrontierTask[T]], R], task: Front
 
 
 class SharedTaskFrontier[T, R]:
-    """Persistent bounded process pool with canonical result assembly."""
+    """Bounded reusable process pool with deterministic result ordering."""
 
     def __init__(self, max_workers: int | None = None) -> None:
         self._requested_workers = max_workers
@@ -145,14 +132,12 @@ class SharedTaskFrontier[T, R]:
                         task = next(task_iterator)
                     except StopIteration:
                         break
-                    future = self._executor.submit(_run_frontier_task, worker, task)
-                    futures[future] = task
+                    futures[self._executor.submit(_run_frontier_task, worker, task)] = task
                 if not futures:
                     break
                 finished, _pending = wait(futures, return_when=FIRST_COMPLETED)
                 for future in finished:
                     task = futures.pop(future)
-                    # Unexpected worker exceptions intentionally propagate immediately.
                     completed[task.task_id] = future.result()
         except BaseException:
             for future in futures:
@@ -165,9 +150,7 @@ class SharedTaskFrontier[T, R]:
             max_queue_depth=len(ordered),
             runnable_tasks=len(ordered),
             elapsed_seconds=elapsed,
-            worker_utilization_proxy=(
-                min(1.0, len(ordered) / self.worker_limit) if elapsed >= 0.0 else 0.0
-            ),
+            worker_utilization_proxy=min(1.0, len(ordered) / self.worker_limit),
         )
         return FrontierResult(
             tuple((task, completed[task.task_id]) for task in ordered),
@@ -175,9 +158,4 @@ class SharedTaskFrontier[T, R]:
         )
 
 
-__all__ = [
-    "FrontierMetrics",
-    "FrontierResult",
-    "FrontierTask",
-    "SharedTaskFrontier",
-]
+__all__ = ["FrontierMetrics", "FrontierResult", "FrontierTask", "SharedTaskFrontier"]

@@ -7,7 +7,6 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.ablation import (
     HMMSubsetEvaluation,
     HMMSubsetEvaluator,
@@ -21,6 +20,7 @@ from market_regime_engine.feature_discovery.metadata_store import (
     apply_pca_credit_to_feature_stats,
 )
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.runtime.task_frontier import SharedTaskFrontier
 from tests.unit.feature_discovery.test_metadata_store import make_bundle
 
 SELECTOR_HASH = "a" * 64

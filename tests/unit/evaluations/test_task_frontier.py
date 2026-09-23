@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-import market_regime_engine.evaluations.task_frontier as frontier_module
-from market_regime_engine.evaluations.task_frontier import (
+import market_regime_engine.runtime.task_frontier as frontier_module
+from market_regime_engine.runtime.task_frontier import (
     FrontierTask,
     SharedTaskFrontier,
 )

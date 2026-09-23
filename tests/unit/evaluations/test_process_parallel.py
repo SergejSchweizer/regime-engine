@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 def _native_thread_probe(_value: int) -> tuple[dict[str, str | None], tuple[int, ...]]:
