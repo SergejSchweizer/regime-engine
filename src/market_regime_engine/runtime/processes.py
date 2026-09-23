@@ -21,7 +21,7 @@ _NATIVE_THREAD_LIMITER: object | None = None
 def is_pickleable(value: object) -> bool:
     try:
         pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-    except (AttributeError, OSError, pickle.PickleError, TypeError):
+    except AttributeError, OSError, pickle.PickleError, TypeError:
         return False
     return True
 

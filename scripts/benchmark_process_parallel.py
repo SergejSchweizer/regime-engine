@@ -15,8 +15,8 @@ import resource
 import time
 from concurrent.futures import Future
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.runtime.cpu import available_cpu_count, cpu_topology
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 def _cpu_kernel(iterations: int) -> int:

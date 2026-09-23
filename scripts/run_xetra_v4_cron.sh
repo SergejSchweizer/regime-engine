@@ -28,4 +28,4 @@ fi
 curl --fail --silent --show-error "$MLFLOW_TRACKING_URI/health" >/dev/null \
   || fail "external MLflow health check failed: $MLFLOW_TRACKING_URI"
 
-exec "$ROOT/.venv/bin/python" "$ROOT/scripts/run_xetra_v4_full_evaluation.py"
+exec "$ROOT/.venv/bin/python" -m market_regime_engine.cli evaluate --profile xetra

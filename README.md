@@ -64,44 +64,6 @@ artifacts only. The evaluation itself has no durable position ledger or resume
 key: if the process is interrupted, invoke the same command again and it will
 recompute every fold from the beginning.
 
-Run the local-only hermetic full-computation proof with:
-
-```bash
-./scripts/run_pr231_hermetic_proof.sh
-```
-
-The proof is also available as independently startable local sub-proofs. Run
-only the phase needed for a change:
-
-```bash
-./scripts/run_pr231_hermetic_proof.sh pipeline-math
-./scripts/run_pr231_hermetic_proof.sh tracking-and-plots
-./scripts/run_pr231_hermetic_proof.sh independent-process-and-labels
-./scripts/run_pr231_hermetic_proof.sh future-mutation-isolation
-```
-
-Each phase creates its own metadata and proof sidecar below
-`.artifacts/pr231-hermetic-proof` (or `PR231_PROOF_OUTPUT_DIR`). The combined
-`all` mode remains available, but is not required when validating one phase.
-Sub-phases reuse a commit- and fixture-bound local baseline cache when they
-share the same output directory; a missing or stale cache is recomputed.
-The tracking phase copies its plot manifest and PNGs into that output
-directory, so the recorded bundle remains verifiable after pytest removes its
-temporary MLflow directory.
-After the selected phases finish, verify one complete bundle without rerunning
-any computation:
-
-```bash
-.venv/bin/python scripts/verify_pr231_subproof_bundle.py \
-  --output-dir .artifacts/pr231-hermetic-proof \
-  --json-out .artifacts/pr231-hermetic-proof/pr231-proof-bundle.json
-```
-
-It writes timing metadata, the JUnit report and the computation proof sidecar
-to `.artifacts/pr231-hermetic-proof` by default. Set
-`PR231_PROOF_OUTPUT_DIR` to store them elsewhere. This proof never runs in
-GitHub Actions, contacts external services or participates in merge/push gates.
-
 ## Statistical lifecycle
 
 Feature discovery and candidate selection use outer-fold TRAIN data only. The v4 contract evaluates the dynamic source catalog, Gaussian K2-K5, two-mixture GMM-HMM K2-K5, and Student-t K2-K5 candidates using the deterministic walk-forward contract in `EVALUATION.md`. No ETF/portfolio/trading metric participates in discovery or model ranking.
