@@ -171,7 +171,23 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
         ),
     )
     assert len(names) == 1001
+    assert result.quality_eligible_features == names
     assert result.family_pca
+    name_index = {name: index for index, name in enumerate(names)}
+    for artifact in result.family_pca:
+        family_matrix = matrix[
+            :,
+            tuple(name_index[name] for name in artifact.feature_order),
+        ]
+        standardized = artifact.scaler.transform(family_matrix)
+        _u, singular_values, _vh = np.linalg.svd(standardized, full_matrices=False)
+        expected_variance = (singular_values**2) / float(np.sum(singular_values**2))
+        assert np.allclose(
+            artifact.explained_variance_ratio[: artifact.numerical_rank],
+            expected_variance[: artifact.numerical_rank],
+            rtol=1.0e-10,
+            atol=1.0e-10,
+        )
     assert result.global_reduction.representatives
     assert result.selected_features
     assert result.ablation.one_feature_results
@@ -223,6 +239,12 @@ def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: P
         "ablation-losses.png",
     }
     assert all(path.stat().st_size > 0 for path in artifacts)
+    assert all(item.score.value == float(len(item.selected_features)) for item in result.sffs.steps)
+    assert result.ablation.baseline.hmm_evaluation.score is not None
+    assert result.ablation.baseline.hmm_evaluation.score.value == float(
+        len(result.selected_features)
+    )
+    assert result.ablation.ablation_losses == tuple(1.0 for _ in result.selected_features)
     assert json.loads((tmp_path / "feature-funnel.json").read_text())["sffs_selected"] == len(
         result.selected_features
     )
