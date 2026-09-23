@@ -46,8 +46,14 @@ def test_canonical_import_graph_has_no_deleted_optional_or_dynamic_edge() -> Non
         "legacy",
     }
     canonical_prefixes = {
-        "commands", "evaluation", "feature_discovery", "features",
-        "preprocessing", "profiles", "runtime", "training",
+        "commands",
+        "evaluation",
+        "feature_discovery",
+        "features",
+        "preprocessing",
+        "profiles",
+        "runtime",
+        "training",
     }
     for path in SOURCE_ROOT.rglob("*.py"):
         if path.relative_to(SOURCE_ROOT).parts[0] not in canonical_prefixes:
@@ -56,8 +62,7 @@ def test_canonical_import_graph_has_no_deleted_optional_or_dynamic_edge() -> Non
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 assert all(
-                    alias.name.split(".")[-1] not in deleted_modules
-                    for alias in node.names
+                    alias.name.split(".")[-1] not in deleted_modules for alias in node.names
                 ), path
             elif isinstance(node, ast.ImportFrom):
                 assert (node.module or "").split(".")[-1] not in deleted_modules, path
@@ -66,10 +71,7 @@ def test_canonical_import_graph_has_no_deleted_optional_or_dynamic_edge() -> Non
                 dynamic = (
                     isinstance(function, ast.Name)
                     and function.id in {"__import__", "import_module"}
-                ) or (
-                    isinstance(function, ast.Attribute)
-                    and function.attr == "import_module"
-                )
+                ) or (isinstance(function, ast.Attribute) and function.attr == "import_module")
                 if dynamic:
                     # The CLI composition is intentionally lazy so static
                     # verifier runs never import external services. It may
@@ -93,9 +95,7 @@ def test_canonical_import_graph_has_no_deleted_optional_or_dynamic_edge() -> Non
         ("walk_forward", "l_star"),
     ),
 )
-def test_historical_profile_switches_fail_closed_as_unknown(
-    location: str, key: str
-) -> None:
+def test_historical_profile_switches_fail_closed_as_unknown(location: str, key: str) -> None:
     raw = yaml.safe_load((ROOT / "configs/profiles/xetra_v4.yaml").read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     mutated = copy.deepcopy(raw)
@@ -108,9 +108,7 @@ def test_historical_profile_switches_fail_closed_as_unknown(
 
 def test_canonical_calendar_fixture_keeps_pre_deletion_statistical_identity() -> None:
     timestamps = tuple(
-        datetime.combine(
-            date(2023, 1, 1) + timedelta(days=index), datetime.min.time(), tzinfo=UTC
-        )
+        datetime.combine(date(2023, 1, 1) + timedelta(days=index), datetime.min.time(), tzinfo=UTC)
         for index in range(120)
     )
     plan = plan_calendar_month(timestamps, minimum_train_source_observations=31)
@@ -128,7 +126,10 @@ def test_canonical_calendar_fixture_keeps_pre_deletion_statistical_identity() ->
 def test_production_month_clock_has_no_fixed_block_constructor() -> None:
     production = _production_text()
     forbidden_constructors = (
-        "walk_forward_splits", "fixed_block", "trading_day_clock", "fixed_row_clock"
+        "walk_forward_splits",
+        "fixed_block",
+        "trading_day_clock",
+        "fixed_row_clock",
     )
     assert all(name not in production for name in forbidden_constructors)
     clock = (SOURCE_ROOT / "evaluation" / "calendar_clock.py").read_text(encoding="utf-8")
