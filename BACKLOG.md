@@ -1525,7 +1525,9 @@ implemented, including binding generated Family-PCA TRAIN values into the
 process-safe SFFS callbacks. The production refit/serving package now also
 supports serialized Family-PCA artifacts and refits the canonical family
 transform on the deployment TRAIN window; focused round-trip and backend
-package tests cover the new path. Production-path call-graph QA and complete
+package tests cover the new path. Final refit now consumes the canonical
+monthly validation identity instead of invoking the superseded generic
+walk-forward evaluator. Production-path call-graph QA and complete
 acceptance evidence remain open.
 Current evidence: 19 backend/boundary tests plus 58 affected command and
 feature-discovery tests, one production call-graph contract test, four

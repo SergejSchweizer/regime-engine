@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 
@@ -36,6 +37,23 @@ from market_regime_engine.training.multistart import AdapterFactory, run_multist
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _MINIMUM_RETAINED = 504
 AdapterFactoryBuilder = Callable[[ResolvedCandidateProfile], AdapterFactory]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalRefitValidation:
+    """Frozen validation identity supplied by the canonical monthly evaluator."""
+
+    profile_id: str
+    profile_config_version: int
+    candidate_id: str
+    state_count: int
+    source_build_id: str
+    feature_order: tuple[str, ...]
+    feature_selection_definition_hash: str
+    feature_selection_execution_hash: str
+    evaluation_plan_hash: str
+    evaluation_cutoff: datetime
+    evidence_hash: str
 
 
 def _require_utc(value: datetime, field_name: str) -> datetime:
@@ -133,7 +151,7 @@ def final_production_refit(
     *,
     lineage: SourceLineage,
     candidate: ResolvedCandidateProfile,
-    winning_evaluation: WalkForwardEvaluation,
+    winning_evaluation: WalkForwardEvaluation | CanonicalRefitValidation,
     deployment_selection: DeploymentSelection,
     profile: ModelProfile,
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
@@ -263,7 +281,11 @@ def final_production_refit(
         evaluation_plan_hash=winning_evaluation.evaluation_plan_hash,
         validation_evaluation_cutoff=validation_cutoff,
         deployment_selection_cutoff=cutoff,
-        validation_evidence_hash=content_hash(winning_evaluation),
+        validation_evidence_hash=(
+            winning_evaluation.evidence_hash
+            if isinstance(winning_evaluation, CanonicalRefitValidation)
+            else content_hash(winning_evaluation)
+        ),
         source_catalog_hash=deployment_selection.source_catalog_hash,
         state_identity_scope=deployment_selection.configuration.state_identity_scope,
         feature_order=candidate.feature_order,
