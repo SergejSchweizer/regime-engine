@@ -1,3 +1,4 @@
+<!-- owner: backlog -->
 # Regime Engine — Canonical Backlog
 
 Status date: 2026-09-20
@@ -1812,23 +1813,27 @@ Other legal/license files are unaffected.
 **Type:** QA only / documentation
 **Depends on:** PR-511
 
+**Status:** ACCEPTANCE COMPLETE — branch `pr/PR-512-documentation-completeness-qa` is
+validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluation. Merge to
+`origin/main` is the remaining gate.
+
 #### Acceptance
 
-- [ ] Repository contract/onboarding Markdown inventory is exactly README.md, ARCHITECTURE.md,
+- [x] Repository contract/onboarding Markdown inventory is exactly README.md, ARCHITECTURE.md,
   EVALUATION.md, OPERATIONS.md, CONTRIBUTING.md and BACKLOG.md, excluding legal/license metadata.
-- [ ] DATA_SOURCE.md, EVALUATION_EXECUTION.md and PLOT_STYLE.md no longer exist.
-- [ ] Link checker resolves every internal documentation link.
-- [ ] Static owner-keyword checks prove source/operations, statistical evaluation, architecture,
+- [x] DATA_SOURCE.md, EVALUATION_EXECUTION.md and PLOT_STYLE.md no longer exist.
+- [x] Link checker resolves every internal documentation link.
+- [x] Static owner-keyword checks prove source/operations, statistical evaluation, architecture,
   contributing and backlog contracts have exactly one owning document.
-- [ ] Active docs contain no `macro_loader.macro_features_daily`, old PCA-only-prefix selector,
+- [x] Active docs contain no `macro_loader.macro_features_daily`, old PCA-only-prefix selector,
   clustering/medoid/teacher canonical path or contradictory monthly cadence.
-- [ ] Parse every Mermaid fenced block with the repository's pinned Mermaid validation tool or a
+- [x] Parse every Mermaid fenced block with the repository's pinned Mermaid validation tool or a
   deterministic syntax validator.
-- [ ] README walkthrough commands are executed in a hermetic smoke test where possible and clearly
+- [x] README walkthrough commands are executed in a hermetic smoke test where possible and clearly
   mark external-only commands.
-- [ ] No required information disappears when the retired docs are removed; a migration checklist
+- [x] No required information disappears when the retired docs are removed; a migration checklist
   maps every retained old section to its new owner or marks it intentionally superseded.
-- [ ] QA changes no production behavior.
+- [x] QA changes no production behavior.
 
 ### PR-501 — QA: zero-legacy and full hermetic multi-fold pipeline proof
 
