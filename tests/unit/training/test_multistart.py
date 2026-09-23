@@ -269,6 +269,24 @@ def test_multistart_batch_flattens_all_fold_seeds_on_one_frontier() -> None:
     assert parallel == serial
 
 
+def test_multistart_batch_worker_budget_matrix_preserves_two_fold_results() -> None:
+    outcomes = {seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS}
+    jobs = (
+        MultistartBatchJob(
+            "fold-budget-001", [[0.0], [1.0]], 2, PickleableAdapterFactory(outcomes)
+        ),
+        MultistartBatchJob(
+            "fold-budget-002", [[2.0], [3.0]], 2, PickleableAdapterFactory(outcomes)
+        ),
+    )
+
+    results = tuple(
+        run_multistart_batch(jobs, max_workers=worker_budget)
+        for worker_budget in (1, 8, 32, 64, None)
+    )
+    assert all(result == results[0] for result in results)
+
+
 def test_batch_typed_invalidity_is_fold_evidence_when_requested() -> None:
     outcomes: dict[int, FitResult | Exception] = {
         seed: RecoverableEvaluationInvalidity(f"fail-{seed}") for seed in MULTISTART_SEEDS

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from hashlib import sha256
 from math import fsum, isfinite, sqrt
 from statistics import median
+from typing import cast
+
+import numpy as np
 
 from market_regime_engine.feature_discovery.feature_roles import (
     FeatureRoleContract,
@@ -124,6 +127,57 @@ def _stable_duplicate(
     return full[0], full[1], tuple(subwindows), tuple(support_counts)
 
 
+def _stable_duplicate_matrix(
+    feature_values: Mapping[str, Sequence[float | None]],
+    names: tuple[str, ...],
+    profile: FeatureSelectionProfile,
+) -> dict[tuple[str, str], tuple[float, int, tuple[float, ...], tuple[int, ...]]] | None:
+    """Find stable duplicate edges with family-local vectorized correlations.
+
+    The family boundary is intentionally the memory limit: a family matrix is at
+    most a few hundred columns, while the global pipeline never materializes a
+    10,000-feature correlation matrix.  Incomplete/non-finite vectors retain the
+    scalar path so missing-data semantics remain fail-closed.
+    """
+
+    if any(
+        value is None or not isfinite(float(value))
+        for name in names
+        for value in feature_values[name]
+    ):
+        return None
+    if len(names) < 2:
+        return {}
+    matrix = np.asarray(
+        tuple(tuple(float(cast(float, value)) for value in feature_values[name]) for name in names),
+        dtype=np.float64,
+    ).T
+    if matrix.shape[0] < profile.correlation_min_pair_rows:
+        return None
+    full = np.abs(np.corrcoef(matrix, rowvar=False))
+    bounds = _contiguous_thirds(matrix.shape[0])
+    subwindows = tuple(
+        np.abs(np.corrcoef(matrix[start:end], rowvar=False)) for start, end in bounds
+    )
+    candidate_pairs = np.argwhere(np.triu(full >= profile.family_near_duplicate_abs_threshold, k=1))
+    edges: dict[tuple[str, str], tuple[float, int, tuple[float, ...], tuple[int, ...]]] = {}
+    for left_index, right_index in candidate_pairs:
+        left = int(left_index)
+        right = int(right_index)
+        sub_values = tuple(float(item[left, right]) for item in subwindows)
+        if any(
+            value < profile.family_near_duplicate_subwindow_abs_threshold for value in sub_values
+        ):
+            continue
+        edges[(names[left], names[right])] = (
+            float(full[left, right]),
+            matrix.shape[0],
+            sub_values,
+            tuple(end - start for start, end in bounds),
+        )
+    return edges
+
+
 def prune_family_near_duplicates(
     feature_values: Mapping[str, Sequence[float | None]],
     contract: FeatureRoleContract,
@@ -167,7 +221,9 @@ def prune_family_near_duplicates(
     removed: list[str] = []
     evidence: list[FamilyPairEvidence] = []
     for family in sorted(by_family):
-        remaining = set(by_family[family])
+        family_names = tuple(by_family[family])
+        matrix_edges = _stable_duplicate_matrix(feature_values, family_names, resolved_profile)
+        remaining = set(family_names)
         while remaining:
             candidates = tuple(sorted(remaining, key=lambda name: canonical_order[name]))
             neighborhoods: dict[
@@ -176,9 +232,15 @@ def prune_family_near_duplicates(
             ] = {name: [] for name in candidates}
             for left_index, left_name in enumerate(candidates):
                 for right_name in candidates[left_index + 1 :]:
-                    duplicate = _stable_duplicate(
-                        feature_values[left_name], feature_values[right_name], resolved_profile
+                    duplicate = (
+                        None if matrix_edges is None else matrix_edges.get((left_name, right_name))
                     )
+                    if duplicate is None and matrix_edges is not None:
+                        duplicate = matrix_edges.get((right_name, left_name))
+                    if duplicate is None and matrix_edges is None:
+                        duplicate = _stable_duplicate(
+                            feature_values[left_name], feature_values[right_name], resolved_profile
+                        )
                     if duplicate is None:
                         continue
                     neighborhoods[left_name].append((right_name, duplicate))
