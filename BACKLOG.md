@@ -1613,26 +1613,26 @@ superseded statistical/source paths merely to preserve backwards compatibility.
 **Type:** QA only
 **Depends on:** PR-526
 
-**Status:** IN PROGRESS — branch `pr/PR-527-zero-legacy-statistical-source-qa` is based on
-`origin/main` at `56b5ce7`; no NAS or MLflow evaluation has been run. This QA is local and
-synthetic-only. It distinguishes retired selector/source fallback symbols from canonical
-feature-discovery terminology that remains part of the current profile contract.
+**Status:** ACCEPTANCE COMPLETE — GitHub PR #495 passed all policy, lint, strict-mypy, unit and
+merge gates and is ready to merge. The QA is local and synthetic-only; no NAS or MLflow
+evaluation has been run. It distinguishes retired selector/source fallback symbols from
+canonical feature-discovery terminology that remains part of the current profile contract.
 
 #### Acceptance
 
-- [ ] Static repository scan finds no production symbol/import/config key for PCA-only-prefix/L*,
+- [x] Static repository scan finds no production symbol/import/config key for PCA-only-prefix/L*,
   medoid, teacher-HMM, clustering selector, raw-plus-PCA selector or old source fallbacks.
-- [ ] Static import-graph traversal proves no canonical module has an optional/dynamic import path to
+- [x] Static import-graph traversal proves no canonical module has an optional/dynamic import path to
   a deleted implementation.
-- [ ] CLI/config mutation tests prove historical selector/source switches are rejected as unknown
+- [x] CLI/config mutation tests prove historical selector/source switches are rejected as unknown
   rather than silently ignored.
-- [ ] A fixture exposing `macro_features_daily`, `macro_raw` and `macro_features` proves only
+- [x] A fixture exposing `macro_features_daily`, `macro_raw` and `macro_features` proves only
   `macro_loader.macro_features` can be used.
-- [ ] Month-clock tests prove no fixed 63-row, 42-row or 21-trading-day production constructor remains
+- [x] Month-clock tests prove no fixed 63-row, 42-row or 21-trading-day production constructor remains
   reachable.
-- [ ] One canonical evaluation fixture reproduces the pre-deletion PR-500 statistical hashes.
-- [ ] Python package build/import, Ruff, strict mypy, unit and hermetic integration suites pass.
-- [ ] QA adds no production behavior.
+- [x] One canonical evaluation fixture reproduces the pre-deletion PR-500 statistical hashes.
+- [x] Python package build/import, Ruff, strict mypy, unit and hermetic integration suites pass.
+- [x] QA adds no production behavior.
 
 ### PR-528 — Delete compatibility-only profile, package, artifact and serving code
 
