@@ -1841,15 +1841,15 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Depends on:** PR-512
 
 **Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
-`origin/main` at `f1ecc99`; current local HEAD includes `b9ed95b` and this backlog update is the
-next local commit before pushing. Canonical fold diagnostics now materialize the
+`origin/main` at `f1ecc99`; the branch contains the pushed canonical diagnostics and independent
+oracle-proof commits. Canonical fold diagnostics now materialize the
 required JSON tables and PNG plots for tracking. The end-to-end hermetic acceptance and
 independent recomputation remain open. No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
 
-**Current git status:** clean before the backlog status update; after this status edit the only
-expected change is `BACKLOG.md` on this branch. No local or remote branch cleanup is authorized
-until PR-501 acceptance is complete and merged.
+**Current git status:** working tree is clean and the branch is synchronized with its remote
+tracking branch; no local or remote branch cleanup is authorized until PR-501 acceptance is
+complete and merged.
 
 #### Acceptance
 
