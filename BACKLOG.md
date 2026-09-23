@@ -1877,28 +1877,35 @@ complete and merged.
 **Type:** QA only / resource acceptance
 **Depends on:** PR-501
 
+**Status:** IN PROGRESS — branch `pr/PR-502-scale-cpu-memory-acceptance` is based on merged
+`origin/main` at `6d942c8`. A hermetic 10,004-feature catalog now runs the real 10k quality
+filter, retains 124 survivors, completes family PCA/global reduction, records local wall/RSS/
+candidate/worker metadata, and proves HMM selection sees only post-reduction candidates. The
+worker-budget parity, concurrent multi-fold saturation, and MLflow runtime-record completeness
+criteria remain open. No NAS, PostgreSQL, MLflow, or real-data evaluation has been run.
+
 Target host class: approximately 86 vCPUs and 256 GiB RAM.
 
 #### Acceptance
 
-- [ ] Run a production-shaped synthetic fixture with at least 10,000 discovered features across
+- [x] Run a production-shaped synthetic fixture with at least 10,000 discovered features across
   multiple core and transformation families.
-- [ ] Quality filtering and family PCA complete without materializing a global 10,000x10,000
+- [x] Quality filtering and family PCA complete without materializing a global 10,000x10,000
   correlation matrix.
-- [ ] Global correlation work is blockwise and persists only required edge/mapping evidence.
-- [ ] HMM SFFS receives only post-PCA/post-correlation representatives, never the original
+- [x] Global correlation work is blockwise and persists only required edge/mapping evidence.
+- [x] HMM SFFS receives only post-PCA/post-correlation representatives, never the original
   10,000-feature matrix as an HMM observation vector.
 - [ ] Candidate HMM fits use the shared process frontier; worker counts 1, 8, 32, 64 and auto
   remain statistically identical.
 - [ ] Multi-fold evaluation uses concurrent fold controllers and the same global worker pool; no
   nested process pools are created.
-- [ ] Native numerical thread pools remain one thread per worker.
-- [ ] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
+- [x] Native numerical thread pools remain one thread per worker.
+- [x] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
   otherwise copy them.
-- [ ] Peak resident memory for the acceptance run stays below 64 GiB.
+- [x] Peak resident memory for the acceptance run stays below 64 GiB.
 - [ ] The run records wall time, peak RSS, candidate counts per stage and effective worker count in
   MLflow and the local fold metadata.
-- [ ] No Spark, Ray or external distributed-compute dependency is introduced.
+- [x] No Spark, Ray or external distributed-compute dependency is introduced.
 
 ---
 
