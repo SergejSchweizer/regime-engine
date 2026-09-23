@@ -1731,6 +1731,10 @@ behavior.
 **Type:** QA only / structural acceptance
 **Depends on:** PR-530
 
+**Status:** IN PROGRESS — branch `pr/PR-531-canonical-only-import-graph-qa` is based on
+`origin/main` at `26cf90f`; QA is local/synthetic-only and does not access NAS, PostgreSQL,
+MLflow, or run the full evaluation.
+
 #### Acceptance
 
 - [ ] Build an import/dependency graph and prove the canonical layer direction required by PR-530.
