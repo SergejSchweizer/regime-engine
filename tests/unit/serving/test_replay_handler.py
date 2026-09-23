@@ -16,7 +16,7 @@ from market_regime_engine.inference.replay import ReplayInferenceResult, fixed_m
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing import fit_pca_hmm_scaler
+from market_regime_engine.preprocessing.two_stage import fit_family_pca_hmm_scaler
 from market_regime_engine.serving.model_resolver import ModelResolver
 from market_regime_engine.serving.replay_admission import ReplayAdmission
 from market_regime_engine.serving.replay_handler import ReplayHandler, replay_response_json
@@ -27,15 +27,10 @@ BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 def artifact() -> ProductionModelArtifact:
     features = ("f0",)
-    pca_start = datetime(2026, 1, 1, tzinfo=UTC)
-    pca_timestamps = tuple(pca_start + timedelta(days=index) for index in range(120))
-    pca_scaler = fit_pca_hmm_scaler(
-        pca_timestamps,
+    pca_scaler = fit_family_pca_hmm_scaler(
         np.arange(120, dtype=np.float64).reshape(-1, 1),
         raw_feature_order=features,
-        inner_fold_id="fold_001",
-        fit_start=pca_start,
-        fit_end=pca_timestamps[-1],
+        family_pca=(),
         model_feature_order=features,
     )
     return ProductionModelArtifact(

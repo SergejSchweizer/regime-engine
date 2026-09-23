@@ -21,7 +21,7 @@ from market_regime_engine.mlflow_support.model_package import (
 from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing.two_stage import fit_pca_hmm_scaler
+from market_regime_engine.preprocessing.two_stage import fit_family_pca_hmm_scaler
 from market_regime_engine.serving.latest_handler import LatestHandler
 from market_regime_engine.serving.model_resolver import ModelResolver
 from market_regime_engine.serving.replay_admission import ReplayAdmission
@@ -33,15 +33,10 @@ BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 def artifact(build: str) -> ProductionModelArtifact:
     features = ("f0",)
-    pca_start = BASE
-    pca_scaler = fit_pca_hmm_scaler(
-        (pca_start, pca_start + timedelta(days=1)),
+    pca_scaler = fit_family_pca_hmm_scaler(
         ((0.0,), (1.0,)),
         raw_feature_order=features,
-        inner_fold_id="integration",
-        fit_start=pca_start,
-        fit_end=pca_start + timedelta(days=1),
-        component_count=1,
+        family_pca=(),
         model_feature_order=features,
     )
     return ProductionModelArtifact(

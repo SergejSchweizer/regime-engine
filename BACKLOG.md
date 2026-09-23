@@ -1639,9 +1639,9 @@ canonical feature-discovery terminology that remains part of the current profile
 **Type:** implementation / compatibility removal
 **Depends on:** PR-527
 
-**Status:** IN PROGRESS — branch `pr/PR-528-delete-compatibility-boundaries` is based on
-`origin/main` at `16a6596`; local-only contract cleanup is underway. No NAS, PostgreSQL,
-MLflow or full evaluation run has been performed.
+**Status:** ACCEPTANCE COMPLETE locally — branch `pr/PR-528-delete-compatibility-boundaries` is
+based on `origin/main` at `16a6596`; final GitHub validation and merge remain pending. No NAS,
+PostgreSQL, MLflow or full evaluation run has been performed.
 
 The current canonical profile/package/serving contract is the only supported contract. Historical
 model packages and run artifacts remain available in MLflow/Git history as data, but this repository
@@ -1649,25 +1649,25 @@ does not keep compatibility code to execute or reinterpret superseded contracts.
 
 #### Acceptance
 
-- [ ] Delete v1-v3 Xetra profile/config compatibility models, parsers, upgrade adapters and runtime
+- [x] Delete v1-v3 Xetra profile/config compatibility models, parsers, upgrade adapters and runtime
   branches that are not part of the sole current profile.
-- [ ] Delete legacy feature-order/package schema readers, deserializers, migration adapters and
+- [x] Delete legacy feature-order/package schema readers, deserializers, migration adapters and
   fallback package loaders that accept packages lacking the canonical feature-selection profile
   hash, selected semantic tuple or required current lineage.
-- [ ] Delete historical artifact readers whose only purpose is to normalize superseded evaluation
+- [x] Delete historical artifact readers whose only purpose is to normalize superseded evaluation
   evidence into current structures.
-- [ ] Delete deprecated CLI arguments, config aliases, environment-variable aliases and API request
+- [x] Delete deprecated CLI arguments, config aliases, environment-variable aliases and API request
   fields retained only for backwards compatibility.
-- [ ] Delete serving/refit fallback branches that infer missing current package fields or reconstruct
+- [x] Delete serving/refit fallback branches that infer missing current package fields or reconstruct
   historical feature-selection state.
-- [ ] Reject an old package/config/API payload explicitly at the current validation boundary; do not
+- [x] Reject an old package/config/API payload explicitly at the current validation boundary; do not
   auto-upgrade it.
-- [ ] Do not mutate, delete or rewrite historical MLflow runs, registered model versions, artifacts
+- [x] Do not mutate, delete or rewrite historical MLflow runs, registered model versions, artifacts
   or PostgreSQL data as part of compatibility-code removal.
-- [ ] Keep only current public API/profile/package types and their exact validators/serializers.
-- [ ] Remove tests/fixtures that assert acceptance of historical contracts and replace them with
+- [x] Keep only current public API/profile/package types and their exact validators/serializers.
+- [x] Remove tests/fixtures that assert acceptance of historical contracts and replace them with
   rejection tests at the current boundary.
-- [ ] No compatibility layer remains solely because an old artifact exists remotely.
+- [x] No compatibility layer remains solely because an old artifact exists remotely.
 
 ### PR-529 — QA: current-contract-only package and serving boundary
 

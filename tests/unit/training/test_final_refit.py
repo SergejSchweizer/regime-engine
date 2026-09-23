@@ -23,7 +23,6 @@ from market_regime_engine.models.gaussian_hmm import (
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 from market_regime_engine.models.protocols import FilterResult, FitResult
 from market_regime_engine.models.student_t_hmm import StudentTHMMAdapter
-from market_regime_engine.profiles.config import PCAConfig
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
 from market_regime_engine.states.alignment import StateAlignment, align_first_fold
@@ -341,30 +340,20 @@ def test_final_refit_uses_full_sample_aligns_and_persists_filter_boundary() -> N
     assert result.hmm.feature_order == result.scaler.feature_order == FEATURES
 
 
-def test_final_refit_reconstructs_and_persists_fold_independent_pca() -> None:
+def test_final_refit_rejects_removed_global_pca_fallback() -> None:
     rows = source_rows(1324)
     evaluation = pca_winning_evaluation(rows.iloc[:-1].reset_index(drop=True))
-    profile = replace(
-        load_profile(PROFILE_CONFIG),
-        pca=PCAConfig(variance_threshold=0.90),
-    )
-    result = final_production_refit(
-        rows,
-        lineage=lineage(rows),
-        candidate=pca_candidate(),
-        winning_evaluation=evaluation,
-        deployment_selection=deployment_selection(rows, evaluation, PCA_FEATURES),
-        profile=profile,
-        adapter_factory_builder=lambda item: PCAAdapter,
-        pca_raw_feature_order=FEATURES,
-    )
-
-    assert result.pca_scaler is not None
-    assert result.pca_scaler.raw_feature_order == FEATURES
-    assert result.pca_scaler.model_feature_order == PCA_FEATURES
-    assert result.pca_scaler.pca_fit.clock.inner_fold_id == "production"
-    assert result.scaler == result.pca_scaler.hmm_scaler
-    assert result.hmm.feature_order == PCA_FEATURES
+    with pytest.raises(ValueError, match="family PCA model feature order contains unknown"):
+        final_production_refit(
+            rows,
+            lineage=lineage(rows),
+            candidate=pca_candidate(),
+            winning_evaluation=evaluation,
+            deployment_selection=deployment_selection(rows, evaluation, PCA_FEATURES),
+            profile=load_profile(PROFILE_CONFIG),
+            adapter_factory_builder=lambda item: PCAAdapter,
+            pca_raw_feature_order=FEATURES,
+        )
 
 
 def test_rows_strictly_after_cutoff_cannot_change_final_refit() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,21 +23,16 @@ from market_regime_engine.mlflow_support.model_package import (
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
-from market_regime_engine.preprocessing import fit_pca_hmm_scaler
+from market_regime_engine.preprocessing.two_stage import fit_family_pca_hmm_scaler
 
 
 def artifact() -> ProductionModelArtifact:
     feature_order = ("f0", "f1")
-    start = datetime(2026, 1, 1, tzinfo=UTC)
-    timestamps = tuple(start + timedelta(days=index) for index in range(120))
     index = np.arange(120, dtype=np.float64)
-    pca_scaler = fit_pca_hmm_scaler(
-        timestamps,
+    pca_scaler = fit_family_pca_hmm_scaler(
         np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0))),
         raw_feature_order=feature_order,
-        inner_fold_id="fold_001",
-        fit_start=start,
-        fit_end=timestamps[-1],
+        family_pca=(),
         model_feature_order=feature_order,
     )
     return ProductionModelArtifact(
@@ -84,17 +79,13 @@ def artifact() -> ProductionModelArtifact:
 
 def pca_artifact() -> ProductionModelArtifact:
     base = artifact()
-    start = datetime(2026, 1, 1, tzinfo=UTC)
-    timestamps = tuple(start + timedelta(days=index) for index in range(120))
     index = np.arange(120, dtype=np.float64)
     raw_rows = np.column_stack((np.sin(index / 5.0), np.cos(index / 7.0)))
-    pca_scaler = fit_pca_hmm_scaler(
-        timestamps,
+    pca_scaler = fit_family_pca_hmm_scaler(
         raw_rows,
         raw_feature_order=("f0", "f1"),
-        inner_fold_id="fold_001",
-        fit_start=start,
-        fit_end=timestamps[-1],
+        family_pca=(),
+        model_feature_order=("f0", "f1"),
     )
     dimension = len(pca_scaler.model_feature_order)
     covariance = tuple(
@@ -152,7 +143,7 @@ def test_gmm_hmm_json_roundtrip_preserves_two_mixture_emissions() -> None:
     assert json.loads(payload)["hmm"]["model_family"] == "gmm_hmm"
 
 
-def test_pca_lineage_json_roundtrip_preserves_two_stage_artifact() -> None:
+def test_pca_lineage_json_roundtrip_preserves_family_artifact() -> None:
     original = pca_artifact()
     payload = production_artifact_json(original)
 
@@ -160,7 +151,7 @@ def test_pca_lineage_json_roundtrip_preserves_two_stage_artifact() -> None:
 
     assert restored == original
     assert json.loads(payload)["pca_scaler"]["artifact_schema"] == (
-        "RegimeEnginePCATwoStageScaler.v1"
+        "RegimeEngineFamilyPCATwoStageScaler.v1"
     )
 
 

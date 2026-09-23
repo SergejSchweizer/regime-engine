@@ -56,7 +56,7 @@ Run the complete Xetra v4 evaluation as one cron-safe command:
 ./scripts/run_xetra_v4_cron.sh
 ```
 
-The `evaluation.checkpoint_root` value in `config.yaml` is mandatory, absolute,
+The `evaluation.state_root` value in `config.yaml` is mandatory, absolute,
 and must be outside the checkout. All other deployment metadata is loaded from
 the same file; no `.env` file is used.
 It stores the immutable input snapshot, audit output, and metric-export
