@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 from math import isfinite
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -20,9 +19,6 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.runtime.parallel import ReadOnlyMatrix
-
-if TYPE_CHECKING:
-    from market_regime_engine.evaluation_runs.hmm_units import HMMSeedCheckpoint
 
 MULTISTART_SEEDS = (11, 23, 37, 53, 71, 89, 107, 131)
 MINIMUM_VALID_STARTS = 6
@@ -131,7 +127,6 @@ class _FrontierStartPayload:
     state_count: int
     adapter_factory: AdapterFactory
     seed: int
-    retryable_technical_failure: bool
 
 
 def _successful_diagnostic(result: FitResult) -> StartDiagnostic:
@@ -164,7 +159,6 @@ def _evaluate_start(
     state_count: int,
     adapter_factory: AdapterFactory,
     seed: int,
-    retryable_technical_failure: bool = False,
 ) -> tuple[StartDiagnostic, FitResult | None]:
     try:
         result = adapter_factory().fit(train_rows, state_count, seed)
@@ -182,7 +176,7 @@ def _evaluate_start(
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
     except Exception:
         # An unexpected adapter/backend failure is never statistical evidence.
-        # It must reach the parent unchanged, regardless of checkpoint mode.
+        # It must reach the parent unchanged.
         raise
 
 
@@ -207,7 +201,6 @@ def _evaluate_start_in_frontier(
             state_count=payload.state_count,
             adapter_factory=payload.adapter_factory,
             seed=payload.seed,
-            retryable_technical_failure=payload.retryable_technical_failure,
         )
     finally:
         del mapped
@@ -233,7 +226,6 @@ def run_multistart(
     state_count: int,
     adapter_factory: AdapterFactory,
     max_workers: int | None = None,
-    checkpoint: HMMSeedCheckpoint | None = None,
     frontier: SharedTaskFrontier[_FrontierStartPayload, tuple[StartDiagnostic, FitResult | None]]
     | None = None,
 ) -> MultistartResult:
@@ -248,14 +240,7 @@ def run_multistart(
     worker_limit = cpu_worker_count(max_workers, task_count=len(MULTISTART_SEEDS))
 
     evaluated_by_seed: dict[int, tuple[StartDiagnostic, FitResult | None]] = {}
-    pending_seeds: list[int] = []
-    for seed in MULTISTART_SEEDS:
-        if checkpoint is not None:
-            cached = checkpoint.load(seed)
-            if cached is not None:
-                evaluated_by_seed[seed] = (cached.diagnostic, cached.result)
-                continue
-        pending_seeds.append(seed)
+    pending_seeds = list(MULTISTART_SEEDS)
 
     if pending_seeds:
         pending_worker_limit = min(worker_limit, len(pending_seeds))
@@ -290,7 +275,6 @@ def run_multistart(
                             state_count,
                             adapter_factory,
                             seed,
-                            checkpoint is not None,
                         ),
                     )
                     for seed in pending_seeds
@@ -300,11 +284,6 @@ def run_multistart(
                 mapped_results = {
                     seed: by_task_id[f"multistart:{state_count}:{seed}"] for seed in pending_seeds
                 }
-            if checkpoint is not None:
-                from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
-
-                for seed, outcome in mapped_results.items():
-                    checkpoint.save(seed, SeedFitOutcome(*outcome))
             return mapped_results
 
         if frontier is not None:
@@ -317,13 +296,8 @@ def run_multistart(
                     state_count=state_count,
                     adapter_factory=adapter_factory,
                     seed=seed,
-                    retryable_technical_failure=checkpoint is not None,
                 )
                 pending_results[seed] = outcome
-                if checkpoint is not None:
-                    from market_regime_engine.evaluation_runs.hmm_units import SeedFitOutcome
-
-                    checkpoint.save(seed, SeedFitOutcome(*outcome))
         elif is_pickleable(adapter_factory):
             # A direct caller gets the same shared frontier boundary; callers
             # spanning multiple candidates/folds can pass their own instance.
@@ -421,7 +395,6 @@ def run_multistart_batch(
                             job.state_count,
                             job.adapter_factory,
                             seed,
-                            False,
                         ),
                     )
                     for job in ordered_jobs

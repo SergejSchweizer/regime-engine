@@ -93,7 +93,9 @@ def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
 
     monkeypatch.setattr(module, "run_canonical_xetra_evaluation", fake_evaluate)
     monkeypatch.setattr(module, "fit_and_materialize_pca_source", fake_materialize)
-    monkeypatch.setattr(module, "FileMlflowTrackingPort", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        module, "CanonicalFileMlflowTrackingPort", lambda *args, **kwargs: object()
+    )
 
     outcome = backend.evaluate("xetra", "build-1")
 
