@@ -567,8 +567,13 @@ def run_monthly_outer_refit(
                     fold.train_source_observations : fold.train_source_observations
                     + fold.test_source_observations
                 ].copy()
+                selection_train = train.loc[
+                    train.loc[:, list(quality.eligible_features)].notna().all(axis=1)
+                ].copy()
+                if selection_train.empty:
+                    raise ValueError("quality-eligible features have no shared finite TRAIN rows")
                 stage_callbacks = (
-                    stage_callback_factory(train, test, fold)
+                    stage_callback_factory(selection_train, test, fold)
                     if stage_callback_factory is not None
                     else None
                 )

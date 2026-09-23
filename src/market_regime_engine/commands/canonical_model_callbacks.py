@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from math import tanh
 from typing import Any, cast
@@ -139,6 +139,9 @@ class CanonicalModelCallbacks:
                 source_build_id=self.source_build_id,
                 max_workers=self.max_workers,
             )
+            fold_callbacks.bind_feature_values(
+                {name: tuple(train[name].tolist()) for name in features}
+            )
             try:
                 fit = fold_callbacks._fit(features, state_count)
                 adapter = CandidateAdapterFactory("gaussian_hmm", features)()
@@ -174,7 +177,14 @@ class CanonicalModelCallbacks:
             evaluation_plan_hash=plan.plan_hash,
             folds=tuple(evidence),
         )
-        return to_sffs_score(score_feature_subset(candidate, latest_fold_id=plan.folds[-1].fold_id))
+        score = to_sffs_score(
+            score_feature_subset(candidate, latest_fold_id=plan.folds[-1].fold_id)
+        )
+        return (
+            None
+            if score is None
+            else replace(score, model_family="gaussian_hmm", state_count=state_count)
+        )
 
     def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
         try:

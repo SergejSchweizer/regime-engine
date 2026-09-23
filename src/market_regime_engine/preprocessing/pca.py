@@ -41,8 +41,11 @@ class PCAArtifact:
 
     Component signs are canonicalized by making the loading with the largest
     absolute magnitude positive (ties choose the first feature).  The full
-    explained-variance-ratio vector is retained for auditability while only
-    the minimal component prefix meeting ``variance_threshold`` is stored.
+    explained-variance-ratio vector is retained for auditability.  Automatic
+    component selection stores the minimal prefix meeting
+    ``variance_threshold``; an explicit component count is a fixed-dimension
+    contract and records the threshold diagnostically without requiring that
+    fixed prefix to reach it.
     """
 
     scaler: StandardScalerArtifact
@@ -50,6 +53,7 @@ class PCAArtifact:
     explained_variance_ratio: tuple[float, ...]
     retained_component_count: int
     variance_threshold: float = _DEFAULT_VARIANCE_THRESHOLD
+    variance_threshold_enforced: bool = True
 
     def __post_init__(self) -> None:
         _validate_threshold(self.variance_threshold)
@@ -70,7 +74,10 @@ class PCAArtifact:
         ) or not isclose(sum(self.explained_variance_ratio), 1.0, abs_tol=1.0e-10, rel_tol=0.0):
             raise ValueError("explained variance ratios must be finite, nonnegative and sum to one")
         cumulative = float(sum(self.explained_variance_ratio[: self.retained_component_count]))
-        if cumulative + _ORTHONORMAL_TOLERANCE < self.variance_threshold:
+        if (
+            self.variance_threshold_enforced
+            and cumulative + _ORTHONORMAL_TOLERANCE < self.variance_threshold
+        ):
             raise RecoverableEvaluationInvalidity(
                 "retained PCA components do not meet the variance threshold"
             )
@@ -110,7 +117,7 @@ class PCAArtifact:
 
     def to_canonical_json(self) -> str:
         payload = {
-            "artifact_schema": "RegimeEnginePCA.v1",
+            "artifact_schema": "RegimeEnginePCA.v2",
             "components_hex": [
                 [value.hex() for value in component] for component in self.components
             ],
@@ -121,6 +128,7 @@ class PCAArtifact:
             "retained_component_count": self.retained_component_count,
             "scaler": json.loads(self.scaler.to_canonical_json()),
             "variance_threshold_hex": self.variance_threshold.hex(),
+            "variance_threshold_enforced": self.variance_threshold_enforced,
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -135,6 +143,7 @@ class PCAArtifact:
             "retained_component_count",
             "scaler",
             "variance_threshold_hex",
+            "variance_threshold_enforced",
         }
         if not isinstance(raw, dict) or set(raw) != expected:
             raise ValueError("unknown/missing PCA serialization fields")
@@ -146,7 +155,7 @@ class PCAArtifact:
         )
         if tuple(raw["feature_order"]) != scaler.feature_order:
             raise ValueError("PCA feature order does not match scaler feature order")
-        if raw["artifact_schema"] != "RegimeEnginePCA.v1":
+        if raw["artifact_schema"] != "RegimeEnginePCA.v2":
             raise ValueError("unsupported PCA artifact schema")
         return cls(
             scaler=scaler,
@@ -159,6 +168,7 @@ class PCAArtifact:
             ),
             retained_component_count=int(raw["retained_component_count"]),
             variance_threshold=float.fromhex(raw["variance_threshold_hex"]),
+            variance_threshold_enforced=bool(raw["variance_threshold_enforced"]),
         )
 
 
@@ -206,6 +216,7 @@ def fit_pca_transformer(
         explained_variance_ratio=tuple(float(value) for value in explained_ratio),
         retained_component_count=retained,
         variance_threshold=variance_threshold,
+        variance_threshold_enforced=component_count is None,
     )
 
 

@@ -76,8 +76,11 @@ def _transformation_details(
     transformation = _TRANSFORMATION_RE.fullmatch(feature_name)
     if transformation is None or transformation.group("family") != family:
         raise ValueError(f"missing transformation provenance: {feature_name}")
-    parameters = tuple(
-        ("variant", token) for token in transformation.group("parameters").split("_")
+    tokens = transformation.group("parameters").split("_")
+    parameters = (
+        (("variant", tokens[0]),)
+        if len(tokens) == 1
+        else tuple((f"variant_{index:02d}", token) for index, token in enumerate(tokens))
     )
     return transformation.group("name"), parameters
 
@@ -92,14 +95,14 @@ def build_feature_provenance(
     completion order cannot change registry ordering or identities.
     """
 
-    names = contract.transformation_features + contract.core_features
+    names = contract.transformation_features + contract.direct_hmm_candidates
     requested = tuple(names if feature_names is None else feature_names)
     if not requested or len(requested) != len(set(requested)):
         raise ValueError("feature provenance names must be non-empty and unique")
     rows: list[FeatureProvenance] = []
     for feature_name in requested:
         assignment = contract.assignment(feature_name)
-        if assignment.role is FeatureRole.CORE:
+        if assignment.role in (FeatureRole.CORE, FeatureRole.PCA):
             rows.append(FeatureProvenance(feature_name, assignment.role, None, None, ()))
         elif assignment.role is FeatureRole.TRANSFORMATION:
             if assignment.family is None:

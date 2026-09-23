@@ -27,7 +27,6 @@ from market_regime_engine.feature_discovery.family_reduction import (
     prune_family_near_duplicates,
 )
 from market_regime_engine.feature_discovery.feature_roles import (
-    FeatureRole,
     FeatureRoleContract,
     FeatureSelectionProfile,
     FeatureStage,
@@ -63,13 +62,25 @@ def _empty_family_reduction(profile_hash: str) -> FamilyNearDuplicateResult:
     return FamilyNearDuplicateResult((), (), (), profile_hash)
 
 
-def _complete_vector(name: str, values: Sequence[float | None]) -> tuple[float, ...]:
-    result = tuple(float(value) for value in values if value is not None)
-    if len(result) != len(values) or any(not isfinite(value) for value in result):
-        raise ValueError(
-            f"quality-eligible feature {name!r} must have finite complete TRAIN values"
-        )
-    return result
+def _complete_case_values(
+    names: Sequence[str], feature_values: Mapping[str, Sequence[float | None]]
+) -> dict[str, tuple[float, ...]]:
+    """Keep one shared finite TRAIN row set without imputing missing values."""
+
+    if not names:
+        raise ValueError("complete-case selection requires at least one feature")
+    lengths = {len(feature_values[name]) for name in names}
+    if len(lengths) != 1:
+        raise ValueError("quality-eligible feature vectors must have equal row counts")
+    rows = tuple(zip(*(feature_values[name] for name in names), strict=True))
+    complete_rows = tuple(
+        row for row in rows if all(value is not None and isfinite(float(value)) for value in row)
+    )
+    if not complete_rows:
+        raise ValueError("quality-eligible features have no shared finite TRAIN rows")
+    return {
+        name: tuple(float(row[index]) for row in complete_rows) for index, name in enumerate(names)
+    }
 
 
 def _bind_feature_values(callback: object, values: Mapping[str, Sequence[float]]) -> None:
@@ -210,8 +221,9 @@ def fit_family_pca_stages(
     resolved_profile = contract.profile if profile is None else profile
     if resolved_profile.profile_hash != contract.profile.profile_hash:
         raise ValueError("family PCA profile must match the role contract profile")
+    complete_values = _complete_case_values(eligible, feature_values)
     family_values = {
-        name: _complete_vector(name, feature_values[name])
+        name: complete_values[name]
         for name in eligible
         if contract.assignment(name).family is not None
     }
@@ -317,7 +329,7 @@ def run_canonical_feature_selection(
         raise ValueError(
             "metadata_fold_id, metadata_source_build_id and metadata_state_count are required"
         )
-    values = {name: _complete_vector(name, feature_values[name]) for name in eligible}
+    values = _complete_case_values(eligible, feature_values)
     family_values = {
         name: values[name] for name in eligible if contract.assignment(name).family is not None
     }
@@ -408,9 +420,7 @@ def run_canonical_feature_selection(
     else:
         family_reduction = _empty_family_reduction(resolved_profile.profile_hash)
 
-    core_names = tuple(
-        name for name in eligible if contract.assignment(name).role is FeatureRole.CORE
-    )
+    core_names = tuple(name for name in eligible if contract.assignment(name).direct_hmm_candidate)
     candidate_values = {name: values[name] for name in core_names}
     candidate_values.update(generated_values)
     _bind_feature_values(evaluate_subset, candidate_values)

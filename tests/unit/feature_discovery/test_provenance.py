@@ -61,3 +61,11 @@ def test_missing_or_conflicting_transformation_provenance_fails_closed() -> None
             build_feature_role_contract(("timestamp_m1",)),
             ("timestamp_m1",),
         )
+
+
+def test_multi_token_transformation_parameters_have_unique_canonical_keys() -> None:
+    row = build_feature_provenance(
+        build_feature_role_contract(("vix_momentum_autocorr_20obs_5lag",))
+    )[0]
+
+    assert row.transformation_parameters == (("variant_00", "20obs"), ("variant_01", "5lag"))

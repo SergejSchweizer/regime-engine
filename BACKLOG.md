@@ -1956,6 +1956,11 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Type:** external QA / read-only
 **Depends on:** PR-523 and a production-eligible upstream source snapshot
 
+**Current status:** IN PROGRESS — the authorized audit is running against the NAS
+`macro_loader.macro_features` source with the read-only `macro-loader` role and the
+production MLflow tracking endpoint. No acceptance criterion is marked complete until
+the external contract test and its archived evidence finish successfully.
+
 #### Acceptance
 
 - [ ] Query exactly `macro_loader.macro_features` read-only and capture materialized-view
