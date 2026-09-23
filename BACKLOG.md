@@ -1573,7 +1573,9 @@ discovery/training stages now live under `runtime.processes` rather than the
 retired evaluation namespace. The obsolete `evaluation_runs`, statistical K/prefix/
 teacher selectors, fixed-step walk-forward stack, compatibility MLflow evidence
 adapters, and their sole-purpose tests are now removed from the working tree.
-Canonical import/bootstrap, Ruff, strict Mypy, and 29 focused backend/refit tests
+The shared task frontier is also now under `runtime.task_frontier`; the former
+`evaluations` package has no active implementation left. Canonical import/bootstrap,
+Ruff, strict Mypy, and 29 focused backend/refit tests plus 24 runtime-frontier tests
 pass locally. PR-526 remains open pending the full acceptance audit and gate.
 
 Git history is the archive. The repository must not retain executable implementations for

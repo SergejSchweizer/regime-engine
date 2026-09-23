@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
+from market_regime_engine.runtime.processes import cpu_process_pool
 from market_regime_engine.runtime.parallel import (
     FoldParallelExecutor,
     ParallelExecutionPlan,

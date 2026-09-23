@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 
-from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.ablation import (
     AblationResult,
     HMMSubsetEvaluator,
@@ -57,6 +56,7 @@ from market_regime_engine.runtime.parallel import (
     ReadOnlyMatrix,
 )
 from market_regime_engine.runtime.processes import is_pickleable
+from market_regime_engine.runtime.task_frontier import SharedTaskFrontier
 
 
 def _empty_family_reduction(profile_hash: str) -> FamilyNearDuplicateResult:

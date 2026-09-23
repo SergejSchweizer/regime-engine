@@ -7,11 +7,6 @@ from math import nan
 import pytest
 
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
-from market_regime_engine.evaluations.task_frontier import (
-    FrontierMetrics,
-    FrontierResult,
-    SharedTaskFrontier,
-)
 from market_regime_engine.feature_discovery.feature_subset_score import (
     FeatureSubsetFoldEvidence,
 )
@@ -23,6 +18,11 @@ from market_regime_engine.feature_discovery.sffs import (
 )
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult
+from market_regime_engine.runtime.task_frontier import (
+    FrontierMetrics,
+    FrontierResult,
+    SharedTaskFrontier,
+)
 from market_regime_engine.training.multistart import (
     MINIMUM_SUCCESS_RATE,
     MINIMUM_VALID_STARTS,

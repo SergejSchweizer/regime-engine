@@ -9,7 +9,6 @@ from math import tanh
 
 import pytest
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.feature_subset_score import (
     FeatureSubsetCandidate,
     FeatureSubsetFoldEvidence,
@@ -20,6 +19,7 @@ from market_regime_engine.feature_discovery.sffs import (
     SFFSResult,
     select_sffs,
 )
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 def _fold(
