@@ -1842,12 +1842,13 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 
 **Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
 `origin/main` at `f1ecc99`; the branch contains the pushed canonical diagnostics and independent
-oracle-proof commits, including real PCA→HMM→Outer TEST composition on both a small hermetic
-universe and the 1001-feature fixture. Canonical fold diagnostics now materialize the
+oracle-proof commits, including two real PCA→HMM→Outer TEST folds with per-fold diagnostics on
+a hermetic universe, plus the 1001-feature fixture through Final-HMM/Outer-TEST. Canonical fold
+diagnostics now materialize the
 required JSON tables and PNG plots for tracking. The end-to-end hermetic acceptance and
-independent recomputation of the integrated large-feature multi-fold run remains open. The
-remaining end-to-end gap is multi-fold execution with real callbacks and tracked artifacts in
-the same run. No NAS, PostgreSQL, MLflow, production mutation, or
+independent recomputation of correlation leaders and the exact large-feature multi-fold run
+remains open. The real multi-fold callback/artifact path is now covered on the hermetic fixture.
+No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
 
 **Current git status:** working tree is clean and the branch is synchronized with its remote

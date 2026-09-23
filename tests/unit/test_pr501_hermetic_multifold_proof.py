@@ -303,7 +303,10 @@ def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: P
     )
 
 
-def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
+@pytest.mark.parametrize("fold_index", (1, 2))
+def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline(
+    tmp_path: Path, fold_index: int
+) -> None:
     names = (
         "vix_log_level",
         "us_10y_log_level",
@@ -311,7 +314,7 @@ def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
         "vix_delta_5obs",
     )
     contract = build_feature_role_contract((TEMPORAL_KEY, *names))
-    rng = np.random.default_rng(501_501)
+    rng = np.random.default_rng(501_500 + fold_index)
     timestamps = pd.date_range("2018-01-01", periods=120, freq="D", tz="UTC")
     matrix = rng.normal(size=(120, len(names)))
     values = {
@@ -331,7 +334,7 @@ def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
         test=test,
         profile=profile,
         catalog=_catalog(),
-        source_build_id="hermetic-501-real-pipeline",
+        source_build_id=f"hermetic-501-real-pipeline-{fold_index}",
         max_workers=None,
     )
 
@@ -394,7 +397,7 @@ def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
         test=test_with_candidates,
         profile=profile,
         catalog=_catalog(),
-        source_build_id="hermetic-501-real-pipeline",
+        source_build_id=f"hermetic-501-real-pipeline-{fold_index}",
         max_workers=None,
     )
     model_hash = final_callbacks.fit_final_hmm(train_with_candidates, result.selected_features, 2)
@@ -407,6 +410,14 @@ def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
         (model_hash,),
     )
     assert len(outer_hash) == 64
+    artifacts = write_canonical_diagnostics(result, tmp_path / f"fold-{fold_index}")
+    tracker = _Tracking()
+    run_id = tracker.start_run(run_name=f"hermetic-fold-{fold_index}")
+    for artifact in artifacts:
+        tracker.log_artifact(run_id, str(artifact), "diagnostics")
+    tracker.end_run(run_id)
+    assert len(artifacts) == 10
+    assert len(tracker.artifacts) == len(artifacts)
 
 
 class _Tracking:
