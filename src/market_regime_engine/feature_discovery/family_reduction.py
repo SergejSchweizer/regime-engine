@@ -149,9 +149,7 @@ def _stable_duplicate_matrix(
     if len(names) < 2:
         return {}
     matrix = np.asarray(
-        tuple(
-            tuple(float(cast(float, value)) for value in feature_values[name]) for name in names
-        ),
+        tuple(tuple(float(cast(float, value)) for value in feature_values[name]) for name in names),
         dtype=np.float64,
     ).T
     if matrix.shape[0] < profile.correlation_min_pair_rows:
