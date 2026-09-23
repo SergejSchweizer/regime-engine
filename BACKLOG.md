@@ -1565,7 +1565,7 @@ runtime path first; the following PRs then delete now-unreachable legacy and com
 **Depends on:** PR-500
 
 **Status:** IN PROGRESS as GitHub PR #494 on branch
-`pr/PR-526-legacy-runtime-removal`, pushed at `d6a3652` and based on
+`pr/PR-526-legacy-runtime-removal`, pushed at `48848ef` and based on
 `origin/main` at `47bf60b`. The obsolete candidate checkpoint store and
 multistart seed-resume hooks are removed from the runtime path. The canonical
 backend now uses a dedicated MLflow adapter that does not import the retired
