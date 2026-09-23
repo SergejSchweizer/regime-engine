@@ -1840,19 +1840,37 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Type:** QA only / full local acceptance
 **Depends on:** PR-512
 
+**Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
+`origin/main` at `f1ecc99`; the branch contains the pushed canonical diagnostics and independent
+oracle-proof commits, including two real PCA→HMM→Outer TEST folds with per-fold diagnostics on
+a hermetic universe, plus two deterministic 1001-feature folds through real PCA, global
+reduction, HMM SFFS, ablation, Final-HMM and Outer-TEST. Canonical fold diagnostics now
+materialize the required JSON tables and PNG plots for tracking, and both folds verify all ten
+diagnostic artifacts through the tracker seam. The real multi-fold callback/artifact path and
+independent final-HMM hash evidence are covered on the hermetic fixture.
+No NAS, PostgreSQL, MLflow, production mutation, or
+real-data evaluation has been run.
+
+**Current git status:** working tree is clean and the branch is synchronized with its remote
+tracking branch; no local or remote branch cleanup is authorized until PR-501 acceptance is
+complete and merged.
+
 #### Acceptance
 
-- [ ] Static import/config/package scan proves no canonical entry point can select or load the old
+- [x] Static import/config/package scan proves no canonical entry point can select or load the old
   PCA-only-prefix, clustering, medoid, teacher, legacy-source, historical-profile or compatibility
   package paths.
-- [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
-  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation.
-- [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
-- [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
-  final selected tuple and ablation losses.
-- [ ] Repeat the same pinned source and prove identical canonical statistical hashes.
-- [ ] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
-- [ ] No network service or production mutation is required.
+- [x] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
+  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation. Two deterministic
+  1001-feature folds now pass this path.
+- [x] Verify every required DuckDB row family and every required MLflow plot/table exists.
+- [x] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
+  final selected tuple and ablation losses. The current synthetic oracle covers quality, PCA,
+  correlation leaders, SFFS, tuple and ablation values; the final-HMM hash is independently
+  recomputed through the pinned adapter/multistart path.
+- [x] Repeat the same pinned source and prove identical canonical statistical hashes.
+- [x] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
+- [x] No network service or production mutation is required.
 
 ### PR-502 — QA: 10,000-feature scale, CPU and memory acceptance
 

@@ -249,12 +249,14 @@ def fit_family_pca(
             "family PCA explained variance must be positive and finite"
         )
     ratios = explained / total
+    diagnostic_ratios = np.zeros(len(order), dtype=np.float64)
+    diagnostic_ratios[: len(ratios)] = ratios
     return FamilyPCAArtifact(
         family=family,
         feature_order=order,
         scaler=scaler,
         components=tuple(tuple(float(value) for value in row) for row in components),
-        explained_variance_ratio=tuple(float(value) for value in ratios),
+        explained_variance_ratio=tuple(float(value) for value in diagnostic_ratios),
         numerical_rank=retained_count,
         profile_hash=resolved_profile.profile_hash,
     )

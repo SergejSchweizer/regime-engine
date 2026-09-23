@@ -52,6 +52,9 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
+from market_regime_engine.mlflow_support.canonical_diagnostics import (
+    write_canonical_diagnostics,
+)
 from market_regime_engine.mlflow_support.ports import TrackingPort
 from market_regime_engine.profiles.config import ModelProfile
 
@@ -404,6 +407,7 @@ def _track_stage(
     fold: CalendarMonthFold,
     stage: str,
     params: Mapping[str, object],
+    diagnostics: FeatureSelectionPipelineResult | None = None,
 ) -> str:
     run_id = tracking.start_run(
         run_name=f"monthly-{fold.test_calendar_month}-{stage}",
@@ -428,6 +432,10 @@ def _track_stage(
                 encoding="utf-8",
             )
             tracking.log_artifact(run_id, str(manifest), "stage")
+            if diagnostics is not None:
+                diagnostic_directory = Path(directory) / "diagnostics"
+                for artifact in write_canonical_diagnostics(diagnostics, diagnostic_directory):
+                    tracking.log_artifact(run_id, str(artifact), "diagnostics")
         tracking.log_params(
             run_id,
             {
@@ -630,7 +638,19 @@ def run_monthly_outer_refit(
                         ("ablation", {"hashes": pipeline.ablation.fit_execution_hashes}),
                     ):
                         child_runs.append(
-                            _track_stage(tracking, parent_run_id, fold, stage, params)
+                            _track_stage(
+                                tracking,
+                                parent_run_id,
+                                fold,
+                                stage,
+                                params,
+                                diagnostics=(
+                                    pipeline
+                                    if stage == "family_pca"
+                                    and isinstance(pipeline, FeatureSelectionPipelineResult)
+                                    else None
+                                ),
+                            )
                         )
                 if fit_callbacks is not None:
                     fitted_hashes = cast(Any, fit_callbacks.fit_final_hmm)(

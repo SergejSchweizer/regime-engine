@@ -1,0 +1,550 @@
+from __future__ import annotations
+
+import json
+import pickle
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
+
+import duckdb
+import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
+import pytest
+
+from market_regime_engine.commands.canonical_model_callbacks import CanonicalModelCallbacks
+from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
+from market_regime_engine.feature_discovery.feature_roles import (
+    TEMPORAL_KEY,
+    TRANSFORMATION_FAMILIES,
+    build_feature_role_contract,
+)
+from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
+from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
+from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.mlflow_support.canonical_diagnostics import (
+    write_canonical_diagnostics,
+)
+from market_regime_engine.profiles.loader import load_profile
+from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
+from market_regime_engine.training.multistart import run_multistart
+from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
+from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
+
+
+def test_hermetic_multifold_proof_populates_all_evidence_tables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = FeatureSelectionMetadataStore(tmp_path / "metadata")
+    tracker = _Tracking()
+    result = _run(monkeypatch, max_workers=None, tracker=tracker, metadata_store=store)
+
+    assert len(result.folds) >= 2
+    assert result.valid_folds
+    assert all(fold.package is not None for fold in result.valid_folds)
+    assert tracker.starts and tracker.artifacts
+
+    required_tables = {
+        "feature_registry",
+        "fold_feature_stats",
+        "pca_loadings",
+        "correlation_mapping",
+        "sffs_steps",
+        "fold_model_stats",
+    }
+    with duckdb.connect(str(store.database), read_only=True) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+            ).fetchall()
+        }
+    assert required_tables <= tables
+
+
+def test_pinned_hermetic_run_is_hash_stable_across_worker_plans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serial = _run(monkeypatch, max_workers=1)
+    parallel = _run(monkeypatch, max_workers=None)
+    assert parallel.result_hash == serial.result_hash
+    assert tuple(item.package.package_hash for item in parallel.valid_folds) == tuple(
+        item.package.package_hash for item in serial.valid_folds
+    )
+
+
+def test_outer_test_perturbation_preserves_prior_fold_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = _run(monkeypatch)
+    first = before.folds[0]
+    assert first.package is not None
+    source = _source()
+    source.loc[
+        source["timestamp_m1"] > first.fold.test_last_timestamp,
+        "vix_log_level",
+    ] += 100000.0
+    after = _run(monkeypatch, source=source)
+    assert after.folds[0].package is not None
+    assert after.folds[0].package.package_hash == first.package.package_hash
+
+
+def test_evidence_manifest_is_canonical_json_and_has_no_network_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _run(monkeypatch)
+    encoded = json.dumps(result.result_hash, sort_keys=True, separators=(",", ":"))
+    assert encoded == json.dumps(result.result_hash, separators=(",", ":"), sort_keys=True)
+    assert "10.10.1.3" not in encoded
+
+
+def test_real_hmm_callback_fits_train_and_filters_outer_test() -> None:
+    rng = np.random.default_rng(501)
+    timestamps = pd.date_range("2018-01-01", periods=320, freq="D", tz="UTC")
+    train = pd.DataFrame(
+        {
+            "timestamp_m1": timestamps[:280],
+            "vix_log_level": rng.normal(size=280),
+            "us_10y_log_level": rng.normal(size=280),
+        }
+    )
+    test = pd.DataFrame(
+        {
+            "timestamp_m1": timestamps[280:],
+            "vix_log_level": rng.normal(size=40),
+            "us_10y_log_level": rng.normal(size=40),
+        }
+    )
+    callbacks = CanonicalModelCallbacks(
+        train=train,
+        test=test,
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        catalog=_catalog(),
+        source_build_id="hermetic-501",
+        max_workers=None,
+    )
+    fit = callbacks._fit(("vix_log_level", "us_10y_log_level"), 2)
+    fit_hash = callbacks.fit_final_hmm(train, ("vix_log_level", "us_10y_log_level"), 2)
+    assert callbacks.evaluate_outer_test(
+        train,
+        test,
+        ("vix_log_level", "us_10y_log_level"),
+        2,
+        (fit_hash,),
+    )
+    assert fit.winner.artifact is not None
+
+
+@pytest.mark.parametrize("fold_index", (1, 2))
+def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
+    tmp_path: Path, fold_index: int
+) -> None:
+    names = tuple(
+        f"{family}_delta_{index}obs" for index in range(1, 78) for family in TRANSFORMATION_FAMILIES
+    )
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    rng = np.random.default_rng(501_1000)
+    matrix = rng.normal(size=(256, len(names)))
+    values = {
+        name: tuple(float(value) for value in matrix[:, index]) for index, name in enumerate(names)
+    }
+
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    callbacks = CanonicalModelCallbacks(
+        train=pd.DataFrame(
+            {TEMPORAL_KEY: pd.date_range("2018-01-01", periods=len(matrix), freq="D", tz="UTC")}
+        ),
+        test=pd.DataFrame(
+            {TEMPORAL_KEY: pd.date_range("2018-06-01", periods=24, freq="D", tz="UTC")}
+        ),
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id=f"hermetic-501-thousand-feature-selection-{fold_index}",
+        max_workers=None,
+    )
+
+    class _RealHMMOracle:
+        def bind_feature_values(self, bound: dict[str, tuple[float, ...]]) -> None:
+            callbacks.bind_feature_values(bound)
+
+        def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore:
+            fit = callbacks._fit(features, 2)
+            score = callbacks._score(features, 2, fit)
+            return replace(score, value=score.value + 1_000_000.0 * len(features))
+
+        def evaluate_hmm_subset(self, features: tuple[str, ...]) -> HMMSubsetEvaluation:
+            fit = callbacks._fit(features, 2)
+            return HMMSubsetEvaluation(
+                self.evaluate_subset(features),
+                "gaussian_hmm",
+                2,
+                callbacks.hmm_selector_contract_hash,
+                sha256(pickle.dumps(fit, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest(),
+            )
+
+    oracle = _RealHMMOracle()
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=oracle.evaluate_subset,
+        evaluate_hmm_subset=oracle.evaluate_hmm_subset,
+        hmm_selector_contract_hash=callbacks.hmm_selector_contract_hash,
+        max_sffs_features=2,
+        max_workers=None,
+        metadata_store=FeatureSelectionMetadataStore(tmp_path / "metadata"),
+        metadata_fold_id=f"fold-501-{fold_index}",
+        metadata_source_build_id=f"build-501-{fold_index}",
+        metadata_state_count=2,
+    )
+    assert len(names) == 1001
+    assert result.quality_eligible_features == names
+    assert result.family_pca
+    name_index = {name: index for index, name in enumerate(names)}
+    for artifact in result.family_pca:
+        family_matrix = matrix[
+            :,
+            tuple(name_index[name] for name in artifact.feature_order),
+        ]
+        standardized = artifact.scaler.transform(family_matrix)
+        _u, singular_values, _vh = np.linalg.svd(standardized, full_matrices=False)
+        expected_variance = (singular_values**2) / float(np.sum(singular_values**2))
+        assert np.allclose(
+            artifact.explained_variance_ratio[: artifact.numerical_rank],
+            expected_variance[: artifact.numerical_rank],
+            rtol=1.0e-10,
+            atol=1.0e-10,
+        )
+    assert result.global_reduction.representatives
+    assert result.selected_features
+    assert result.ablation.one_feature_results
+
+    generated_train: dict[str, tuple[float, ...]] = {}
+    for artifact in result.family_pca:
+        family_matrix = matrix[:, tuple(name_index[name] for name in artifact.feature_order)]
+        transformed = artifact.transform(family_matrix)
+        generated_train.update(
+            {
+                name: tuple(float(row[index]) for row in transformed)
+                for index, name in enumerate(artifact.generated_feature_names)
+            }
+        )
+
+    independent_names = tuple(sorted(generated_train))
+    independent_edges: dict[tuple[str, str], tuple[float, tuple[float, ...]]] = {}
+
+    def independent_absolute_pearson(left: np.ndarray, right: np.ndarray) -> float | None:
+        if left.size < 2 or np.std(left) == 0.0 or np.std(right) == 0.0:
+            return None
+        return abs(float(np.corrcoef(left, right)[0, 1]))
+
+    for left_index, left_name in enumerate(independent_names):
+        left = np.asarray(generated_train[left_name], dtype=np.float64)
+        for right_name in independent_names[left_index + 1 :]:
+            right = np.asarray(generated_train[right_name], dtype=np.float64)
+            full = independent_absolute_pearson(left, right)
+            bounds = ((0, 86), (86, 171), (171, len(left)))
+            subwindows = tuple(
+                independent_absolute_pearson(left[start:end], right[start:end])
+                for start, end in bounds
+            )
+            if (
+                full is not None
+                and full >= contract.profile.correlation_abs_threshold
+                and all(
+                    value is not None
+                    and value >= contract.profile.correlation_subwindow_abs_threshold
+                    for value in subwindows
+                )
+            ):
+                independent_edges[(left_name, right_name)] = (full, subwindows)
+
+    remaining = set(independent_names)
+    independent_representatives: list[str] = []
+    independent_removed: list[str] = []
+    while remaining:
+        candidates = tuple(name for name in independent_names if name in remaining)
+        neighborhoods = {
+            name: [
+                (other, independent_edges[pair])
+                for other in candidates
+                if other != name
+                for pair in ((name, other) if name < other else (other, name),)
+                if pair in independent_edges
+            ]
+            for name in candidates
+        }
+        leader = min(
+            candidates,
+            key=lambda name: (
+                -len(neighborhoods[name]),
+                -float(np.median([item[1][0] for item in neighborhoods[name]]))
+                if neighborhoods[name]
+                else 0.0,
+                -1.0,
+                1,
+                independent_names.index(name),
+            ),
+        )
+        independent_representatives.append(leader)
+        direct = tuple(
+            sorted((name for name, _edge in neighborhoods[leader]), key=independent_names.index)
+        )
+        independent_removed.extend(direct)
+        remaining.difference_update((leader, *direct))
+
+    assert tuple(independent_representatives) == result.global_reduction.representatives
+    assert tuple(independent_removed) == result.global_reduction.removed_features
+    for item in result.global_reduction.evidence:
+        full, subwindows = independent_edges[(item.leader, item.removed)]
+        assert np.isclose(item.full_absolute_pearson, full, rtol=1.0e-12, atol=1.0e-12)
+        assert np.allclose(item.subwindow_absolute_pearsons, subwindows, rtol=1.0e-12, atol=1.0e-12)
+
+    final_train = pd.DataFrame(
+        {
+            TEMPORAL_KEY: pd.date_range("2018-01-01", periods=len(matrix), freq="D", tz="UTC"),
+            **generated_train,
+        }
+    )
+    final_test_matrix = np.random.default_rng(501_1001 + fold_index).normal(size=(24, len(names)))
+    final_test = pd.DataFrame(
+        {
+            TEMPORAL_KEY: pd.date_range("2018-05-01", periods=24, freq="D", tz="UTC"),
+            **{
+                name: tuple(float(value) for value in final_test_matrix[:, index])
+                for index, name in enumerate(names)
+            },
+        }
+    )
+    for artifact in result.family_pca:
+        test_family = final_test_matrix[
+            :, tuple(name_index[name] for name in artifact.feature_order)
+        ]
+        transformed = artifact.transform(test_family)
+        for index, name in enumerate(artifact.generated_feature_names):
+            final_test[name] = tuple(float(row[index]) for row in transformed)
+    final_callbacks = CanonicalModelCallbacks(
+        train=final_train,
+        test=final_test,
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        catalog=_catalog(),
+        source_build_id=f"hermetic-501-thousand-feature-{fold_index}",
+        max_workers=None,
+    )
+    final_hash = final_callbacks.fit_final_hmm(final_train, result.selected_features, 2)
+    assert isinstance(final_hash, str)
+    assert final_callbacks.evaluate_outer_test(
+        final_train,
+        final_test,
+        result.selected_features,
+        2,
+        (final_hash,),
+    )
+
+
+def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: Path) -> None:
+    names = ("vix_log_level", "us_10y_log_level")
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    values = {
+        names[0]: tuple(float(index) for index in range(30)),
+        names[1]: tuple(float((index % 4) ** 2) for index in range(30)),
+    }
+
+    def score(features: tuple[str, ...]) -> FeatureSubsetScore:
+        return FeatureSubsetScore(features, float(len(features)))
+
+    def hmm_score(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        return HMMSubsetEvaluation(
+            score(features),
+            "gaussian_hmm",
+            2,
+            "a" * 64,
+            sha256("|".join(features).encode()).hexdigest(),
+        )
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=score,
+        evaluate_hmm_subset=hmm_score,
+        hmm_selector_contract_hash="a" * 64,
+        max_workers=None,
+        evaluate_gaussian_subset_by_k=lambda state_count, features: FeatureSubsetScore(
+            features, float(len(features)), model_family="gaussian_hmm", state_count=state_count
+        ),
+    )
+    artifacts = write_canonical_diagnostics(result, tmp_path)
+    assert {path.name for path in artifacts} == {
+        "feature-funnel.json",
+        "family-pca.json",
+        "correlation-reduction.json",
+        "sffs-steps.json",
+        "ablation-losses.json",
+        "feature-funnel.png",
+        "pca-explained-variance.png",
+        "correlation-reduction.png",
+        "sffs-scores.png",
+        "ablation-losses.png",
+    }
+    assert all(path.stat().st_size > 0 for path in artifacts)
+    assert all(item.score.value == float(len(item.selected_features)) for item in result.sffs.steps)
+    assert result.ablation.baseline.hmm_evaluation.score is not None
+    assert result.ablation.baseline.hmm_evaluation.score.value == float(
+        len(result.selected_features)
+    )
+    assert result.ablation.ablation_losses == tuple(1.0 for _ in result.selected_features)
+    assert json.loads((tmp_path / "feature-funnel.json").read_text())["sffs_selected"] == len(
+        result.selected_features
+    )
+
+
+@pytest.mark.parametrize("fold_index", (1, 2))
+def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline(
+    tmp_path: Path, fold_index: int
+) -> None:
+    names = (
+        "vix_log_level",
+        "us_10y_log_level",
+        "vix_delta_1obs",
+        "vix_delta_5obs",
+    )
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    rng = np.random.default_rng(501_500 + fold_index)
+    timestamps = pd.date_range("2018-01-01", periods=120, freq="D", tz="UTC")
+    matrix = rng.normal(size=(120, len(names)))
+    values = {
+        name: tuple(float(value) for value in matrix[:, index]) for index, name in enumerate(names)
+    }
+    train = pd.DataFrame({TEMPORAL_KEY: timestamps})
+    test_timestamps = pd.date_range("2018-05-01", periods=40, freq="D", tz="UTC")
+    test_matrix = rng.normal(size=(40, len(names)))
+    test_values = {
+        name: tuple(float(value) for value in test_matrix[:, index])
+        for index, name in enumerate(names)
+    }
+    test = pd.DataFrame({TEMPORAL_KEY: test_timestamps, **test_values})
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    callbacks = CanonicalModelCallbacks(
+        train=train,
+        test=test,
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id=f"hermetic-501-real-pipeline-{fold_index}",
+        max_workers=None,
+    )
+
+    class _RealHMMOracle:
+        def bind_feature_values(self, bound: dict[str, tuple[float, ...]]) -> None:
+            callbacks.bind_feature_values(bound)
+
+        def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore:
+            fit = callbacks._fit(features, 2)
+            score = callbacks._score(features, 2, fit)
+            return replace(score, value=score.value + 100.0 * len(features))
+
+        def evaluate_hmm_subset(self, features: tuple[str, ...]) -> HMMSubsetEvaluation:
+            fit = callbacks._fit(features, 2)
+            return HMMSubsetEvaluation(
+                self.evaluate_subset(features),
+                "gaussian_hmm",
+                2,
+                callbacks.hmm_selector_contract_hash,
+                sha256(pickle.dumps(fit, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest(),
+            )
+
+    oracle = _RealHMMOracle()
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=oracle.evaluate_subset,
+        evaluate_hmm_subset=oracle.evaluate_hmm_subset,
+        hmm_selector_contract_hash=callbacks.hmm_selector_contract_hash,
+        max_sffs_features=2,
+        max_workers=None,
+    )
+    assert result.family_pca
+    assert result.selected_features
+
+    train_candidate_values = callbacks._bound_feature_values
+    assert train_candidate_values is not None
+    train_with_candidates = pd.DataFrame({TEMPORAL_KEY: timestamps, **dict(train_candidate_values)})
+    test_candidate_values = dict(test_values)
+    for artifact in result.family_pca:
+        family_matrix = np.asarray(
+            tuple(
+                tuple(test_values[name][row] for name in artifact.feature_order)
+                for row in range(len(test_timestamps))
+            ),
+            dtype=np.float64,
+        )
+        transformed = artifact.transform(family_matrix)
+        test_candidate_values.update(
+            {
+                name: tuple(float(row[index]) for row in transformed)
+                for index, name in enumerate(artifact.generated_feature_names)
+            }
+        )
+    test_with_candidates = pd.DataFrame({TEMPORAL_KEY: test_timestamps, **test_candidate_values})
+    final_callbacks = CanonicalModelCallbacks(
+        train=train_with_candidates,
+        test=test_with_candidates,
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id=f"hermetic-501-real-pipeline-{fold_index}",
+        max_workers=None,
+    )
+    model_hash = final_callbacks.fit_final_hmm(train_with_candidates, result.selected_features, 2)
+    assert isinstance(model_hash, str)
+    independent_fit = run_multistart(
+        final_callbacks._matrix(train_with_candidates, result.selected_features),
+        state_count=2,
+        adapter_factory=CandidateAdapterFactory("gaussian_hmm", result.selected_features),
+        max_workers=None,
+    )
+    independent_hash = sha256(
+        pickle.dumps(independent_fit, protocol=pickle.HIGHEST_PROTOCOL)
+    ).hexdigest()
+    assert independent_hash == model_hash
+    outer_hash = final_callbacks.evaluate_outer_test(
+        train_with_candidates,
+        test_with_candidates,
+        result.selected_features,
+        2,
+        (model_hash,),
+    )
+    assert len(outer_hash) == 64
+    artifacts = write_canonical_diagnostics(result, tmp_path / f"fold-{fold_index}")
+    tracker = _Tracking()
+    run_id = tracker.start_run(run_name=f"hermetic-fold-{fold_index}")
+    for artifact in artifacts:
+        tracker.log_artifact(run_id, str(artifact), "diagnostics")
+    tracker.end_run(run_id)
+    assert len(artifacts) == 10
+    assert len(tracker.artifacts) == len(artifacts)
+
+
+class _Tracking:
+    def __init__(self) -> None:
+        self.starts: list[tuple[str, str | None]] = []
+        self.artifacts: list[tuple[str, str]] = []
+
+    def start_run(self, *, run_name: str, parent_run_id: str | None = None) -> str:
+        del run_name
+        run_id = f"run-{len(self.starts)}"
+        self.starts.append((run_id, parent_run_id))
+        return run_id
+
+    def log_params(self, _run_id: str, _params: dict[str, str]) -> None:
+        return None
+
+    def log_artifact(self, run_id: str, local_path: str, artifact_path: str) -> None:
+        self.artifacts.append((run_id, f"{local_path}:{artifact_path}"))
+
+    def end_run(self, _run_id: str) -> None:
+        return None
+
+    def fail_run(self, _run_id: str) -> None:
+        raise AssertionError("hermetic proof tracking failed")
