@@ -1918,6 +1918,12 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 **Depends on:** PR-502
 **Runs on:** authorized target host class with approximately 86 vCPUs and 256 GiB RAM
 
+**Current status:** hermetic local benchmark proof is implemented and green in
+`tests/unit/test_pr523_parallel_benchmark.py` (`2 passed`). It covers the fixed worker-budget
+matrix and local SQLite MLflow artifact read-back without contacting NAS, PostgreSQL, or the
+production MLflow server. The real target-host benchmark and complete multi-fold evaluation are
+still open; no real-data evaluation has started.
+
 #### Acceptance
 
 - [ ] Run the same fixed production-shaped workload with worker budgets 1, 8, 16, 32, 48, 64, 80
