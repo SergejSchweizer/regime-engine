@@ -304,12 +304,6 @@ class FeatureSource(Protocol):
     def read(self, request: FeatureRequest) -> FeatureSnapshot: ...
 
 
-class DynamicFeatureSource(Protocol):
-    def read_with_catalog(
-        self, request: FeatureRequest
-    ) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]: ...
-
-
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
