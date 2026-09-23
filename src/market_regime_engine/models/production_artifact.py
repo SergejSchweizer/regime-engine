@@ -10,7 +10,6 @@ from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.preprocessing.two_stage import (
     FamilyPCATwoStageScalerArtifact,
-    PCATwoStageScalerArtifact,
 )
 
 _PROBABILITY_TOLERANCE = 1e-10
@@ -53,7 +52,7 @@ class ProductionModelArtifact:
     retained_observation_count: int
     skipped_incomplete_observation_count: int
     # PCA is part of the canonical v4 production feature universe.
-    pca_scaler: PCATwoStageScalerArtifact | FamilyPCATwoStageScalerArtifact
+    pca_scaler: FamilyPCATwoStageScalerArtifact
 
     def __post_init__(self) -> None:
         if self.profile_id != "xetra" or self.profile_config_version != 4:

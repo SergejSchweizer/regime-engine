@@ -12,7 +12,6 @@ from market_regime_engine.models.production_artifact import ProductionModelArtif
 from market_regime_engine.preprocessing.scaling import StandardScalerArtifact
 from market_regime_engine.preprocessing.two_stage import (
     FamilyPCATwoStageScalerArtifact,
-    PCATwoStageScalerArtifact,
 )
 
 PACKAGE_SCHEMA_VERSION = "RegimeEngineProductionModel.v4"
@@ -201,12 +200,8 @@ def production_artifact_from_payload(payload: dict[str, Any]) -> ProductionModel
     pca_payload = payload["pca_scaler"]
     if isinstance(pca_payload, dict):
         artifact_schema = pca_payload.get("artifact_schema")
-        pca_scaler: PCATwoStageScalerArtifact | FamilyPCATwoStageScalerArtifact
-        if artifact_schema == "RegimeEnginePCATwoStageScaler.v1":
-            pca_scaler = PCATwoStageScalerArtifact.from_canonical_json(
-                json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
-            )
-        elif artifact_schema == "RegimeEngineFamilyPCATwoStageScaler.v1":
+        pca_scaler: FamilyPCATwoStageScalerArtifact
+        if artifact_schema == "RegimeEngineFamilyPCATwoStageScaler.v1":
             pca_scaler = FamilyPCATwoStageScalerArtifact.from_canonical_json(
                 json.dumps(pca_payload, sort_keys=True, separators=(",", ":"))
             )

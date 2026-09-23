@@ -24,7 +24,7 @@ The rollout contract is:
    final-grid policy. Every walk-forward fold refits PCA on that fold's raw
    TRAIN rows and transforms TEST only with that fold artifact.
 4. Fit the final production artifact with a separate `production` PCA clock.
-   The resulting `PCATwoStageScalerArtifact` is stored in the production
+   The resulting `FamilyPCATwoStageScalerArtifact` is stored in the production
    package and validated against the HMM/scaler feature order.
 
 The process-backed candidate, fold, and multistart schedulers retain the same
