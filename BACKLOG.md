@@ -1841,8 +1841,8 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Depends on:** PR-512
 
 **Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
-`origin/main` at `f1ecc99`; current local HEAD is `ef7a0dc` and the branch is one commit ahead
-of its remote tracking branch until pushed. Canonical fold diagnostics now materialize the
+`origin/main` at `f1ecc99`; current local HEAD includes `b9ed95b` and this backlog update is the
+next local commit before pushing. Canonical fold diagnostics now materialize the
 required JSON tables and PNG plots for tracking. The end-to-end hermetic acceptance and
 independent recomputation remain open. No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
@@ -1853,16 +1853,18 @@ until PR-501 acceptance is complete and merged.
 
 #### Acceptance
 
-- [ ] Static import/config/package scan proves no canonical entry point can select or load the old
+- [x] Static import/config/package scan proves no canonical entry point can select or load the old
   PCA-only-prefix, clustering, medoid, teacher, legacy-source, historical-profile or compatibility
   package paths.
 - [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
   and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation.
 - [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
 - [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
-  final selected tuple and ablation losses.
-- [ ] Repeat the same pinned source and prove identical canonical statistical hashes.
-- [ ] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
+  final selected tuple and ablation losses. The current synthetic oracle covers quality, PCA,
+  SFFS, tuple and ablation values; the correlation-leader and final-HMM evidence still need the
+  integrated fold proof.
+- [x] Repeat the same pinned source and prove identical canonical statistical hashes.
+- [x] Perturb only Outer TEST and prove all TRAIN-side feature-selection artifacts remain unchanged.
 - [ ] No network service or production mutation is required.
 
 ### PR-502 — QA: 10,000-feature scale, CPU and memory acceptance
