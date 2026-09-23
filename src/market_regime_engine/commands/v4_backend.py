@@ -42,9 +42,7 @@ from market_regime_engine.feature_discovery.metadata_store import FeatureSelecti
 from market_regime_engine.feature_discovery.pipeline import fit_family_pca_stages
 from market_regime_engine.feature_discovery.quality import filter_outer_train_quality
 from market_regime_engine.features.ports import (
-    FeatureCatalogSnapshot,
     FeatureRequest,
-    FeatureRow,
     FeatureSnapshot,
 )
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
@@ -67,21 +65,6 @@ from market_regime_engine.training.final_refit import (
     CanonicalRefitValidation,
     final_production_refit,
 )
-
-
-class _RecordingSource:
-    def __init__(self, source: MacroFeaturesPostgresSource) -> None:
-        self._source = source
-        self.catalog: Any | None = None
-        self.snapshot: FeatureSnapshot | None = None
-
-    def read_with_catalog(self, request: FeatureRequest) -> Any:
-        if self.catalog is not None and self.snapshot is not None:
-            return self.catalog, self.snapshot
-        catalog, snapshot = self._source.read_with_catalog(request)
-        self.catalog = catalog
-        self.snapshot = snapshot
-        return catalog, snapshot
 
 
 def _atomic_pickle(path: Path, value: object) -> None:
@@ -112,33 +95,6 @@ def _rows(snapshot: FeatureSnapshot) -> pd.DataFrame:
     frame = pd.DataFrame([row.values for row in snapshot.rows], columns=snapshot.feature_names)
     frame.insert(0, "timestamp_m1", [row.timestamp for row in snapshot.rows])
     return frame
-
-
-def _canonical_source(
-    catalog: FeatureCatalogSnapshot, snapshot: FeatureSnapshot
-) -> tuple[FeatureCatalogSnapshot, FeatureSnapshot]:
-    """Drop the historical global-PCA append before family-PCA selection."""
-
-    raw_positions = tuple(
-        index for index, name in enumerate(snapshot.feature_names) if not name.startswith("pca_pc_")
-    )
-    raw_names = tuple(snapshot.feature_names[index] for index in raw_positions)
-    if raw_names == snapshot.feature_names:
-        return catalog, snapshot
-    raw_rows = tuple(
-        FeatureRow(row.timestamp, tuple(row.values[index] for index in raw_positions))
-        for row in snapshot.rows
-    )
-    raw_snapshot = FeatureSnapshot(snapshot.lineage, raw_names, raw_rows)
-    raw_entries = tuple(
-        entry for entry in catalog.entries if not entry.feature_name.startswith("pca_pc_")
-    )
-    raw_catalog = FeatureCatalogSnapshot.from_entries(
-        catalog.lineage,
-        catalog.timestamp_column,
-        raw_entries,
-    ).with_materialization(raw_snapshot)
-    return raw_catalog, raw_snapshot
 
 
 def _candidate(configuration: Any, catalog: Any) -> ResolvedCandidateProfile:
@@ -213,11 +169,7 @@ class V4LifecycleBackend:
         return self.state_root / "oos"
 
     def _capture_source(self) -> tuple[Any, FeatureSnapshot]:
-        recording = _RecordingSource(self.source)
-        recording.read_with_catalog(FeatureRequest.all_features())
-        if recording.catalog is None or recording.snapshot is None:
-            raise RuntimeError("source did not return a catalog and snapshot")
-        catalog, snapshot = recording.catalog, recording.snapshot
+        catalog, snapshot = self.source.read_with_catalog(FeatureRequest.all_features())
         # PCA is part of the canonical v4 feature universe, not a profile
         # option.  Materialize it on every lifecycle source capture so this
         # backend cannot silently create a raw-only source snapshot.
@@ -277,13 +229,7 @@ class V4LifecycleBackend:
                 source_build_id,
                 f"gaussian_hmm_k{package.state_count}_full",
             )
-        recording = _RecordingSource(self.source)
-        recording.read_with_catalog(FeatureRequest.all_features())
-        if recording.catalog is None or recording.snapshot is None:
-            raise RuntimeError("source did not return a catalog and snapshot")
         catalog, snapshot = self._capture_source()
-        catalog, snapshot = _canonical_source(catalog, snapshot)
-        _atomic_pickle(self._source_path, (catalog, snapshot))
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
         rows = _rows(snapshot)
