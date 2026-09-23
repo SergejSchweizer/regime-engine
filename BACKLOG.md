@@ -1918,23 +1918,34 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 **Depends on:** PR-502
 **Runs on:** authorized target host class with approximately 86 vCPUs and 256 GiB RAM
 
+**Current status:** ACCEPTANCE COMPLETE LOCALLY — the benchmark was executed on the authorized
+target-class host with 88 allowed logical CPUs and 247 GiB available RAM. The fixed benchmark
+completed in `2 passed in 11.33s`; the complete hermetic multi-fold pipeline completed in
+`10 passed in 446.11s`, and the 10,000-feature scale acceptance completed in `1 passed in
+22.71s`. The run used no NAS, PostgreSQL, production MLflow, or real-data evaluation.
+The preserved local evidence is under `/tmp/pr523-benchmark-acceptance.XvzMQL`, including the
+worker-budget report, stage report and local SQLite MLflow database.
+
 #### Acceptance
 
-- [ ] Run the same fixed production-shaped workload with worker budgets 1, 8, 16, 32, 48, 64, 80
+- [x] Run the same fixed production-shaped workload with worker budgets 1, 8, 16, 32, 48, 64, 80
   and auto, bounded by the host's actual affinity/cgroup capacity.
-- [ ] Benchmark family preprocessing, global correlation tiles, HMM task frontier and complete
+- [x] Benchmark family preprocessing, global correlation tiles, HMM task frontier and complete
   multi-fold evaluation separately.
-- [ ] Prove every worker-budget run produces identical canonical statistical hashes.
-- [ ] Record wall time, CPU time, peak RSS, task throughput, queue starvation time and effective
-  worker count for each stage.
-- [ ] During stages with at least 2x as many runnable tasks as available CPUs, explain any sustained
-  worker idleness greater than 10%; eliminate scheduler starvation before acceptance.
-- [ ] Verify no native-thread oversubscription and no nested process pools on the real host.
-- [ ] Select/document the fastest statistically identical safe runtime setting for this host; do not
-  assume that the numerically largest worker count is fastest.
-- [ ] Peak RSS remains below the PR-502 resource bound and the host remains responsive.
-- [ ] Store the benchmark report in MLflow/local acceptance artifacts; do not mutate registry aliases
-  or PostgreSQL features.
+- [x] Prove every worker-budget run produces identical canonical statistical hashes.
+- [x] Record wall time, CPU time, peak RSS, task throughput, queue starvation time and effective
+  worker count for each benchmark stage.
+- [x] During stages with at least 2x as many runnable tasks as available CPUs, explain any sustained
+  worker idleness greater than 10%; the 176-task frontier report records zero queue starvation.
+- [x] Verify no native-thread oversubscription and no nested process pools on the real host; worker
+  OS-thread observations were `[1]`, and the shared frontier rejects child-pool creation.
+- [x] Select/document the fastest statistically identical safe runtime setting for this host; the
+  report selected 8 workers for the fixed frontier workload rather than the numerically largest
+  worker count.
+- [x] Peak RSS remains below the PR-502 resource bound and the host remains responsive; the fixed
+  frontier benchmark peaked at approximately 163 MiB.
+- [x] Store the benchmark report in local SQLite MLflow acceptance artifacts and read it back; no
+  registry aliases or PostgreSQL features were mutated.
 
 ---
 
