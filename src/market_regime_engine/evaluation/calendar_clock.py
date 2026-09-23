@@ -16,11 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from itertools import pairwise
-from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
-
-if TYPE_CHECKING:
-    from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 
 _DEFAULT_TIMEZONE = "Europe/Berlin"
 _TIMESTAMP_FORMAT = "%Y-%m"
@@ -135,21 +131,6 @@ class CalendarMonthPlan:
             raise ValueError("calendar folds must preserve canonical order")
         if len({fold.test_calendar_month for fold in self.folds}) != len(self.folds):
             raise ValueError("calendar TEST months must be unique")
-
-    def as_walk_forward_plan(self) -> WalkForwardPlan:
-        """Adapt monthly folds to consumers that only need fold window fields."""
-
-        from market_regime_engine.evaluation.walk_forward_splits import (
-            WalkForwardFold,
-            WalkForwardPlan,
-        )
-
-        return WalkForwardPlan(
-            folds=cast(tuple[WalkForwardFold, ...], self.folds),
-            evaluation_cutoff=self.folds[-1].test_last_timestamp if self.folds else None,
-            plan_hash=self.plan_hash,
-        )
-
 
 def _fold_hash(
     *,
