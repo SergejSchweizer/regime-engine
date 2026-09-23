@@ -59,11 +59,7 @@ class FeaturePostgresSettings:
         database = _required(env, "REGIME_FEATURE_PGDATABASE")
         direct = env.get("REGIME_FEATURE_PGPASSWORD")
         file_values = tuple(
-            value
-            for value in (
-                env.get("REGIME_FEATURE_PGPASSWORD_FILE"),
-            )
-            if value
+            value for value in (env.get("REGIME_FEATURE_PGPASSWORD_FILE"),) if value
         )
         if len(set(file_values)) > 1:
             raise ValueError("configure only one feature PostgreSQL password file")
