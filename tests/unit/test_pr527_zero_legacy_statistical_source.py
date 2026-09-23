@@ -114,7 +114,7 @@ def test_canonical_calendar_fixture_keeps_pre_deletion_statistical_identity() ->
     plan = plan_calendar_month(timestamps, minimum_train_source_observations=31)
 
     # Pinned local PR-500 canonical fixture identities. No database or MLflow
-    # client is opened by this deterministic regression fixture.
+    # client is opened by this deterministic statistical regression fixture.
     assert plan.plan_hash == "356fbf8c5fb1fc9154a2c1667e2d077ffe6a00cab77186b530bd958a9ccac7ac"
     assert tuple(fold.month_clock_hash for fold in plan.folds) == (
         "7b1315aa1753570ff462d11f899bf0636083be1f58564fdddc2fce68aa77366c",
