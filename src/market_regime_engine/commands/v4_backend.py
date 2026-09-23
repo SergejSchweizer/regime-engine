@@ -49,6 +49,9 @@ from market_regime_engine.features.ports import (
 )
 from market_regime_engine.features.postgres_settings import FeaturePostgresSettings
 from market_regime_engine.features.postgres_source import MacroFeaturesPostgresSource
+from market_regime_engine.mlflow_support.canonical_tracking import (
+    CanonicalFileMlflowTrackingPort,
+)
 from market_regime_engine.mlflow_support.model_package import (
     load_production_package,
     save_production_package,
@@ -56,7 +59,6 @@ from market_regime_engine.mlflow_support.model_package import (
 from market_regime_engine.mlflow_support.model_publishing import publish_production_package
 from market_regime_engine.mlflow_support.registry import MlflowModelRegistry
 from market_regime_engine.mlflow_support.settings import MLflowSettings
-from market_regime_engine.mlflow_support.tracking import FileMlflowTrackingPort
 from market_regime_engine.predictions.store import PredictionStore
 from market_regime_engine.preprocessing.pca_features import fit_and_materialize_pca_source
 from market_regime_engine.profiles.loader import load_profile
@@ -311,7 +313,7 @@ class V4LifecycleBackend:
             metadata_store=FeatureSelectionMetadataStore(
                 self.state_root / "feature-selection.duckdb"
             ),
-            tracking=FileMlflowTrackingPort(
+            tracking=CanonicalFileMlflowTrackingPort(
                 self.mlflow_settings.tracking_uri,
                 experiment_name="macro-regime-evaluation",
             ),

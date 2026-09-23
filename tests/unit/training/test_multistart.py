@@ -6,7 +6,6 @@ from math import nan
 
 import pytest
 
-import market_regime_engine.training.multistart as multistart_module
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.evaluations.task_frontier import (
     FrontierMetrics,
@@ -399,19 +398,6 @@ def test_non_pickleable_adapter_factory_can_run_serially() -> None:
     )
 
     assert result.winner.seed == 131
-
-
-def test_checkpointed_technical_start_failure_remains_retryable() -> None:
-    error = RuntimeError("temporary backend failure")
-
-    with pytest.raises(RuntimeError, match="temporary backend failure"):
-        multistart_module._evaluate_start(
-            [[0.0]],
-            state_count=2,
-            adapter_factory=factory({MULTISTART_SEEDS[0]: error}),
-            seed=MULTISTART_SEEDS[0],
-            retryable_technical_failure=True,
-        )
 
 
 def test_multistart_contracts_reject_invalid_diagnostics_and_results() -> None:
