@@ -1697,6 +1697,10 @@ PostgreSQL, MLflow, or run the full evaluation. Merge to `origin/main` is the re
 **Type:** implementation / structural refactor
 **Depends on:** PR-529
 
+**Status:** IN PROGRESS — branch `pr/PR-530-canonical-only-structural-refactor` is based on
+`origin/main` at `8ad8755`; local-only structural cleanup is in progress, with no NAS,
+PostgreSQL, MLflow, or full evaluation run.
+
 Legacy deletion is expected to expose abstractions, wrappers and version-specific names that no
 longer serve a second implementation. This PR simplifies them without changing statistical
 behavior.
