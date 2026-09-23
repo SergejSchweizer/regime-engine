@@ -1,3 +1,4 @@
+<!-- owner: contributing -->
 # Contributing and Git Policy
 
 Status date: 2026-08-24
