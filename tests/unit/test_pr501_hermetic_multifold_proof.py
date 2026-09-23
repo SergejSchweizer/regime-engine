@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import pickle
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -248,6 +250,112 @@ def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: P
     assert json.loads((tmp_path / "feature-funnel.json").read_text())["sffs_selected"] == len(
         result.selected_features
     )
+
+
+def test_real_pca_hmm_and_outer_test_share_one_hermetic_pipeline() -> None:
+    names = (
+        "vix_log_level",
+        "us_10y_log_level",
+        "vix_delta_1obs",
+        "vix_delta_5obs",
+    )
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    rng = np.random.default_rng(501_501)
+    timestamps = pd.date_range("2018-01-01", periods=120, freq="D", tz="UTC")
+    matrix = rng.normal(size=(120, len(names)))
+    values = {
+        name: tuple(float(value) for value in matrix[:, index]) for index, name in enumerate(names)
+    }
+    train = pd.DataFrame({TEMPORAL_KEY: timestamps})
+    test_timestamps = pd.date_range("2018-05-01", periods=40, freq="D", tz="UTC")
+    test_matrix = rng.normal(size=(40, len(names)))
+    test_values = {
+        name: tuple(float(value) for value in test_matrix[:, index])
+        for index, name in enumerate(names)
+    }
+    test = pd.DataFrame({TEMPORAL_KEY: test_timestamps, **test_values})
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    callbacks = CanonicalModelCallbacks(
+        train=train,
+        test=test,
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id="hermetic-501-real-pipeline",
+        max_workers=None,
+    )
+
+    class _RealHMMOracle:
+        def bind_feature_values(self, bound: dict[str, tuple[float, ...]]) -> None:
+            callbacks.bind_feature_values(bound)
+
+        def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore:
+            fit = callbacks._fit(features, 2)
+            score = callbacks._score(features, 2, fit)
+            return replace(score, value=score.value + 100.0 * len(features))
+
+        def evaluate_hmm_subset(self, features: tuple[str, ...]) -> HMMSubsetEvaluation:
+            fit = callbacks._fit(features, 2)
+            return HMMSubsetEvaluation(
+                self.evaluate_subset(features),
+                "gaussian_hmm",
+                2,
+                callbacks.hmm_selector_contract_hash,
+                sha256(pickle.dumps(fit, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest(),
+            )
+
+    oracle = _RealHMMOracle()
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=oracle.evaluate_subset,
+        evaluate_hmm_subset=oracle.evaluate_hmm_subset,
+        hmm_selector_contract_hash=callbacks.hmm_selector_contract_hash,
+        max_sffs_features=2,
+        max_workers=None,
+    )
+    assert result.family_pca
+    assert result.selected_features
+
+    train_candidate_values = callbacks._bound_feature_values
+    assert train_candidate_values is not None
+    train_with_candidates = pd.DataFrame({TEMPORAL_KEY: timestamps, **dict(train_candidate_values)})
+    test_candidate_values = dict(test_values)
+    for artifact in result.family_pca:
+        family_matrix = np.asarray(
+            tuple(
+                tuple(test_values[name][row] for name in artifact.feature_order)
+                for row in range(len(test_timestamps))
+            ),
+            dtype=np.float64,
+        )
+        transformed = artifact.transform(family_matrix)
+        test_candidate_values.update(
+            {
+                name: tuple(float(row[index]) for row in transformed)
+                for index, name in enumerate(artifact.generated_feature_names)
+            }
+        )
+    test_with_candidates = pd.DataFrame({TEMPORAL_KEY: test_timestamps, **test_candidate_values})
+    final_callbacks = CanonicalModelCallbacks(
+        train=train_with_candidates,
+        test=test_with_candidates,
+        profile=profile,
+        catalog=_catalog(),
+        source_build_id="hermetic-501-real-pipeline",
+        max_workers=None,
+    )
+    model_hash = final_callbacks.fit_final_hmm(train_with_candidates, result.selected_features, 2)
+    assert isinstance(model_hash, str)
+    outer_hash = final_callbacks.evaluate_outer_test(
+        train_with_candidates,
+        test_with_candidates,
+        result.selected_features,
+        2,
+        (model_hash,),
+    )
+    assert len(outer_hash) == 64
 
 
 class _Tracking:
