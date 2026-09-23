@@ -1840,6 +1840,10 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Type:** QA only / full local acceptance
 **Depends on:** PR-512
 
+**Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
+`origin/main` at `f1ecc99`; local-only synthetic proof work is in progress. No NAS, PostgreSQL,
+MLflow, production mutation, or real-data evaluation has been run.
+
 #### Acceptance
 
 - [ ] Static import/config/package scan proves no canonical entry point can select or load the old
