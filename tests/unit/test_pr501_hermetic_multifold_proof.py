@@ -4,10 +4,14 @@ import json
 from pathlib import Path
 
 import duckdb
+import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
+from market_regime_engine.commands.canonical_model_callbacks import CanonicalModelCallbacks
 from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
-from tests.unit.feature_discovery.test_pr498_monthly_refit import _source
+from market_regime_engine.profiles.loader import load_profile
+from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
 from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
 
 
@@ -75,6 +79,43 @@ def test_evidence_manifest_is_canonical_json_and_has_no_network_identity(
     encoded = json.dumps(result.result_hash, sort_keys=True, separators=(",", ":"))
     assert encoded == json.dumps(result.result_hash, separators=(",", ":"), sort_keys=True)
     assert "10.10.1.3" not in encoded
+
+
+def test_real_hmm_callback_fits_train_and_filters_outer_test() -> None:
+    rng = np.random.default_rng(501)
+    timestamps = pd.date_range("2018-01-01", periods=320, freq="D", tz="UTC")
+    train = pd.DataFrame(
+        {
+            "timestamp_m1": timestamps[:280],
+            "vix_log_level": rng.normal(size=280),
+            "us_10y_log_level": rng.normal(size=280),
+        }
+    )
+    test = pd.DataFrame(
+        {
+            "timestamp_m1": timestamps[280:],
+            "vix_log_level": rng.normal(size=40),
+            "us_10y_log_level": rng.normal(size=40),
+        }
+    )
+    callbacks = CanonicalModelCallbacks(
+        train=train,
+        test=test,
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        catalog=_catalog(),
+        source_build_id="hermetic-501",
+        max_workers=None,
+    )
+    fit = callbacks._fit(("vix_log_level", "us_10y_log_level"), 2)
+    fit_hash = callbacks.fit_final_hmm(train, ("vix_log_level", "us_10y_log_level"), 2)
+    assert callbacks.evaluate_outer_test(
+        train,
+        test,
+        ("vix_log_level", "us_10y_log_level"),
+        2,
+        (fit_hash,),
+    )
+    assert fit.winner.artifact is not None
 
 
 class _Tracking:
