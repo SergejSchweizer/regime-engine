@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from mlflow.tracking import MlflowClient
 
 from market_regime_engine.contracts import SourceLineage
 from market_regime_engine.feature_discovery import pipeline as selection_pipeline
@@ -28,6 +29,7 @@ from market_regime_engine.features.ports import (
     FeatureRow,
     FeatureSnapshot,
 )
+from market_regime_engine.mlflow_support.canonical_tracking import CanonicalFileMlflowTrackingPort
 from market_regime_engine.runtime.cpu import available_cpu_count
 from market_regime_engine.runtime.parallel import ParallelExecutionPlan
 from market_regime_engine.runtime.performance import PerformanceRecorder
@@ -166,6 +168,29 @@ def test_10000_feature_scale_stays_post_pca_and_records_resources(
     )
     assert not set(result.sffs.selected_features) & set(transformation_names)
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    tracker = CanonicalFileMlflowTrackingPort(
+        tracking_uri,
+        experiment_name="pr502-hermetic-scale",
+    )
+    run_id = tracker.start_run(run_name="pr502-10000-feature-scale")
+    tracker.log_params(
+        run_id,
+        {
+            "wall_seconds": str(report["wall_seconds"]),
+            "peak_parent_rss_mib": str(report["peak_parent_rss_mib"]),
+            "quality_survivors": str(report["metadata"]["candidate_counts"]["quality_survivors"]),
+        },
+    )
+    tracker.log_artifact(run_id, str(report_path), "performance")
+    tracker.end_run(run_id)
+    client = MlflowClient(tracking_uri=tracking_uri)
+    assert client.get_run(run_id).data.params["quality_survivors"] == str(
+        report["metadata"]["candidate_counts"]["quality_survivors"]
+    )
+    assert tuple(item.path for item in client.list_artifacts(run_id, "performance")) == (
+        "performance/scale-performance.json",
+    )
     assert report["metadata"]["candidate_counts"]["discovered_features"] >= 10_000
     assert report["metadata"]["candidate_counts"]["quality_survivors"] < 1_000
     assert report["metadata"]["candidate_counts"]["global_correlation_input"] < 1_000

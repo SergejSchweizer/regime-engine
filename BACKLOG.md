@@ -1877,13 +1877,13 @@ complete and merged.
 **Type:** QA only / resource acceptance
 **Depends on:** PR-501
 
-**Status:** IN PROGRESS — branch `pr/PR-502-scale-cpu-memory-acceptance` is based on merged
+**Status:** ACCEPTANCE COMPLETE LOCALLY — branch `pr/PR-502-scale-cpu-memory-acceptance` is based on merged
 `origin/main` at `6d942c8`. A hermetic 10,004-feature catalog now runs the real 10k quality
 filter, retains 124 survivors, completes family PCA/global reduction, records local wall/RSS/
 candidate/worker metadata, and proves HMM selection sees only post-reduction candidates. A
-two-fold HMM batch now also has identical results for worker budgets 1/8/32/64/auto. Only the
-MLflow runtime-record completeness criterion remains open. Full local validation is green
-(720 passed, 3 external tests skipped), and
+two-fold HMM batch now also has identical results for worker budgets 1/8/32/64/auto. The local
+SQLite MLflow acceptance run reads back the performance artifact and runtime parameters. Full
+local validation is green (720 passed, 3 external tests skipped), and
 the working tree is clean at the current branch tip. No NAS, PostgreSQL, MLflow, or real-data
 evaluation has been run.
 
@@ -1906,7 +1906,7 @@ Target host class: approximately 86 vCPUs and 256 GiB RAM.
 - [x] Full feature matrices are shared/read-only or memory-mapped where worker fan-out would
   otherwise copy them.
 - [x] Peak resident memory for the acceptance run stays below 64 GiB.
-- [ ] The run records wall time, peak RSS, candidate counts per stage and effective worker count in
+- [x] The run records wall time, peak RSS, candidate counts per stage and effective worker count in
   MLflow and the local fold metadata.
 - [x] No Spark, Ray or external distributed-compute dependency is introduced.
 
