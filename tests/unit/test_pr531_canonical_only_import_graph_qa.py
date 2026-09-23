@@ -32,9 +32,7 @@ def _edges() -> dict[str, set[str]]:
             self._type_checking = 0
 
         def visit_If(self, node: ast.If) -> None:
-            is_type_checking = (
-                isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
-            )
+            is_type_checking = isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
             if is_type_checking:
                 self._type_checking += 1
             for child in node.body:
@@ -123,9 +121,7 @@ def test_public_exports_resolve_and_removed_exports_are_absent() -> None:
 
 
 def test_removed_runtime_switches_and_forwarding_names_are_absent() -> None:
-    production = "\n".join(
-        path.read_text(encoding="utf-8") for path in SOURCE_ROOT.rglob("*.py")
-    )
+    production = "\n".join(path.read_text(encoding="utf-8") for path in SOURCE_ROOT.rglob("*.py"))
     forbidden = (
         "REGIME_EVALUATION_CHECKPOINT_ROOT",
         "REGIME_FEATURE_PGPASSWORD_SECRET_FILE",
