@@ -77,8 +77,6 @@ remote `runs:/...` URI; only this final-refit artifact may become a
 `regime-xetra` version. Registration can update `challenger` only; `champion`
 promotion remains an explicit operator action.
 
-The complete v4 workflow is documented in [docs/regime_evaluations.md](docs/regime_evaluations.md).
-
 ## Contract ownership
 
 - `BACKLOG.md`: implementation PR scope/dependencies/API/deployment/operations plan
