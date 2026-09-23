@@ -18,20 +18,13 @@ from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 from mlflow.tracking import MlflowClient
 
-from market_regime_engine.contracts.core import K_CHAMPION_ALIASES
-from market_regime_engine.evaluations.k_champion_contract import KChampionSelection
-from market_regime_engine.mlflow_support.k_champion_contract import (
-    KChampionPromotionInstruction,
-)
 from market_regime_engine.mlflow_support.model_package import load_production_package
 from market_regime_engine.mlflow_support.ports import ResolvedModelVersion
 from market_regime_engine.mlflow_support.settings import MLflowSettings
 from market_regime_engine.models.production_artifact import ProductionModelArtifact
 
 REGISTERED_MODEL_NAME = "regime-xetra"
-K_SLOT_ALIASES = frozenset(K_CHAMPION_ALIASES)
-ALLOWED_ALIASES = frozenset({"challenger", "champion", *K_SLOT_ALIASES})
-_K_SLOT_BY_ALIAS = {alias: int(alias.rsplit("-k", 1)[1]) for alias in K_SLOT_ALIASES}
+ALLOWED_ALIASES = frozenset({"challenger", "champion"})
 _REGISTRY_THREAD_LOCK = threading.RLock()
 
 
@@ -99,23 +92,6 @@ class RegisteredProductionModel:
 
 
 @dataclass(frozen=True, slots=True)
-class RegisteredKSlotModel:
-    model_name: str
-    slot_id: str
-    exact_version: str
-    package_uri: str
-    idempotency_key: str
-
-    def __post_init__(self) -> None:
-        if self.model_name != REGISTERED_MODEL_NAME:
-            raise ValueError("registered K-slot model must be exactly regime-xetra")
-        if self.slot_id not in {"k2", "k3", "k4", "k5"}:
-            raise ValueError("registered K-slot model has an invalid slot")
-        if not self.exact_version or not self.package_uri or not self.idempotency_key:
-            raise ValueError("registered K-slot identity/package fields cannot be empty")
-
-
-@dataclass(frozen=True, slots=True)
 class AliasMutationAudit:
     model_name: str
     alias: str
@@ -130,9 +106,7 @@ class AliasMutationAudit:
         if self.model_name != REGISTERED_MODEL_NAME:
             raise ValueError("alias audit model name must be exactly regime-xetra")
         if self.alias not in ALLOWED_ALIASES:
-            raise ValueError(
-                "only challenger/champion or champion-k2..champion-k5 aliases are permitted"
-            )
+            raise ValueError("only challenger/champion aliases are permitted")
         if not self.new_version:
             raise ValueError("alias mutation requires a non-empty target version")
         if not self.reason or self.reason.strip() != self.reason:
@@ -170,24 +144,6 @@ def _require_alias(alias: str) -> None:
         raise ValueError(
             "only challenger/champion or champion-k2..champion-k5 aliases are permitted"
         )
-
-
-def _require_slot_target(alias: str, target: object) -> None:
-    """Ensure a K-slot alias can only point to the matching K model version."""
-
-    expected_state_count = _K_SLOT_BY_ALIAS.get(alias)
-    if expected_state_count is None:
-        return
-    tags = getattr(target, "tags", {})
-    observed = tags.get("regime_engine.state_count") if isinstance(tags, dict) else None
-    if observed is None:
-        raise ValueError(f"{alias} target is missing regime_engine.state_count")
-    try:
-        state_count = int(observed)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{alias} target has an invalid state count") from exc
-    if state_count != expected_state_count:
-        raise ValueError(f"{alias} requires a matching K={expected_state_count} model version")
 
 
 class MlflowModelRegistry:
@@ -299,106 +255,6 @@ class MlflowModelRegistry:
             resolved_at_utc=datetime.now(UTC),
         )
 
-    def register_k_slot_package(
-        self,
-        selection: KChampionSelection,
-        *,
-        package_source_uri: str,
-        artifact_hash: str,
-        description: str | None = None,
-    ) -> RegisteredKSlotModel:
-        with _registry_mutation_lock():
-            return self._register_k_slot_package_unlocked(
-                selection,
-                package_source_uri=package_source_uri,
-                artifact_hash=artifact_hash,
-                description=description,
-            )
-
-    def _register_k_slot_package_unlocked(
-        self,
-        selection: KChampionSelection,
-        *,
-        package_source_uri: str,
-        artifact_hash: str,
-        description: str | None,
-    ) -> RegisteredKSlotModel:
-        """Register one immutable K-slot package by its remote ``runs:/`` URI."""
-
-        _require_model_name(REGISTERED_MODEL_NAME)
-        if not package_source_uri.startswith("runs:/"):
-            raise ValueError("K-slot registration requires a remote MLflow runs:/ URI")
-        if len(artifact_hash) != 64 or artifact_hash != artifact_hash.lower():
-            raise ValueError("K-slot artifact_hash must be a lowercase SHA-256")
-        if artifact_hash != selection.artifact_hash:
-            raise ValueError("K-slot artifact hash differs from the immutable selection record")
-        try:
-            self._client.get_registered_model(REGISTERED_MODEL_NAME)
-        except MlflowException as exc:
-            if not _is_missing(exc):
-                raise
-            self._client.create_registered_model(REGISTERED_MODEL_NAME)
-        tags = {
-            "regime_engine.slot_id": selection.slot_id,
-            "regime_engine.alias": selection.alias,
-            "regime_engine.state_count": str(selection.state_count),
-            "regime_engine.model_family": selection.model_family,
-            "regime_engine.candidate_identity": selection.candidate_identity,
-            "regime_engine.policy_id": selection.policy_id,
-            "regime_engine.policy_version": selection.policy_version,
-            "regime_engine.profile_id": selection.profile_id,
-            "regime_engine.profile_config_version": str(selection.profile_config_version),
-            "regime_engine.source_snapshot_id": selection.source_snapshot_id,
-            "regime_engine.feature_order_sha256": selection.feature_order_hash,
-            "regime_engine.comparison_domain_id": selection.comparison_domain_id,
-            "regime_engine.promotion_score_version": selection.promotion_score_version,
-            "regime_engine.reference_teacher_id": selection.reference_teacher_id,
-            "regime_engine.validation_cutoff": selection.validation_cutoff.isoformat(),
-            "regime_engine.deployment_cutoff": selection.deployment_cutoff.isoformat(),
-            "regime_engine.selection_sha256": selection.selection_hash,
-            "regime_engine.artifact_sha256": artifact_hash,
-            "regime_engine.idempotency_key": selection.idempotency_key,
-        }
-        search = getattr(self._client, "search_model_versions", None)
-        if callable(search):
-            for existing in search("name='regime-xetra'"):
-                existing_tags = getattr(existing, "tags", {})
-                if all(existing_tags.get(key) == value for key, value in tags.items()):
-                    return RegisteredKSlotModel(
-                        REGISTERED_MODEL_NAME,
-                        selection.slot_id,
-                        str(existing.version),
-                        str(existing.source),
-                        selection.idempotency_key,
-                    )
-        version = self._client.create_model_version(
-            name=REGISTERED_MODEL_NAME,
-            source=package_source_uri,
-            description=description,
-            tags=tags,
-        )
-        return RegisteredKSlotModel(
-            REGISTERED_MODEL_NAME,
-            selection.slot_id,
-            str(version.version),
-            package_source_uri,
-            selection.idempotency_key,
-        )
-
-    def apply_k_slot_promotion(
-        self,
-        instruction: KChampionPromotionInstruction,
-    ) -> AliasMutationAudit:
-        """Apply an already validated K-slot instruction using audited CAS."""
-
-        return self.compare_and_swap_alias_with_audit(
-            model_name=instruction.model_name,
-            alias=instruction.alias,
-            expected_current_version=instruction.expected_current_version,
-            new_version=instruction.exact_model_version,
-            reason=instruction.reason,
-        )
-
     def get_model_package_uri(self, model_name: str, exact_version: str) -> str:
         _require_model_name(model_name)
         if not exact_version:
@@ -454,7 +310,6 @@ class MlflowModelRegistry:
         target = self._client.get_model_version(model_name, new_version)
         if str(target.version) != new_version:
             raise ValueError("registry returned a mismatched target model version")
-        _require_slot_target(alias, target)
         observed = self._current_alias_version(alias)
         changed = observed == expected_current_version
         audit = AliasMutationAudit(
@@ -472,29 +327,6 @@ class MlflowModelRegistry:
         key = f"regime_engine.alias_audit.{audit.observed_at_utc.timestamp():.6f}"
         self._client.set_registered_model_tag(model_name, key, audit.canonical_json())
         return audit
-
-    def rollback_k_slot(
-        self,
-        *,
-        model_name: str,
-        alias: str,
-        expected_current_version: str,
-        rollback_version: str,
-        reason: str = "K-slot rollback",
-    ) -> AliasMutationAudit:
-        """Restore one retained K-slot version through the same audited CAS."""
-
-        if alias not in K_SLOT_ALIASES:
-            raise ValueError("rollback is permitted only for champion-k2..champion-k5")
-        if not expected_current_version:
-            raise ValueError("rollback requires the currently observed alias version")
-        return self.compare_and_swap_alias_with_audit(
-            model_name=model_name,
-            alias=alias,
-            expected_current_version=expected_current_version,
-            new_version=rollback_version,
-            reason=reason,
-        )
 
     def compare_and_swap_alias(
         self,

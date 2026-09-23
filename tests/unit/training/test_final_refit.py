@@ -10,8 +10,6 @@ import pandas as pd
 import pytest
 
 from market_regime_engine.contracts import SourceLineage
-from market_regime_engine.evaluation.walk_forward import run_walk_forward_candidate
-from market_regime_engine.evaluation.walk_forward_splits import plan_walk_forward
 from market_regime_engine.feature_discovery.contracts import (
     DeploymentSelection,
     FinalSelectedConfiguration,
@@ -32,6 +30,7 @@ from market_regime_engine.states.alignment import StateAlignment, align_first_fo
 from market_regime_engine.training import final_refit as final_refit_module
 from market_regime_engine.training.adapter_factory import adapter_factory
 from market_regime_engine.training.final_refit import (
+    CanonicalRefitValidation,
     _aligned_artifact,
     _default_adapter_builder,
     _refit_matrix,
@@ -251,32 +250,34 @@ def lineage(rows: pd.DataFrame) -> SourceLineage:
 
 
 def winning_evaluation(rows: pd.DataFrame):
-    profile = load_profile(PROFILE_CONFIG)
-    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
-    return run_walk_forward_candidate(
-        rows,
-        plan=plan,
-        profile=profile,
-        candidate=candidate(),
-        adapter_factory=DeterministicAdapter,
-        pca_raw_feature_order=FEATURES,
+    return CanonicalRefitValidation(
+        profile_id="xetra",
+        profile_config_version=4,
+        candidate_id=candidate().candidate_id,
+        state_count=candidate().state_count,
+        source_build_id="build-1",
+        feature_order=FEATURES,
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        evaluation_plan_hash="c" * 64,
+        evaluation_cutoff=rows["timestamp_m1"].iloc[-1],
+        evidence_hash="e" * 64,
     )
 
 
 def pca_winning_evaluation(rows: pd.DataFrame):
-    profile = replace(
-        load_profile(PROFILE_CONFIG),
-        pca=PCAConfig(variance_threshold=0.90),
-    )
-    plan = plan_walk_forward(tuple(rows["timestamp_m1"]), profile.walk_forward)
-    return run_walk_forward_candidate(
-        rows,
-        plan=plan,
-        profile=profile,
-        candidate=pca_candidate(),
-        adapter_factory=PCAAdapter,
-        pca_raw_feature_order=FEATURES,
-        pca_variance_threshold=profile.pca.variance_threshold,
+    return CanonicalRefitValidation(
+        profile_id="xetra",
+        profile_config_version=4,
+        candidate_id=pca_candidate().candidate_id,
+        state_count=pca_candidate().state_count,
+        source_build_id="build-1",
+        feature_order=PCA_FEATURES,
+        feature_selection_definition_hash="a" * 64,
+        feature_selection_execution_hash="b" * 64,
+        evaluation_plan_hash="c" * 64,
+        evaluation_cutoff=rows["timestamp_m1"].iloc[-1],
+        evidence_hash="e" * 64,
     )
 
 

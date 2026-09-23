@@ -1570,8 +1570,11 @@ multistart seed-resume hooks are removed from the runtime path. The canonical
 backend now uses a dedicated MLflow adapter that does not import the retired
 evaluation hierarchy. CPU process-pool primitives used by canonical
 discovery/training stages now live under `runtime.processes` rather than the
-retired evaluation namespace. Remaining legacy selector/source modules and their
-sole-purpose tests are still being removed; PR-526 is not accepted yet.
+retired evaluation namespace. The obsolete `evaluation_runs`, statistical K/prefix/
+teacher selectors, fixed-step walk-forward stack, compatibility MLflow evidence
+adapters, and their sole-purpose tests are now removed from the working tree.
+Canonical import/bootstrap, Ruff, strict Mypy, and 29 focused backend/refit tests
+pass locally. PR-526 remains open pending the full acceptance audit and gate.
 
 Git history is the archive. The repository must not retain executable implementations for
 superseded statistical/source paths merely to preserve backwards compatibility.

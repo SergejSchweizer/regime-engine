@@ -15,7 +15,6 @@ from market_regime_engine.evaluation.diagnostics import (
     validate_full_covariances,
     validate_train_occupancy,
 )
-from market_regime_engine.evaluation.walk_forward import WalkForwardEvaluation
 from market_regime_engine.feature_discovery.contracts import DeploymentSelection, content_hash
 from market_regime_engine.feature_discovery.family_pca import FamilyPCAArtifact
 from market_regime_engine.inference.filtering import causal_filter
@@ -151,7 +150,7 @@ def final_production_refit(
     *,
     lineage: SourceLineage,
     candidate: ResolvedCandidateProfile,
-    winning_evaluation: WalkForwardEvaluation | CanonicalRefitValidation,
+    winning_evaluation: CanonicalRefitValidation,
     deployment_selection: DeploymentSelection,
     profile: ModelProfile,
     adapter_factory_builder: AdapterFactoryBuilder | None = None,
