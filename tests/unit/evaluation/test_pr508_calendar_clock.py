@@ -93,6 +93,7 @@ def test_calendar_clock_rejects_fixed_block_and_trading_day_approximations() -> 
 
     assert tuple(fold.test_source_observations for fold in plan.folds) == (29, 31, 30)
     assert all(fold.test_source_observations != 63 for fold in plan.folds)
+    assert all(fold.test_source_observations != 42 for fold in plan.folds)
     assert all(fold.test_source_observations != 21 for fold in plan.folds)
     assert tuple(fold.test_calendar_month for fold in plan.folds) != (
         "2024-02",
