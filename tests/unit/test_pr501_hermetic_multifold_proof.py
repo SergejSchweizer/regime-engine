@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import duckdb
@@ -9,7 +10,15 @@ import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
 from market_regime_engine.commands.canonical_model_callbacks import CanonicalModelCallbacks
+from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
+from market_regime_engine.feature_discovery.feature_roles import (
+    TEMPORAL_KEY,
+    TRANSFORMATION_FAMILIES,
+    build_feature_role_contract,
+)
 from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
+from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
+from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 from market_regime_engine.profiles.loader import load_profile
 from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
 from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
@@ -116,6 +125,53 @@ def test_real_hmm_callback_fits_train_and_filters_outer_test() -> None:
         (fit_hash,),
     )
     assert fit.winner.artifact is not None
+
+
+def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
+    tmp_path: Path,
+) -> None:
+    names = tuple(
+        f"{family}_delta_{index}obs" for index in range(1, 78) for family in TRANSFORMATION_FAMILIES
+    )
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    rng = np.random.default_rng(501_1000)
+    matrix = rng.normal(size=(64, len(names)))
+    values = {
+        name: tuple(float(value) for value in matrix[:, index]) for index, name in enumerate(names)
+    }
+
+    def score(features: tuple[str, ...]) -> FeatureSubsetScore:
+        return FeatureSubsetScore(features, float(len(features)))
+
+    def hmm_score(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        fit_hash = sha256("|".join(features).encode()).hexdigest()
+        return HMMSubsetEvaluation(score(features), "gaussian_hmm", 2, "a" * 64, fit_hash)
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=score,
+        evaluate_hmm_subset=hmm_score,
+        hmm_selector_contract_hash="a" * 64,
+        max_sffs_features=3,
+        max_workers=None,
+        metadata_store=FeatureSelectionMetadataStore(tmp_path / "metadata"),
+        metadata_fold_id="fold-501",
+        metadata_source_build_id="build-501",
+        metadata_state_count=2,
+        evaluate_gaussian_subset_by_k=lambda state_count, features: FeatureSubsetScore(
+            features,
+            float(len(features)),
+            model_family="gaussian_hmm",
+            state_count=state_count,
+        ),
+    )
+    assert len(names) == 1001
+    assert result.family_pca
+    assert result.global_reduction.representatives
+    assert result.selected_features
+    assert result.ablation.one_feature_results
 
 
 class _Tracking:
