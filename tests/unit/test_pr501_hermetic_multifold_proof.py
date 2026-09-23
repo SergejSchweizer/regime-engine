@@ -19,6 +19,9 @@ from market_regime_engine.feature_discovery.feature_roles import (
 from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
 from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.mlflow_support.canonical_diagnostics import (
+    write_canonical_diagnostics,
+)
 from market_regime_engine.profiles.loader import load_profile
 from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
 from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
@@ -172,6 +175,57 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
     assert result.global_reduction.representatives
     assert result.selected_features
     assert result.ablation.one_feature_results
+
+
+def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: Path) -> None:
+    names = ("vix_log_level", "us_10y_log_level")
+    contract = build_feature_role_contract((TEMPORAL_KEY, *names))
+    values = {
+        names[0]: tuple(float(index) for index in range(30)),
+        names[1]: tuple(float((index % 4) ** 2) for index in range(30)),
+    }
+
+    def score(features: tuple[str, ...]) -> FeatureSubsetScore:
+        return FeatureSubsetScore(features, float(len(features)))
+
+    def hmm_score(features: tuple[str, ...]) -> HMMSubsetEvaluation:
+        return HMMSubsetEvaluation(
+            score(features),
+            "gaussian_hmm",
+            2,
+            "a" * 64,
+            sha256("|".join(features).encode()).hexdigest(),
+        )
+
+    result = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=names,
+        evaluate_subset=score,
+        evaluate_hmm_subset=hmm_score,
+        hmm_selector_contract_hash="a" * 64,
+        max_workers=None,
+        evaluate_gaussian_subset_by_k=lambda state_count, features: FeatureSubsetScore(
+            features, float(len(features)), model_family="gaussian_hmm", state_count=state_count
+        ),
+    )
+    artifacts = write_canonical_diagnostics(result, tmp_path)
+    assert {path.name for path in artifacts} == {
+        "feature-funnel.json",
+        "family-pca.json",
+        "correlation-reduction.json",
+        "sffs-steps.json",
+        "ablation-losses.json",
+        "feature-funnel.png",
+        "pca-explained-variance.png",
+        "correlation-reduction.png",
+        "sffs-scores.png",
+        "ablation-losses.png",
+    }
+    assert all(path.stat().st_size > 0 for path in artifacts)
+    assert json.loads((tmp_path / "feature-funnel.json").read_text())[
+        "sffs_selected"
+    ] == len(result.selected_features)
 
 
 class _Tracking:
