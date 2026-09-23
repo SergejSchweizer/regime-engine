@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import ast
-import importlib
 from pathlib import Path
 
 import pytest
+
+import market_regime_engine.features as features
+import market_regime_engine.mlflow_support as mlflow_support
+import market_regime_engine.preprocessing as preprocessing
 
 ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = ROOT / "src" / "market_regime_engine"
@@ -109,12 +112,14 @@ def test_public_exports_resolve_and_removed_exports_are_absent() -> None:
         "market_regime_engine.mlflow_support",
     )
     for name in modules:
-        module = importlib.import_module(name)
+        module = {
+            "market_regime_engine.features": features,
+            "market_regime_engine.preprocessing": preprocessing,
+            "market_regime_engine.mlflow_support": mlflow_support,
+        }[name]
         for exported in getattr(module, "__all__", ()):
             assert hasattr(module, exported), (name, exported)
-    assert not hasattr(
-        importlib.import_module("market_regime_engine.features"), "DynamicFeatureSource"
-    )
+    assert not hasattr(features, "DynamicFeatureSource")
 
 
 def test_removed_runtime_switches_and_forwarding_names_are_absent() -> None:
