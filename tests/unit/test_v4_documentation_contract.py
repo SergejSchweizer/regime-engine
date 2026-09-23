@@ -8,7 +8,7 @@ DOCUMENTATION = (
     ROOT / "README.md",
     ROOT / "ARCHITECTURE.md",
     ROOT / "EVALUATION.md",
-    ROOT / "DATA_SOURCE.md",
+    ROOT / "OPERATIONS.md",
     ROOT / "docs" / "model_lifecycle_operations.md",
     ROOT / "docs" / "qa" / "xetra_v4_full_compute.md",
 )
