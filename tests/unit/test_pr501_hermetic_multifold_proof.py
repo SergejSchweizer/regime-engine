@@ -223,9 +223,9 @@ def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: P
         "ablation-losses.png",
     }
     assert all(path.stat().st_size > 0 for path in artifacts)
-    assert json.loads((tmp_path / "feature-funnel.json").read_text())[
-        "sffs_selected"
-    ] == len(result.selected_features)
+    assert json.loads((tmp_path / "feature-funnel.json").read_text())["sffs_selected"] == len(
+        result.selected_features
+    )
 
 
 class _Tracking:

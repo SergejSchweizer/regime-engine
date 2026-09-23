@@ -120,7 +120,7 @@ def write_canonical_diagnostics(
         paths.append(path)
 
     explained = tuple(
-        sum(item.explained_variance_ratio[: ordinal])
+        sum(item.explained_variance_ratio[:ordinal])
         for item in pipeline.family_pca
         for ordinal in range(1, item.numerical_rank + 1)
     )
