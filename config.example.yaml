@@ -12,7 +12,7 @@ feature_postgres:
   sslmode: disable
   password_file: /absolute/path/to/pg_macro_loader_password
 evaluation:
-  checkpoint_root: /absolute/path/to/evaluation-checkpoints
+  state_root: /absolute/path/to/regime-engine-state
 runtime:
   cpu_workers: 86
   native_threads: 1

@@ -158,12 +158,10 @@ def _candidate(configuration: Any, catalog: Any) -> ResolvedCandidateProfile:
 
 
 def _configured_state_root(root: Path) -> Path:
-    configured = os.environ.get("REGIME_ENGINE_STATE_ROOT") or os.environ.get(
-        "REGIME_EVALUATION_CHECKPOINT_ROOT"
-    )
+    configured = os.environ.get("REGIME_ENGINE_STATE_ROOT")
     if not configured:
         raise RuntimeError(
-            "REGIME_ENGINE_STATE_ROOT or REGIME_EVALUATION_CHECKPOINT_ROOT must be configured "
+            "REGIME_ENGINE_STATE_ROOT must be configured "
             "to a persistent deployment volume"
         )
     state_root = Path(configured).expanduser()

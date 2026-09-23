@@ -9,7 +9,7 @@ then performs the complete v4 search and outer policy.
 ## Preconditions
 
 - Install the exact repository environment with Python 3.14.7.
-- Configure an absolute persistent `REGIME_EVALUATION_CHECKPOINT_ROOT`
+- Configure an absolute persistent `REGIME_ENGINE_STATE_ROOT`
   outside the repository through `config.yaml`.
 - Configure absolute paths outside the repository for both
   `REGIME_EVALUATION_SUMMARY_PATH` and `REGIME_PERFORMANCE_REPORT_PATH`.

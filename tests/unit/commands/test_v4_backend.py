@@ -13,7 +13,6 @@ def test_lifecycle_backend_requires_configured_persistent_state_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("REGIME_ENGINE_STATE_ROOT", raising=False)
-    monkeypatch.delenv("REGIME_EVALUATION_CHECKPOINT_ROOT", raising=False)
     with pytest.raises(RuntimeError, match="persistent deployment volume"):
         module._configured_state_root(Path.cwd())
 
@@ -271,14 +270,13 @@ def test_lifecycle_status_captures_source_and_completion_metadata(
     assert status.challenger_version is None
 
 
-def test_lifecycle_backend_covers_fallback_state_root_and_registry_errors(
+def test_lifecycle_backend_requires_current_state_root_and_reports_registry_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = tmp_path / "checkout"
     repository.mkdir()
-    monkeypatch.delenv("REGIME_ENGINE_STATE_ROOT", raising=False)
-    monkeypatch.setenv("REGIME_EVALUATION_CHECKPOINT_ROOT", str(tmp_path / "checkpoint"))
-    assert module._configured_state_root(repository) == tmp_path / "checkpoint"
+    monkeypatch.setenv("REGIME_ENGINE_STATE_ROOT", str(tmp_path / "state"))
+    assert module._configured_state_root(repository) == tmp_path / "state"
 
     backend = object.__new__(module.V4LifecycleBackend)
 

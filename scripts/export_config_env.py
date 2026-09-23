@@ -1,8 +1,8 @@
 """Validate deployment config.yaml and emit safe shell exports.
 
-The generated exports are an internal compatibility bridge for the Python
-runtime. Secrets are deliberately accepted only as a password-file path; a
-password value in config.yaml is rejected.
+The generated exports are the deployment boundary for the Python runtime.
+Secrets are deliberately accepted only as a password-file path; a password
+value in config.yaml is rejected.
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ def _required(mapping: dict[str, Any], key: str, name: str) -> Any:
     return value
 
 
+def _only_keys(mapping: dict[str, Any], allowed: set[str], name: str) -> None:
+    unknown = set(mapping) - allowed
+    if unknown:
+        raise ValueError(f"unknown keys for {name}: {sorted(unknown)}")
+
+
 def _positive_int(value: Any, name: str) -> int:
     try:
         parsed = int(value)
@@ -45,14 +51,23 @@ def load_config(path: Path) -> dict[str, str]:
     except OSError as exc:
         raise ValueError(f"cannot read config file {path}: {exc}") from exc
     root = _mapping(raw, "config")
+    _only_keys(
+        root, {"mlflow", "feature_postgres", "evaluation", "runtime", "environment"}, "config"
+    )
 
     mlflow = _mapping(root.get("mlflow"), "mlflow")
+    _only_keys(mlflow, {"tracking_uri", "registry_uri"}, "mlflow")
     tracking_uri = str(_required(mlflow, "tracking_uri", "mlflow"))
     registry_uri = str(mlflow.get("registry_uri", tracking_uri))
     if tracking_uri != "http://10.10.1.3:5000" or registry_uri != tracking_uri:
         raise ValueError("MLflow tracking and registry must use http://10.10.1.3:5000")
 
     feature = _mapping(root.get("feature_postgres"), "feature_postgres")
+    _only_keys(
+        feature,
+        {"host", "port", "database", "user", "sslmode", "password_file"},
+        "feature_postgres",
+    )
     password_keys = {"password", "password_value", "dsn", "connection_string"}
     present_secrets = password_keys.intersection(feature)
     if present_secrets:
@@ -74,11 +89,13 @@ def load_config(path: Path) -> dict[str, str]:
         raise ValueError("feature_postgres.password_file must be absolute")
 
     evaluation = _mapping(root.get("evaluation"), "evaluation")
-    checkpoint_root = str(_required(evaluation, "checkpoint_root", "evaluation"))
-    if not Path(checkpoint_root).expanduser().is_absolute():
-        raise ValueError("evaluation.checkpoint_root must be absolute")
+    _only_keys(evaluation, {"state_root"}, "evaluation")
+    state_root = str(_required(evaluation, "state_root", "evaluation"))
+    if not Path(state_root).expanduser().is_absolute():
+        raise ValueError("evaluation.state_root must be absolute")
 
     runtime = _mapping(root.get("runtime"), "runtime")
+    _only_keys(runtime, {"cpu_workers", "native_threads"}, "runtime")
     cpu_workers = _positive_int(_required(runtime, "cpu_workers", "runtime"), "runtime.cpu_workers")
     native_threads = _positive_int(
         _required(runtime, "native_threads", "runtime"), "runtime.native_threads"
@@ -88,7 +105,7 @@ def load_config(path: Path) -> dict[str, str]:
         "MLFLOW_TRACKING_URI": tracking_uri,
         "MLFLOW_REGISTRY_URI": registry_uri,
         **feature_exports,
-        "REGIME_EVALUATION_CHECKPOINT_ROOT": str(Path(checkpoint_root).expanduser()),
+        "REGIME_ENGINE_STATE_ROOT": str(Path(state_root).expanduser()),
         "REGIME_CPU_WORKERS": str(cpu_workers),
         "OMP_NUM_THREADS": str(native_threads),
         "OPENBLAS_NUM_THREADS": str(native_threads),
