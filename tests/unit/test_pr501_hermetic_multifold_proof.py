@@ -194,6 +194,57 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
     assert result.selected_features
     assert result.ablation.one_feature_results
 
+    generated_train: dict[str, tuple[float, ...]] = {}
+    for artifact in result.family_pca:
+        family_matrix = matrix[:, tuple(name_index[name] for name in artifact.feature_order)]
+        transformed = artifact.transform(family_matrix)
+        generated_train.update(
+            {
+                name: tuple(float(row[index]) for row in transformed)
+                for index, name in enumerate(artifact.generated_feature_names)
+            }
+        )
+    final_train = pd.DataFrame(
+        {
+            TEMPORAL_KEY: pd.date_range("2018-01-01", periods=len(matrix), freq="D", tz="UTC"),
+            **generated_train,
+        }
+    )
+    final_test_matrix = np.random.default_rng(501_1001).normal(size=(24, len(names)))
+    final_test = pd.DataFrame(
+        {
+            TEMPORAL_KEY: pd.date_range("2018-05-01", periods=24, freq="D", tz="UTC"),
+            **{
+                name: tuple(float(value) for value in final_test_matrix[:, index])
+                for index, name in enumerate(names)
+            },
+        }
+    )
+    for artifact in result.family_pca:
+        test_family = final_test_matrix[
+            :, tuple(name_index[name] for name in artifact.feature_order)
+        ]
+        transformed = artifact.transform(test_family)
+        for index, name in enumerate(artifact.generated_feature_names):
+            final_test[name] = tuple(float(row[index]) for row in transformed)
+    final_callbacks = CanonicalModelCallbacks(
+        train=final_train,
+        test=final_test,
+        profile=load_profile("configs/profiles/xetra_v4.yaml"),
+        catalog=_catalog(),
+        source_build_id="hermetic-501-thousand-feature",
+        max_workers=None,
+    )
+    final_hash = final_callbacks.fit_final_hmm(final_train, result.selected_features, 2)
+    assert isinstance(final_hash, str)
+    assert final_callbacks.evaluate_outer_test(
+        final_train,
+        final_test,
+        result.selected_features,
+        2,
+        (final_hash,),
+    )
+
 
 def test_canonical_diagnostics_materialize_required_tables_and_plots(tmp_path: Path) -> None:
     names = ("vix_log_level", "us_10y_log_level")
