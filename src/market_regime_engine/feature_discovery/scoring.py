@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import numpy as np
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     FEATURE_SCORE_BIN_COUNT,
     FEATURE_SCORE_TIE_TOLERANCE,
@@ -20,6 +19,7 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.features.ports import FeatureSnapshot
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 _TIMESTAMP_COLUMN = "timestamp_m1"
 _PROBABILITY_TOLERANCE = 1.0e-10

@@ -9,7 +9,6 @@ from math import fsum, isfinite, sqrt
 import numpy as np
 from scipy.stats import rankdata  # type: ignore[import-untyped]
 
-from market_regime_engine.evaluations.process_parallel import cpu_process_pool
 from market_regime_engine.feature_discovery.contracts import (
     MIN_PAIRWISE_OBSERVATIONS,
     RHO_CLIP_TOLERANCE,
@@ -19,6 +18,7 @@ from market_regime_engine.feature_discovery.contracts import (
 )
 from market_regime_engine.features.ports import FeatureSnapshot
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 @dataclass(frozen=True, slots=True)

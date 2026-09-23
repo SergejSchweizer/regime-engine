@@ -13,12 +13,12 @@ import numpy as np
 import numpy.typing as npt
 
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
-from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.models.artifacts import GaussianHMMArtifact
 from market_regime_engine.models.protocols import FitResult, GaussianHMMAdapter
 from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.runtime.parallel import ReadOnlyMatrix
+from market_regime_engine.runtime.processes import is_pickleable
 
 MULTISTART_SEEDS = (11, 23, 37, 53, 71, 89, 107, 131)
 MINIMUM_VALID_STARTS = 6

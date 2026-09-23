@@ -8,13 +8,13 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import FrontierTask, SharedTaskFrontier
 from market_regime_engine.feature_discovery.sffs import (
     FeatureSubsetScore,
     _canonical_subset,
 )
 from market_regime_engine.runtime.cpu import cpu_worker_count
+from market_regime_engine.runtime.processes import is_pickleable
 
 
 def _require_text(value: str, field: str) -> None:

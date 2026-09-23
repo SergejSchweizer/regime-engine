@@ -19,7 +19,7 @@ from market_regime_engine.evaluation.walk_forward import (
 )
 from market_regime_engine.evaluation.walk_forward_splits import WalkForwardPlan
 from market_regime_engine.evaluation_runs.stages import StageCheckpoint
-from market_regime_engine.evaluations.process_parallel import is_pickleable
+from market_regime_engine.runtime.processes import is_pickleable
 from market_regime_engine.evaluations.scheduling import randomized_order
 from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.contracts import content_hash

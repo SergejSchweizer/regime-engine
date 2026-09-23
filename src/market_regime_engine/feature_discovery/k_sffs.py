@@ -8,7 +8,6 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from market_regime_engine.evaluations.process_parallel import is_pickleable
 from market_regime_engine.evaluations.task_frontier import SharedTaskFrontier
 from market_regime_engine.feature_discovery.feature_roles import SFFS_MAX_FEATURES
 from market_regime_engine.feature_discovery.sffs import (
@@ -16,6 +15,7 @@ from market_regime_engine.feature_discovery.sffs import (
     SFFSResult,
     select_sffs,
 )
+from market_regime_engine.runtime.processes import is_pickleable
 
 LEGAL_K = (2, 3, 4, 5)
 GAUSSIAN_HMM = "gaussian_hmm"
