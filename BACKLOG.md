@@ -1697,9 +1697,9 @@ PostgreSQL, MLflow, or run the full evaluation. Merge to `origin/main` is the re
 **Type:** implementation / structural refactor
 **Depends on:** PR-529
 
-**Status:** IN PROGRESS — branch `pr/PR-530-canonical-only-structural-refactor` is based on
-`origin/main` at `8ad8755`; local-only structural cleanup is in progress, with no NAS,
-PostgreSQL, MLflow, or full evaluation run.
+**Status:** ACCEPTANCE COMPLETE — branch `pr/PR-530-canonical-only-structural-refactor` is
+validated locally and by GitHub PR #498; structural work was local/synthetic-only, with no NAS,
+PostgreSQL, MLflow, or full evaluation run. Merge to `origin/main` is the remaining gate.
 
 Legacy deletion is expected to expose abstractions, wrappers and version-specific names that no
 longer serve a second implementation. This PR simplifies them without changing statistical
@@ -1707,24 +1707,24 @@ behavior.
 
 #### Acceptance
 
-- [ ] Remove interfaces, adapters, factories, strategy branches and dependency-injection bindings
+- [x] Remove interfaces, adapters, factories, strategy branches and dependency-injection bindings
   that have only one implementation and no independently useful test seam after PR-528.
-- [ ] Collapse duplicate canonical orchestration helpers so evaluation and deployment/refit call the
+- [x] Collapse duplicate canonical orchestration helpers so evaluation and deployment/refit call the
   same stage implementations rather than parallel copies.
-- [ ] Remove dead configuration fields, unused dataclasses, unreachable branches, stale metrics and
+- [x] Remove dead configuration fields, unused dataclasses, unreachable branches, stale metrics and
   unused serialization fields revealed by legacy deletion.
-- [ ] Rename internal modules/functions whose names describe superseded mechanics rather than their
+- [x] Rename internal modules/functions whose names describe superseded mechanics rather than their
   canonical responsibility; update all imports atomically.
-- [ ] Keep externally intentional identities such as repository/package name, `profile_id=xetra`,
+- [x] Keep externally intentional identities such as repository/package name, `profile_id=xetra`,
   registered model identity and current API contract unchanged unless another active backlog item
   explicitly owns that change.
-- [ ] Establish one directional dependency flow:
+- [x] Establish one directional dependency flow:
   source/contracts -> preprocessing/selection -> HMM evaluation -> packaging/lifecycle -> serving.
-- [ ] No circular imports are introduced; package import must not execute network/database work.
-- [ ] Shared parallel-execution, DuckDB and MLflow abstractions remain single-source and are not
+- [x] No circular imports are introduced; package import must not execute network/database work.
+- [x] Shared parallel-execution, DuckDB and MLflow abstractions remain single-source and are not
   duplicated during refactor.
-- [ ] Refactor produces identical canonical statistical/package hashes on pinned fixtures.
-- [ ] Ruff, formatting, strict mypy and required unit/integration tests pass at 85% coverage.
+- [x] Refactor produces identical canonical statistical/package hashes on pinned fixtures.
+- [x] Ruff, formatting, strict mypy and required unit/integration tests pass at 85% coverage.
 
 ### PR-531 — QA: canonical-only import graph, dead-code and refactor proof
 
