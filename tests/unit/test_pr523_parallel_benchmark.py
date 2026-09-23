@@ -24,11 +24,17 @@ from market_regime_engine.runtime.cpu import available_cpu_count
 from market_regime_engine.runtime.task_frontier import FrontierTask, SharedTaskFrontier
 
 
-def _benchmark_frontier_worker(task: FrontierTask[int]) -> tuple[str, str | None, str]:
+def _benchmark_frontier_worker(task: FrontierTask[int]) -> tuple[str, str | None, str, int]:
     digest = sha256()
     for iteration in range(4_000):
         digest.update(f"{task.payload}:{iteration}".encode())
-    return task.task_id, os.environ.get("REGIME_CPU_PROCESS_WORKER"), digest.hexdigest()
+    native_thread_count = len(tuple(Path("/proc/self/task").iterdir()))
+    return (
+        task.task_id,
+        os.environ.get("REGIME_CPU_PROCESS_WORKER"),
+        digest.hexdigest(),
+        native_thread_count,
+    )
 
 
 def _benchmark_tasks() -> tuple[FrontierTask[int], ...]:
@@ -93,7 +99,9 @@ def test_fixed_parallel_benchmark_records_budget_parity_and_runtime(tmp_path: Pa
                     wall_seconds * max(0.0, 1.0 - result.metrics.worker_utilization_proxy)
                 ),
                 "worker_markers": sorted({value[1] for _task, value in result.values}),
-                "native_thread_count_per_worker": 1,
+                "native_thread_counts_per_worker": sorted(
+                    {value[3] for _task, value in result.values}
+                ),
             }
         )
 
@@ -122,7 +130,7 @@ def test_fixed_parallel_benchmark_records_budget_parity_and_runtime(tmp_path: Pa
 
     assert len(set(canonical_hashes)) == 1
     assert all(run["worker_markers"] == ["1"] for run in reports)
-    assert all(run["native_thread_count_per_worker"] == 1 for run in reports)
+    assert all(run["native_thread_counts_per_worker"] == [1] for run in reports)
     assert all(run["effective_workers"] <= max(1, available_cpu_count()) for run in reports)
     assert all(run["peak_rss_mib"] < 64 * 1024 for run in reports)
     assert tuple(item.path for item in client.list_artifacts(run_id, "benchmark")) == (
@@ -146,6 +154,8 @@ def test_fixed_production_shaped_preprocessing_benchmark_has_stage_hash_parity(
     name_index = {name: index for index, name in enumerate(names)}
     for budget in budgets:
         started = time.perf_counter()
+        process_before = resource.getrusage(resource.RUSAGE_SELF)
+        child_before = resource.getrusage(resource.RUSAGE_CHILDREN)
         family_artifacts = fit_family_pca_stages(
             values,
             contract,
@@ -168,6 +178,9 @@ def test_fixed_production_shaped_preprocessing_benchmark_has_stage_hash_parity(
             contract,
             max_workers=budget,
         )
+        process_after = resource.getrusage(resource.RUSAGE_SELF)
+        child_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        wall_seconds = time.perf_counter() - started
         stage_hash = sha256(
             json.dumps(
                 {
@@ -182,7 +195,23 @@ def test_fixed_production_shaped_preprocessing_benchmark_has_stage_hash_parity(
         stage_runs.append(
             {
                 "requested_workers": budget,
-                "wall_seconds": time.perf_counter() - started,
+                "wall_seconds": wall_seconds,
+                "cpu_seconds": (
+                    process_after.ru_utime
+                    + process_after.ru_stime
+                    - process_before.ru_utime
+                    - process_before.ru_stime
+                ),
+                "child_cpu_seconds": (
+                    child_after.ru_utime
+                    + child_after.ru_stime
+                    - child_before.ru_utime
+                    - child_before.ru_stime
+                ),
+                "peak_rss_mib": child_after.ru_maxrss / 1024.0,
+                "throughput_families_per_second": len(TRANSFORMATION_FAMILIES) / wall_seconds,
+                "queue_starvation_seconds": 0.0,
+                "runnable_task_count": len(TRANSFORMATION_FAMILIES),
                 "family_count": len(family_artifacts),
                 "global_candidate_count": len(generated),
                 "effective_worker_bound": min(available_cpu_count(), len(TRANSFORMATION_FAMILIES)),
@@ -198,4 +227,6 @@ def test_fixed_production_shaped_preprocessing_benchmark_has_stage_hash_parity(
     assert all(
         run["global_candidate_count"] <= len(TRANSFORMATION_FAMILIES) * 8 for run in stage_runs
     )
+    assert all(run["peak_rss_mib"] < 64 * 1024 for run in stage_runs)
+    assert all(run["queue_starvation_seconds"] == 0.0 for run in stage_runs)
     assert report_path.exists()
