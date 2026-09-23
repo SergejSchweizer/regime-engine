@@ -226,6 +226,77 @@ def test_thousand_feature_hermetic_selection_runs_real_pca_and_reduction(
                 for index, name in enumerate(artifact.generated_feature_names)
             }
         )
+
+    independent_names = tuple(sorted(generated_train))
+    independent_edges: dict[tuple[str, str], tuple[float, tuple[float, ...]]] = {}
+
+    def independent_absolute_pearson(left: np.ndarray, right: np.ndarray) -> float | None:
+        if left.size < 2 or np.std(left) == 0.0 or np.std(right) == 0.0:
+            return None
+        return abs(float(np.corrcoef(left, right)[0, 1]))
+
+    for left_index, left_name in enumerate(independent_names):
+        left = np.asarray(generated_train[left_name], dtype=np.float64)
+        for right_name in independent_names[left_index + 1 :]:
+            right = np.asarray(generated_train[right_name], dtype=np.float64)
+            full = independent_absolute_pearson(left, right)
+            bounds = ((0, 86), (86, 171), (171, len(left)))
+            subwindows = tuple(
+                independent_absolute_pearson(left[start:end], right[start:end])
+                for start, end in bounds
+            )
+            if (
+                full is not None
+                and full >= contract.profile.correlation_abs_threshold
+                and all(
+                    value is not None
+                    and value >= contract.profile.correlation_subwindow_abs_threshold
+                    for value in subwindows
+                )
+            ):
+                independent_edges[(left_name, right_name)] = (full, subwindows)
+
+    remaining = set(independent_names)
+    independent_representatives: list[str] = []
+    independent_removed: list[str] = []
+    while remaining:
+        candidates = tuple(name for name in independent_names if name in remaining)
+        neighborhoods = {
+            name: [
+                (other, independent_edges[pair])
+                for other in candidates
+                if other != name
+                for pair in ((name, other) if name < other else (other, name),)
+                if pair in independent_edges
+            ]
+            for name in candidates
+        }
+        leader = min(
+            candidates,
+            key=lambda name: (
+                -len(neighborhoods[name]),
+                -float(np.median([item[1][0] for item in neighborhoods[name]]))
+                if neighborhoods[name]
+                else 0.0,
+                -1.0,
+                1,
+                independent_names.index(name),
+            ),
+        )
+        independent_representatives.append(leader)
+        direct = tuple(
+            sorted((name for name, _edge in neighborhoods[leader]), key=independent_names.index)
+        )
+        independent_removed.extend(direct)
+        remaining.difference_update((leader, *direct))
+
+    assert tuple(independent_representatives) == result.global_reduction.representatives
+    assert tuple(independent_removed) == result.global_reduction.removed_features
+    for item in result.global_reduction.evidence:
+        full, subwindows = independent_edges[(item.leader, item.removed)]
+        assert np.isclose(item.full_absolute_pearson, full, rtol=1.0e-12, atol=1.0e-12)
+        assert np.allclose(item.subwindow_absolute_pearsons, subwindows, rtol=1.0e-12, atol=1.0e-12)
+
     final_train = pd.DataFrame(
         {
             TEMPORAL_KEY: pd.date_range("2018-01-01", periods=len(matrix), freq="D", tz="UTC"),
