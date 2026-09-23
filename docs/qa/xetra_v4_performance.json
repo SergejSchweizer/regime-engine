@@ -43,6 +43,6 @@
   "artifacts": {
     "detailed_report": "/home/dev_regime/perf-final-xetra-20260912/performance.json",
     "summary": "/home/dev_regime/perf-final-xetra-20260912/summary.json",
-    "checkpoint_root": "/home/dev_regime/perf-final-xetra-20260912/checkpoints"
+    "state_root": "/home/dev_regime/perf-final-xetra-20260912/state"
   }
 }

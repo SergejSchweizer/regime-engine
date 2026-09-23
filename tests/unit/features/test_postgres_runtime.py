@@ -80,22 +80,14 @@ def test_exact_defaults_plain_transport_password_file_and_safe_summary(tmp_path:
     assert "s3cr3t" not in repr(settings.safe_summary())
 
 
-def test_secret_file_alias_is_accepted_and_conflicting_file_sources_fail(tmp_path: Path) -> None:
+def test_secret_file_alias_is_rejected(tmp_path: Path) -> None:
     secret = tmp_path / "feature-password"
     secret.write_text("s3cr3t\n", encoding="utf-8")
-    settings = FeaturePostgresSettings.from_env(
-        {
-            "REGIME_FEATURE_PGDATABASE": "features",
-            "REGIME_FEATURE_PGPASSWORD_SECRET_FILE": str(secret),
-        }
-    )
-    assert settings.password == "s3cr3t"
-    with pytest.raises(ValueError, match="one feature PostgreSQL password file"):
+    with pytest.raises(ValueError, match="password or password file is required"):
         FeaturePostgresSettings.from_env(
             {
                 "REGIME_FEATURE_PGDATABASE": "features",
-                "REGIME_FEATURE_PGPASSWORD_FILE": str(secret),
-                "REGIME_FEATURE_PGPASSWORD_SECRET_FILE": str(secret) + ".other",
+                "REGIME_FEATURE_PGPASSWORD_SECRET_FILE": str(secret),
             }
         )
 

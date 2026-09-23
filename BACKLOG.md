@@ -1639,6 +1639,10 @@ canonical feature-discovery terminology that remains part of the current profile
 **Type:** implementation / compatibility removal
 **Depends on:** PR-527
 
+**Status:** IN PROGRESS — branch `pr/PR-528-delete-compatibility-boundaries` is based on
+`origin/main` at `16a6596`; local-only contract cleanup is underway. No NAS, PostgreSQL,
+MLflow or full evaluation run has been performed.
+
 The current canonical profile/package/serving contract is the only supported contract. Historical
 model packages and run artifacts remain available in MLflow/Git history as data, but this repository
 does not keep compatibility code to execute or reinterpret superseded contracts.

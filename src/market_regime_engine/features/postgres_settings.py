@@ -62,7 +62,6 @@ class FeaturePostgresSettings:
             value
             for value in (
                 env.get("REGIME_FEATURE_PGPASSWORD_FILE"),
-                env.get("REGIME_FEATURE_PGPASSWORD_SECRET_FILE"),
             )
             if value
         )
