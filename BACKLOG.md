@@ -1843,11 +1843,11 @@ validated locally; documentation QA uses no NAS, PostgreSQL, MLflow, or evaluati
 **Status:** IN PROGRESS — branch `pr/PR-501-zero-legacy-hermetic-multifold-proof` is based on
 `origin/main` at `f1ecc99`; the branch contains the pushed canonical diagnostics and independent
 oracle-proof commits, including two real PCA→HMM→Outer TEST folds with per-fold diagnostics on
-a hermetic universe, plus the 1001-feature fixture through Final-HMM/Outer-TEST. Canonical fold
-diagnostics now materialize the
-required JSON tables and PNG plots for tracking. The end-to-end hermetic acceptance and
-independent recomputation of correlation leaders and the exact large-feature multi-fold run
-remains open. The real multi-fold callback/artifact path is now covered on the hermetic fixture.
+a hermetic universe, plus a 1001-feature fixture through real PCA, global reduction, HMM SFFS,
+ablation, Final-HMM and Outer-TEST. Canonical fold diagnostics now materialize the required JSON
+tables and PNG plots for tracking. The exact large-feature multi-fold run and independent
+recomputation of correlation leaders remain open. The real multi-fold callback/artifact path is
+covered on the hermetic fixture.
 No NAS, PostgreSQL, MLflow, production mutation, or
 real-data evaluation has been run.
 
@@ -1861,7 +1861,8 @@ complete and merged.
   PCA-only-prefix, clustering, medoid, teacher, legacy-source, historical-profile or compatibility
   package paths.
 - [ ] Run a complete hermetic multi-fold evaluation from thousands-feature input through final HMM
-  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation.
+  and Outer TEST with real PCA, correlation, HMM SFFS and ablation computation. A complete
+  single-fold 1001-feature run now passes this path; the multi-fold variant remains open.
 - [ ] Verify every required DuckDB row family and every required MLflow plot/table exists.
 - [ ] Independently recompute one fold's quality decisions, PCA, correlation leaders, SFFS score,
   final selected tuple and ablation losses. The current synthetic oracle covers quality, PCA,
