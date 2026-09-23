@@ -1958,8 +1958,11 @@ worker-budget report, stage report and local SQLite MLflow database.
 
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
-production MLflow tracking endpoint. No acceptance criterion is marked complete until
-the external contract test and its archived evidence finish successfully.
+production MLflow tracking endpoint. Implementation is pushed on branch
+`pr/PR-503-current-xetra-readonly-audit` at commit `bdb6dfb` in GitHub PR #505;
+Git Policy, lint and type gates are green while the Unit gate and external audit are
+still running. No acceptance criterion is marked complete until the external contract
+test and its archived evidence finish successfully.
 
 #### Acceptance
 
