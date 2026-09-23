@@ -6,12 +6,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from market_regime_engine.runtime.processes import cpu_process_pool
 from market_regime_engine.runtime.parallel import (
     FoldParallelExecutor,
     ParallelExecutionPlan,
     ReadOnlyMatrix,
 )
+from market_regime_engine.runtime.processes import cpu_process_pool
 
 
 def square(value: int) -> int:

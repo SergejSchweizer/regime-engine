@@ -132,6 +132,7 @@ class CalendarMonthPlan:
         if len({fold.test_calendar_month for fold in self.folds}) != len(self.folds):
             raise ValueError("calendar TEST months must be unique")
 
+
 def _fold_hash(
     *,
     timezone: str,

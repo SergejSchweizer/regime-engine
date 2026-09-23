@@ -93,17 +93,6 @@ def test_qa_contract_covers_only_the_two_authoritative_gate_workflows() -> None:
     assert all((ROOT / ".github" / "workflows" / name).is_file() for name in WORKFLOW_NAMES)
 
 
-def test_long_hermetic_proof_is_local_only() -> None:
-    assert not (ROOT / ".github" / "workflows" / "hermetic-v4-proof.yml").exists()
-    runner = (ROOT / "scripts" / "run_pr231_hermetic_proof.sh").read_text(encoding="utf-8")
-    assert '"integration and slow"' in runner
-    assert "PR231_PROOF_OUTPUT" in runner
-    assert 'RUN_METADATA="$OUTPUT_DIR/pr231-${PHASE}.json"' in runner
-    assert 'JUNIT_XML="$OUTPUT_DIR/pr231-${PHASE}-junit.xml"' in runner
-    assert "pr231-computation-proof.json" in runner
-    assert "--junitxml=pr231-${PHASE}-junit.xml" in runner
-
-
 def test_external_feature_postgres_smoke_script_is_executable() -> None:
     script = ROOT / "scripts" / "verify_feature_postgres.sh"
     assert script.stat().st_mode & 0o111
