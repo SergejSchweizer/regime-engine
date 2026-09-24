@@ -43,6 +43,7 @@ class TransformationFamily(StrEnum):
     US_10Y = "us_10y"
     ESTR = "estr"
     USD_BROAD = "usd_broad"
+    FED = "fed"
 
 
 class FeatureStage(StrEnum):
@@ -95,6 +96,7 @@ _TRANSFORMATION_RE = re.compile(
     r"(?:_[a-z0-9]+)+$"
 )
 _LOG_RETURN_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_log_return_[0-9]+obs$")
+_EXPECTED_MOVE_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_next_expected_move_bp$")
 _FAMILY_BY_LONGEST_PREFIX = tuple(sorted(TRANSFORMATION_FAMILIES, key=len, reverse=True))
 _FAMILY_PC_RE = re.compile(r"^family_pc_(?P<family>[a-z0-9_]+)_(?P<component>[1-8])$")
 _PCA_RE = re.compile(r"^pca_pc_00[1-8]$")
@@ -206,7 +208,11 @@ class FeatureRoleAssignment:
 
 
 def _family_for_name(feature_name: str) -> str | None:
-    match = _TRANSFORMATION_RE.fullmatch(feature_name) or _LOG_RETURN_RE.fullmatch(feature_name)
+    match = (
+        _TRANSFORMATION_RE.fullmatch(feature_name)
+        or _LOG_RETURN_RE.fullmatch(feature_name)
+        or _EXPECTED_MOVE_RE.fullmatch(feature_name)
+    )
     if match is None:
         return None
     family = match.group("family")

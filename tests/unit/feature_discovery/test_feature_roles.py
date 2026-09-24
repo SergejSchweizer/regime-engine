@@ -34,6 +34,13 @@ def test_canonical_core_inventory_is_exactly_twenty() -> None:
     assert classify_feature_name("usd_broad_log_return_20obs").family == "usd_broad"
 
 
+def test_classify_current_fed_expected_move_transformation() -> None:
+    assignment = classify_feature_name("fed_next_expected_move_bp")
+
+    assert assignment.role is FeatureRole.TRANSFORMATION
+    assert assignment.family == "fed"
+
+
 @pytest.mark.parametrize(
     "name",
     (
