@@ -97,6 +97,9 @@ _TRANSFORMATION_RE = re.compile(
 )
 _LOG_RETURN_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_log_return_[0-9]+obs$")
 _EXPECTED_MOVE_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_next_expected_move_bp$")
+_FED_PATH_SLOPE_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_path_slope_m[0-9]+_bp$")
+_FED_UNCERTAINTY_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_next_uncertainty_bp$")
+_FED_REPRICING_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_repricing_[0-9]+obs_bp$")
 _FAMILY_BY_LONGEST_PREFIX = tuple(sorted(TRANSFORMATION_FAMILIES, key=len, reverse=True))
 _FAMILY_PC_RE = re.compile(r"^family_pc_(?P<family>[a-z0-9_]+)_(?P<component>[1-8])$")
 _PCA_RE = re.compile(r"^pca_pc_00[1-8]$")
@@ -212,6 +215,9 @@ def _family_for_name(feature_name: str) -> str | None:
         _TRANSFORMATION_RE.fullmatch(feature_name)
         or _LOG_RETURN_RE.fullmatch(feature_name)
         or _EXPECTED_MOVE_RE.fullmatch(feature_name)
+        or _FED_PATH_SLOPE_RE.fullmatch(feature_name)
+        or _FED_UNCERTAINTY_RE.fullmatch(feature_name)
+        or _FED_REPRICING_RE.fullmatch(feature_name)
     )
     if match is None:
         return None

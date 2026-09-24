@@ -42,6 +42,21 @@ def test_classify_current_fed_expected_move_transformation() -> None:
 
 
 @pytest.mark.parametrize(
+    "feature_name",
+    (
+        "fed_path_slope_m3_bp",
+        "fed_next_uncertainty_bp",
+        "fed_repricing_5obs_bp",
+    ),
+)
+def test_classify_current_fed_level_transformations(feature_name: str) -> None:
+    assignment = classify_feature_name(feature_name)
+
+    assert assignment.role is FeatureRole.TRANSFORMATION
+    assert assignment.family == "fed"
+
+
+@pytest.mark.parametrize(
     "name",
     (
         "vix_delta_1obs",
