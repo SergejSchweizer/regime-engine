@@ -279,11 +279,14 @@ def build_canonical_stage_factory(
     catalog: FeatureCatalogSnapshot,
     source_build_id: str,
     max_workers: int | None,
-) -> Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]:
+) -> Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold, int], StageCallbacks]:
     """Return a pickle-safe per-fold callback factory for the public backend."""
 
     def factory(
-        train: pd.DataFrame, test: pd.DataFrame, _fold: CalendarMonthFold
+        train: pd.DataFrame,
+        test: pd.DataFrame,
+        _fold: CalendarMonthFold,
+        fold_workers: int,
     ) -> StageCallbacks:
         return cast(
             StageCallbacks,
@@ -293,7 +296,7 @@ def build_canonical_stage_factory(
                 profile=profile,
                 catalog=catalog,
                 source_build_id=source_build_id,
-                max_workers=max_workers,
+                max_workers=min(max_workers or fold_workers, fold_workers),
             ).as_callbacks(),
         )
 

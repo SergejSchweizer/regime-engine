@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -57,6 +59,7 @@ from market_regime_engine.mlflow_support.canonical_diagnostics import (
 )
 from market_regime_engine.mlflow_support.ports import TrackingPort
 from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count
 
 _TIMESTAMP = "timestamp_m1"
 
@@ -228,7 +231,9 @@ class StageCallbacks(Protocol):
     evaluate_outer_test: OuterTestEvaluator
 
 
-StageCallbackFactory = Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]
+StageCallbackFactory = Callable[
+    [pd.DataFrame, pd.DataFrame, CalendarMonthFold, int], StageCallbacks
+]
 
 
 def _snapshot(frame: pd.DataFrame, catalog: FeatureCatalogSnapshot) -> FeatureSnapshot:
@@ -454,6 +459,179 @@ def _track_stage(
     return run_id
 
 
+@dataclass(frozen=True, slots=True)
+class _ComputedMonthlyFold:
+    fold: CalendarMonthFold
+    provenance: tuple[Any, ...]
+    quality: Any
+    pipeline: FeatureSelectionPipelineResult
+    selected_sffs: SFFSResult
+    selected_features: tuple[str, ...]
+    model_hashes: tuple[str, ...]
+    outer_test_hash: str
+    package: MonthlyPackageIdentity
+
+
+def _fold_resource_partition(
+    fold_count: int, requested_workers: int | None
+) -> tuple[int, int]:
+    if fold_count < 1:
+        raise ValueError("fold_count must be positive")
+    total = cpu_worker_count(requested_workers)
+    if total == 1:
+        return 1, 1
+    configured_outer = int(os.environ.get("REGIME_OUTER_FOLD_WORKERS", "4"))
+    if configured_outer < 1:
+        raise ValueError("REGIME_OUTER_FOLD_WORKERS must be positive")
+    outer = min(fold_count, total, configured_outer)
+    return outer, max(1, total // outer)
+
+
+def _compute_monthly_fold(
+    source_rows: pd.DataFrame,
+    *,
+    catalog: FeatureCatalogSnapshot,
+    profile: ModelProfile,
+    contract: FeatureRoleContract,
+    fold: CalendarMonthFold,
+    evaluate_subset: SubsetEvaluator,
+    evaluate_hmm_subset: HMMSubsetEvaluator,
+    hmm_selector_contract_hash: str,
+    fit_final_hmm: FinalHMMFitter,
+    evaluate_gaussian_subset_by_k: PerKSubsetEvaluator,
+    evaluate_outer_test: OuterTestEvaluator,
+    stage_callback_factory: StageCallbackFactory | None,
+    inner_workers: int,
+    state_count: int,
+) -> _ComputedMonthlyFold:
+    train = source_rows.iloc[: fold.train_source_observations].copy()
+    if train[_TIMESTAMP].iloc[-1] != fold.train_cutoff_timestamp:
+        raise ValueError("monthly TRAIN prefix does not end at the calendar cutoff")
+    provenance = build_feature_provenance(contract)
+    snapshot = _snapshot(train, catalog)
+    quality = filter_outer_train_quality(
+        catalog,
+        snapshot,
+        fold.train_first_timestamp,
+        fold.train_cutoff_timestamp,
+        max_workers=inner_workers,
+    )
+    values = _feature_values(snapshot, quality.eligible_features)
+    test = source_rows.iloc[
+        fold.train_source_observations : fold.train_source_observations
+        + fold.test_source_observations
+    ].copy()
+    selection_train = train.loc[
+        train.loc[:, list(quality.eligible_features)].notna().all(axis=1)
+    ].copy()
+    if selection_train.empty:
+        raise ValueError("quality-eligible features have no shared finite TRAIN rows")
+    stage_callbacks = (
+        stage_callback_factory(selection_train, test, fold, inner_workers)
+        if stage_callback_factory is not None
+        else None
+    )
+    current_evaluate_subset = (
+        cast(Any, stage_callbacks.evaluate_subset)
+        if stage_callbacks is not None
+        else evaluate_subset
+    )
+    current_evaluate_hmm_subset = (
+        cast(Any, stage_callbacks.evaluate_hmm_subset)
+        if stage_callbacks is not None
+        else evaluate_hmm_subset
+    )
+    current_selector_hash = (
+        str(stage_callbacks.hmm_selector_contract_hash)
+        if stage_callbacks is not None
+        else hmm_selector_contract_hash
+    )
+    current_evaluate_gaussian_subset_by_k = (
+        cast(Any, stage_callbacks.evaluate_gaussian_subset_by_k)
+        if stage_callbacks is not None
+        else evaluate_gaussian_subset_by_k
+    )
+    pipeline = run_canonical_feature_selection(
+        values,
+        contract,
+        quality_eligible_features=quality.eligible_features,
+        evaluate_subset=current_evaluate_subset,
+        evaluate_hmm_subset=current_evaluate_hmm_subset,
+        hmm_selector_contract_hash=current_selector_hash,
+        evaluate_gaussian_subset_by_k=current_evaluate_gaussian_subset_by_k,
+        state_counts=(2, 3, 4, 5),
+        profile=contract.profile,
+        max_workers=inner_workers,
+    )
+    selection_by_k = {item.state_count: item.sffs for item in pipeline.k_sffs}
+    selected_sffs = selection_by_k.get(state_count, pipeline.sffs)
+    selected_features = selected_sffs.selected_features
+    fit_callbacks = (
+        stage_callback_factory(
+            _materialize_family_pca(train, contract, pipeline),
+            _materialize_family_pca(test, contract, pipeline),
+            fold,
+            inner_workers,
+        )
+        if stage_callback_factory is not None
+        else None
+    )
+    current_fit_final_hmm = (
+        cast(Any, fit_callbacks.fit_final_hmm)
+        if fit_callbacks is not None
+        else fit_final_hmm
+    )
+    fitted_hashes = (
+        cast(Any, fit_callbacks.fit_final_hmm)(
+            _materialize_family_pca(train, contract, pipeline),
+            selected_features,
+            state_count,
+        )
+        if fit_callbacks is not None
+        else current_fit_final_hmm(train, selected_features, 2)
+    )
+    model_hashes = (fitted_hashes,) if isinstance(fitted_hashes, str) else tuple(fitted_hashes)
+    if not model_hashes:
+        raise ValueError("final HMM fit returned no model hash")
+    for model_hash in model_hashes:
+        _sha(model_hash, "final HMM model hash")
+    current_evaluate_outer_test = (
+        cast(Any, fit_callbacks.evaluate_outer_test)
+        if fit_callbacks is not None
+        else evaluate_outer_test
+    )
+    outer_test_hash = current_evaluate_outer_test(
+        train, test, selected_features, state_count, model_hashes
+    )
+    _sha(outer_test_hash, "outer TEST hash")
+    package = MonthlyPackageIdentity(
+        source_build_id=catalog.lineage.source_build_id,
+        source_catalog_hash=catalog.catalog_hash,
+        train_cutoff=fold.train_cutoff_timestamp,
+        available_for_test_month=fold.test_calendar_month,
+        feature_selection_profile_hash=pipeline.profile_hash,
+        feature_role_contract_hash=pipeline.role_contract_hash,
+        provenance_hash=_tuple_hash(tuple(item.canonical_dict for item in provenance)),
+        family_pca_fit_hashes=tuple(item.fit_hash for item in pipeline.family_pca),
+        representative_hash=content_hash(pipeline.global_reduction.representatives),
+        selected_features=selected_features,
+        state_count=state_count,
+        model_hashes=model_hashes,
+        outer_test_hash=outer_test_hash,
+    )
+    return _ComputedMonthlyFold(
+        fold,
+        provenance,
+        quality,
+        pipeline,
+        selected_sffs,
+        selected_features,
+        model_hashes,
+        outer_test_hash,
+        package,
+    )
+
+
 def run_monthly_outer_refit(
     source_rows: pd.DataFrame,
     *,
@@ -519,237 +697,147 @@ def run_monthly_outer_refit(
         )
     results: list[MonthlyRefitFoldResult] = []
     try:
-        for fold in plan.folds:
-            train = source_rows.iloc[: fold.train_source_observations].copy()
-            if train[_TIMESTAMP].iloc[-1] != fold.train_cutoff_timestamp:
-                raise ValueError("monthly TRAIN prefix does not end at the calendar cutoff")
-            child_runs: list[str] = []
-            try:
-                provenance = build_feature_provenance(contract)
-                if parent_run_id is not None:
-                    assert tracking is not None
-                    child_runs.append(
-                        _track_stage(
-                            tracking,
-                            parent_run_id,
-                            fold,
-                            "provenance",
-                            {
-                                "hash": _tuple_hash(
-                                    tuple(item.canonical_dict for item in provenance)
-                                )
-                            },
-                        )
-                    )
-                snapshot = _snapshot(train, catalog)
-                quality = filter_outer_train_quality(
-                    catalog,
-                    snapshot,
-                    fold.train_first_timestamp,
-                    fold.train_cutoff_timestamp,
-                    max_workers=max_workers,
+        if stage_callback_factory is None:
+            # Caller-supplied callbacks may carry mutable test or application
+            # state.  The production factory is immutable and fold-local, so
+            # only that path is eligible for outer-fold concurrency.
+            outer_workers, inner_workers = 1, max(1, cpu_worker_count(max_workers))
+        else:
+            outer_workers, inner_workers = _fold_resource_partition(
+                len(plan.folds), max_workers
+            )
+        fold_futures = {}
+        with ThreadPoolExecutor(max_workers=outer_workers) as fold_executor:
+            for fold in plan.folds:
+                fold_futures[fold.fold_id] = fold_executor.submit(
+                    _compute_monthly_fold,
+                    source_rows,
+                    catalog=catalog,
+                    profile=profile,
+                    contract=contract,
+                    fold=fold,
+                    evaluate_subset=evaluate_subset,
+                    evaluate_hmm_subset=evaluate_hmm_subset,
+                    hmm_selector_contract_hash=hmm_selector_contract_hash,
+                    fit_final_hmm=fit_final_hmm,
+                    evaluate_gaussian_subset_by_k=evaluate_gaussian_subset_by_k,
+                    evaluate_outer_test=evaluate_outer_test,
+                    stage_callback_factory=stage_callback_factory,
+                    inner_workers=inner_workers,
+                    state_count=state_count,
                 )
-                if parent_run_id is not None:
-                    assert tracking is not None
-                    child_runs.append(
-                        _track_stage(
-                            tracking,
-                            parent_run_id,
-                            fold,
-                            "quality",
-                            {
-                                "quality_hash": quality.result_hash,
-                            },
-                        )
-                    )
-                values = _feature_values(snapshot, quality.eligible_features)
-                test = source_rows.iloc[
-                    fold.train_source_observations : fold.train_source_observations
-                    + fold.test_source_observations
-                ].copy()
-                selection_train = train.loc[
-                    train.loc[:, list(quality.eligible_features)].notna().all(axis=1)
-                ].copy()
-                if selection_train.empty:
-                    raise ValueError("quality-eligible features have no shared finite TRAIN rows")
-                stage_callbacks = (
-                    stage_callback_factory(selection_train, test, fold)
-                    if stage_callback_factory is not None
-                    else None
-                )
-                current_evaluate_subset = (
-                    cast(Any, stage_callbacks.evaluate_subset)
-                    if stage_callbacks is not None
-                    else evaluate_subset
-                )
-                current_evaluate_hmm_subset = (
-                    cast(Any, stage_callbacks.evaluate_hmm_subset)
-                    if stage_callbacks is not None
-                    else evaluate_hmm_subset
-                )
-                current_selector_hash = (
-                    str(stage_callbacks.hmm_selector_contract_hash)
-                    if stage_callbacks is not None
-                    else hmm_selector_contract_hash
-                )
-                current_fit_final_hmm = (
-                    cast(Any, stage_callbacks.fit_final_hmm)
-                    if stage_callbacks is not None
-                    else fit_final_hmm
-                )
-                current_evaluate_gaussian_subset_by_k = (
-                    cast(Any, stage_callbacks.evaluate_gaussian_subset_by_k)
-                    if stage_callbacks is not None
-                    else evaluate_gaussian_subset_by_k
-                )
-                current_evaluate_outer_test = (
-                    cast(Any, stage_callbacks.evaluate_outer_test)
-                    if stage_callbacks is not None
-                    else evaluate_outer_test
-                )
-                pipeline = run_canonical_feature_selection(
-                    values,
-                    contract,
-                    quality_eligible_features=quality.eligible_features,
-                    evaluate_subset=current_evaluate_subset,
-                    evaluate_hmm_subset=current_evaluate_hmm_subset,
-                    hmm_selector_contract_hash=current_selector_hash,
-                    evaluate_gaussian_subset_by_k=current_evaluate_gaussian_subset_by_k,
-                    state_counts=(2, 3, 4, 5),
-                    profile=contract.profile,
-                    max_workers=max_workers,
-                )
-                selection_by_k = {item.state_count: item.sffs for item in pipeline.k_sffs}
-                selected_sffs = selection_by_k.get(state_count, pipeline.sffs)
-                selected_features = selected_sffs.selected_features
-                fit_callbacks = (
-                    stage_callback_factory(
-                        _materialize_family_pca(train, contract, pipeline),
-                        _materialize_family_pca(test, contract, pipeline),
-                        fold,
-                    )
-                    if stage_callback_factory is not None
-                    else None
-                )
-                if parent_run_id is not None:
-                    assert tracking is not None
-                    for stage, params in (
-                        (
-                            "family_pca",
-                            {"hashes": tuple(item.fit_hash for item in pipeline.family_pca)},
-                        ),
-                        ("correlation", {"hash": pipeline.global_reduction.result_hash}),
-                        ("sffs", {"hash": _sffs_hash(selected_sffs)}),
-                        ("ablation", {"hashes": pipeline.ablation.fit_execution_hashes}),
-                    ):
+            for fold in plan.folds:
+                fold_computation = fold_futures[fold.fold_id]
+                child_runs: list[str] = []
+                try:
+                    computed = fold_computation.result()
+                    provenance = computed.provenance
+                    quality = computed.quality
+                    pipeline = computed.pipeline
+                    selected_sffs = computed.selected_sffs
+                    package = computed.package
+                    if parent_run_id is not None:
+                        assert tracking is not None
                         child_runs.append(
                             _track_stage(
                                 tracking,
                                 parent_run_id,
                                 fold,
-                                stage,
-                                params,
-                                diagnostics=(
-                                    pipeline
-                                    if stage == "family_pca"
-                                    and isinstance(pipeline, FeatureSelectionPipelineResult)
-                                    else None
-                                ),
+                                "provenance",
+                                {
+                                    "hash": _tuple_hash(
+                                        tuple(item.canonical_dict for item in provenance)
+                                    )
+                                },
                             )
                         )
-                if fit_callbacks is not None:
-                    fitted_hashes = cast(Any, fit_callbacks.fit_final_hmm)(
-                        _materialize_family_pca(train, contract, pipeline),
-                        selected_features,
-                        state_count,
-                    )
-                else:
-                    fitted_hashes = current_fit_final_hmm(train, selected_features, state_count)
-                model_hashes = (
-                    (fitted_hashes,) if isinstance(fitted_hashes, str) else tuple(fitted_hashes)
-                )
-                if not model_hashes:
-                    raise ValueError("final HMM fit returned no model hash")
-                for model_hash in model_hashes:
-                    _sha(model_hash, "final HMM model hash")
-                if fit_callbacks is not None:
-                    current_evaluate_outer_test = cast(Any, fit_callbacks.evaluate_outer_test)
-                outer_test_hash = current_evaluate_outer_test(
-                    train,
-                    test,
-                    selected_features,
-                    state_count,
-                    model_hashes,
-                )
-                _sha(outer_test_hash, "outer TEST hash")
-                package = MonthlyPackageIdentity(
-                    source_build_id=catalog.lineage.source_build_id,
-                    source_catalog_hash=catalog.catalog_hash,
-                    train_cutoff=fold.train_cutoff_timestamp,
-                    available_for_test_month=fold.test_calendar_month,
-                    feature_selection_profile_hash=pipeline.profile_hash,
-                    feature_role_contract_hash=pipeline.role_contract_hash,
-                    provenance_hash=_tuple_hash(
-                        tuple(item.canonical_dict for item in build_feature_provenance(contract))
-                    ),
-                    family_pca_fit_hashes=tuple(item.fit_hash for item in pipeline.family_pca),
-                    representative_hash=content_hash(pipeline.global_reduction.representatives),
-                    selected_features=selected_features,
-                    state_count=state_count,
-                    model_hashes=model_hashes,
-                    outer_test_hash=outer_test_hash,
-                )
-                model_run_id: str | None = None
-                if parent_run_id is not None:
-                    assert tracking is not None
-                    model_run_id = _track_stage(
-                        tracking,
-                        parent_run_id,
-                        fold,
-                        "final_hmm",
-                        {
-                            "package_hash": package.package_hash,
-                            "model_hashes": model_hashes,
-                        },
-                    )
-                    child_runs.append(model_run_id)
-                    child_runs.append(
-                        _track_stage(
+                        child_runs.append(
+                            _track_stage(
+                                tracking,
+                                parent_run_id,
+                                fold,
+                                "quality",
+                                {"quality_hash": quality.result_hash},
+                            )
+                        )
+                        for stage, params in (
+                            (
+                                "family_pca",
+                                {"hashes": tuple(item.fit_hash for item in pipeline.family_pca)},
+                            ),
+                            ("correlation", {"hash": pipeline.global_reduction.result_hash}),
+                            ("sffs", {"hash": _sffs_hash(selected_sffs)}),
+                            ("ablation", {"hashes": pipeline.ablation.fit_execution_hashes}),
+                        ):
+                            child_runs.append(
+                                _track_stage(
+                                    tracking,
+                                    parent_run_id,
+                                    fold,
+                                    stage,
+                                    params,
+                                    diagnostics=(
+                                        pipeline
+                                        if stage == "family_pca"
+                                        and isinstance(pipeline, FeatureSelectionPipelineResult)
+                                        else None
+                                    ),
+                                )
+                            )
+                        model_run_id = _track_stage(
                             tracking,
                             parent_run_id,
                             fold,
-                            "outer_test",
-                            {"hash": outer_test_hash},
+                            "final_hmm",
+                            {
+                                "package_hash": package.package_hash,
+                                "model_hashes": computed.model_hashes,
+                            },
+                        )
+                        child_runs.append(model_run_id)
+                        child_runs.append(
+                            _track_stage(
+                                tracking,
+                                parent_run_id,
+                                fold,
+                                "outer_test",
+                                {"hash": computed.outer_test_hash},
+                            )
+                        )
+                    else:
+                        model_run_id = None
+                    if metadata_store is not None:
+                        metadata_store.commit_fold(
+                            _metadata_bundle(
+                                fold=fold,
+                                catalog=catalog,
+                                contract=contract,
+                                quality_rows=quality_to_fold_feature_stats(
+                                    quality,
+                                    fold_id=fold.fold_id,
+                                    profile_hash=pipeline.profile_hash,
+                                    role_contract=contract,
+                                ),
+                                pipeline=pipeline,
+                                package=package,
+                                model_family="gaussian_hmm",
+                                model_run_id=model_run_id,
+                                sffs_result=selected_sffs,
+                                outer_test_hash=computed.outer_test_hash,
+                            )
+                        )
+                    results.append(MonthlyRefitFoldResult(fold, package, pipeline, True))
+                except (ValueError, TypeError, KeyError, TimeoutError) as exc:
+                    if parent_run_id is not None:
+                        assert tracking is not None
+                        tracking.log_params(
+                            parent_run_id, {f"{fold.fold_id}.failure": str(exc)}
+                        )
+                    results.append(
+                        MonthlyRefitFoldResult(
+                            fold, None, None, False, f"{type(exc).__name__}: {exc}"
                         )
                     )
-                if metadata_store is not None:
-                    metadata_store.commit_fold(
-                        _metadata_bundle(
-                            fold=fold,
-                            catalog=catalog,
-                            contract=contract,
-                            quality_rows=quality_to_fold_feature_stats(
-                                quality,
-                                fold_id=fold.fold_id,
-                                profile_hash=pipeline.profile_hash,
-                                role_contract=contract,
-                            ),
-                            pipeline=pipeline,
-                            package=package,
-                            model_family="gaussian_hmm",
-                            model_run_id=model_run_id,
-                            sffs_result=selected_sffs,
-                            outer_test_hash=outer_test_hash,
-                        )
-                    )
-                results.append(MonthlyRefitFoldResult(fold, package, pipeline, True))
-            except (ValueError, TypeError, KeyError) as exc:
-                if parent_run_id is not None:
-                    assert tracking is not None
-                    tracking.log_params(parent_run_id, {f"{fold.fold_id}.failure": str(exc)})
-                results.append(
-                    MonthlyRefitFoldResult(fold, None, None, False, f"{type(exc).__name__}: {exc}")
-                )
         result_hash = content_hash(
             (
                 catalog.lineage.source_build_id,

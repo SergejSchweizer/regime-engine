@@ -43,7 +43,9 @@ class CanonicalStageCallbacks:
     ]
 
 
-StageCallbackFactory = Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]
+StageCallbackFactory = Callable[
+    [pd.DataFrame, pd.DataFrame, CalendarMonthFold, int], StageCallbacks
+]
 
 
 @dataclass(frozen=True, slots=True)

@@ -79,13 +79,22 @@ def cpu_process_pool(
                 module=r"multiprocessing\.popen_fork",
             )
         pool_initializer = cast(Callable[[], object], _initialize_process_worker)
-        with ProcessPoolExecutor(
+        executor = ProcessPoolExecutor(
             max_workers=worker_limit,
             mp_context=context,
             initializer=pool_initializer,
             initargs=cast(tuple[()], (initializer, initargs, cpu_affinity)),
-        ) as executor:
+        )
+        try:
             yield executor
+        except BaseException:
+            terminate = getattr(executor, "terminate_workers", None)
+            if terminate is not None:
+                terminate()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
 
 
 __all__ = ["cpu_process_pool", "is_pickleable"]
