@@ -21,6 +21,23 @@ _TRANSFORMATION_RE: Final[re.Pattern[str]] = re.compile(
     r"^(?P<family>[a-z0-9_]+)_(?P<name>delta|zscore|momentum_autocorr|return_geom)"
     r"_(?P<parameters>[a-z0-9_]+)$"
 )
+_EXPECTED_MOVE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<family>[a-z0-9_]+)_next_expected_move_bp$"
+)
+_PATH_SLOPE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<family>[a-z0-9_]+)_path_slope_m(?P<window>[0-9]+)_bp$"
+)
+_UNCERTAINTY_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<family>[a-z0-9_]+)_next_uncertainty_bp$"
+)
+_REPRICING_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<family>[a-z0-9_]+)_repricing_(?P<window>[0-9]+)obs_bp$"
+)
+_FED_DERIVED_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<family>fed)_(?:next_expected_move_bp|path_slope_m[0-9]+_bp|"
+    r"next_uncertainty_bp|repricing_[0-9]+obs_bp)_"
+    r"(?P<name>delta|zscore|momentum_autocorr|return_geom)_(?P<parameters>[a-z0-9_]+)$"
+)
 
 
 def _canonical_json(value: object) -> str:
@@ -73,6 +90,43 @@ def _transformation_details(
         if log_return.group("family") != family:
             raise ValueError(f"feature provenance family conflict: {feature_name}")
         return "log_return", (("window_observations", int(log_return.group("window"))),)
+    expected_move = _EXPECTED_MOVE_RE.fullmatch(feature_name)
+    if expected_move is not None:
+        if expected_move.group("family") != family:
+            raise ValueError(f"feature provenance family conflict: {feature_name}")
+        return "next_expected_move", (("unit", "bp"),)
+    path_slope = _PATH_SLOPE_RE.fullmatch(feature_name)
+    if path_slope is not None:
+        if path_slope.group("family") != family:
+            raise ValueError(f"feature provenance family conflict: {feature_name}")
+        return "path_slope", (
+            ("horizon_months", int(path_slope.group("window"))),
+            ("unit", "bp"),
+        )
+    uncertainty = _UNCERTAINTY_RE.fullmatch(feature_name)
+    if uncertainty is not None:
+        if uncertainty.group("family") != family:
+            raise ValueError(f"feature provenance family conflict: {feature_name}")
+        return "next_uncertainty", (("unit", "bp"),)
+    repricing = _REPRICING_RE.fullmatch(feature_name)
+    if repricing is not None:
+        if repricing.group("family") != family:
+            raise ValueError(f"feature provenance family conflict: {feature_name}")
+        return "repricing", (
+            ("unit", "bp"),
+            ("window_observations", int(repricing.group("window"))),
+        )
+    fed_derived = _FED_DERIVED_RE.fullmatch(feature_name)
+    if fed_derived is not None:
+        if fed_derived.group("family") != family:
+            raise ValueError(f"feature provenance family conflict: {feature_name}")
+        tokens = fed_derived.group("parameters").split("_")
+        parameters = (
+            (("variant", tokens[0]),)
+            if len(tokens) == 1
+            else tuple((f"variant_{index:02d}", token) for index, token in enumerate(tokens))
+        )
+        return fed_derived.group("name"), parameters
     transformation = _TRANSFORMATION_RE.fullmatch(feature_name)
     if transformation is None or transformation.group("family") != family:
         raise ValueError(f"missing transformation provenance: {feature_name}")
