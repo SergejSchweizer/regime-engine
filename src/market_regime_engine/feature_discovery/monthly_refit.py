@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -62,6 +63,8 @@ from market_regime_engine.profiles.config import ModelProfile
 from market_regime_engine.runtime.cpu import cpu_worker_count
 
 _TIMESTAMP = "timestamp_m1"
+_FOLD_CHECKPOINT_SCHEMA_VERSION = 1
+_FOLD_CHECKPOINT_ALGORITHM_VERSION = "pr-503-fold-checkpoint-v1"
 
 
 def _sha(value: str, field: str) -> None:
@@ -462,6 +465,7 @@ def _track_stage(
 @dataclass(frozen=True, slots=True)
 class _ComputedMonthlyFold:
     fold: CalendarMonthFold
+    source_data_sha256: str
     provenance: tuple[Any, ...]
     quality: Any
     pipeline: FeatureSelectionPipelineResult
@@ -470,6 +474,89 @@ class _ComputedMonthlyFold:
     model_hashes: tuple[str, ...]
     outer_test_hash: str
     package: MonthlyPackageIdentity
+
+
+def _fold_checkpoint_path(
+    metadata_store: FeatureSelectionMetadataStore, fold_id: str
+) -> Path:
+    root = metadata_store.database.parent / "fold-checkpoints"
+    root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    return root / f"{fold_id}.pickle"
+
+
+def _write_fold_checkpoint(
+    metadata_store: FeatureSelectionMetadataStore,
+    computed: _ComputedMonthlyFold,
+    *,
+    plan_hash: str,
+    profile_hash: str,
+    role_contract_hash: str,
+) -> None:
+    payload = {
+        "schema_version": _FOLD_CHECKPOINT_SCHEMA_VERSION,
+        "algorithm_version": _FOLD_CHECKPOINT_ALGORITHM_VERSION,
+        "source_build_id": computed.package.source_build_id,
+        "source_data_sha256": computed.source_data_sha256,
+        "source_catalog_hash": computed.package.source_catalog_hash,
+        "plan_hash": plan_hash,
+        "fold_id": computed.fold.fold_id,
+        "fold_clock_hash": computed.fold.month_clock_hash,
+        "profile_hash": profile_hash,
+        "role_contract_hash": role_contract_hash,
+        "package_hash": computed.package.package_hash,
+        "computed": computed,
+    }
+    path = _fold_checkpoint_path(metadata_store, computed.fold.fold_id)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+    temporary.replace(path)
+
+
+def _read_fold_checkpoint(
+    metadata_store: FeatureSelectionMetadataStore,
+    *,
+    fold: CalendarMonthFold,
+    source_build_id: str,
+    source_data_sha256: str,
+    source_catalog_hash: str,
+    plan_hash: str,
+    profile_hash: str,
+    role_contract_hash: str,
+) -> _ComputedMonthlyFold | None:
+    path = _fold_checkpoint_path(metadata_store, fold.fold_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = pickle.loads(path.read_bytes())
+        computed = payload["computed"]
+        if (
+            payload["schema_version"] != _FOLD_CHECKPOINT_SCHEMA_VERSION
+            or payload["algorithm_version"] != _FOLD_CHECKPOINT_ALGORITHM_VERSION
+            or payload["source_build_id"] != source_build_id
+            or payload["source_data_sha256"] != source_data_sha256
+            or payload["source_catalog_hash"] != source_catalog_hash
+            or payload["plan_hash"] != plan_hash
+            or payload["fold_id"] != fold.fold_id
+            or payload["fold_clock_hash"] != fold.month_clock_hash
+            or payload["profile_hash"] != profile_hash
+            or payload["role_contract_hash"] != role_contract_hash
+            or not isinstance(computed, _ComputedMonthlyFold)
+            or computed.fold != fold
+            or computed.package.package_hash != payload["package_hash"]
+        ):
+            return None
+        return computed
+    except (
+        AttributeError,
+        EOFError,
+        IndexError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        pickle.PickleError,
+    ):
+        return None
 
 
 def _fold_resource_partition(
@@ -621,6 +708,7 @@ def _compute_monthly_fold(
     )
     return _ComputedMonthlyFold(
         fold,
+        catalog.lineage.data_sha256,
         provenance,
         quality,
         pipeline,
@@ -707,8 +795,30 @@ def run_monthly_outer_refit(
                 len(plan.folds), max_workers
             )
         fold_futures = {}
+        cached_folds: dict[str, _ComputedMonthlyFold] = {}
+        checkpoint_store = (
+            metadata_store
+            if metadata_store is not None and hasattr(metadata_store, "database")
+            else None
+        )
+        if checkpoint_store is not None:
+            for fold in plan.folds:
+                cached = _read_fold_checkpoint(
+                    checkpoint_store,
+                    fold=fold,
+                    source_build_id=catalog.lineage.source_build_id,
+                    source_data_sha256=catalog.lineage.data_sha256,
+                    source_catalog_hash=catalog.catalog_hash,
+                    plan_hash=plan.plan_hash,
+                    profile_hash=contract.profile.profile_hash,
+                    role_contract_hash=contract.contract_hash,
+                )
+                if cached is not None:
+                    cached_folds[fold.fold_id] = cached
         with ThreadPoolExecutor(max_workers=outer_workers) as fold_executor:
             for fold in plan.folds:
+                if fold.fold_id in cached_folds:
+                    continue
                 fold_futures[fold.fold_id] = fold_executor.submit(
                     _compute_monthly_fold,
                     source_rows,
@@ -727,16 +837,22 @@ def run_monthly_outer_refit(
                     state_count=state_count,
                 )
             for fold in plan.folds:
-                fold_computation = fold_futures[fold.fold_id]
+                reused = fold.fold_id in cached_folds
+                fold_computation = fold_futures.get(fold.fold_id)
                 child_runs: list[str] = []
                 try:
-                    computed = fold_computation.result()
+                    if reused:
+                        computed = cached_folds[fold.fold_id]
+                    else:
+                        if fold_computation is None:
+                            raise RuntimeError("missing monthly fold computation")
+                        computed = fold_computation.result()
                     provenance = computed.provenance
                     quality = computed.quality
                     pipeline = computed.pipeline
                     selected_sffs = computed.selected_sffs
                     package = computed.package
-                    if parent_run_id is not None:
+                    if parent_run_id is not None and not reused:
                         assert tracking is not None
                         child_runs.append(
                             _track_stage(
@@ -804,9 +920,19 @@ def run_monthly_outer_refit(
                                 {"hash": computed.outer_test_hash},
                             )
                         )
+                    elif parent_run_id is not None:
+                        assert tracking is not None
+                        tracking.log_params(
+                            parent_run_id,
+                            {
+                                f"{fold.fold_id}.checkpoint_reused": "true",
+                                f"{fold.fold_id}.package_hash": package.package_hash,
+                            },
+                        )
+                        model_run_id = None
                     else:
                         model_run_id = None
-                    if metadata_store is not None:
+                    if metadata_store is not None and not reused:
                         metadata_store.commit_fold(
                             _metadata_bundle(
                                 fold=fold,
@@ -826,6 +952,14 @@ def run_monthly_outer_refit(
                                 outer_test_hash=computed.outer_test_hash,
                             )
                         )
+                        if checkpoint_store is not None:
+                            _write_fold_checkpoint(
+                                checkpoint_store,
+                                computed,
+                                plan_hash=plan.plan_hash,
+                                profile_hash=contract.profile.profile_hash,
+                                role_contract_hash=pipeline.role_contract_hash,
+                            )
                     results.append(MonthlyRefitFoldResult(fold, package, pipeline, True))
                 except (ValueError, TypeError, KeyError, TimeoutError) as exc:
                     if parent_run_id is not None:

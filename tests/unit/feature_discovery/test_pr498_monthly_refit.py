@@ -200,3 +200,72 @@ def test_failed_monthly_fit_is_invalid_and_is_not_committed(
         item.failure_reason for item in result.folds
     ]
     assert store.commits == len(result.folds) - 1
+
+
+def test_completed_fold_checkpoint_is_reused_for_same_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    source = _source()
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    names = CORE_FEATURES
+    pipeline = _fake_pipeline(names)
+    pipeline.role_contract_hash = module.build_feature_role_contract_from_catalog(
+        catalog
+    ).contract_hash
+    monkeypatch.setattr(
+        module, "filter_outer_train_quality", lambda *args, **kwargs: _fake_quality(names)
+    )
+    monkeypatch.setattr(module, "run_canonical_feature_selection", lambda *args, **kwargs: pipeline)
+    monkeypatch.setattr(module, "_metadata_bundle", lambda **kwargs: object())
+
+    class Store:
+        def __init__(self) -> None:
+            self.database = tmp_path / "feature_selection.duckdb"
+            self.commits = 0
+
+        def commit_fold(self, _bundle: object) -> bool:
+            self.commits += 1
+            return True
+
+    store = Store()
+    calls = 0
+
+    def fit(_frame: pd.DataFrame, _selected: tuple[str, ...], _state_count: int) -> str:
+        nonlocal calls
+        calls += 1
+        return "7" * 64
+
+    first = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _: None,
+        evaluate_hmm_subset=lambda _: None,
+        hmm_selector_contract_hash="8" * 64,
+        fit_final_hmm=fit,
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "9" * 64,
+        metadata_store=store,  # type: ignore[arg-type]
+    )
+    first_calls = calls
+    second = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _: None,
+        evaluate_hmm_subset=lambda _: None,
+        hmm_selector_contract_hash="8" * 64,
+        fit_final_hmm=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("checkpointed folds must not refit")
+        ),
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "9" * 64,
+        metadata_store=store,  # type: ignore[arg-type]
+    )
+
+    assert first.folds and second.folds
+    assert all(item.valid for item in first.folds)
+    assert all(item.valid for item in second.folds)
+    assert calls == first_calls
+    assert store.commits == len(first.folds)
