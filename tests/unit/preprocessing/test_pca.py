@@ -62,6 +62,16 @@ def test_explicit_component_count_is_fixed_dimension_and_keeps_threshold_diagnos
     assert PCAArtifact.from_canonical_json(artifact.to_canonical_json()) == artifact
 
 
+def test_constant_input_feature_is_documented_and_has_zero_pca_contribution() -> None:
+    train = np.column_stack((_train(), np.ones(len(_train()))))
+    artifact = fit_pca_transformer(train, ("a", "b", "c", "constant"))
+
+    assert artifact.scaler.constant_feature_indices == (3,)
+    assert artifact.scaler.scales[3] == 1.0
+    assert all(component[3] == 0.0 for component in artifact.components)
+    assert PCAArtifact.from_canonical_json(artifact.to_canonical_json()) == artifact
+
+
 def test_pca_rejects_nonfinite_input_threshold_and_wrong_dimension() -> None:
     train = _train()
     with pytest.raises(ValueError, match="finite"):

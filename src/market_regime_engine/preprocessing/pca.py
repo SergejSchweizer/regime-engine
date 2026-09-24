@@ -192,7 +192,7 @@ def fit_pca_transformer(
 
     _validate_threshold(variance_threshold)
     matrix = _matrix(retained_train_rows, len(feature_order), "retained_train_rows")
-    scaler = fit_standard_scaler(matrix, feature_order)
+    scaler = fit_standard_scaler(matrix, feature_order, allow_constant_features=True)
     standardized = scaler.transform(matrix)
     _u, singular_values, vt = np.linalg.svd(standardized, full_matrices=False)
     explained = np.square(singular_values, dtype=np.float64)
