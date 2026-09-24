@@ -200,6 +200,12 @@ def fit_pca_transformer(
     if not isfinite(total) or total <= 0.0:
         raise ValueError("PCA explained variance must be positive and finite")
     explained_ratio = explained / total
+    if explained_ratio.size < matrix.shape[1]:
+        explained_ratio = np.pad(
+            explained_ratio,
+            (0, matrix.shape[1] - explained_ratio.size),
+            mode="constant",
+        )
     cumulative = np.cumsum(explained_ratio, dtype=np.float64)
     if component_count is not None and component_count < 1:
         raise ValueError("component_count must be positive")
