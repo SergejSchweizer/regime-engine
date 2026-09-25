@@ -70,13 +70,19 @@ class CanonicalModelCallbacks:
     _bound_feature_values: Mapping[str, Sequence[float]] | None = field(
         default=None, repr=False, compare=False
     )
+    _effective_train_cache: pd.DataFrame | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
         object.__setattr__(self, "_bound_feature_values", dict(values))
+        object.__setattr__(self, "_effective_train_cache", None)
 
     def _effective_train(self) -> pd.DataFrame:
         if self._bound_feature_values is None:
             return self.train
+        if self._effective_train_cache is not None:
+            return self._effective_train_cache
         # Candidate evaluation binds the fold-local PCA values repeatedly.
         # Inserting each bound column independently fragments the pandas
         # BlockManager and turns this hot path into an effectively serial
@@ -84,7 +90,9 @@ class CanonicalModelCallbacks:
         # block once and replace any colliding names in one concatenation.
         bound = pd.DataFrame(self._bound_feature_values, index=self.train.index)
         base = self.train.drop(columns=bound.columns, errors="ignore")
-        return pd.concat((base, bound), axis=1, copy=False)
+        effective = pd.concat((base, bound), axis=1, copy=False)
+        object.__setattr__(self, "_effective_train_cache", effective)
+        return effective
 
     @property
     def hmm_selector_contract_hash(self) -> str:
@@ -304,6 +312,7 @@ class _CanonicalGaussianSubsetBatchEvaluator:
 
     callbacks: CanonicalModelCallbacks
     frontier: SharedTaskFrontier[Any, Any] | None = None
+    _cached_inner_plan: CalendarMonthPlan | None = field(default=None, init=False, repr=False)
 
     def __call__(
         self, state_count: int, features: tuple[str, ...]
@@ -317,13 +326,17 @@ class _CanonicalGaussianSubsetBatchEvaluator:
         self.frontier = cast(SharedTaskFrontier[Any, Any] | None, frontier)
 
     def _inner_plan(self) -> CalendarMonthPlan:
+        if self._cached_inner_plan is not None:
+            return self._cached_inner_plan
         source_train = self.callbacks._effective_train()
-        return plan_calendar_month(
+        plan = plan_calendar_month(
             tuple(source_train.loc[:, "timestamp_m1"].tolist()),
             minimum_train_source_observations=(
                 self.callbacks.profile.feature_discovery.inner_train_source_observations
             ),
         )
+        self._cached_inner_plan = plan
+        return plan
 
     def _job_factory(
         self, state_count: int, features: tuple[str, ...]
