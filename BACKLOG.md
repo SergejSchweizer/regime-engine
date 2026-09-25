@@ -2050,6 +2050,14 @@ fresh authorized audit is currently running from
 (2026-09-25 19:17 local), PID `292598` was healthy with 86 active CPU-bound
 workers in `fold_001 / feature_selection`; no checkpoint exists yet, so no
 acceptance criterion is marked complete.
+The run then reached `fold_001 / outer_test` and failed with
+`ValueError: canonical HMM callback received unknown or empty features`: the final
+PCA-bound callback was invoked with the original raw TEST frame, so generated PCA
+features were absent. The run was controlled-stopped while fold 002 was still in
+feature selection; no checkpoint or acceptance evidence exists. Final TRAIN/TEST
+PCA materialization is now passed through to the final HMM and Outer TEST callback,
+with a regression test covering generated PCA features. The fix is local and must
+be pushed before the next authorized audit run.
 
 #### Acceptance
 

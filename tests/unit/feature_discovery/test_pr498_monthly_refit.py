@@ -149,6 +149,68 @@ def test_monthly_refit_uses_only_closed_train_prefix_and_freezes_package_identit
     assert tracking.ended[-1] == "run-0"
 
 
+def test_final_outer_test_receives_pca_materialized_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source()
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    generated = ("family_pc_test",)
+    observed_test_columns: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        module, "filter_outer_train_quality", lambda *args, **kwargs: _fake_quality(CORE_FEATURES)
+    )
+    monkeypatch.setattr(
+        module, "run_canonical_feature_selection", lambda *args, **kwargs: _fake_pipeline(generated)
+    )
+
+    def materialize(frame: pd.DataFrame, *_args: object) -> pd.DataFrame:
+        return frame.assign(family_pc_test=1.0)
+
+    monkeypatch.setattr(module, "_materialize_family_pca", materialize)
+
+    def stage_factory(
+        _train: pd.DataFrame, _test: pd.DataFrame, _fold: object, _workers: int
+    ) -> SimpleNamespace:
+        def outer_test(
+            _train_frame: pd.DataFrame,
+            test_frame: pd.DataFrame,
+            features: tuple[str, ...],
+            _state_count: int,
+            _model_hashes: tuple[str, ...],
+        ) -> str:
+            observed_test_columns.append(tuple(test_frame.columns))
+            assert features == generated
+            assert "family_pc_test" in test_frame
+            return "a" * 64
+
+        return SimpleNamespace(
+            evaluate_subset=lambda _features: None,
+            evaluate_hmm_subset=lambda _features: None,
+            hmm_selector_contract_hash="b" * 64,
+            fit_final_hmm=lambda _frame, _features, _states: "c" * 64,
+            evaluate_gaussian_subset_by_k=lambda _states, _features: None,
+            evaluate_outer_test=outer_test,
+        )
+
+    result = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _features: None,
+        evaluate_hmm_subset=lambda _features: None,
+        hmm_selector_contract_hash="d" * 64,
+        fit_final_hmm=lambda _frame, _features, _states: "e" * 64,
+        evaluate_gaussian_subset_by_k=lambda _states, _features: None,
+        evaluate_outer_test=lambda *_args: "f" * 64,
+        stage_callback_factory=stage_factory,
+    )
+
+    assert result.folds and all(item.valid for item in result.folds)
+    assert observed_test_columns
+
+
 def test_failed_monthly_fit_is_invalid_and_is_not_committed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

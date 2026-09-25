@@ -710,13 +710,10 @@ def _compute_monthly_fold(
     selection_by_k = {item.state_count: item.sffs for item in pipeline.k_sffs}
     selected_sffs = selection_by_k.get(state_count, pipeline.sffs)
     selected_features = selected_sffs.selected_features
+    fit_train = _materialize_family_pca(train, contract, pipeline)
+    fit_test = _materialize_family_pca(test, contract, pipeline)
     fit_callbacks = (
-        stage_callback_factory(
-            _materialize_family_pca(train, contract, pipeline),
-            _materialize_family_pca(test, contract, pipeline),
-            fold,
-            inner_workers,
-        )
+        stage_callback_factory(fit_train, fit_test, fold, inner_workers)
         if stage_callback_factory is not None
         else None
     )
@@ -727,7 +724,7 @@ def _compute_monthly_fold(
     )
     fitted_hashes = (
         cast(Any, fit_callbacks.fit_final_hmm)(
-            _materialize_family_pca(train, contract, pipeline),
+            fit_train,
             selected_features,
             state_count,
         )
@@ -747,7 +744,7 @@ def _compute_monthly_fold(
     if progress is not None:
         progress.update(fold.fold_id, "computing", stage="outer_test")
     outer_test_hash = current_evaluate_outer_test(
-        train, test, selected_features, state_count, model_hashes
+        fit_train, fit_test, selected_features, state_count, model_hashes
     )
     _sha(outer_test_hash, "outer TEST hash")
     package = MonthlyPackageIdentity(
