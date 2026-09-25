@@ -74,10 +74,17 @@ class CanonicalModelCallbacks:
     _effective_train_cache: pd.DataFrame | None = field(
         default=None, repr=False, compare=False
     )
+    _bound_numeric_cache: tuple[tuple[str, ...], np.ndarray[Any, Any]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _bound_numeric_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
         object.__setattr__(self, "_bound_feature_values", dict(values))
         object.__setattr__(self, "_effective_train_cache", None)
+        object.__setattr__(self, "_bound_numeric_cache", None)
 
     def _effective_train(self) -> pd.DataFrame:
         if self._bound_feature_values is None:
@@ -102,8 +109,36 @@ class CanonicalModelCallbacks:
     def _matrix(self, frame: pd.DataFrame, features: tuple[str, ...]) -> np.ndarray[Any, Any]:
         if not features or any(feature not in frame.columns for feature in features):
             raise ValueError("canonical HMM callback received unknown or empty features")
-        selected = frame.loc[:, list(features)].dropna(axis=0, how="any")
-        values = selected.to_numpy(dtype=np.float64, copy=True)
+        selected = frame.loc[:, list(features)].to_numpy(dtype=np.float64, copy=True)
+        values = selected[np.isfinite(selected).all(axis=1)]
+        if values.ndim != 2 or values.shape[0] < 2 or not np.isfinite(values).all():
+            raise ValueError("canonical HMM callback requires finite TRAIN observations")
+        return cast(np.ndarray[Any, Any], values)
+
+    def _bound_matrix(
+        self,
+        features: tuple[str, ...],
+        *,
+        start: int = 0,
+        stop: int | None = None,
+    ) -> np.ndarray[Any, Any]:
+        """Return a finite candidate matrix without repeated pandas slicing."""
+
+        if self._bound_feature_values is None:
+            return self._matrix(self.train.iloc[start:stop], features)
+        with self._bound_numeric_lock:
+            if self._bound_numeric_cache is None:
+                names = tuple(self._bound_feature_values)
+                matrix = pd.DataFrame(
+                    self._bound_feature_values, index=self.train.index
+                ).to_numpy(dtype=np.float64, copy=True)
+                object.__setattr__(self, "_bound_numeric_cache", (names, matrix))
+            names, matrix = self._bound_numeric_cache
+        positions = {name: index for index, name in enumerate(names)}
+        if any(feature not in positions for feature in features):
+            return self._matrix(self.train.iloc[start:stop], features)
+        selected = matrix[start:stop, [positions[feature] for feature in features]]
+        values = selected[np.isfinite(selected).all(axis=1)]
         if values.ndim != 2 or values.shape[0] < 2 or not np.isfinite(values).all():
             raise ValueError("canonical HMM callback requires finite TRAIN observations")
         return cast(np.ndarray[Any, Any], values)
@@ -344,11 +379,11 @@ class _CanonicalGaussianSubsetBatchEvaluator:
     def _job_factory(
         self, state_count: int, features: tuple[str, ...]
     ) -> tuple[FrontierFoldJob, ...]:
-        source_train = self.callbacks._effective_train()
         jobs: list[FrontierFoldJob] = []
         for fold in self._inner_plan().folds:
-            train = source_train.iloc[: fold.train_source_observations]
-            matrix = self.callbacks._matrix(train, features)
+            matrix = self.callbacks._bound_matrix(
+                features, stop=fold.train_source_observations
+            )
             job_id = f"{fold.fold_id}:{','.join(features)}"
             jobs.append(
                 FrontierFoldJob(
@@ -375,7 +410,13 @@ class _CanonicalGaussianSubsetBatchEvaluator:
         ]
         adapter = CandidateAdapterFactory("gaussian_hmm", entry.candidate_subset)()
         adapter.reconstruct(result.winner.artifact)
-        filtered = adapter.causal_filter(self.callbacks._matrix(test, entry.candidate_subset))
+        filtered = adapter.causal_filter(
+            self.callbacks._bound_matrix(
+                entry.candidate_subset,
+                start=fold.train_source_observations,
+                stop=fold.train_source_observations + fold.test_source_observations,
+            )
+        )
         target = filtered.log_likelihood / max(1, len(test))
         bounded = (tanh(abs(target)) + 1.0) / 2.0
         plan = self._inner_plan()
