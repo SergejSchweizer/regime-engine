@@ -113,7 +113,7 @@ class FrontierFeatureSubsetEvaluator:
 
     job_factory: Callable[[int, tuple[str, ...]], tuple[FrontierFoldJob, ...]]
     evidence_factory: Callable[[FrontierFoldJob, MultistartResult], FeatureSubsetFoldEvidence]
-    feature_order_hash: str
+    feature_order_hash: str | Callable[[tuple[str, ...]], str]
     source_build_id: str
     evaluation_plan_hash: str
     latest_fold_id: str
@@ -165,7 +165,11 @@ class FrontierFeatureSubsetEvaluator:
             breakdown = score_feature_subset(
                 FeatureSubsetCandidate(
                     candidate,
-                    self.feature_order_hash,
+                    (
+                        self.feature_order_hash(candidate)
+                        if callable(self.feature_order_hash)
+                        else self.feature_order_hash
+                    ),
                     self.source_build_id,
                     self.evaluation_plan_hash,
                     evidence,
