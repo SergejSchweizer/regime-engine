@@ -1977,11 +1977,12 @@ greedy iteration. Inner calendar plans and bound TRAIN frames are now cached per
 fold-local evaluator; tracing confirmed the prior hotspot was repeated
 `plan_calendar_month` construction in every SFFS candidate. The next run must use
 the process frontier; the cache initialization is now synchronized across the
-parallel K-slot coordinators. The current authorized run uses four outer folds
-with 21 inner workers each (84 HMM workers), and currently reports four
-`computing/feature_selection` folds plus 138 queued folds; no fold checkpoint or
-acceptance evidence exists yet. It still must produce the contract and archived
-evidence before any acceptance criterion is marked complete.
+parallel K-slot coordinators. The current authorized run uses one outer fold
+with 86 inner workers to make the first fold checkpoint observable sooner; it
+currently reports one `computing/feature_selection` fold plus 141 queued folds.
+No fold checkpoint or acceptance evidence exists yet. It still must produce the
+contract and archived evidence before any acceptance criterion is marked
+complete.
 The backend now resolves workers through `cpu_worker_count()`, so the configured
 `REGIME_CPU_WORKERS=86` budget is honored instead of using raw `os.cpu_count()`.
 The live run exposed and the batch frontier now fixes a contract bug where one
