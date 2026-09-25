@@ -86,10 +86,20 @@ def _complete_case_values(
 def _bind_feature_values(callback: object, values: Mapping[str, Sequence[float]]) -> None:
     """Expose pipeline-generated TRAIN values to a callback owner when supported."""
 
+    binder = getattr(callback, "bind_feature_values", None)
+    if callable(binder):
+        binder(values)
+        return
     owner = getattr(callback, "__self__", None)
     binder = getattr(owner, "bind_feature_values", None)
     if callable(binder):
         binder(values)
+
+
+def _bind_execution_frontier(callback: object, frontier: object) -> None:
+    binder = getattr(callback, "bind_execution_frontier", None)
+    if callable(binder):
+        binder(frontier)
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +458,7 @@ def run_canonical_feature_selection(
         SharedTaskFrontier(max_workers) if can_share_frontier else nullcontext(None)
     )
     with frontier_context as frontier:
+        _bind_execution_frontier(evaluate_gaussian_subset_by_k, frontier)
         if evaluate_gaussian_subset_by_k is None:
             sffs = select_sffs(
                 global_reduction.representatives,

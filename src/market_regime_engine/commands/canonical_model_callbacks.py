@@ -14,7 +14,11 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.commands.canonical_xetra import CanonicalStageCallbacks
-from market_regime_engine.evaluation.calendar_clock import CalendarMonthFold, plan_calendar_month
+from market_regime_engine.evaluation.calendar_clock import (
+    CalendarMonthFold,
+    CalendarMonthPlan,
+    plan_calendar_month,
+)
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_subset_score import (
@@ -24,11 +28,20 @@ from market_regime_engine.feature_discovery.feature_subset_score import (
     to_sffs_score,
 )
 from market_regime_engine.feature_discovery.monthly_refit import StageCallbacks
-from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.feature_discovery.sffs import (
+    FeatureSubsetScore,
+    FrontierFeatureSubsetEvaluator,
+    FrontierFoldJob,
+)
 from market_regime_engine.features.ports import FeatureCatalogSnapshot
 from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.runtime.task_frontier import SharedTaskFrontier
 from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
-from market_regime_engine.training.multistart import MultistartResult, run_multistart
+from market_regime_engine.training.multistart import (
+    MultistartBatchJob,
+    MultistartResult,
+    run_multistart,
+)
 
 
 def _hash(value: object) -> str:
@@ -276,9 +289,108 @@ class CanonicalModelCallbacks:
             evaluate_hmm_subset=self.evaluate_hmm_subset,
             hmm_selector_contract_hash=self.hmm_selector_contract_hash,
             fit_final_hmm=self.fit_final_hmm,
-            evaluate_gaussian_subset_by_k=self.evaluate_gaussian_subset_by_k,
+            evaluate_gaussian_subset_by_k=_CanonicalGaussianSubsetBatchEvaluator(self),
             evaluate_outer_test=self.evaluate_outer_test,
         )
+
+
+@dataclass(slots=True)
+class _CanonicalGaussianSubsetBatchEvaluator:
+    """Flatten candidate/inner-fold HMM starts into the shared CPU frontier."""
+
+    callbacks: CanonicalModelCallbacks
+    frontier: SharedTaskFrontier[Any, Any] | None = None
+
+    def __call__(
+        self, state_count: int, features: tuple[str, ...]
+    ) -> FeatureSubsetScore | None:
+        return self.callbacks._inner_score(features, state_count)
+
+    def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
+        self.callbacks.bind_feature_values(values)
+
+    def bind_execution_frontier(self, frontier: object) -> None:
+        self.frontier = cast(SharedTaskFrontier[Any, Any] | None, frontier)
+
+    def _inner_plan(self) -> CalendarMonthPlan:
+        source_train = self.callbacks._effective_train()
+        return plan_calendar_month(
+            tuple(source_train.loc[:, "timestamp_m1"].tolist()),
+            minimum_train_source_observations=(
+                self.callbacks.profile.feature_discovery.inner_train_source_observations
+            ),
+        )
+
+    def _job_factory(
+        self, state_count: int, features: tuple[str, ...]
+    ) -> tuple[FrontierFoldJob, ...]:
+        source_train = self.callbacks._effective_train()
+        jobs: list[FrontierFoldJob] = []
+        for fold in self._inner_plan().folds:
+            train = source_train.iloc[: fold.train_source_observations]
+            matrix = self.callbacks._matrix(train, features)
+            job_id = f"{fold.fold_id}:{','.join(features)}"
+            jobs.append(
+                FrontierFoldJob(
+                    features,
+                    fold.fold_id,
+                    MultistartBatchJob(
+                        job_id,
+                        matrix,
+                        state_count,
+                        CandidateAdapterFactory("gaussian_hmm", features),
+                    ),
+                )
+            )
+        return tuple(jobs)
+
+    def _evidence_factory(
+        self, entry: FrontierFoldJob, result: MultistartResult
+    ) -> FeatureSubsetFoldEvidence:
+        source_train = self.callbacks._effective_train()
+        fold = next(item for item in self._inner_plan().folds if item.fold_id == entry.fold_id)
+        test = source_train.iloc[
+            fold.train_source_observations : fold.train_source_observations
+            + fold.test_source_observations
+        ]
+        adapter = CandidateAdapterFactory("gaussian_hmm", entry.candidate_subset)()
+        adapter.reconstruct(result.winner.artifact)
+        filtered = adapter.causal_filter(self.callbacks._matrix(test, entry.candidate_subset))
+        target = filtered.log_likelihood / max(1, len(test))
+        bounded = (tanh(abs(target)) + 1.0) / 2.0
+        plan = self._inner_plan()
+        return FeatureSubsetFoldEvidence(
+            fold_id=entry.fold_id,
+            valid=True,
+            latest=entry.fold_id == plan.folds[-1].fold_id,
+            target_log_score=target,
+            baseline_target_log_score=0.0,
+            calibration_error=1.0 - bounded,
+            stability_score=result.success_rate,
+            support_score=min(1.0, len(test) / 42.0),
+        )
+
+    def evaluate_many(
+        self,
+        feature_sets: Sequence[tuple[str, ...]],
+        *,
+        state_count: int,
+    ) -> tuple[FeatureSubsetScore | None, ...]:
+        if self.frontier is None:
+            return tuple(self(state_count, features) for features in feature_sets)
+        plan = self._inner_plan()
+        evaluator = FrontierFeatureSubsetEvaluator(
+            self._job_factory,
+            self._evidence_factory,
+            _hash,
+            self.callbacks.source_build_id,
+            plan.plan_hash,
+            plan.folds[-1].fold_id,
+            state_count,
+            max_workers=self.callbacks.max_workers,
+            frontier=self.frontier,
+        )
+        return evaluator.evaluate_many(feature_sets, state_count=state_count)
 
 
 def build_canonical_stage_factory(
