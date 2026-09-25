@@ -31,16 +31,6 @@ class _FixedKScore:
         result = self.evaluator(self.state_count, features)
         return self._validate(result)
 
-    def evaluate_many(
-        self, feature_sets: Iterable[tuple[str, ...]]
-    ) -> tuple[FeatureSubsetScore | None, ...]:
-        batch_evaluator = getattr(self.evaluator, "evaluate_many", None)
-        if callable(batch_evaluator):
-            results = tuple(batch_evaluator(feature_sets, state_count=self.state_count))
-        else:
-            results = tuple(self(features) for features in feature_sets)
-        return tuple(self._validate(result) for result in results)
-
     def _validate(self, result: FeatureSubsetScore | None) -> FeatureSubsetScore | None:
         if result is None:
             return None
@@ -49,6 +39,20 @@ class _FixedKScore:
                 "K SFFS evaluator must return a Gaussian-HMM score for the requested K"
             )
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedKBatchScore(_FixedKScore):
+    """Fixed-K adapter that preserves an evaluator's batching seam."""
+
+    def evaluate_many(
+        self, feature_sets: Iterable[tuple[str, ...]]
+    ) -> tuple[FeatureSubsetScore | None, ...]:
+        batch_evaluator = getattr(self.evaluator, "evaluate_many", None)
+        if not callable(batch_evaluator):
+            raise TypeError("batch score adapter requires an evaluate_many evaluator")
+        results = tuple(batch_evaluator(feature_sets, state_count=self.state_count))
+        return tuple(self._validate(result) for result in results)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +111,12 @@ def select_k_slot_sffs(
     with frontier_context as frontier:
 
         def select_one(state_count: int) -> KSlotSFFSResult:
-            fixed_k_score = _FixedKScore(evaluate_gaussian_subset, state_count)
+            score_type = (
+                _FixedKBatchScore
+                if callable(getattr(evaluate_gaussian_subset, "evaluate_many", None))
+                else _FixedKScore
+            )
+            fixed_k_score = score_type(evaluate_gaussian_subset, state_count)
             selected = select_sffs(
                 candidate_tuple,
                 fixed_k_score,

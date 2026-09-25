@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -83,11 +84,18 @@ class CanonicalModelCallbacks:
 
     def _fit(self, features: tuple[str, ...], state_count: int) -> MultistartResult:
         matrix = self._matrix(self._effective_train(), features)
+        # A canonical candidate may itself be evaluated inside the shared
+        # process frontier.  Never create a child pool from that worker; the
+        # frontier already supplies the CPU lane.  Direct parent calls retain
+        # the configured multistart parallelism.
+        effective_workers = (
+            1 if os.environ.get("REGIME_CPU_PROCESS_WORKER") == "1" else self.max_workers
+        )
         return run_multistart(
             matrix,
             state_count=state_count,
             adapter_factory=CandidateAdapterFactory("gaussian_hmm", features),
-            max_workers=self.max_workers,
+            max_workers=effective_workers,
         )
 
     @staticmethod
