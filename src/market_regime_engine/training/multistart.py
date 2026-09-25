@@ -153,6 +153,13 @@ def _failure(seed: int, reason: str, *, converged: bool = False) -> StartDiagnos
     )
 
 
+def _is_nonfinite_backend_failure(exc: ValueError) -> bool:
+    """Identify numerical candidate failures without hiding adapter contract errors."""
+
+    message = str(exc).lower()
+    return "infs or nans" in message or "infinite or nan" in message
+
+
 def _evaluate_start(
     train_rows: npt.ArrayLike,
     *,
@@ -174,6 +181,14 @@ def _evaluate_start(
     except RecoverableEvaluationInvalidity as exc:
         # Only an explicitly typed statistical invalidity is safe to cache.
         return _failure(seed, f"{type(exc).__name__}: {exc}"), None
+    except ValueError as exc:
+        # hmmlearn/scipy can report a non-finite intermediate as a plain
+        # ValueError.  That invalidates this seed, not the whole candidate;
+        # preserve the strict multistart gate while still surfacing contract
+        # mismatches and other programming errors.
+        if _is_nonfinite_backend_failure(exc):
+            return _failure(seed, f"{type(exc).__name__}: {exc}"), None
+        raise
     except Exception:
         # An unexpected adapter/backend failure is never statistical evidence.
         # It must reach the parent unchanged.
