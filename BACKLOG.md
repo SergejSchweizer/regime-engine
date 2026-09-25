@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `95d4ffa` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `cd43dd8` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1976,7 +1976,8 @@ incremental adjacency maps instead of rebuilding all candidate pairs for every
 greedy iteration. Inner calendar plans and bound TRAIN frames are now cached per
 fold-local evaluator; tracing confirmed the prior hotspot was repeated
 `plan_calendar_month` construction in every SFFS candidate. The next run must use
-the process frontier and still produce the contract and archived evidence before any
+the process frontier; the cache initialization is now synchronized across the
+parallel K-slot coordinators. It still must produce the contract and archived evidence before any
 acceptance criterion is marked complete.
 
 #### Acceptance
