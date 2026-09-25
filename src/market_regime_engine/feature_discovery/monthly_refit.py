@@ -272,11 +272,7 @@ def _materialize_family_pca(
 
     output = frame.copy()
     for artifact in pipeline.family_pca:
-        input_names = tuple(
-            assignment.feature_name
-            for assignment in contract.assignments
-            if assignment.family == artifact.family
-        )
+        input_names = artifact.feature_order
         complete = output.loc[:, list(input_names)].notna().all(axis=1)
         generated: dict[str, list[float | None]] = {
             name: [None] * len(output) for name in artifact.generated_feature_names

@@ -1,7 +1,7 @@
 <!-- owner: backlog -->
 # Regime Engine — Canonical Backlog
 
-Status date: 2026-09-20
+Status date: 2026-09-25
 
 This file is the **single authoritative backlog** for `regime-engine`.
 Open and acceptance-pending work is kept at the top. Completed implementation and
@@ -69,8 +69,9 @@ PR-448
 
 ### Current repository and external state
 
-- `origin/main` is `9165249`; local working branch is
-  `pr/PR-476-feature-role-selection-contract` at the current pushed `HEAD`;
+- `origin/main` is `437150c`; local working branch is
+  `pr/PR-503-current-xetra-readonly-audit` at `e7f35da` (51 commits ahead of
+  `origin/main` and in sync with `origin/pr/PR-503-current-xetra-readonly-audit`);
   the working tree is clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
@@ -93,10 +94,18 @@ PR-448
   implementation branches are retained
   only as rebased pointers to `origin/main` for the current branch-retention
   policy.
-- **Current active implementation:** PR-476 is GitHub PR #456 on branch
-  `pr/PR-476-feature-role-selection-contract`; GitHub Git-Policy, Lint, Type,
-  Unit and Merge-Gate checks are green. Full evaluation is intentionally not
-  run.
+- **Current active implementation:** PR-503 is GitHub PR #505 on branch
+  `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
+  (`13 passed`, external test skipped unless explicitly enabled), MLflow health
+  is reachable, and the read-only password file is present. The persistent state
+  root is now the Git-ignored local path
+  `/home/dev_regime/regime-engine/evaluation-state`. The latest external run was
+  stopped by operator request after folds 001--004 exposed a Family-PCA
+  input-order mismatch; the local fix materializes each family with its immutable
+  artifact feature order and is covered by focused tests, but is not yet pushed
+  or accepted externally. Acceptance evidence is not yet produced. No PR is
+  closed and no remote or local branch is deleted while PR-503 remains
+  acceptance-pending.
 
 ---
 
@@ -1956,7 +1965,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Type:** external QA / read-only
 **Depends on:** PR-523 and a production-eligible upstream source snapshot
 
-**Current status:** IN PROGRESS — the authorized audit is running against the NAS
+**Current status:** ACCEPTANCE PENDING — the authorized audit is prepared against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
 `pr/PR-503-current-xetra-readonly-audit` at commit `999ddc8` in GitHub PR #505.
@@ -2012,6 +2021,16 @@ generic selector remains capable of testing a singleton, and the focused suite
 passes 70 tests. The run was stopped after fold 001 recorded
 `ValueError: ablation requires a selected tuple with at least two features`;
 the next run must verify that the enforced minimum reaches a valid checkpoint.
+The subsequent full local-state run exposed a separate deterministic defect:
+Family-PCA materialization rebuilt its input from all family columns after
+near-duplicate pruning, rather than using the frozen per-artifact feature order.
+Folds 001--004 therefore failed with `ValueError: family PCA rows must match the
+exact TRAIN feature order`; the operator stopped all evaluations before any
+acceptance evidence was created. Materialization now uses
+`FamilyPCAArtifact.feature_order`, with a regression test that first prunes a
+family near-duplicate and then materializes its PC. The corrected branch must be
+rebased, pushed, and rerun from a fresh state before any acceptance criterion is
+marked complete.
 
 #### Acceptance
 

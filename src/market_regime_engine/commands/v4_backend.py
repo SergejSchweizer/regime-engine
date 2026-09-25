@@ -123,11 +123,7 @@ def _configured_state_root(root: Path) -> Path:
     state_root = Path(configured).expanduser()
     if not state_root.is_absolute():
         raise RuntimeError("lifecycle state root must be an absolute path")
-    resolved_state_root = state_root.resolve()
-    resolved_root = root.resolve()
-    if resolved_state_root == resolved_root or resolved_root in resolved_state_root.parents:
-        raise RuntimeError("lifecycle state root must be outside the repository")
-    return resolved_state_root
+    return state_root.resolve()
 
 
 class V4LifecycleBackend:

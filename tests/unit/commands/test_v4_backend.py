@@ -17,7 +17,7 @@ def test_lifecycle_backend_requires_configured_persistent_state_root(
         module._configured_state_root(Path.cwd())
 
 
-def test_lifecycle_state_root_is_absolute_and_outside_checkout(tmp_path: Path) -> None:
+def test_lifecycle_state_root_is_absolute_and_may_be_inside_checkout(tmp_path: Path) -> None:
     repository = tmp_path / "checkout"
     repository.mkdir()
     with pytest.MonkeyPatch.context() as monkeypatch:
@@ -30,14 +30,13 @@ def test_lifecycle_state_root_is_absolute_and_outside_checkout(tmp_path: Path) -
         assert module._configured_state_root(repository) == outside
 
 
-def test_lifecycle_state_root_rejects_repository_subdirectory(tmp_path: Path) -> None:
+def test_lifecycle_state_root_accepts_repository_subdirectory(tmp_path: Path) -> None:
     repository = tmp_path / "checkout"
     repository.mkdir()
-    state = repository / ".state"
+    state = repository / "evaluation-state"
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("REGIME_ENGINE_STATE_ROOT", str(state))
-        with pytest.raises(RuntimeError, match="outside the repository"):
-            module._configured_state_root(repository)
+        assert module._configured_state_root(repository) == state
 
 
 def test_lifecycle_evaluation_does_not_create_a_resume_ledger(

@@ -35,9 +35,10 @@ configuration; never commit credentials, `.env` files, DSNs, or raw feature
 vectors. The canonical feature identity is `macro-loader` and the canonical
 MLflow URI is `http://10.10.1.3:5000`.
 
-Persistent state must be configured through an absolute `evaluation.state_root`
-outside the checkout. It stores only the immutable source snapshot, evaluation
-evidence, and local metric artifacts.
+Persistent state must be configured through an absolute `evaluation.state_root`.
+The local deployment uses the Git-ignored `evaluation-state/` directory in the
+checkout. It stores only the immutable source snapshot, evaluation evidence,
+and local metric artifacts.
 
 ## Bootstrap and local verification
 
