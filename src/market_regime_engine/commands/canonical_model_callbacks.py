@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
@@ -313,6 +314,7 @@ class _CanonicalGaussianSubsetBatchEvaluator:
     callbacks: CanonicalModelCallbacks
     frontier: SharedTaskFrontier[Any, Any] | None = None
     _cached_inner_plan: CalendarMonthPlan | None = field(default=None, init=False, repr=False)
+    _inner_plan_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __call__(
         self, state_count: int, features: tuple[str, ...]
@@ -328,15 +330,16 @@ class _CanonicalGaussianSubsetBatchEvaluator:
     def _inner_plan(self) -> CalendarMonthPlan:
         if self._cached_inner_plan is not None:
             return self._cached_inner_plan
-        source_train = self.callbacks._effective_train()
-        plan = plan_calendar_month(
-            tuple(source_train.loc[:, "timestamp_m1"].tolist()),
-            minimum_train_source_observations=(
-                self.callbacks.profile.feature_discovery.inner_train_source_observations
-            ),
-        )
-        self._cached_inner_plan = plan
-        return plan
+        with self._inner_plan_lock:
+            if self._cached_inner_plan is None:
+                source_train = self.callbacks._effective_train()
+                self._cached_inner_plan = plan_calendar_month(
+                    tuple(source_train.loc[:, "timestamp_m1"].tolist()),
+                    minimum_train_source_observations=(
+                        self.callbacks.profile.feature_discovery.inner_train_source_observations
+                    ),
+                )
+            return self._cached_inner_plan
 
     def _job_factory(
         self, state_count: int, features: tuple[str, ...]
