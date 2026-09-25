@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `f824378` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `ab8bae3` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1984,6 +1984,10 @@ acceptance evidence exists yet. It still must produce the contract and archived
 evidence before any acceptance criterion is marked complete.
 The backend now resolves workers through `cpu_worker_count()`, so the configured
 `REGIME_CPU_WORKERS=86` budget is honored instead of using raw `os.cpu_count()`.
+The live run exposed and the batch frontier now fixes a contract bug where one
+candidate's 5/8-start invalidity aborted the whole fold; invalid candidates are
+discarded locally, matching the serial evaluator behavior. The next run must
+confirm that folds continue past such candidates and produce valid checkpoints.
 
 #### Acceptance
 
