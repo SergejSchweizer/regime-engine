@@ -1959,12 +1959,14 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `caebc97` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `6bc357b` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
-profile, role-contract and algorithm identities all match. The active external audit
-is still running; no acceptance criterion is marked complete until the contract test
-and archived evidence finish successfully.
+profile, role-contract and algorithm identities all match. The persistent
+`fold-progress.json` state records the last computing, tracking, commit or failure
+stage for every fold. The previous authorized audit terminated before its first
+fold commit; no acceptance criterion is marked complete until a new run produces
+the contract and archived evidence successfully.
 
 #### Acceptance
 
