@@ -2033,6 +2033,12 @@ family near-duplicate and then materializes its PC. The corrected branch must be
 rebased, pushed, and rerun from a fresh state before any acceptance criterion is
 marked complete.
 
+The fresh `pr503-run5-state` execution was then controlled-stopped after
+approximately 6 hours 49 minutes in `fold_001 / feature_selection`: all 86
+workers remained CPU-active, but no fold checkpoint or metadata commit existed.
+The run produced no acceptance evidence and must not be counted as a successful
+fold.
+
 #### Acceptance
 
 - [ ] Query exactly `macro_loader.macro_features` read-only and capture materialized-view
