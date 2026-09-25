@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `b45f864` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `61da146` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1971,7 +1971,9 @@ short replacement run exposed a parent-thread fallback; the authorized run was
 terminated before acceptance evidence was produced. Global correlation now uses
 the same per-fold worker budget as the other CPU stages. Bound fold feature
 columns are now assembled in one pandas block to avoid the prior fragmented,
-serial candidate-preparation hotspot. The next run must use
+serial candidate-preparation hotspot. Global correlation reduction now keeps
+incremental adjacency maps instead of rebuilding all candidate pairs for every
+greedy iteration. The next run must use
 the process frontier and still produce the contract and archived evidence before any
 acceptance criterion is marked complete.
 
