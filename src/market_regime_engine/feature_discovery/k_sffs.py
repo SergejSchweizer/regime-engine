@@ -121,6 +121,7 @@ def select_k_slot_sffs(
                 candidate_tuple,
                 fixed_k_score,
                 max_features=max_features,
+                minimum_features=2,
                 max_workers=max_workers,
                 frontier=frontier,
                 frontier_state_count=state_count,

@@ -120,7 +120,7 @@ def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) 
         result.evidence_metadata["feature_selection_profile_hash"] == contract.profile.profile_hash
     )
     with duckdb.connect(str(tmp_path / "feature_selection.duckdb"), read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM sffs_steps").fetchone() == (28,)
+        assert connection.execute("SELECT count(*) FROM sffs_steps").fetchone() == (20,)
 
 
 def test_canonical_pipeline_can_run_without_transformations() -> None:

@@ -276,6 +276,7 @@ def select_sffs(
     score: ScoreFunction,
     *,
     max_features: int = SFFS_MAX_FEATURES,
+    minimum_features: int = 1,
     max_workers: int | None = None,
     frontier: SharedTaskFrontier[ScoreFunction, FeatureSubsetScore | None] | None = None,
     frontier_state_count: int = 2,
@@ -291,6 +292,10 @@ def select_sffs(
     candidate_tuple = _canonical_subset(candidates)
     if max_features < 1 or max_features > SFFS_MAX_FEATURES:
         raise ValueError("SFFS max_features must be between 1 and 10")
+    if minimum_features < 1 or minimum_features > SFFS_MAX_FEATURES:
+        raise ValueError("SFFS minimum_features must be between 1 and 10")
+    if minimum_features > max_features:
+        raise ValueError("SFFS minimum_features cannot exceed max_features")
     if max_features > len(candidate_tuple):
         max_features = len(candidate_tuple)
     candidate_order = {name: index for index, name in enumerate(candidate_tuple)}
@@ -361,6 +366,8 @@ def select_sffs(
                 best = (features, evaluated)
         if best is None:
             raise ValueError("SFFS requires at least one eligible singleton")
+        if len(candidate_tuple) < minimum_features:
+            raise ValueError("SFFS has fewer candidates than its minimum feature count")
 
         selected, selected_score = best
         steps = [SFFSStep("start", selected, selected_score)]
@@ -376,9 +383,13 @@ def select_sffs(
             )
             forward: tuple[tuple[str, ...], FeatureSubsetScore] | None = None
             for proposal, evaluated in zip(forward_sets, forward_scores, strict=True):
+                improves = evaluated is not None and (
+                    evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
+                )
+                reaches_minimum = len(selected) < minimum_features
                 if (
                     evaluated is not None
-                    and evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
+                    and (improves or reaches_minimum)
                     and _better((proposal, evaluated), forward, candidate_order)
                 ):
                     forward = (proposal, evaluated)
@@ -388,7 +399,7 @@ def select_sffs(
             visited.add(selected)
             steps.append(SFFSStep("add", selected, selected_score))
 
-            while len(selected) > 1:
+            while len(selected) > minimum_features:
                 backward_sets = tuple(
                     tuple(item for item in selected if item != name) for name in selected
                 )

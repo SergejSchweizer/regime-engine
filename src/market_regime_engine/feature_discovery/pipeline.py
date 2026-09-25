@@ -467,6 +467,7 @@ def run_canonical_feature_selection(
                 global_reduction.representatives,
                 evaluate_subset,
                 max_features=sffs_max_features,
+                minimum_features=2,
                 max_workers=max_workers,
                 frontier=frontier,
             )
