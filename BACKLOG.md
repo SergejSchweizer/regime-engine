@@ -70,7 +70,7 @@ PR-448
 ### Current repository and external state
 
 - `origin/main` is `437150c`; local working branch is
-  `pr/PR-503-current-xetra-readonly-audit` at `e7f35da` (51 commits ahead of
+  `pr/PR-503-current-xetra-readonly-audit` at `7a2b809` (52 commits ahead of
   `origin/main` and in sync with `origin/pr/PR-503-current-xetra-readonly-audit`);
   the working tree is clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
@@ -97,15 +97,12 @@ PR-448
 - **Current active implementation:** PR-503 is GitHub PR #505 on branch
   `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
   (`13 passed`, external test skipped unless explicitly enabled), MLflow health
-  is reachable, and the read-only password file is present. The persistent state
-  root is now the Git-ignored local path
-  `/home/dev_regime/regime-engine/evaluation-state`. The latest external run was
-  stopped by operator request after folds 001--004 exposed a Family-PCA
-  input-order mismatch; the local fix materializes each family with its immutable
-  artifact feature order, is covered by focused tests, and is pushed after a
-  rebase on `origin/main`, but is not yet accepted externally. Acceptance
-  evidence is not yet produced. No PR is closed and no remote or local branch is
-  deleted while PR-503 remains acceptance-pending.
+  is reachable, and the read-only password file is present. The current branch
+  is pushed at `7a2b809`; the latest local PCA diagnostic tests pass (`11
+  passed`). No evaluation process is active, no fold checkpoint was produced by
+  the interrupted run, and external acceptance evidence is not yet produced.
+  No PR is closed and no remote or local branch is deleted while PR-503 remains
+  acceptance-pending.
 
 ---
 
