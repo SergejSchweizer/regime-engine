@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `3b4c66c` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `81d35a9` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1991,6 +1991,10 @@ The live run exposed and the batch frontier now fixes a contract bug where one
 candidate's 5/8-start invalidity aborted the whole fold; invalid candidates are
 discarded locally, matching the serial evaluator behavior. The next run must
 confirm that folds continue past such candidates and produce valid checkpoints.
+Plain numerical `ValueError` failures from a HMM start that explicitly report
+nonfinite intermediates are now converted to failed-start evidence, while
+adapter contract errors remain fatal. This closes the observed failure mode
+that stopped fold 001 before a checkpoint.
 The diagnostic trace also found repeated pandas candidate/fold slicing before
 frontier submission; matrix conversion now uses NumPy finite-row filtering while
 retaining the original pandas slice boundaries. A first single-fold run exposed
