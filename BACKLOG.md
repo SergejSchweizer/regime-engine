@@ -70,9 +70,9 @@ PR-448
 ### Current repository and external state
 
 - `origin/main` is `437150c`; local working branch is
-  `pr/PR-503-current-xetra-readonly-audit` at `8408c39` (57 commits ahead of
-  `origin/main` and in sync with `origin/pr/PR-503-current-xetra-readonly-audit`);
-  the working tree is clean before this backlog update.
+  `pr/PR-503-current-xetra-readonly-audit` at the current pushed `HEAD` (in sync
+  with `origin/pr/PR-503-current-xetra-readonly-audit`); the working tree is
+  clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
