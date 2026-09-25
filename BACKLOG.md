@@ -2058,6 +2058,13 @@ feature selection; no checkpoint or acceptance evidence exists. Final TRAIN/TEST
 PCA materialization is now passed through to the final HMM and Outer TEST callback,
 with a regression test covering generated PCA features. The fix is local and must
 be pushed before the next authorized audit run.
+Run7 was then started from the fresh state root
+`/home/dev_regime/.cache/regime-engine/pr503-run7-state` with the pushed PCA fix,
+the NAS read-only source, `REGIME_OUTER_FOLD_WORKERS=1` and
+`REGIME_CPU_WORKERS=86`. At the latest observation (2026-09-25 19:42 local),
+fold 001 was healthy in `feature_selection` with all 86 process workers active;
+no fold checkpoint or acceptance evidence exists yet, and the audit remains in
+progress.
 
 #### Acceptance
 
