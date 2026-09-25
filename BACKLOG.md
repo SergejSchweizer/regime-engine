@@ -2065,6 +2065,13 @@ the NAS read-only source, `REGIME_OUTER_FOLD_WORKERS=1` and
 fold 001 was healthy in `feature_selection` with all 86 process workers active;
 no fold checkpoint or acceptance evidence exists yet, and the audit remains in
 progress.
+Run7 has now completed fold 001: the fold reached `committed / checkpoint` and
+produced the atomically written `fold_001.pickle` with package hash
+`56bc85e2097938594afe8f50a9df82fd08c947c8f613eb3100a9a50cae592e7c`.
+Fold 002 is computing in `feature_selection` with the 86-worker budget. This is
+the first successful fold checkpoint in the current audit, but the external
+acceptance criteria remain pending until the required source, provenance,
+multi-fold, read-only, and archive evidence is complete.
 
 #### Acceptance
 
