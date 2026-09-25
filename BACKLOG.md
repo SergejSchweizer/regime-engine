@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `91fa8f6` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `3b4c66c` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1977,12 +1977,14 @@ greedy iteration. Inner calendar plans and bound TRAIN frames are now cached per
 fold-local evaluator; tracing confirmed the prior hotspot was repeated
 `plan_calendar_month` construction in every SFFS candidate. The next run must use
 the process frontier; the cache initialization is now synchronized across the
-parallel K-slot coordinators. The current authorized run uses one outer fold
+parallel K-slot coordinators. The previous authorized run used one outer fold
 with 86 inner workers to make the first fold checkpoint observable sooner; it
-currently reports one `computing/feature_selection` fold plus 141 queued folds.
-No fold checkpoint or acceptance evidence exists yet. It still must produce the
-contract and archived evidence before any acceptance criterion is marked
-complete.
+failed on fold 001 in `feature_selection` with `ValueError: array must not
+contain infs or NaNs` and was stopped while fold 002 was still computing; no
+fold checkpoint or acceptance evidence exists yet. Failure tracebacks are now
+persisted in `fold-progress.json` for the next diagnostic run. It still must
+produce the contract and archived evidence before any acceptance criterion is
+marked complete.
 The backend now resolves workers through `cpu_worker_count()`, so the configured
 `REGIME_CPU_WORKERS=86` budget is honored instead of using raw `os.cpu_count()`.
 The live run exposed and the batch frontier now fixes a contract bug where one
