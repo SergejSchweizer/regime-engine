@@ -451,13 +451,22 @@ def test_evaluate_start_does_not_hide_unexpected_adapter_contract_failures() -> 
         )
 
 
-def test_evaluate_start_counts_nonfinite_backend_errors_as_failed_starts() -> None:
+@pytest.mark.parametrize(
+    "message",
+    (
+        "array must not contain infs or NaNs",
+        "transition row must sum to one within 1e-10",
+    ),
+)
+def test_evaluate_start_counts_numerical_backend_errors_as_failed_starts(
+    message: str,
+) -> None:
     outcomes: dict[int, FitResult | Exception] = {
         seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS
     }
     outcomes.update(
         {
-            seed: ValueError("array must not contain infs or NaNs")
+            seed: ValueError(message)
             for seed in MULTISTART_SEEDS[:3]
         }
     )

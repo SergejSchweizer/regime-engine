@@ -157,7 +157,11 @@ def _is_nonfinite_backend_failure(exc: ValueError) -> bool:
     """Identify numerical candidate failures without hiding adapter contract errors."""
 
     message = str(exc).lower()
-    return "infs or nans" in message or "infinite or nan" in message
+    return (
+        "infs or nans" in message
+        or "infinite or nan" in message
+        or "transition row must sum to one" in message
+    )
 
 
 def _evaluate_start(
