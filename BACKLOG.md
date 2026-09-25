@@ -2039,6 +2039,18 @@ workers remained CPU-active, but no fold checkpoint or metadata commit existed.
 The run produced no acceptance evidence and must not be counted as a successful
 fold.
 
+The next optimization was pushed on the current branch as
+`ead7577`: frontier workers now pass an immutable normal `ndarray` view over
+the file-backed candidate matrix instead of copying the complete matrix once
+per HMM seed. Gaussian, GMM and Student-t adapter tests confirmed read-only
+consumption, and the focused multistart/model suite passed (`36 passed`). A
+fresh authorized audit is currently running from
+`/home/dev_regime/.cache/regime-engine/pr503-run6-state` with
+`REGIME_CPU_WORKERS=86` and one outer fold at a time. At the latest observation
+(2026-09-25 19:17 local), PID `292598` was healthy with 86 active CPU-bound
+workers in `fold_001 / feature_selection`; no checkpoint exists yet, so no
+acceptance criterion is marked complete.
+
 #### Acceptance
 
 - [ ] Query exactly `macro_loader.macro_features` read-only and capture materialized-view
