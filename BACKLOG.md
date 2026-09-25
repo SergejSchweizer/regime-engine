@@ -70,7 +70,7 @@ PR-448
 ### Current repository and external state
 
 - `origin/main` is `437150c`; local working branch is
-  `pr/PR-503-current-xetra-readonly-audit` at `7a2b809` (52 commits ahead of
+  `pr/PR-503-current-xetra-readonly-audit` at `0650571` (55 commits ahead of
   `origin/main` and in sync with `origin/pr/PR-503-current-xetra-readonly-audit`);
   the working tree is clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
@@ -98,7 +98,7 @@ PR-448
   `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
   (`13 passed`, external test skipped unless explicitly enabled), MLflow health
   is reachable, and the read-only password file is present. The current branch
-  is pushed at `7a2b809`; the latest local PCA diagnostic tests pass (`11
+  is pushed at `0650571`; the latest local PCA diagnostic tests pass (`11
   passed`). No evaluation process is active, no fold checkpoint was produced by
   the interrupted run, and external acceptance evidence is not yet produced.
   No PR is closed and no remote or local branch is deleted while PR-503 remains
