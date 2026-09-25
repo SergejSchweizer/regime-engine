@@ -440,6 +440,7 @@ def run_canonical_feature_selection(
         candidate_values,
         contract,
         profile=resolved_profile,
+        max_workers=max_workers,
     )
     sffs_max_features = (
         resolved_profile.sffs_max_features if max_sffs_features is None else max_sffs_features
