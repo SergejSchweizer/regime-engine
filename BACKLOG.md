@@ -1959,16 +1959,17 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `901055e` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `e8589ec` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
 `fold-progress.json` state records the last computing, tracking, commit or failure
-stage for every fold. Candidate HMM scoring now reuses the shared process frontier
-instead of spawning a nested pool per candidate. The previous authorized audit was
-terminated after confirming that pool-churn bottleneck; the replacement run must
-still produce the contract and archived evidence before any acceptance criterion is
-marked complete.
+stage for every fold. Candidate and inner-fold HMM scoring now share one process
+frontier, flattening the eight-seed jobs instead of evaluating 23 inner folds
+serially per candidate. The authorized run was terminated after more than seven
+hours without a completed fold; the optimized replacement run must still produce
+the contract and archived evidence before any acceptance criterion is marked
+complete.
 
 #### Acceptance
 
