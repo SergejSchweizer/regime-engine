@@ -212,9 +212,11 @@ def _evaluate_start_in_frontier(
     )
     mapped.flags.writeable = False
     # Keep the process-boundary contract file-backed, but hand numerical
-    # backends a normal contiguous ndarray.  Some hmmlearn versions take
-    # different convergence paths for the np.memmap subclass itself.
-    train_rows = np.array(mapped, copy=True, order="C")
+    # backends a normal ndarray view.  ``np.asarray`` removes the memmap
+    # subclass without copying the immutable matrix; all supported adapters
+    # consume rows read-only.  Copying here once per seed multiplied the full
+    # candidate matrix memory traffic by the eight-start frontier.
+    train_rows = np.asarray(mapped)
     try:
         return _evaluate_start(
             train_rows,
