@@ -102,10 +102,10 @@ PR-448
   `/home/dev_regime/regime-engine/evaluation-state`. The latest external run was
   stopped by operator request after folds 001--004 exposed a Family-PCA
   input-order mismatch; the local fix materializes each family with its immutable
-  artifact feature order and is covered by focused tests, but is not yet pushed
-  or accepted externally. Acceptance evidence is not yet produced. No PR is
-  closed and no remote or local branch is deleted while PR-503 remains
-  acceptance-pending.
+  artifact feature order, is covered by focused tests, and is pushed after a
+  rebase on `origin/main`, but is not yet accepted externally. Acceptance
+  evidence is not yet produced. No PR is closed and no remote or local branch is
+  deleted while PR-503 remains acceptance-pending.
 
 ---
 
@@ -1968,7 +1968,8 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** ACCEPTANCE PENDING — the authorized audit is prepared against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `999ddc8` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at its current rebased `HEAD` in GitHub
+PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
