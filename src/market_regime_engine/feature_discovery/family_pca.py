@@ -126,7 +126,11 @@ class FamilyPCAArtifact:
     def transform(self, rows: npt.ArrayLike) -> ArrayF64:
         matrix = np.asarray(rows, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[1] != len(self.feature_order):
-            raise ValueError("family PCA rows must match the exact TRAIN feature order")
+            actual_columns = matrix.shape[1] if matrix.ndim == 2 else None
+            raise ValueError(
+                "family PCA rows must match the exact TRAIN feature order: "
+                f"expected {len(self.feature_order)} columns, got {actual_columns}"
+            )
         if np.any(~np.isfinite(matrix)):
             raise ValueError("family PCA transform rows must be complete and finite")
         return self.scaler.transform(matrix) @ np.asarray(self.components, dtype=np.float64).T
