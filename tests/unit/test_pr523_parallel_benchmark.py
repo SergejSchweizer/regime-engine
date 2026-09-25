@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 from mlflow.tracking import MlflowClient
+from threadpoolctl import threadpool_info
 
 from market_regime_engine.feature_discovery.feature_roles import (
     TEMPORAL_KEY,
@@ -28,7 +29,10 @@ def _benchmark_frontier_worker(task: FrontierTask[int]) -> tuple[str, str | None
     digest = sha256()
     for iteration in range(4_000):
         digest.update(f"{task.payload}:{iteration}".encode())
-    native_thread_count = len(tuple(Path("/proc/self/task").iterdir()))
+    native_thread_counts = tuple(
+        int(item["num_threads"]) for item in threadpool_info() if "num_threads" in item
+    )
+    native_thread_count = max(native_thread_counts, default=1)
     return (
         task.task_id,
         os.environ.get("REGIME_CPU_PROCESS_WORKER"),
