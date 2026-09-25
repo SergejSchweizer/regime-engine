@@ -45,7 +45,7 @@ def test_removing_integration_from_either_terminal_gate_fails_qa(workflow_index:
 def test_bare_integration_selector_fails_qa() -> None:
     for workflow in _workflows():
         mutated = workflow.replace(
-            'pytest -n auto tests -m "not integration and not external"',
+            'pytest -n auto tests -m "not integration and not external and not slow"',
             "pytest -n auto tests -m integration",
             1,
         )

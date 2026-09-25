@@ -99,8 +99,11 @@ PR-448
   (`13 passed`, external test skipped unless explicitly enabled), MLflow health
   is reachable, and the read-only password file is present. The current branch
   is pushed at `0650571`; the latest local PCA diagnostic tests pass (`11
-  passed`). No evaluation process is active, no fold checkpoint was produced by
-  the interrupted run, and external acceptance evidence is not yet produced.
+  passed`). The GitHub unit gate was found executing the local-only slow
+  Hermetic v4 proof; the gate contract is being corrected to exclude the
+  `slow` marker while retaining that proof for local/dedicated runs. No
+  evaluation process is active, no fold checkpoint was produced by the
+  interrupted run, and external acceptance evidence is not yet produced.
   No PR is closed and no remote or local branch is deleted while PR-503 remains
   acceptance-pending.
 

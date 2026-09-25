@@ -30,6 +30,8 @@ from market_regime_engine.training.multistart import run_multistart
 from tests.unit.feature_discovery.test_pr498_monthly_refit import _catalog, _source
 from tests.unit.feature_discovery.test_pr499_orchestration_cadence_qa import _run
 
+pytestmark = pytest.mark.slow
+
 
 def test_hermetic_multifold_proof_populates_all_evidence_tables(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
