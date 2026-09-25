@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -476,6 +477,66 @@ class _ComputedMonthlyFold:
     package: MonthlyPackageIdentity
 
 
+class _FoldProgress:
+    """Atomically persist the last observable state of every outer fold."""
+
+    def __init__(self, metadata_store: FeatureSelectionMetadataStore) -> None:
+        self._path = metadata_store.database.parent / "fold-progress.json"
+        self._lock = threading.Lock()
+        self._payload: dict[str, Any] = {
+            "schema_version": 1,
+            "algorithm_version": _FOLD_CHECKPOINT_ALGORITHM_VERSION,
+            "folds": {},
+        }
+
+    def _write(self) -> None:
+        self._path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+        temporary = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(self._payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temporary.replace(self._path)
+
+    def initialize(
+        self,
+        *,
+        source_build_id: str,
+        source_data_sha256: str,
+        source_catalog_hash: str,
+        plan_hash: str,
+        fold_ids: Sequence[str],
+        outer_workers: int,
+        inner_workers: int,
+    ) -> None:
+        with self._lock:
+            self._payload = {
+                "schema_version": 1,
+                "algorithm_version": _FOLD_CHECKPOINT_ALGORITHM_VERSION,
+                "source_build_id": source_build_id,
+                "source_data_sha256": source_data_sha256,
+                "source_catalog_hash": source_catalog_hash,
+                "plan_hash": plan_hash,
+                "outer_workers": outer_workers,
+                "inner_workers": inner_workers,
+                "folds": {
+                    fold_id: {"state": "pending"} for fold_id in fold_ids
+                },
+            }
+            self._write()
+
+    def update(self, fold_id: str, state: str, **details: object) -> None:
+        with self._lock:
+            fold = self._payload.setdefault("folds", {}).setdefault(fold_id, {})
+            fold.update(
+                {
+                    "state": state,
+                    "updated_at_utc": datetime.now(UTC).isoformat(),
+                    **details,
+                }
+            )
+            self._write()
+
+
 def _fold_checkpoint_path(
     metadata_store: FeatureSelectionMetadataStore, fold_id: str
 ) -> Path:
@@ -590,7 +651,10 @@ def _compute_monthly_fold(
     stage_callback_factory: StageCallbackFactory | None,
     inner_workers: int,
     state_count: int,
+    progress: _FoldProgress | None = None,
 ) -> _ComputedMonthlyFold:
+    if progress is not None:
+        progress.update(fold.fold_id, "computing", stage="quality")
     train = source_rows.iloc[: fold.train_source_observations].copy()
     if train[_TIMESTAMP].iloc[-1] != fold.train_cutoff_timestamp:
         raise ValueError("monthly TRAIN prefix does not end at the calendar cutoff")
@@ -618,6 +682,8 @@ def _compute_monthly_fold(
         if stage_callback_factory is not None
         else None
     )
+    if progress is not None:
+        progress.update(fold.fold_id, "computing", stage="feature_selection")
     current_evaluate_subset = (
         cast(Any, stage_callbacks.evaluate_subset)
         if stage_callbacks is not None
@@ -663,6 +729,8 @@ def _compute_monthly_fold(
         if stage_callback_factory is not None
         else None
     )
+    if progress is not None:
+        progress.update(fold.fold_id, "computing", stage="final_hmm")
     current_fit_final_hmm = (
         cast(Any, fit_callbacks.fit_final_hmm)
         if fit_callbacks is not None
@@ -687,6 +755,8 @@ def _compute_monthly_fold(
         if fit_callbacks is not None
         else evaluate_outer_test
     )
+    if progress is not None:
+        progress.update(fold.fold_id, "computing", stage="outer_test")
     outer_test_hash = current_evaluate_outer_test(
         train, test, selected_features, state_count, model_hashes
     )
@@ -706,7 +776,7 @@ def _compute_monthly_fold(
         model_hashes=model_hashes,
         outer_test_hash=outer_test_hash,
     )
-    return _ComputedMonthlyFold(
+    computed = _ComputedMonthlyFold(
         fold,
         catalog.lineage.data_sha256,
         provenance,
@@ -718,6 +788,14 @@ def _compute_monthly_fold(
         outer_test_hash,
         package,
     )
+    if progress is not None:
+        progress.update(
+            fold.fold_id,
+            "computed",
+            stage="awaiting_tracking_and_commit",
+            package_hash=package.package_hash,
+        )
+    return computed
 
 
 def run_monthly_outer_refit(
@@ -801,6 +879,17 @@ def run_monthly_outer_refit(
             if metadata_store is not None and hasattr(metadata_store, "database")
             else None
         )
+        progress = _FoldProgress(checkpoint_store) if checkpoint_store is not None else None
+        if progress is not None:
+            progress.initialize(
+                source_build_id=catalog.lineage.source_build_id,
+                source_data_sha256=catalog.lineage.data_sha256,
+                source_catalog_hash=catalog.catalog_hash,
+                plan_hash=plan.plan_hash,
+                fold_ids=tuple(fold.fold_id for fold in plan.folds),
+                outer_workers=outer_workers,
+                inner_workers=inner_workers,
+            )
         if checkpoint_store is not None:
             for fold in plan.folds:
                 cached = _read_fold_checkpoint(
@@ -815,10 +904,18 @@ def run_monthly_outer_refit(
                 )
                 if cached is not None:
                     cached_folds[fold.fold_id] = cached
+                    if progress is not None:
+                        progress.update(
+                            fold.fold_id,
+                            "reused",
+                            package_hash=cached.package.package_hash,
+                        )
         with ThreadPoolExecutor(max_workers=outer_workers) as fold_executor:
             for fold in plan.folds:
                 if fold.fold_id in cached_folds:
                     continue
+                if progress is not None:
+                    progress.update(fold.fold_id, "queued")
                 fold_futures[fold.fold_id] = fold_executor.submit(
                     _compute_monthly_fold,
                     source_rows,
@@ -835,6 +932,7 @@ def run_monthly_outer_refit(
                     stage_callback_factory=stage_callback_factory,
                     inner_workers=inner_workers,
                     state_count=state_count,
+                    progress=progress,
                 )
             for fold in plan.folds:
                 reused = fold.fold_id in cached_folds
@@ -847,6 +945,8 @@ def run_monthly_outer_refit(
                         if fold_computation is None:
                             raise RuntimeError("missing monthly fold computation")
                         computed = fold_computation.result()
+                    if progress is not None and not reused:
+                        progress.update(fold.fold_id, "tracking", stage="provenance")
                     provenance = computed.provenance
                     quality = computed.quality
                     pipeline = computed.pipeline
@@ -867,6 +967,8 @@ def run_monthly_outer_refit(
                                 },
                             )
                         )
+                        if progress is not None:
+                            progress.update(fold.fold_id, "tracking", stage="quality")
                         child_runs.append(
                             _track_stage(
                                 tracking,
@@ -885,6 +987,8 @@ def run_monthly_outer_refit(
                             ("sffs", {"hash": _sffs_hash(selected_sffs)}),
                             ("ablation", {"hashes": pipeline.ablation.fit_execution_hashes}),
                         ):
+                            if progress is not None:
+                                progress.update(fold.fold_id, "tracking", stage=stage)
                             child_runs.append(
                                 _track_stage(
                                     tracking,
@@ -911,6 +1015,8 @@ def run_monthly_outer_refit(
                             },
                         )
                         child_runs.append(model_run_id)
+                        if progress is not None:
+                            progress.update(fold.fold_id, "tracking", stage="outer_test")
                         child_runs.append(
                             _track_stage(
                                 tracking,
@@ -933,6 +1039,8 @@ def run_monthly_outer_refit(
                     else:
                         model_run_id = None
                     if metadata_store is not None and not reused:
+                        if progress is not None:
+                            progress.update(fold.fold_id, "committing", stage="duckdb")
                         metadata_store.commit_fold(
                             _metadata_bundle(
                                 fold=fold,
@@ -960,8 +1068,21 @@ def run_monthly_outer_refit(
                                 profile_hash=contract.profile.profile_hash,
                                 role_contract_hash=pipeline.role_contract_hash,
                             )
+                            if progress is not None:
+                                progress.update(
+                                    fold.fold_id,
+                                    "committed",
+                                    stage="checkpoint",
+                                    package_hash=package.package_hash,
+                                )
                     results.append(MonthlyRefitFoldResult(fold, package, pipeline, True))
                 except (ValueError, TypeError, KeyError, TimeoutError) as exc:
+                    if progress is not None:
+                        progress.update(
+                            fold.fold_id,
+                            "failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
                     if parent_run_id is not None:
                         assert tracking is not None
                         tracking.log_params(
@@ -972,6 +1093,14 @@ def run_monthly_outer_refit(
                             fold, None, None, False, f"{type(exc).__name__}: {exc}"
                         )
                     )
+                except Exception as exc:
+                    if progress is not None:
+                        progress.update(
+                            fold.fold_id,
+                            "failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    raise
         result_hash = content_hash(
             (
                 catalog.lineage.source_build_id,
