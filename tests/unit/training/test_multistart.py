@@ -465,12 +465,7 @@ def test_evaluate_start_counts_numerical_backend_errors_as_failed_starts(
     outcomes: dict[int, FitResult | Exception] = {
         seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS
     }
-    outcomes.update(
-        {
-            seed: ValueError(message)
-            for seed in MULTISTART_SEEDS[:3]
-        }
-    )
+    outcomes.update({seed: ValueError(message) for seed in MULTISTART_SEEDS[:3]})
     with pytest.raises(ValueError, match="valid_starts=5/8"):
         run_multistart(
             [[0.0]],

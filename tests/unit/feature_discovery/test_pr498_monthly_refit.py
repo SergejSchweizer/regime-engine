@@ -270,8 +270,6 @@ def test_completed_fold_checkpoint_is_reused_for_same_dataset(
     assert all(item.valid for item in second.folds)
     assert calls == first_calls
     assert store.commits == len(first.folds)
-    progress = json.loads(
-        (tmp_path / "fold-progress.json").read_text(encoding="utf-8")
-    )
+    progress = json.loads((tmp_path / "fold-progress.json").read_text(encoding="utf-8"))
     assert progress["plan_hash"]
     assert {item["state"] for item in progress["folds"].values()} == {"reused"}

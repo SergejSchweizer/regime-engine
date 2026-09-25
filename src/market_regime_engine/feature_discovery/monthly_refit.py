@@ -515,9 +515,7 @@ class _FoldProgress:
                 "plan_hash": plan_hash,
                 "outer_workers": outer_workers,
                 "inner_workers": inner_workers,
-                "folds": {
-                    fold_id: {"state": "pending"} for fold_id in fold_ids
-                },
+                "folds": {fold_id: {"state": "pending"} for fold_id in fold_ids},
             }
             self._write()
 
@@ -534,9 +532,7 @@ class _FoldProgress:
             self._write()
 
 
-def _fold_checkpoint_path(
-    metadata_store: FeatureSelectionMetadataStore, fold_id: str
-) -> Path:
+def _fold_checkpoint_path(metadata_store: FeatureSelectionMetadataStore, fold_id: str) -> Path:
     root = metadata_store.database.parent / "fold-checkpoints"
     root.mkdir(mode=0o750, parents=True, exist_ok=True)
     return root / f"{fold_id}.pickle"
@@ -617,9 +613,7 @@ def _read_fold_checkpoint(
         return None
 
 
-def _fold_resource_partition(
-    fold_count: int, requested_workers: int | None
-) -> tuple[int, int]:
+def _fold_resource_partition(fold_count: int, requested_workers: int | None) -> tuple[int, int]:
     if fold_count < 1:
         raise ValueError("fold_count must be positive")
     total = cpu_worker_count(requested_workers)
@@ -729,9 +723,7 @@ def _compute_monthly_fold(
     if progress is not None:
         progress.update(fold.fold_id, "computing", stage="final_hmm")
     current_fit_final_hmm = (
-        cast(Any, fit_callbacks.fit_final_hmm)
-        if fit_callbacks is not None
-        else fit_final_hmm
+        cast(Any, fit_callbacks.fit_final_hmm) if fit_callbacks is not None else fit_final_hmm
     )
     fitted_hashes = (
         cast(Any, fit_callbacks.fit_final_hmm)(
@@ -866,9 +858,7 @@ def run_monthly_outer_refit(
             # only that path is eligible for outer-fold concurrency.
             outer_workers, inner_workers = 1, max(1, cpu_worker_count(max_workers))
         else:
-            outer_workers, inner_workers = _fold_resource_partition(
-                len(plan.folds), max_workers
-            )
+            outer_workers, inner_workers = _fold_resource_partition(len(plan.folds), max_workers)
         fold_futures = {}
         cached_folds: dict[str, _ComputedMonthlyFold] = {}
         checkpoint_store = (
@@ -1083,9 +1073,7 @@ def run_monthly_outer_refit(
                         )
                     if parent_run_id is not None:
                         assert tracking is not None
-                        tracking.log_params(
-                            parent_run_id, {f"{fold.fold_id}.failure": str(exc)}
-                        )
+                        tracking.log_params(parent_run_id, {f"{fold.fold_id}.failure": str(exc)})
                     results.append(
                         MonthlyRefitFoldResult(
                             fold, None, None, False, f"{type(exc).__name__}: {exc}"

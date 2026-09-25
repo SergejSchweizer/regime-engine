@@ -217,9 +217,7 @@ def prune_global_correlated_features(
     # start.  Removing a leader and its direct duplicates only changes the
     # neighborhoods of those removed vertices, so maintain adjacency maps
     # incrementally instead.
-    neighborhoods: dict[str, dict[str, _Redundancy]] = {
-        name: {} for name in ordered_names
-    }
+    neighborhoods: dict[str, dict[str, _Redundancy]] = {name: {} for name in ordered_names}
     for (left_index, right_index), redundancy in edges.items():
         left_name = ordered_names[left_index]
         right_name = ordered_names[right_index]

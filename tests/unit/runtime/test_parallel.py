@@ -94,9 +94,10 @@ def test_process_pool_uses_clean_spawn_context() -> None:
 
 def test_process_pool_timeout_propagates_and_terminates_workers() -> None:
     plan = ParallelExecutionPlan.create(2, requested_workers=2)
-    with pytest.raises(TimeoutError, match="made no progress"), FoldParallelExecutor[
-        int, int
-    ](plan, wait_timeout_seconds=0.05) as executor:
+    with (
+        pytest.raises(TimeoutError, match="made no progress"),
+        FoldParallelExecutor[int, int](plan, wait_timeout_seconds=0.05) as executor,
+    ):
         executor.map_ordered(slow_square, (0, 1))
 
 

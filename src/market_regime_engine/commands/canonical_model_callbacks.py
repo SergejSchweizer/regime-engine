@@ -71,9 +71,7 @@ class CanonicalModelCallbacks:
     _bound_feature_values: Mapping[str, Sequence[float]] | None = field(
         default=None, repr=False, compare=False
     )
-    _effective_train_cache: pd.DataFrame | None = field(
-        default=None, repr=False, compare=False
-    )
+    _effective_train_cache: pd.DataFrame | None = field(default=None, repr=False, compare=False)
 
     def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
         object.__setattr__(self, "_bound_feature_values", dict(values))
@@ -316,9 +314,7 @@ class _CanonicalGaussianSubsetBatchEvaluator:
     _cached_inner_plan: CalendarMonthPlan | None = field(default=None, init=False, repr=False)
     _inner_plan_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
-    def __call__(
-        self, state_count: int, features: tuple[str, ...]
-    ) -> FeatureSubsetScore | None:
+    def __call__(self, state_count: int, features: tuple[str, ...]) -> FeatureSubsetScore | None:
         return self.callbacks._inner_score(features, state_count)
 
     def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:

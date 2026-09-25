@@ -450,9 +450,7 @@ def run_canonical_feature_selection(
         if evaluate_gaussian_subset_by_k is not None
         else evaluate_subset
     )
-    has_selection_batch_frontier = callable(
-        getattr(selection_evaluator, "evaluate_many", None)
-    )
+    has_selection_batch_frontier = callable(getattr(selection_evaluator, "evaluate_many", None))
     can_share_frontier = max_workers != 1 and (
         has_selection_batch_frontier
         or (is_pickleable(selection_evaluator) and is_pickleable(evaluate_hmm_subset))
