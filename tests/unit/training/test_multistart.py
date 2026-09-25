@@ -456,6 +456,7 @@ def test_evaluate_start_does_not_hide_unexpected_adapter_contract_failures() -> 
     (
         "array must not contain infs or NaNs",
         "transition row must sum to one within 1e-10",
+        "'covars' must be symmetric, positive-definite",
     ),
 )
 def test_evaluate_start_counts_numerical_backend_errors_as_failed_starts(

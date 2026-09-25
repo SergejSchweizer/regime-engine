@@ -161,6 +161,7 @@ def _is_nonfinite_backend_failure(exc: ValueError) -> bool:
         "infs or nans" in message
         or "infinite or nan" in message
         or "transition row must sum to one" in message
+        or "covars' must be symmetric, positive-definite" in message
     )
 
 
