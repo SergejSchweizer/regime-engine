@@ -77,10 +77,14 @@ class CanonicalModelCallbacks:
     def _effective_train(self) -> pd.DataFrame:
         if self._bound_feature_values is None:
             return self.train
-        frame = self.train.copy()
-        for name, values in self._bound_feature_values.items():
-            frame[name] = tuple(values)
-        return frame
+        # Candidate evaluation binds the fold-local PCA values repeatedly.
+        # Inserting each bound column independently fragments the pandas
+        # BlockManager and turns this hot path into an effectively serial
+        # O(number-of-features) copy for every candidate.  Build the bound
+        # block once and replace any colliding names in one concatenation.
+        bound = pd.DataFrame(self._bound_feature_values, index=self.train.index)
+        base = self.train.drop(columns=bound.columns, errors="ignore")
+        return pd.concat((base, bound), axis=1, copy=False)
 
     @property
     def hmm_selector_contract_hash(self) -> str:
