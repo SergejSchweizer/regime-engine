@@ -143,19 +143,29 @@ class FrontierFeatureSubsetEvaluator:
         results = run_multistart_batch(
             tuple(entry.job for entry in entries),
             max_workers=self.max_workers,
+            # A failed multistart gate invalidates only this candidate/fold.
+            # The serial callback path has the same candidate-local contract;
+            # allowing the batch to return None keeps one bad candidate from
+            # aborting the complete outer fold.
+            allow_invalid=True,
             frontier=self.frontier,
         )
         evidence_by_candidate: dict[tuple[str, ...], list[FeatureSubsetFoldEvidence]] = {
             candidate: [] for candidate in candidates
         }
+        invalid_candidates: set[tuple[str, ...]] = set()
         for entry, result in zip(entries, results, strict=True):
             if result is None:
-                raise RuntimeError("frontier SFFS multistart gate failed")
+                invalid_candidates.add(entry.candidate_subset)
+                continue
             evidence_by_candidate[entry.candidate_subset].append(
                 self.evidence_factory(entry, result)
             )
         scores: list[FeatureSubsetScore | None] = []
         for candidate in candidates:
+            if candidate in invalid_candidates:
+                scores.append(None)
+                continue
             evidence = tuple(
                 sorted(evidence_by_candidate[candidate], key=lambda item: item.fold_id)
             )
