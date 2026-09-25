@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `ec497dc` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `999ddc8` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -2004,7 +2004,14 @@ The diagnostic trace also found repeated pandas candidate/fold slicing before
 frontier submission; matrix conversion now uses NumPy finite-row filtering while
 retaining the original pandas slice boundaries. A first single-fold run exposed
 and the follow-up fixed a row-alignment error in the more aggressive cache. The
-next run must verify that the corrected path produces valid fold results.
+next run must verify that the corrected path produces valid fold results. The
+latest run then exposed a production-contract mismatch: SFFS could return a
+singleton even though ablation and final package validation require at least two
+features. Production and K-slot SFFS now enforce `minimum_features=2`; the
+generic selector remains capable of testing a singleton, and the focused suite
+passes 70 tests. The run was stopped after fold 001 recorded
+`ValueError: ablation requires a selected tuple with at least two features`;
+the next run must verify that the enforced minimum reaches a valid checkpoint.
 
 #### Acceptance
 
