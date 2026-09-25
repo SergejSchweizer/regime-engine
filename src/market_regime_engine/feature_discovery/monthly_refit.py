@@ -6,6 +6,7 @@ import json
 import os
 import pickle
 import threading
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -1082,6 +1083,7 @@ def run_monthly_outer_refit(
                             fold.fold_id,
                             "failed",
                             error=f"{type(exc).__name__}: {exc}",
+                            traceback=traceback.format_exc(),
                         )
                     if parent_run_id is not None:
                         assert tracking is not None
@@ -1099,6 +1101,7 @@ def run_monthly_outer_refit(
                             fold.fold_id,
                             "failed",
                             error=f"{type(exc).__name__}: {exc}",
+                            traceback=traceback.format_exc(),
                         )
                     raise
         result_hash = content_hash(
