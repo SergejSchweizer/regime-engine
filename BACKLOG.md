@@ -1959,7 +1959,7 @@ worker-budget report, stage report and local SQLite MLflow database.
 **Current status:** IN PROGRESS — the authorized audit is running against the NAS
 `macro_loader.macro_features` source with the read-only `macro-loader` role and the
 production MLflow tracking endpoint. Implementation is pushed on branch
-`pr/PR-503-current-xetra-readonly-audit` at commit `b35ca42` in GitHub PR #505.
+`pr/PR-503-current-xetra-readonly-audit` at commit `91fa8f6` in GitHub PR #505.
 Fold-level checkpoint files are written atomically only after successful DuckDB
 metadata commits and are reused only when source build/data/catalog, calendar plan,
 profile, role-contract and algorithm identities all match. The persistent
@@ -1990,9 +1990,10 @@ candidate's 5/8-start invalidity aborted the whole fold; invalid candidates are
 discarded locally, matching the serial evaluator behavior. The next run must
 confirm that folds continue past such candidates and produce valid checkpoints.
 The diagnostic trace also found repeated pandas candidate/fold slicing before
-frontier submission; fold-local bound feature matrices are now cached as NumPy
-arrays and reused for TRAIN/TEST job construction. The next run must verify
-that this removes the parent-side preparation bottleneck.
+frontier submission; matrix conversion now uses NumPy finite-row filtering while
+retaining the original pandas slice boundaries. A first single-fold run exposed
+and the follow-up fixed a row-alignment error in the more aggressive cache. The
+next run must verify that the corrected path produces valid fold results.
 
 #### Acceptance
 
