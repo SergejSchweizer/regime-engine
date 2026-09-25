@@ -61,6 +61,7 @@ from market_regime_engine.predictions.store import PredictionStore
 from market_regime_engine.preprocessing.pca_features import fit_and_materialize_pca_source
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.final_refit import (
     CanonicalRefitValidation,
     final_production_refit,
@@ -233,7 +234,7 @@ class V4LifecycleBackend:
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
         rows = _rows(snapshot)
-        worker_count = max(1, os.cpu_count() or 1)
+        worker_count = cpu_worker_count()
         base_callbacks = CanonicalModelCallbacks(
             train=rows,
             test=rows.iloc[:0].copy(),
@@ -312,7 +313,7 @@ class V4LifecycleBackend:
             discovery_hash=package_identity.package_hash,
         )
         candidate = _candidate(configuration, catalog)
-        worker_count = max(1, os.cpu_count() or 1)
+        worker_count = cpu_worker_count()
         raw_feature_values = {
             name: tuple(row.values[index] for row in snapshot.rows)
             for index, name in enumerate(snapshot.feature_names)
@@ -377,7 +378,7 @@ class V4LifecycleBackend:
             rows: list[dict[str, object]] = []
             catalog, snapshot = self._saved_source()
             source_rows = _rows(snapshot)
-            worker_count = max(1, os.cpu_count() or 1)
+            worker_count = cpu_worker_count()
             for fold_result in result.monthly.valid_folds:
                 fold = fold_result.fold
                 package = fold_result.package
