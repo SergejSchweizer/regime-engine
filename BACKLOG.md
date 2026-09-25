@@ -2072,6 +2072,10 @@ Fold 002 is computing in `feature_selection` with the 86-worker budget. This is
 the first successful fold checkpoint in the current audit, but the external
 acceptance criteria remain pending until the required source, provenance,
 multi-fold, read-only, and archive evidence is complete.
+The run has since committed fold 002 as a second checkpoint with package hash
+`3abbf968a70d0fecc88096eeb7664027f12ef9251781ca4d913662a54ffdc194`; fold 003
+is now computing in `feature_selection`. The audit therefore has 2 of 142
+folds committed, with all acceptance criteria still open.
 
 #### Acceptance
 
