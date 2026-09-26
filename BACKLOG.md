@@ -103,12 +103,14 @@ PR-448
   Hermetic v4 proof; the gate contract is being corrected to exclude the
   `slow` marker while retaining that proof for local/dedicated runs. No
   evaluation process is active, and external acceptance evidence is not yet
-  archived. Run7 produced five valid atomic fold checkpoints; fold 006 was
-  left in `computing / feature_selection` when the detached process ended
-  without a terminal record. The five checkpoints are useful resumable state,
-  but they do not by themselves satisfy the source/provenance/archive
-  acceptance evidence. No PR is closed and no remote or local branch is
-  deleted while PR-503 remains acceptance-pending.
+  archived. Run7 now has valid atomic checkpoints through fold 021 (the first
+  five are reused and folds 006--021 were committed during the resumed run).
+  Fold 022 was left in `computing / feature_selection` when the detached
+  process ended again without a terminal record; no fold is marked failed.
+  The checkpoints are useful resumable state, but they do not by themselves
+  satisfy the source/provenance/archive acceptance evidence. No PR is closed
+  and no remote or local branch is deleted while PR-503 remains
+  acceptance-pending.
 
 ---
 
@@ -2077,13 +2079,13 @@ acceptance criteria remain pending until the required source, provenance,
 multi-fold, read-only, and archive evidence is complete.
 The run has since committed fold 002 as a second checkpoint with package hash
 `3abbf968a70d0fecc88096eeb7664027f12ef9251781ca4d913662a54ffdc194` and then
-committed folds 003, 004 and 005. Their checkpoint files were written at
-2026-09-25 18:36, 18:57 and 19:18 UTC respectively. Fold 006 entered
-`feature_selection` but the detached process ended around 21:21 UTC without a
-terminal state or evidence archive. Run7 therefore has 5 of 142 folds
-committed and can resume from the existing checkpoints; all PR-503 acceptance
-criteria remain open until the required source, provenance, read-only and
-archive evidence is produced.
+committed folds 003--021. The resumed run reused folds 001--005 and committed
+folds 006--021 without any failed-fold entry. Fold 022 entered
+`feature_selection`, but the detached process ended again without a terminal
+state or evidence archive. Run7 therefore has 21 of 142 folds available and
+can resume from the existing checkpoints; all PR-503 acceptance criteria
+remain open until the required source, provenance, read-only and archive
+evidence is produced.
 
 #### Acceptance
 
