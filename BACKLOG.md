@@ -98,7 +98,7 @@ PR-448
   `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
   (`13 passed`, external test skipped unless explicitly enabled), MLflow health
   is reachable, and the read-only password file is present. The current branch
-  is pushed at `cd46434`; the latest local PCA diagnostic tests pass (`11
+  is pushed at `b099c6c`; the latest local PCA diagnostic tests pass (`11
   passed`) and the parallel QA regression suite passes (`4 passed`). The GitHub unit gate was found executing the local-only slow
   Hermetic v4 proof; the gate contract is being corrected to exclude the
   `slow` marker while retaining that proof for local/dedicated runs. No
@@ -111,6 +111,12 @@ PR-448
   satisfy the source/provenance/archive acceptance evidence. No PR is closed
   and no remote or local branch is deleted while PR-503 remains
   acceptance-pending.
+  The resume path now pins an existing audit `source.pkl` instead of
+  recapturing a changed NAS view; this was required after the view grew to
+  4,431 rows through 2026-09-25 while the immutable lineage row still covered
+  4,426 rows through 2026-09-18. The NAS was queried read-only and was not
+  modified. The fix is covered by 15 backend unit tests, Ruff, Mypy and the
+  local Hermetic integration gate.
 
 ---
 
