@@ -189,6 +189,19 @@ class V4LifecycleBackend:
             return value
         return self._capture_source()
 
+    def _cycle_source(self) -> tuple[Any, FeatureSnapshot]:
+        """Return the immutable source snapshot for an interrupted audit cycle.
+
+        A read-only external audit must remain pinned to the source snapshot it
+        started with.  The NAS view may receive newer rows while its lineage
+        record is being refreshed; recapturing it during resume would either
+        change the dataset or fail the lineage-bound source contract.  This
+        behavior is deliberately restricted to the explicit audit mode.
+        """
+        if os.environ.get("REGIME_RUN_XETRA_V4_AUDIT") == "1" and self._source_path.is_file():
+            return self._saved_source()
+        return self._capture_source()
+
     def _registry_version(self, alias: str) -> str | None:
         try:
             return MlflowModelRegistry().resolve_alias("regime-xetra", alias).exact_version
@@ -200,7 +213,7 @@ class V4LifecycleBackend:
     def status(self, profile_id: str) -> LifecycleStatus:
         if profile_id != "xetra":
             raise ValueError("only xetra is supported")
-        catalog, _snapshot = self._capture_source()
+        catalog, _snapshot = self._cycle_source()
         completed: str | None = None
         metadata_path = self.state_root / "completed.json"
         if metadata_path.is_file():
@@ -226,7 +239,7 @@ class V4LifecycleBackend:
                 source_build_id,
                 f"gaussian_hmm_k{package.state_count}_full",
             )
-        catalog, snapshot = self._capture_source()
+        catalog, snapshot = self._cycle_source()
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
         rows = _rows(snapshot)

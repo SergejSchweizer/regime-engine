@@ -178,6 +178,36 @@ def test_lifecycle_backend_source_capture_and_saved_state(
         backend._saved_source()
 
 
+def test_external_audit_resume_uses_pinned_source_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = object.__new__(module.V4LifecycleBackend)
+    backend.state_root = tmp_path / "lifecycle"
+    catalog = SimpleNamespace(lineage=SimpleNamespace(source_build_id="pinned-build"))
+    snapshot = SimpleNamespace()
+    module._atomic_pickle(backend._source_path, (catalog, snapshot))
+    monkeypatch.setenv("REGIME_RUN_XETRA_V4_AUDIT", "1")
+
+    def unexpected_capture() -> tuple[object, object]:
+        raise AssertionError("an interrupted audit must not recapture the NAS source")
+
+    monkeypatch.setattr(backend, "_capture_source", unexpected_capture)
+
+    assert backend._cycle_source() == (catalog, snapshot)
+
+
+def test_non_audit_cycle_source_captures_current_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = object.__new__(module.V4LifecycleBackend)
+    backend.state_root = tmp_path / "lifecycle"
+    current = (SimpleNamespace(), SimpleNamespace())
+    monkeypatch.delenv("REGIME_RUN_XETRA_V4_AUDIT", raising=False)
+    monkeypatch.setattr(backend, "_capture_source", lambda: current)
+
+    assert backend._cycle_source() == current
+
+
 def test_lifecycle_backend_cached_evaluation_and_registry_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
