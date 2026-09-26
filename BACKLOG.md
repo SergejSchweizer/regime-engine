@@ -98,14 +98,17 @@ PR-448
   `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
   (`13 passed`, external test skipped unless explicitly enabled), MLflow health
   is reachable, and the read-only password file is present. The current branch
-  is pushed at `8408c39`; the latest local PCA diagnostic tests pass (`11
+  is pushed at `cd46434`; the latest local PCA diagnostic tests pass (`11
   passed`) and the parallel QA regression suite passes (`4 passed`). The GitHub unit gate was found executing the local-only slow
   Hermetic v4 proof; the gate contract is being corrected to exclude the
   `slow` marker while retaining that proof for local/dedicated runs. No
-  evaluation process is active, no fold checkpoint was produced by the
-  interrupted run, and external acceptance evidence is not yet produced.
-  No PR is closed and no remote or local branch is deleted while PR-503 remains
-  acceptance-pending.
+  evaluation process is active, and external acceptance evidence is not yet
+  archived. Run7 produced five valid atomic fold checkpoints; fold 006 was
+  left in `computing / feature_selection` when the detached process ended
+  without a terminal record. The five checkpoints are useful resumable state,
+  but they do not by themselves satisfy the source/provenance/archive
+  acceptance evidence. No PR is closed and no remote or local branch is
+  deleted while PR-503 remains acceptance-pending.
 
 ---
 
@@ -2073,9 +2076,14 @@ the first successful fold checkpoint in the current audit, but the external
 acceptance criteria remain pending until the required source, provenance,
 multi-fold, read-only, and archive evidence is complete.
 The run has since committed fold 002 as a second checkpoint with package hash
-`3abbf968a70d0fecc88096eeb7664027f12ef9251781ca4d913662a54ffdc194`; fold 003
-is now computing in `feature_selection`. The audit therefore has 2 of 142
-folds committed, with all acceptance criteria still open.
+`3abbf968a70d0fecc88096eeb7664027f12ef9251781ca4d913662a54ffdc194` and then
+committed folds 003, 004 and 005. Their checkpoint files were written at
+2026-09-25 18:36, 18:57 and 19:18 UTC respectively. Fold 006 entered
+`feature_selection` but the detached process ended around 21:21 UTC without a
+terminal state or evidence archive. Run7 therefore has 5 of 142 folds
+committed and can resume from the existing checkpoints; all PR-503 acceptance
+criteria remain open until the required source, provenance, read-only and
+archive evidence is produced.
 
 #### Acceptance
 
