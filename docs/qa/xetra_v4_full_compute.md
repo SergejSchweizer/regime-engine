@@ -10,7 +10,8 @@ then performs the complete v4 search and outer policy.
 
 - Install the exact repository environment with Python 3.14.7.
 - Configure an absolute persistent `REGIME_ENGINE_STATE_ROOT`
-  outside the repository through `config.yaml`.
+  through `config.yaml`; the local deployment uses the Git-ignored
+  `evaluation-state/` directory in the repository.
 - Configure absolute paths outside the repository for both
   `REGIME_EVALUATION_SUMMARY_PATH` and `REGIME_PERFORMANCE_REPORT_PATH`.
 - Ensure the feature PostgreSQL password is available only through the

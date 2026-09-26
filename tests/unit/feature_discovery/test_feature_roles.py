@@ -34,6 +34,28 @@ def test_canonical_core_inventory_is_exactly_twenty() -> None:
     assert classify_feature_name("usd_broad_log_return_20obs").family == "usd_broad"
 
 
+def test_classify_current_fed_expected_move_transformation() -> None:
+    assignment = classify_feature_name("fed_next_expected_move_bp")
+
+    assert assignment.role is FeatureRole.TRANSFORMATION
+    assert assignment.family == "fed"
+
+
+@pytest.mark.parametrize(
+    "feature_name",
+    (
+        "fed_path_slope_m3_bp",
+        "fed_next_uncertainty_bp",
+        "fed_repricing_5obs_bp",
+    ),
+)
+def test_classify_current_fed_level_transformations(feature_name: str) -> None:
+    assignment = classify_feature_name(feature_name)
+
+    assert assignment.role is FeatureRole.TRANSFORMATION
+    assert assignment.family == "fed"
+
+
 @pytest.mark.parametrize(
     "name",
     (
@@ -194,6 +216,24 @@ def test_stage_boundaries_reject_temporal_and_direct_generated_inputs() -> None:
         contract.validate_stage_features(FeatureStage.HMM, (generated,))
     with pytest.raises(ValueError, match="transformations only"):
         contract.validate_stage_features(FeatureStage.FAMILY_PCA, (CORE_FEATURES[0],))
+
+
+def test_canonical_global_pca_features_are_direct_candidates() -> None:
+    pca = "pca_pc_001"
+    contract = build_feature_role_contract((TEMPORAL_KEY, *CORE_FEATURES, pca))
+
+    assert contract.assignment(pca).role is FeatureRole.PCA
+    assert contract.pca_features == (pca,)
+    assert contract.validate_stage_features(FeatureStage.QUALITY, (pca,)) == (pca,)
+    assert contract.validate_stage_features(FeatureStage.CORRELATION, (pca,)) == (pca,)
+    assert contract.validate_stage_features(FeatureStage.SFFS, (pca,)) == (pca,)
+    assert contract.validate_stage_features(FeatureStage.HMM, (pca,)) == (pca,)
+    assert contract.direct_hmm_candidates[-1] == pca
+
+
+def test_noncanonical_global_pca_feature_fails_closed() -> None:
+    with pytest.raises(ValueError, match="unclassifiable"):
+        build_feature_role_contract((TEMPORAL_KEY, *CORE_FEATURES, "pca_pc_009"))
 
 
 def test_family_pc_identity_is_bounded_and_fail_closed() -> None:

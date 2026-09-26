@@ -5,7 +5,6 @@ from __future__ import annotations
 import multiprocessing
 import os
 import pickle
-import threading
 import warnings
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
@@ -65,12 +64,13 @@ def cpu_process_pool(
     if os.environ.get("REGIME_CPU_PROCESS_WORKER") == "1":
         raise RuntimeError("process-pool workers may not create child process pools")
     worker_limit = cpu_worker_count(max_workers)
-    methods = multiprocessing.get_all_start_methods()
-    context: BaseContext
-    if "fork" in methods and threading.current_thread() is threading.main_thread():
-        context = multiprocessing.get_context("fork")
-    else:
-        context = multiprocessing.get_context("spawn")
+    # Never fork a live application process.  The evaluation parent has
+    # already initialized MLflow, HTTP and test-runner threads; forking after
+    # that point can copy a locked mutex into every child and leave the parent
+    # waiting forever for futures whose workers are idle in futex.  Spawn
+    # starts a clean interpreter and keeps the pool GIL-independent without
+    # inheriting those locks.
+    context: BaseContext = multiprocessing.get_context("spawn")
     with warnings.catch_warnings():
         if context.get_start_method() == "fork":
             warnings.filterwarnings(
@@ -79,13 +79,22 @@ def cpu_process_pool(
                 module=r"multiprocessing\.popen_fork",
             )
         pool_initializer = cast(Callable[[], object], _initialize_process_worker)
-        with ProcessPoolExecutor(
+        executor = ProcessPoolExecutor(
             max_workers=worker_limit,
             mp_context=context,
             initializer=pool_initializer,
             initargs=cast(tuple[()], (initializer, initargs, cpu_affinity)),
-        ) as executor:
+        )
+        try:
             yield executor
+        except BaseException:
+            terminate = getattr(executor, "terminate_workers", None)
+            if terminate is not None:
+                terminate()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
 
 
 __all__ = ["cpu_process_pool", "is_pickleable"]

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import pickle
+import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from math import tanh
 from typing import Any, cast
@@ -13,7 +15,11 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from market_regime_engine.commands.canonical_xetra import CanonicalStageCallbacks
-from market_regime_engine.evaluation.calendar_clock import CalendarMonthFold, plan_calendar_month
+from market_regime_engine.evaluation.calendar_clock import (
+    CalendarMonthFold,
+    CalendarMonthPlan,
+    plan_calendar_month,
+)
 from market_regime_engine.evaluation.errors import RecoverableEvaluationInvalidity
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_subset_score import (
@@ -23,11 +29,20 @@ from market_regime_engine.feature_discovery.feature_subset_score import (
     to_sffs_score,
 )
 from market_regime_engine.feature_discovery.monthly_refit import StageCallbacks
-from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
+from market_regime_engine.feature_discovery.sffs import (
+    FeatureSubsetScore,
+    FrontierFeatureSubsetEvaluator,
+    FrontierFoldJob,
+)
 from market_regime_engine.features.ports import FeatureCatalogSnapshot
 from market_regime_engine.profiles.config import ModelProfile
+from market_regime_engine.runtime.task_frontier import SharedTaskFrontier
 from market_regime_engine.training.adapter_factory import CandidateAdapterFactory
-from market_regime_engine.training.multistart import MultistartResult, run_multistart
+from market_regime_engine.training.multistart import (
+    MultistartBatchJob,
+    MultistartResult,
+    run_multistart,
+)
 
 
 def _hash(value: object) -> str:
@@ -56,17 +71,27 @@ class CanonicalModelCallbacks:
     _bound_feature_values: Mapping[str, Sequence[float]] | None = field(
         default=None, repr=False, compare=False
     )
+    _effective_train_cache: pd.DataFrame | None = field(default=None, repr=False, compare=False)
 
     def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
         object.__setattr__(self, "_bound_feature_values", dict(values))
+        object.__setattr__(self, "_effective_train_cache", None)
 
     def _effective_train(self) -> pd.DataFrame:
         if self._bound_feature_values is None:
             return self.train
-        frame = self.train.copy()
-        for name, values in self._bound_feature_values.items():
-            frame[name] = tuple(values)
-        return frame
+        if self._effective_train_cache is not None:
+            return self._effective_train_cache
+        # Candidate evaluation binds the fold-local PCA values repeatedly.
+        # Inserting each bound column independently fragments the pandas
+        # BlockManager and turns this hot path into an effectively serial
+        # O(number-of-features) copy for every candidate.  Build the bound
+        # block once and replace any colliding names in one concatenation.
+        bound = pd.DataFrame(self._bound_feature_values, index=self.train.index)
+        base = self.train.drop(columns=bound.columns, errors="ignore")
+        effective = pd.concat((base, bound), axis=1, copy=False)
+        object.__setattr__(self, "_effective_train_cache", effective)
+        return effective
 
     @property
     def hmm_selector_contract_hash(self) -> str:
@@ -75,19 +100,26 @@ class CanonicalModelCallbacks:
     def _matrix(self, frame: pd.DataFrame, features: tuple[str, ...]) -> np.ndarray[Any, Any]:
         if not features or any(feature not in frame.columns for feature in features):
             raise ValueError("canonical HMM callback received unknown or empty features")
-        selected = frame.loc[:, list(features)].dropna(axis=0, how="any")
-        values = selected.to_numpy(dtype=np.float64, copy=True)
+        selected = frame.loc[:, list(features)].to_numpy(dtype=np.float64, copy=True)
+        values = selected[np.isfinite(selected).all(axis=1)]
         if values.ndim != 2 or values.shape[0] < 2 or not np.isfinite(values).all():
             raise ValueError("canonical HMM callback requires finite TRAIN observations")
         return cast(np.ndarray[Any, Any], values)
 
     def _fit(self, features: tuple[str, ...], state_count: int) -> MultistartResult:
         matrix = self._matrix(self._effective_train(), features)
+        # A canonical candidate may itself be evaluated inside the shared
+        # process frontier.  Never create a child pool from that worker; the
+        # frontier already supplies the CPU lane.  Direct parent calls retain
+        # the configured multistart parallelism.
+        effective_workers = (
+            1 if os.environ.get("REGIME_CPU_PROCESS_WORKER") == "1" else self.max_workers
+        )
         return run_multistart(
             matrix,
             state_count=state_count,
             adapter_factory=CandidateAdapterFactory("gaussian_hmm", features),
-            max_workers=self.max_workers,
+            max_workers=effective_workers,
         )
 
     @staticmethod
@@ -139,6 +171,9 @@ class CanonicalModelCallbacks:
                 source_build_id=self.source_build_id,
                 max_workers=self.max_workers,
             )
+            fold_callbacks.bind_feature_values(
+                {name: tuple(train[name].tolist()) for name in features}
+            )
             try:
                 fit = fold_callbacks._fit(features, state_count)
                 adapter = CandidateAdapterFactory("gaussian_hmm", features)()
@@ -174,7 +209,14 @@ class CanonicalModelCallbacks:
             evaluation_plan_hash=plan.plan_hash,
             folds=tuple(evidence),
         )
-        return to_sffs_score(score_feature_subset(candidate, latest_fold_id=plan.folds[-1].fold_id))
+        score = to_sffs_score(
+            score_feature_subset(candidate, latest_fold_id=plan.folds[-1].fold_id)
+        )
+        return (
+            None
+            if score is None
+            else replace(score, model_family="gaussian_hmm", state_count=state_count)
+        )
 
     def evaluate_subset(self, features: tuple[str, ...]) -> FeatureSubsetScore | None:
         try:
@@ -258,9 +300,113 @@ class CanonicalModelCallbacks:
             evaluate_hmm_subset=self.evaluate_hmm_subset,
             hmm_selector_contract_hash=self.hmm_selector_contract_hash,
             fit_final_hmm=self.fit_final_hmm,
-            evaluate_gaussian_subset_by_k=self.evaluate_gaussian_subset_by_k,
+            evaluate_gaussian_subset_by_k=_CanonicalGaussianSubsetBatchEvaluator(self),
             evaluate_outer_test=self.evaluate_outer_test,
         )
+
+
+@dataclass(slots=True)
+class _CanonicalGaussianSubsetBatchEvaluator:
+    """Flatten candidate/inner-fold HMM starts into the shared CPU frontier."""
+
+    callbacks: CanonicalModelCallbacks
+    frontier: SharedTaskFrontier[Any, Any] | None = None
+    _cached_inner_plan: CalendarMonthPlan | None = field(default=None, init=False, repr=False)
+    _inner_plan_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __call__(self, state_count: int, features: tuple[str, ...]) -> FeatureSubsetScore | None:
+        return self.callbacks._inner_score(features, state_count)
+
+    def bind_feature_values(self, values: Mapping[str, Sequence[float]]) -> None:
+        self.callbacks.bind_feature_values(values)
+
+    def bind_execution_frontier(self, frontier: object) -> None:
+        self.frontier = cast(SharedTaskFrontier[Any, Any] | None, frontier)
+
+    def _inner_plan(self) -> CalendarMonthPlan:
+        if self._cached_inner_plan is not None:
+            return self._cached_inner_plan
+        with self._inner_plan_lock:
+            if self._cached_inner_plan is None:
+                source_train = self.callbacks._effective_train()
+                self._cached_inner_plan = plan_calendar_month(
+                    tuple(source_train.loc[:, "timestamp_m1"].tolist()),
+                    minimum_train_source_observations=(
+                        self.callbacks.profile.feature_discovery.inner_train_source_observations
+                    ),
+                )
+            return self._cached_inner_plan
+
+    def _job_factory(
+        self, state_count: int, features: tuple[str, ...]
+    ) -> tuple[FrontierFoldJob, ...]:
+        source_train = self.callbacks._effective_train()
+        jobs: list[FrontierFoldJob] = []
+        for fold in self._inner_plan().folds:
+            train = source_train.iloc[: fold.train_source_observations]
+            matrix = self.callbacks._matrix(train, features)
+            job_id = f"{fold.fold_id}:{','.join(features)}"
+            jobs.append(
+                FrontierFoldJob(
+                    features,
+                    fold.fold_id,
+                    MultistartBatchJob(
+                        job_id,
+                        matrix,
+                        state_count,
+                        CandidateAdapterFactory("gaussian_hmm", features),
+                    ),
+                )
+            )
+        return tuple(jobs)
+
+    def _evidence_factory(
+        self, entry: FrontierFoldJob, result: MultistartResult
+    ) -> FeatureSubsetFoldEvidence:
+        source_train = self.callbacks._effective_train()
+        fold = next(item for item in self._inner_plan().folds if item.fold_id == entry.fold_id)
+        test = source_train.iloc[
+            fold.train_source_observations : fold.train_source_observations
+            + fold.test_source_observations
+        ]
+        adapter = CandidateAdapterFactory("gaussian_hmm", entry.candidate_subset)()
+        adapter.reconstruct(result.winner.artifact)
+        filtered = adapter.causal_filter(self.callbacks._matrix(test, entry.candidate_subset))
+        target = filtered.log_likelihood / max(1, len(test))
+        bounded = (tanh(abs(target)) + 1.0) / 2.0
+        plan = self._inner_plan()
+        return FeatureSubsetFoldEvidence(
+            fold_id=entry.fold_id,
+            valid=True,
+            latest=entry.fold_id == plan.folds[-1].fold_id,
+            target_log_score=target,
+            baseline_target_log_score=0.0,
+            calibration_error=1.0 - bounded,
+            stability_score=result.success_rate,
+            support_score=min(1.0, len(test) / 42.0),
+        )
+
+    def evaluate_many(
+        self,
+        feature_sets: Sequence[tuple[str, ...]],
+        *,
+        state_count: int,
+    ) -> tuple[FeatureSubsetScore | None, ...]:
+        if self.frontier is None:
+            return tuple(self(state_count, features) for features in feature_sets)
+        plan = self._inner_plan()
+        evaluator = FrontierFeatureSubsetEvaluator(
+            self._job_factory,
+            self._evidence_factory,
+            _hash,
+            self.callbacks.source_build_id,
+            plan.plan_hash,
+            plan.folds[-1].fold_id,
+            state_count,
+            max_workers=self.callbacks.max_workers,
+            frontier=self.frontier,
+        )
+        return evaluator.evaluate_many(feature_sets, state_count=state_count)
 
 
 def build_canonical_stage_factory(
@@ -269,11 +415,14 @@ def build_canonical_stage_factory(
     catalog: FeatureCatalogSnapshot,
     source_build_id: str,
     max_workers: int | None,
-) -> Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold], StageCallbacks]:
+) -> Callable[[pd.DataFrame, pd.DataFrame, CalendarMonthFold, int], StageCallbacks]:
     """Return a pickle-safe per-fold callback factory for the public backend."""
 
     def factory(
-        train: pd.DataFrame, test: pd.DataFrame, _fold: CalendarMonthFold
+        train: pd.DataFrame,
+        test: pd.DataFrame,
+        _fold: CalendarMonthFold,
+        fold_workers: int,
     ) -> StageCallbacks:
         return cast(
             StageCallbacks,
@@ -283,7 +432,7 @@ def build_canonical_stage_factory(
                 profile=profile,
                 catalog=catalog,
                 source_build_id=source_build_id,
-                max_workers=max_workers,
+                max_workers=min(max_workers or fold_workers, fold_workers),
             ).as_callbacks(),
         )
 

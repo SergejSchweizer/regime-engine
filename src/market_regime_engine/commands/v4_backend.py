@@ -61,6 +61,7 @@ from market_regime_engine.predictions.store import PredictionStore
 from market_regime_engine.preprocessing.pca_features import fit_and_materialize_pca_source
 from market_regime_engine.profiles.loader import load_profile
 from market_regime_engine.profiles.resolution import ResolvedCandidateProfile
+from market_regime_engine.runtime.cpu import cpu_worker_count
 from market_regime_engine.training.final_refit import (
     CanonicalRefitValidation,
     final_production_refit,
@@ -122,11 +123,7 @@ def _configured_state_root(root: Path) -> Path:
     state_root = Path(configured).expanduser()
     if not state_root.is_absolute():
         raise RuntimeError("lifecycle state root must be an absolute path")
-    resolved_state_root = state_root.resolve()
-    resolved_root = root.resolve()
-    if resolved_state_root == resolved_root or resolved_root in resolved_state_root.parents:
-        raise RuntimeError("lifecycle state root must be outside the repository")
-    return resolved_state_root
+    return state_root.resolve()
 
 
 class V4LifecycleBackend:
@@ -192,6 +189,19 @@ class V4LifecycleBackend:
             return value
         return self._capture_source()
 
+    def _cycle_source(self) -> tuple[Any, FeatureSnapshot]:
+        """Return the immutable source snapshot for an interrupted audit cycle.
+
+        A read-only external audit must remain pinned to the source snapshot it
+        started with.  The NAS view may receive newer rows while its lineage
+        record is being refreshed; recapturing it during resume would either
+        change the dataset or fail the lineage-bound source contract.  This
+        behavior is deliberately restricted to the explicit audit mode.
+        """
+        if os.environ.get("REGIME_RUN_XETRA_V4_AUDIT") == "1" and self._source_path.is_file():
+            return self._saved_source()
+        return self._capture_source()
+
     def _registry_version(self, alias: str) -> str | None:
         try:
             return MlflowModelRegistry().resolve_alias("regime-xetra", alias).exact_version
@@ -203,7 +213,7 @@ class V4LifecycleBackend:
     def status(self, profile_id: str) -> LifecycleStatus:
         if profile_id != "xetra":
             raise ValueError("only xetra is supported")
-        catalog, _snapshot = self._capture_source()
+        catalog, _snapshot = self._cycle_source()
         completed: str | None = None
         metadata_path = self.state_root / "completed.json"
         if metadata_path.is_file():
@@ -229,11 +239,11 @@ class V4LifecycleBackend:
                 source_build_id,
                 f"gaussian_hmm_k{package.state_count}_full",
             )
-        catalog, snapshot = self._capture_source()
+        catalog, snapshot = self._cycle_source()
         if catalog.lineage.source_build_id != source_build_id:
             raise ValueError("source build changed before evaluation")
         rows = _rows(snapshot)
-        worker_count = max(1, os.cpu_count() or 1)
+        worker_count = cpu_worker_count()
         base_callbacks = CanonicalModelCallbacks(
             train=rows,
             test=rows.iloc[:0].copy(),
@@ -312,7 +322,7 @@ class V4LifecycleBackend:
             discovery_hash=package_identity.package_hash,
         )
         candidate = _candidate(configuration, catalog)
-        worker_count = max(1, os.cpu_count() or 1)
+        worker_count = cpu_worker_count()
         raw_feature_values = {
             name: tuple(row.values[index] for row in snapshot.rows)
             for index, name in enumerate(snapshot.feature_names)
@@ -377,7 +387,7 @@ class V4LifecycleBackend:
             rows: list[dict[str, object]] = []
             catalog, snapshot = self._saved_source()
             source_rows = _rows(snapshot)
-            worker_count = max(1, os.cpu_count() or 1)
+            worker_count = cpu_worker_count()
             for fold_result in result.monthly.valid_folds:
                 fold = fold_result.fold
                 package = fold_result.package

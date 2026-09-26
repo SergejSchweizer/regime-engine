@@ -176,7 +176,6 @@ def prune_global_correlated_features(
         for left_index in range(len(ordered_names))
         for right_index in range(left_index + 1, len(ordered_names))
     )
-    candidate_index = {name: index for index, name in enumerate(ordered_names)}
     edges: dict[tuple[int, int], _Redundancy] = {}
     if pair_indexes:
         with (
@@ -211,34 +210,33 @@ def prune_global_correlated_features(
                 for left_index, right_index, redundant in tile:
                     edges[(left_index, right_index)] = redundant
 
+    # Build the graph once.  The previous implementation rebuilt every
+    # candidate pair's neighborhood on every greedy iteration.  With a
+    # largely uncorrelated universe that made the deterministic reduction
+    # O(n^3) in Python and dominated the fold before any HMM frontier could
+    # start.  Removing a leader and its direct duplicates only changes the
+    # neighborhoods of those removed vertices, so maintain adjacency maps
+    # incrementally instead.
+    neighborhoods: dict[str, dict[str, _Redundancy]] = {name: {} for name in ordered_names}
+    for (left_index, right_index), redundancy in edges.items():
+        left_name = ordered_names[left_index]
+        right_name = ordered_names[right_index]
+        neighborhoods[left_name][right_name] = redundancy
+        neighborhoods[right_name][left_name] = redundancy
+
     remaining = set(ordered_names)
     representatives: list[str] = []
     removed: list[str] = []
     evidence: list[GlobalCorrelationEvidence] = []
     while remaining:
         candidates = tuple(sorted(remaining, key=lambda name: canonical_order[name]))
-        neighborhoods: dict[
-            str,
-            list[tuple[str, _Redundancy]],
-        ] = {name: [] for name in candidates}
-        for left_index, left_name in enumerate(candidates):
-            for right_name in candidates[left_index + 1 :]:
-                left_order = candidate_index[left_name]
-                right_order = candidate_index[right_name]
-                pair = (min(left_order, right_order), max(left_order, right_order))
-                edge_redundancy = edges.get(pair)
-                if edge_redundancy is None:
-                    continue
-                neighborhoods[left_name].append((right_name, edge_redundancy))
-                neighborhoods[right_name].append((left_name, edge_redundancy))
 
         def leader_key(
             name: str,
-            neighborhoods: dict[str, list[tuple[str, _Redundancy]]] = neighborhoods,
         ) -> tuple[int, float, float, int, int]:
             neighborhood = neighborhoods[name]
             correlation_median = (
-                median(item[1][0] for item in neighborhood) if neighborhood else 0.0
+                median(item[0] for item in neighborhood.values()) if neighborhood else 0.0
             )
             coverage = sum(value is not None for value in feature_values[name]) / len(
                 feature_values[name]
@@ -253,7 +251,9 @@ def prune_global_correlated_features(
 
         leader = min(candidates, key=leader_key)
         representatives.append(leader)
-        direct_duplicates = sorted(neighborhoods[leader], key=lambda item: canonical_order[item[0]])
+        direct_duplicates = sorted(
+            neighborhoods[leader].items(), key=lambda item: canonical_order[item[0]]
+        )
         for duplicate_name, redundant in direct_duplicates:
             removed.append(duplicate_name)
             evidence.append(
@@ -266,7 +266,12 @@ def prune_global_correlated_features(
                     subwindow_support_counts=redundant[3],
                 )
             )
-        remaining.difference_update((leader, *(name for name, _ in direct_duplicates)))
+        removed_names = (leader, *(name for name, _ in direct_duplicates))
+        remaining.difference_update(removed_names)
+        for removed_name in removed_names:
+            for neighbor in tuple(neighborhoods[removed_name]):
+                neighborhoods[neighbor].pop(removed_name, None)
+            neighborhoods[removed_name].clear()
 
     representatives.sort(key=lambda name: canonical_order[name])
     removed.sort(key=lambda name: canonical_order[name])

@@ -1,7 +1,7 @@
 <!-- owner: backlog -->
 # Regime Engine — Canonical Backlog
 
-Status date: 2026-09-20
+Status date: 2026-09-25
 
 This file is the **single authoritative backlog** for `regime-engine`.
 Open and acceptance-pending work is kept at the top. Completed implementation and
@@ -69,9 +69,10 @@ PR-448
 
 ### Current repository and external state
 
-- `origin/main` is `9165249`; local working branch is
-  `pr/PR-476-feature-role-selection-contract` at the current pushed `HEAD`;
-  the working tree is clean before this backlog update.
+- `origin/main` is `437150c`; local working branch is
+  `pr/PR-503-current-xetra-readonly-audit` at the current pushed `HEAD` (in sync
+  with `origin/pr/PR-503-current-xetra-readonly-audit`); the working tree is
+  clean before this backlog update.
 - The previous K-slot implementation/QA closures are preserved in Git history
   and their local acceptance evidence is complete; this cutover intentionally
   supersedes their old planning text with the scalable PR-449–PR-531 chain.
@@ -93,10 +94,29 @@ PR-448
   implementation branches are retained
   only as rebased pointers to `origin/main` for the current branch-retention
   policy.
-- **Current active implementation:** PR-476 is GitHub PR #456 on branch
-  `pr/PR-476-feature-role-selection-contract`; GitHub Git-Policy, Lint, Type,
-  Unit and Merge-Gate checks are green. Full evaluation is intentionally not
-  run.
+- **Current active implementation:** PR-503 is GitHub PR #505 on branch
+  `pr/PR-503-current-xetra-readonly-audit`; local focused audit tests pass
+  (`13 passed`, external test skipped unless explicitly enabled), MLflow health
+  is reachable, and the read-only password file is present. The current branch
+  is pushed at `b099c6c`; the latest local PCA diagnostic tests pass (`11
+  passed`) and the parallel QA regression suite passes (`4 passed`). The GitHub unit gate was found executing the local-only slow
+  Hermetic v4 proof; the gate contract is being corrected to exclude the
+  `slow` marker while retaining that proof for local/dedicated runs. No
+  evaluation process is active, and external acceptance evidence is not yet
+  archived. Run7 now has valid atomic checkpoints through fold 021 (the first
+  five are reused and folds 006--021 were committed during the resumed run).
+  Fold 022 was left in `computing / feature_selection` when the detached
+  process ended again without a terminal record; no fold is marked failed.
+  The checkpoints are useful resumable state, but they do not by themselves
+  satisfy the source/provenance/archive acceptance evidence. No PR is closed
+  and no remote or local branch is deleted while PR-503 remains
+  acceptance-pending.
+  The resume path now pins an existing audit `source.pkl` instead of
+  recapturing a changed NAS view; this was required after the view grew to
+  4,431 rows through 2026-09-25 while the immutable lineage row still covered
+  4,426 rows through 2026-09-18. The NAS was queried read-only and was not
+  modified. The fix is covered by 15 backend unit tests, Ruff, Mypy and the
+  local Hermetic integration gate.
 
 ---
 
@@ -1955,6 +1975,123 @@ worker-budget report, stage report and local SQLite MLflow database.
 
 **Type:** external QA / read-only
 **Depends on:** PR-523 and a production-eligible upstream source snapshot
+
+**Current status:** ACCEPTANCE PENDING — the authorized audit is prepared against the NAS
+`macro_loader.macro_features` source with the read-only `macro-loader` role and the
+production MLflow tracking endpoint. Implementation is pushed on branch
+`pr/PR-503-current-xetra-readonly-audit` at its current rebased `HEAD` in GitHub
+PR #505.
+Fold-level checkpoint files are written atomically only after successful DuckDB
+metadata commits and are reused only when source build/data/catalog, calendar plan,
+profile, role-contract and algorithm identities all match. The persistent
+`fold-progress.json` state records the last computing, tracking, commit or failure
+stage for every fold. Candidate and inner-fold HMM scoring now share one process
+frontier, flattening the eight-seed jobs instead of evaluating 23 inner folds
+serially per candidate. The batch frontier activation was corrected after a
+short replacement run exposed a parent-thread fallback; the authorized run was
+terminated before acceptance evidence was produced. Global correlation now uses
+the same per-fold worker budget as the other CPU stages. Bound fold feature
+columns are now assembled in one pandas block to avoid the prior fragmented,
+serial candidate-preparation hotspot. Global correlation reduction now keeps
+incremental adjacency maps instead of rebuilding all candidate pairs for every
+greedy iteration. Inner calendar plans and bound TRAIN frames are now cached per
+fold-local evaluator; tracing confirmed the prior hotspot was repeated
+`plan_calendar_month` construction in every SFFS candidate. The next run must use
+the process frontier; the cache initialization is now synchronized across the
+parallel K-slot coordinators. The previous authorized run used one outer fold
+with 86 inner workers to make the first fold checkpoint observable sooner; it
+failed on fold 001 in `feature_selection` with `ValueError: array must not
+contain infs or NaNs` and was stopped while fold 002 was still computing; no
+fold checkpoint or acceptance evidence exists yet. Failure tracebacks are now
+persisted in `fold-progress.json` for the next diagnostic run. It still must
+produce the contract and archived evidence before any acceptance criterion is
+marked complete.
+The backend now resolves workers through `cpu_worker_count()`, so the configured
+`REGIME_CPU_WORKERS=86` budget is honored instead of using raw `os.cpu_count()`.
+The live run exposed and the batch frontier now fixes a contract bug where one
+candidate's 5/8-start invalidity aborted the whole fold; invalid candidates are
+discarded locally, matching the serial evaluator behavior. The next run must
+confirm that folds continue past such candidates and produce valid checkpoints.
+Plain numerical `ValueError` failures from a HMM start that explicitly report
+nonfinite intermediates are now converted to failed-start evidence, while
+adapter contract errors remain fatal. This closes the observed failure mode
+that stopped fold 001 before a checkpoint. The replacement run was stopped
+after fold 001 exposed a third numerical candidate failure: `'covars' must be
+symmetric, positive-definite`. The full traceback is persisted in
+`fold-progress.json`; this error is now treated as a failed multistart seed
+while adapter contract errors remain fatal. The targeted suite passes 42 tests.
+The next run must confirm that the fold reaches the checkpoint stage.
+The diagnostic trace also found repeated pandas candidate/fold slicing before
+frontier submission; matrix conversion now uses NumPy finite-row filtering while
+retaining the original pandas slice boundaries. A first single-fold run exposed
+and the follow-up fixed a row-alignment error in the more aggressive cache. The
+next run must verify that the corrected path produces valid fold results. The
+latest run then exposed a production-contract mismatch: SFFS could return a
+singleton even though ablation and final package validation require at least two
+features. Production and K-slot SFFS now enforce `minimum_features=2`; the
+generic selector remains capable of testing a singleton, and the focused suite
+passes 70 tests. The run was stopped after fold 001 recorded
+`ValueError: ablation requires a selected tuple with at least two features`;
+the next run must verify that the enforced minimum reaches a valid checkpoint.
+The subsequent full local-state run exposed a separate deterministic defect:
+Family-PCA materialization rebuilt its input from all family columns after
+near-duplicate pruning, rather than using the frozen per-artifact feature order.
+Folds 001--004 therefore failed with `ValueError: family PCA rows must match the
+exact TRAIN feature order`; the operator stopped all evaluations before any
+acceptance evidence was created. Materialization now uses
+`FamilyPCAArtifact.feature_order`, with a regression test that first prunes a
+family near-duplicate and then materializes its PC. The corrected branch must be
+rebased, pushed, and rerun from a fresh state before any acceptance criterion is
+marked complete.
+
+The fresh `pr503-run5-state` execution was then controlled-stopped after
+approximately 6 hours 49 minutes in `fold_001 / feature_selection`: all 86
+workers remained CPU-active, but no fold checkpoint or metadata commit existed.
+The run produced no acceptance evidence and must not be counted as a successful
+fold.
+
+The next optimization was pushed on the current branch as
+`ead7577`: frontier workers now pass an immutable normal `ndarray` view over
+the file-backed candidate matrix instead of copying the complete matrix once
+per HMM seed. Gaussian, GMM and Student-t adapter tests confirmed read-only
+consumption, and the focused multistart/model suite passed (`36 passed`). A
+fresh authorized audit is currently running from
+`/home/dev_regime/.cache/regime-engine/pr503-run6-state` with
+`REGIME_CPU_WORKERS=86` and one outer fold at a time. At the latest observation
+(2026-09-25 19:17 local), PID `292598` was healthy with 86 active CPU-bound
+workers in `fold_001 / feature_selection`; no checkpoint exists yet, so no
+acceptance criterion is marked complete.
+The run then reached `fold_001 / outer_test` and failed with
+`ValueError: canonical HMM callback received unknown or empty features`: the final
+PCA-bound callback was invoked with the original raw TEST frame, so generated PCA
+features were absent. The run was controlled-stopped while fold 002 was still in
+feature selection; no checkpoint or acceptance evidence exists. Final TRAIN/TEST
+PCA materialization is now passed through to the final HMM and Outer TEST callback,
+with a regression test covering generated PCA features. The fix is local and must
+be pushed before the next authorized audit run.
+Run7 was then started from the fresh state root
+`/home/dev_regime/.cache/regime-engine/pr503-run7-state` with the pushed PCA fix,
+the NAS read-only source, `REGIME_OUTER_FOLD_WORKERS=1` and
+`REGIME_CPU_WORKERS=86`. At the latest observation (2026-09-25 19:42 local),
+fold 001 was healthy in `feature_selection` with all 86 process workers active;
+no fold checkpoint or acceptance evidence exists yet, and the audit remains in
+progress.
+Run7 has now completed fold 001: the fold reached `committed / checkpoint` and
+produced the atomically written `fold_001.pickle` with package hash
+`56bc85e2097938594afe8f50a9df82fd08c947c8f613eb3100a9a50cae592e7c`.
+Fold 002 is computing in `feature_selection` with the 86-worker budget. This is
+the first successful fold checkpoint in the current audit, but the external
+acceptance criteria remain pending until the required source, provenance,
+multi-fold, read-only, and archive evidence is complete.
+The run has since committed fold 002 as a second checkpoint with package hash
+`3abbf968a70d0fecc88096eeb7664027f12ef9251781ca4d913662a54ffdc194` and then
+committed folds 003--021. The resumed run reused folds 001--005 and committed
+folds 006--021 without any failed-fold entry. Fold 022 entered
+`feature_selection`, but the detached process ended again without a terminal
+state or evidence archive. Run7 therefore has 21 of 142 folds available and
+can resume from the existing checkpoints; all PR-503 acceptance criteria
+remain open until the required source, provenance, read-only and archive
+evidence is produced.
 
 #### Acceptance
 

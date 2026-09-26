@@ -113,7 +113,7 @@ class FrontierFeatureSubsetEvaluator:
 
     job_factory: Callable[[int, tuple[str, ...]], tuple[FrontierFoldJob, ...]]
     evidence_factory: Callable[[FrontierFoldJob, MultistartResult], FeatureSubsetFoldEvidence]
-    feature_order_hash: str
+    feature_order_hash: str | Callable[[tuple[str, ...]], str]
     source_build_id: str
     evaluation_plan_hash: str
     latest_fold_id: str
@@ -143,19 +143,29 @@ class FrontierFeatureSubsetEvaluator:
         results = run_multistart_batch(
             tuple(entry.job for entry in entries),
             max_workers=self.max_workers,
+            # A failed multistart gate invalidates only this candidate/fold.
+            # The serial callback path has the same candidate-local contract;
+            # allowing the batch to return None keeps one bad candidate from
+            # aborting the complete outer fold.
+            allow_invalid=True,
             frontier=self.frontier,
         )
         evidence_by_candidate: dict[tuple[str, ...], list[FeatureSubsetFoldEvidence]] = {
             candidate: [] for candidate in candidates
         }
+        invalid_candidates: set[tuple[str, ...]] = set()
         for entry, result in zip(entries, results, strict=True):
             if result is None:
-                raise RuntimeError("frontier SFFS multistart gate failed")
+                invalid_candidates.add(entry.candidate_subset)
+                continue
             evidence_by_candidate[entry.candidate_subset].append(
                 self.evidence_factory(entry, result)
             )
         scores: list[FeatureSubsetScore | None] = []
         for candidate in candidates:
+            if candidate in invalid_candidates:
+                scores.append(None)
+                continue
             evidence = tuple(
                 sorted(evidence_by_candidate[candidate], key=lambda item: item.fold_id)
             )
@@ -165,7 +175,11 @@ class FrontierFeatureSubsetEvaluator:
             breakdown = score_feature_subset(
                 FeatureSubsetCandidate(
                     candidate,
-                    self.feature_order_hash,
+                    (
+                        self.feature_order_hash(candidate)
+                        if callable(self.feature_order_hash)
+                        else self.feature_order_hash
+                    ),
                     self.source_build_id,
                     self.evaluation_plan_hash,
                     evidence,
@@ -262,6 +276,7 @@ def select_sffs(
     score: ScoreFunction,
     *,
     max_features: int = SFFS_MAX_FEATURES,
+    minimum_features: int = 1,
     max_workers: int | None = None,
     frontier: SharedTaskFrontier[ScoreFunction, FeatureSubsetScore | None] | None = None,
     frontier_state_count: int = 2,
@@ -277,6 +292,10 @@ def select_sffs(
     candidate_tuple = _canonical_subset(candidates)
     if max_features < 1 or max_features > SFFS_MAX_FEATURES:
         raise ValueError("SFFS max_features must be between 1 and 10")
+    if minimum_features < 1 or minimum_features > SFFS_MAX_FEATURES:
+        raise ValueError("SFFS minimum_features must be between 1 and 10")
+    if minimum_features > max_features:
+        raise ValueError("SFFS minimum_features cannot exceed max_features")
     if max_features > len(candidate_tuple):
         max_features = len(candidate_tuple)
     candidate_order = {name: index for index, name in enumerate(candidate_tuple)}
@@ -347,6 +366,8 @@ def select_sffs(
                 best = (features, evaluated)
         if best is None:
             raise ValueError("SFFS requires at least one eligible singleton")
+        if len(candidate_tuple) < minimum_features:
+            raise ValueError("SFFS has fewer candidates than its minimum feature count")
 
         selected, selected_score = best
         steps = [SFFSStep("start", selected, selected_score)]
@@ -362,9 +383,13 @@ def select_sffs(
             )
             forward: tuple[tuple[str, ...], FeatureSubsetScore] | None = None
             for proposal, evaluated in zip(forward_sets, forward_scores, strict=True):
+                improves = evaluated is not None and (
+                    evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
+                )
+                reaches_minimum = len(selected) < minimum_features
                 if (
                     evaluated is not None
-                    and evaluated.value > selected_score.value + SCORE_ABS_TOLERANCE
+                    and (improves or reaches_minimum)
                     and _better((proposal, evaluated), forward, candidate_order)
                 ):
                     forward = (proposal, evaluated)
@@ -374,7 +399,7 @@ def select_sffs(
             visited.add(selected)
             steps.append(SFFSStep("add", selected, selected_score))
 
-            while len(selected) > 1:
+            while len(selected) > minimum_features:
                 backward_sets = tuple(
                     tuple(item for item in selected if item != name) for name in selected
                 )

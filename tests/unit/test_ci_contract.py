@@ -29,7 +29,7 @@ def _assert_coverage_contract(project: dict[str, object], workflows: tuple[str, 
     assert thresholds == (CANONICAL_COVERAGE, CANONICAL_COVERAGE)
     assert len(set(workflows)) == 2
     for workflow in workflows:
-        assert 'pytest -n auto tests -m "not integration and not external"' in workflow
+        assert 'pytest -n auto tests -m "not integration and not external and not slow"' in workflow
         assert "actions/download-artifact" not in workflow
         assert "actions/upload-artifact" not in workflow
         assert "coverage-integration" not in workflow

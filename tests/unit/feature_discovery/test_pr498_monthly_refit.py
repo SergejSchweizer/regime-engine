@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -148,6 +149,68 @@ def test_monthly_refit_uses_only_closed_train_prefix_and_freezes_package_identit
     assert tracking.ended[-1] == "run-0"
 
 
+def test_final_outer_test_receives_pca_materialized_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source()
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    generated = ("family_pc_test",)
+    observed_test_columns: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        module, "filter_outer_train_quality", lambda *args, **kwargs: _fake_quality(CORE_FEATURES)
+    )
+    monkeypatch.setattr(
+        module, "run_canonical_feature_selection", lambda *args, **kwargs: _fake_pipeline(generated)
+    )
+
+    def materialize(frame: pd.DataFrame, *_args: object) -> pd.DataFrame:
+        return frame.assign(family_pc_test=1.0)
+
+    monkeypatch.setattr(module, "_materialize_family_pca", materialize)
+
+    def stage_factory(
+        _train: pd.DataFrame, _test: pd.DataFrame, _fold: object, _workers: int
+    ) -> SimpleNamespace:
+        def outer_test(
+            _train_frame: pd.DataFrame,
+            test_frame: pd.DataFrame,
+            features: tuple[str, ...],
+            _state_count: int,
+            _model_hashes: tuple[str, ...],
+        ) -> str:
+            observed_test_columns.append(tuple(test_frame.columns))
+            assert features == generated
+            assert "family_pc_test" in test_frame
+            return "a" * 64
+
+        return SimpleNamespace(
+            evaluate_subset=lambda _features: None,
+            evaluate_hmm_subset=lambda _features: None,
+            hmm_selector_contract_hash="b" * 64,
+            fit_final_hmm=lambda _frame, _features, _states: "c" * 64,
+            evaluate_gaussian_subset_by_k=lambda _states, _features: None,
+            evaluate_outer_test=outer_test,
+        )
+
+    result = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _features: None,
+        evaluate_hmm_subset=lambda _features: None,
+        hmm_selector_contract_hash="d" * 64,
+        fit_final_hmm=lambda _frame, _features, _states: "e" * 64,
+        evaluate_gaussian_subset_by_k=lambda _states, _features: None,
+        evaluate_outer_test=lambda *_args: "f" * 64,
+        stage_callback_factory=stage_factory,
+    )
+
+    assert result.folds and all(item.valid for item in result.folds)
+    assert observed_test_columns
+
+
 def test_failed_monthly_fit_is_invalid_and_is_not_committed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -200,3 +263,75 @@ def test_failed_monthly_fit_is_invalid_and_is_not_committed(
         item.failure_reason for item in result.folds
     ]
     assert store.commits == len(result.folds) - 1
+
+
+def test_completed_fold_checkpoint_is_reused_for_same_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    source = _source()
+    catalog = _catalog()
+    profile = load_profile("configs/profiles/xetra_v4.yaml")
+    names = CORE_FEATURES
+    pipeline = _fake_pipeline(names)
+    pipeline.role_contract_hash = module.build_feature_role_contract_from_catalog(
+        catalog
+    ).contract_hash
+    monkeypatch.setattr(
+        module, "filter_outer_train_quality", lambda *args, **kwargs: _fake_quality(names)
+    )
+    monkeypatch.setattr(module, "run_canonical_feature_selection", lambda *args, **kwargs: pipeline)
+    monkeypatch.setattr(module, "_metadata_bundle", lambda **kwargs: object())
+
+    class Store:
+        def __init__(self) -> None:
+            self.database = tmp_path / "feature_selection.duckdb"
+            self.commits = 0
+
+        def commit_fold(self, _bundle: object) -> bool:
+            self.commits += 1
+            return True
+
+    store = Store()
+    calls = 0
+
+    def fit(_frame: pd.DataFrame, _selected: tuple[str, ...], _state_count: int) -> str:
+        nonlocal calls
+        calls += 1
+        return "7" * 64
+
+    first = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _: None,
+        evaluate_hmm_subset=lambda _: None,
+        hmm_selector_contract_hash="8" * 64,
+        fit_final_hmm=fit,
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "9" * 64,
+        metadata_store=store,  # type: ignore[arg-type]
+    )
+    first_calls = calls
+    second = module.run_monthly_outer_refit(
+        source,
+        catalog=catalog,
+        profile=profile,
+        evaluate_subset=lambda _: None,
+        evaluate_hmm_subset=lambda _: None,
+        hmm_selector_contract_hash="8" * 64,
+        fit_final_hmm=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("checkpointed folds must not refit")
+        ),
+        evaluate_gaussian_subset_by_k=lambda _state_count, _features: None,
+        evaluate_outer_test=lambda *_args: "9" * 64,
+        metadata_store=store,  # type: ignore[arg-type]
+    )
+
+    assert first.folds and second.folds
+    assert all(item.valid for item in first.folds)
+    assert all(item.valid for item in second.folds)
+    assert calls == first_calls
+    assert store.commits == len(first.folds)
+    progress = json.loads((tmp_path / "fold-progress.json").read_text(encoding="utf-8"))
+    assert progress["plan_hash"]
+    assert {item["state"] for item in progress["folds"].values()} == {"reused"}

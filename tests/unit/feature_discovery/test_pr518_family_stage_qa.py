@@ -26,7 +26,7 @@ _ORIGINAL_FAMILY_STAGE = pipeline_module._run_family_stage
 
 
 def delayed_family_stage(task: _FamilyStageTask) -> _FamilyStageResult:
-    time.sleep((int(task.family[-2:]) % 7) * 0.002)
+    time.sleep((sum(map(ord, task.family)) % 7) * 0.002)
     return _ORIGINAL_FAMILY_STAGE(task)
 
 
@@ -82,12 +82,11 @@ def test_all_canonical_families_have_parallel_serial_hash_parity() -> None:
     assert parallel.evidence_metadata == serial.evidence_metadata
 
 
-def test_thirty_two_independent_family_tasks_are_submitted_in_parallel(
+def test_independent_family_tasks_are_submitted_in_parallel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pipeline_module, "_run_family_stage", delayed_family_stage)
-    families = tuple(f"synthetic_family_{index:02d}" for index in range(32))
-    monkeypatch.setattr(roles_module, "TRANSFORMATION_FAMILIES", families)
+    families = TRANSFORMATION_FAMILIES
     names = tuple(f"{family}_delta_1obs" for family in families)
     assignments = tuple(
         roles_module.FeatureRoleAssignment(name, roles_module.FeatureRole.TRANSFORMATION, family)
@@ -121,5 +120,5 @@ def test_thirty_two_independent_family_tasks_are_submitted_in_parallel(
         max_sffs_features=3,
         max_workers=8,
     )
-    assert len(result.family_pca) == 32
-    assert tuple(item.family for item in result.family_pca) == families
+    assert len(result.family_pca) == len(families)
+    assert tuple(item.family for item in result.family_pca) == tuple(sorted(families))

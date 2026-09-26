@@ -26,6 +26,7 @@ class FeatureRole(StrEnum):
     TEMPORAL_KEY = "temporal_key"
     CORE = "core"
     TRANSFORMATION = "transformation"
+    PCA = "pca"
 
 
 class TransformationFamily(StrEnum):
@@ -42,6 +43,7 @@ class TransformationFamily(StrEnum):
     US_10Y = "us_10y"
     ESTR = "estr"
     USD_BROAD = "usd_broad"
+    FED = "fed"
 
 
 class FeatureStage(StrEnum):
@@ -94,8 +96,13 @@ _TRANSFORMATION_RE = re.compile(
     r"(?:_[a-z0-9]+)+$"
 )
 _LOG_RETURN_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_log_return_[0-9]+obs$")
+_EXPECTED_MOVE_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_next_expected_move_bp$")
+_FED_PATH_SLOPE_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_path_slope_m[0-9]+_bp$")
+_FED_UNCERTAINTY_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_next_uncertainty_bp$")
+_FED_REPRICING_RE = re.compile(r"^(?P<family>[a-z0-9_]+)_repricing_[0-9]+obs_bp$")
 _FAMILY_BY_LONGEST_PREFIX = tuple(sorted(TRANSFORMATION_FAMILIES, key=len, reverse=True))
 _FAMILY_PC_RE = re.compile(r"^family_pc_(?P<family>[a-z0-9_]+)_(?P<component>[1-8])$")
+_PCA_RE = re.compile(r"^pca_pc_00[1-8]$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +203,7 @@ class FeatureRoleAssignment:
 
     @property
     def direct_hmm_candidate(self) -> bool:
-        return self.role is FeatureRole.CORE
+        return self.role in (FeatureRole.CORE, FeatureRole.PCA)
 
     @property
     def family_pca_input(self) -> bool:
@@ -204,7 +211,14 @@ class FeatureRoleAssignment:
 
 
 def _family_for_name(feature_name: str) -> str | None:
-    match = _TRANSFORMATION_RE.fullmatch(feature_name) or _LOG_RETURN_RE.fullmatch(feature_name)
+    match = (
+        _TRANSFORMATION_RE.fullmatch(feature_name)
+        or _LOG_RETURN_RE.fullmatch(feature_name)
+        or _EXPECTED_MOVE_RE.fullmatch(feature_name)
+        or _FED_PATH_SLOPE_RE.fullmatch(feature_name)
+        or _FED_UNCERTAINTY_RE.fullmatch(feature_name)
+        or _FED_REPRICING_RE.fullmatch(feature_name)
+    )
     if match is None:
         return None
     family = match.group("family")
@@ -225,6 +239,8 @@ def classify_feature_name(feature_name: str) -> FeatureRoleAssignment:
         return FeatureRoleAssignment(feature_name, FeatureRole.TEMPORAL_KEY)
     if feature_name in CORE_FEATURES:
         return FeatureRoleAssignment(feature_name, FeatureRole.CORE)
+    if _PCA_RE.fullmatch(feature_name) is not None:
+        return FeatureRoleAssignment(feature_name, FeatureRole.PCA)
     family = _family_for_name(feature_name)
     if family is not None:
         return FeatureRoleAssignment(feature_name, FeatureRole.TRANSFORMATION, family)
@@ -256,6 +272,10 @@ class FeatureRoleContract:
         )
 
     @property
+    def pca_features(self) -> tuple[str, ...]:
+        return tuple(item.feature_name for item in self.assignments if item.role is FeatureRole.PCA)
+
+    @property
     def transformation_features(self) -> tuple[str, ...]:
         return tuple(
             item.feature_name
@@ -265,7 +285,7 @@ class FeatureRoleContract:
 
     @property
     def direct_hmm_candidates(self) -> tuple[str, ...]:
-        return self.core_features
+        return tuple(item.feature_name for item in self.assignments if item.direct_hmm_candidate)
 
     @property
     def family_pca_inputs(self) -> tuple[str, ...]:

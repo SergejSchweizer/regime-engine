@@ -74,8 +74,9 @@ Run the complete Xetra v4 evaluation as one cron-safe command:
 ```
 
 The `evaluation.state_root` value in `config.yaml` is mandatory, absolute,
-and must be outside the checkout. All other deployment metadata is loaded from
-the same file; no `.env` file is used.
+and may point to the repository's Git-ignored `evaluation-state/` directory.
+All other deployment metadata is loaded from the same file; no `.env` file is
+used.
 It stores the immutable input snapshot, audit output, and metric-export
 artifacts only. The evaluation itself has no durable position ledger or resume
 key: if the process is interrupted, invoke the same command again and it will

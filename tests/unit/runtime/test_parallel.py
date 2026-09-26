@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +40,15 @@ def worker_native_environment(_: int) -> tuple[str | None, str | None, str | Non
     )  # type: ignore[return-value]
 
 
+def worker_start_method(_: int) -> str:
+    return type(multiprocessing.current_process()).__name__
+
+
+def slow_square(value: int) -> int:
+    time.sleep(2.0)
+    return value * value
+
+
 def test_auto_plan_uses_available_budget_and_task_count() -> None:
     plan = ParallelExecutionPlan.create(3)
     assert plan.available_cpu_budget >= 1
@@ -70,6 +81,24 @@ def test_process_workers_cannot_create_child_pools() -> None:
     with FoldParallelExecutor[int, str](plan) as executor:
         messages = executor.map_ordered(child_pool_attempt, (0, 1))
     assert messages == ("process-pool workers may not create child process pools",) * 2
+
+
+def test_process_pool_uses_clean_spawn_context() -> None:
+    plan = ParallelExecutionPlan.create(2, requested_workers=2)
+    with FoldParallelExecutor[int, str](plan) as executor:
+        assert executor.map_ordered(worker_start_method, (0, 1)) == (
+            "SpawnProcess",
+            "SpawnProcess",
+        )
+
+
+def test_process_pool_timeout_propagates_and_terminates_workers() -> None:
+    plan = ParallelExecutionPlan.create(2, requested_workers=2)
+    with (
+        pytest.raises(TimeoutError, match="made no progress"),
+        FoldParallelExecutor[int, int](plan, wait_timeout_seconds=0.05) as executor,
+    ):
+        executor.map_ordered(slow_square, (0, 1))
 
 
 def test_read_only_matrix_is_one_shared_identity_and_cleans_up(tmp_path: Path) -> None:

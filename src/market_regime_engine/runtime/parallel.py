@@ -20,6 +20,17 @@ from market_regime_engine.runtime.cpu import available_cpu_count, cpu_worker_cou
 T = TypeVar("T")
 R = TypeVar("R")
 _WORKER_MARKER = "REGIME_CPU_PROCESS_WORKER"
+_DEFAULT_WAIT_TIMEOUT_SECONDS = 900.0
+
+
+def _parallel_wait_timeout() -> float:
+    raw = os.environ.get("REGIME_PARALLEL_WAIT_TIMEOUT_SECONDS")
+    if raw is None:
+        return _DEFAULT_WAIT_TIMEOUT_SECONDS
+    value = float(raw)
+    if value <= 0.0:
+        raise ValueError("REGIME_PARALLEL_WAIT_TIMEOUT_SECONDS must be positive")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +140,22 @@ class ReadOnlyMatrix:
 class FoldParallelExecutor[T, R]:
     """Reuse one bounded process pool and restore canonical result ordering."""
 
-    def __init__(self, plan: ParallelExecutionPlan, *, max_pending: int | None = None) -> None:
+    def __init__(
+        self,
+        plan: ParallelExecutionPlan,
+        *,
+        max_pending: int | None = None,
+        wait_timeout_seconds: float | None = None,
+    ) -> None:
         if max_pending is not None and max_pending < 1:
             raise ValueError("max_pending must be at least 1")
         self.plan = plan
         self._max_pending = max_pending or max(1, plan.worker_count * 2)
+        self._wait_timeout_seconds = (
+            _parallel_wait_timeout() if wait_timeout_seconds is None else wait_timeout_seconds
+        )
+        if self._wait_timeout_seconds <= 0.0:
+            raise ValueError("wait_timeout_seconds must be positive")
         self._pool_context: AbstractContextManager[ProcessPoolExecutor] | None = None
         self._pool: ProcessPoolExecutor | None = None
 
@@ -182,7 +204,17 @@ class FoldParallelExecutor[T, R]:
         fill()
         try:
             while pending:
-                completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+                completed, _ = wait(
+                    tuple(pending),
+                    timeout=self._wait_timeout_seconds,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not completed:
+                    raise TimeoutError(
+                        "parallel task pool made no progress within "
+                        f"{self._wait_timeout_seconds:.1f}s "
+                        f"({len(pending)} tasks pending)"
+                    )
                 for future in completed:
                     index = pending.pop(future)
                     results[index] = future.result()

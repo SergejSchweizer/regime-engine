@@ -449,3 +449,27 @@ def test_evaluate_start_does_not_hide_unexpected_adapter_contract_failures() -> 
             adapter_factory=factory({11: mismatch}),
             seed=11,
         )
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "array must not contain infs or NaNs",
+        "transition row must sum to one within 1e-10",
+        "'covars' must be symmetric, positive-definite",
+    ),
+)
+def test_evaluate_start_counts_numerical_backend_errors_as_failed_starts(
+    message: str,
+) -> None:
+    outcomes: dict[int, FitResult | Exception] = {
+        seed: fit_result(seed, float(seed)) for seed in MULTISTART_SEEDS
+    }
+    outcomes.update({seed: ValueError(message) for seed in MULTISTART_SEEDS[:3]})
+    with pytest.raises(ValueError, match="valid_starts=5/8"):
+        run_multistart(
+            [[0.0]],
+            state_count=2,
+            adapter_factory=factory(outcomes),
+            max_workers=1,
+        )

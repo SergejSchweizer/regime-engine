@@ -45,6 +45,33 @@ def test_pca_artifact_round_trip_preserves_exact_parameters() -> None:
     assert np.array_equal(restored.transform(_train()), artifact.transform(_train()))
 
 
+def test_explicit_component_count_is_fixed_dimension_and_keeps_threshold_diagnostic() -> None:
+    rng = np.random.default_rng(304)
+    train = rng.normal(size=(256, 12))
+    artifact = fit_pca_transformer(
+        train,
+        tuple(f"feature_{index}" for index in range(train.shape[1])),
+        variance_threshold=0.90,
+        component_count=2,
+    )
+
+    assert artifact.retained_component_count == 2
+    assert artifact.variance_threshold == 0.90
+    assert artifact.variance_threshold_enforced is False
+    assert artifact.cumulative_explained_variance < 0.90
+    assert PCAArtifact.from_canonical_json(artifact.to_canonical_json()) == artifact
+
+
+def test_constant_input_feature_is_documented_and_has_zero_pca_contribution() -> None:
+    train = np.column_stack((_train(), np.ones(len(_train()))))
+    artifact = fit_pca_transformer(train, ("a", "b", "c", "constant"))
+
+    assert artifact.scaler.constant_feature_indices == (3,)
+    assert artifact.scaler.scales[3] == 1.0
+    assert all(component[3] == 0.0 for component in artifact.components)
+    assert PCAArtifact.from_canonical_json(artifact.to_canonical_json()) == artifact
+
+
 def test_pca_rejects_nonfinite_input_threshold_and_wrong_dimension() -> None:
     train = _train()
     with pytest.raises(ValueError, match="finite"):
@@ -58,7 +85,7 @@ def test_pca_rejects_nonfinite_input_threshold_and_wrong_dimension() -> None:
 
 def test_pca_unknown_artifact_schema_fails_closed(tmp_path: Path) -> None:
     artifact = fit_pca_transformer(_train(), ("a", "b", "c"))
-    payload = artifact.to_canonical_json().replace("RegimeEnginePCA.v1", "RegimeEnginePCA.v2")
+    payload = artifact.to_canonical_json().replace("RegimeEnginePCA.v2", "RegimeEnginePCA.v3")
     path = tmp_path / "pca.json"
     path.write_text(payload, encoding="utf-8")
     with pytest.raises(ValueError, match="unsupported PCA artifact schema"):

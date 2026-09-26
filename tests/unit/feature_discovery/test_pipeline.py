@@ -2,6 +2,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
 from market_regime_engine.feature_discovery.ablation import HMMSubsetEvaluation
 from market_regime_engine.feature_discovery.feature_roles import (
@@ -9,6 +10,7 @@ from market_regime_engine.feature_discovery.feature_roles import (
     build_feature_role_contract,
 )
 from market_regime_engine.feature_discovery.metadata_store import FeatureSelectionMetadataStore
+from market_regime_engine.feature_discovery.monthly_refit import _materialize_family_pca
 from market_regime_engine.feature_discovery.pipeline import run_canonical_feature_selection
 from market_regime_engine.feature_discovery.sffs import FeatureSubsetScore
 
@@ -111,6 +113,9 @@ def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) 
         "family_pc_usd_broad_1",
     )
     assert result.selected_features == ("family_pc_usd_broad_1", "us_10y_log_level")
+    materialized = _materialize_family_pca(pd.DataFrame(feature_values), contract, result)
+    assert tuple(materialized["family_pc_vix_1"].shape) == (30,)
+    assert materialized["family_pc_vix_1"].notna().all()
     assert tuple(item.state_count for item in result.k_sffs) == (2, 3, 4, 5)
     assert all(
         features == result.selected_features for _, features in result.emission_feature_orders
@@ -120,7 +125,7 @@ def test_canonical_pipeline_composes_train_only_stages_in_order(tmp_path: Path) 
         result.evidence_metadata["feature_selection_profile_hash"] == contract.profile.profile_hash
     )
     with duckdb.connect(str(tmp_path / "feature_selection.duckdb"), read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM sffs_steps").fetchone() == (28,)
+        assert connection.execute("SELECT count(*) FROM sffs_steps").fetchone() == (20,)
 
 
 def test_canonical_pipeline_can_run_without_transformations() -> None:

@@ -80,6 +80,33 @@ def test_sffs_uses_process_workers_for_picklable_score_and_preserves_order() -> 
     assert tuple(step.action for step in result.steps) == ("start", "add")
 
 
+def test_sffs_can_enforce_a_production_minimum_without_fabricating_scores() -> None:
+    values = {
+        ("a",): 5.0,
+        ("b",): 1.0,
+        ("a", "b"): 2.0,
+    }
+
+    result = select_sffs(
+        ("a", "b"),
+        lambda features: FeatureSubsetScore(features, values[features]),
+        max_features=10,
+        minimum_features=2,
+        max_workers=1,
+    )
+
+    assert result.selected_features == ("a", "b")
+
+
+def test_sffs_rejects_a_production_minimum_without_enough_candidates() -> None:
+    with pytest.raises(ValueError, match="fewer candidates"):
+        select_sffs(
+            ("a",),
+            lambda features: FeatureSubsetScore(features, 1.0),
+            minimum_features=2,
+        )
+
+
 def test_sffs_exposes_every_candidate_for_durable_step_metadata() -> None:
     result = select_sffs(
         ("a", "b"),

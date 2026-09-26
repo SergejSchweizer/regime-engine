@@ -43,6 +43,7 @@ predictions/
 output/
 outputs/
 /evaluations/
+/evaluation-state/
 
 # Temporary files
 *.tmp

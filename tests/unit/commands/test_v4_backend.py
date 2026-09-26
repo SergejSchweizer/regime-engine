@@ -17,7 +17,7 @@ def test_lifecycle_backend_requires_configured_persistent_state_root(
         module._configured_state_root(Path.cwd())
 
 
-def test_lifecycle_state_root_is_absolute_and_outside_checkout(tmp_path: Path) -> None:
+def test_lifecycle_state_root_is_absolute_and_may_be_inside_checkout(tmp_path: Path) -> None:
     repository = tmp_path / "checkout"
     repository.mkdir()
     with pytest.MonkeyPatch.context() as monkeypatch:
@@ -30,14 +30,13 @@ def test_lifecycle_state_root_is_absolute_and_outside_checkout(tmp_path: Path) -
         assert module._configured_state_root(repository) == outside
 
 
-def test_lifecycle_state_root_rejects_repository_subdirectory(tmp_path: Path) -> None:
+def test_lifecycle_state_root_accepts_repository_subdirectory(tmp_path: Path) -> None:
     repository = tmp_path / "checkout"
     repository.mkdir()
-    state = repository / ".state"
+    state = repository / "evaluation-state"
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("REGIME_ENGINE_STATE_ROOT", str(state))
-        with pytest.raises(RuntimeError, match="outside the repository"):
-            module._configured_state_root(repository)
+        assert module._configured_state_root(repository) == state
 
 
 def test_lifecycle_evaluation_does_not_create_a_resume_ledger(
@@ -177,6 +176,36 @@ def test_lifecycle_backend_source_capture_and_saved_state(
     backend._source_path.write_bytes(module.pickle.dumps(("bad",)))
     with pytest.raises(ValueError, match="malformed"):
         backend._saved_source()
+
+
+def test_external_audit_resume_uses_pinned_source_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = object.__new__(module.V4LifecycleBackend)
+    backend.state_root = tmp_path / "lifecycle"
+    catalog = SimpleNamespace(lineage=SimpleNamespace(source_build_id="pinned-build"))
+    snapshot = SimpleNamespace()
+    module._atomic_pickle(backend._source_path, (catalog, snapshot))
+    monkeypatch.setenv("REGIME_RUN_XETRA_V4_AUDIT", "1")
+
+    def unexpected_capture() -> tuple[object, object]:
+        raise AssertionError("an interrupted audit must not recapture the NAS source")
+
+    monkeypatch.setattr(backend, "_capture_source", unexpected_capture)
+
+    assert backend._cycle_source() == (catalog, snapshot)
+
+
+def test_non_audit_cycle_source_captures_current_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = object.__new__(module.V4LifecycleBackend)
+    backend.state_root = tmp_path / "lifecycle"
+    current = (SimpleNamespace(), SimpleNamespace())
+    monkeypatch.delenv("REGIME_RUN_XETRA_V4_AUDIT", raising=False)
+    monkeypatch.setattr(backend, "_capture_source", lambda: current)
+
+    assert backend._cycle_source() == current
 
 
 def test_lifecycle_backend_cached_evaluation_and_registry_resolution(

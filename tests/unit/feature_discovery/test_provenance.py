@@ -61,3 +61,30 @@ def test_missing_or_conflicting_transformation_provenance_fails_closed() -> None
             build_feature_role_contract(("timestamp_m1",)),
             ("timestamp_m1",),
         )
+
+
+def test_multi_token_transformation_parameters_have_unique_canonical_keys() -> None:
+    row = build_feature_provenance(
+        build_feature_role_contract(("vix_momentum_autocorr_20obs_5lag",))
+    )[0]
+
+    assert row.transformation_parameters == (("variant_00", "20obs"), ("variant_01", "5lag"))
+
+
+@pytest.mark.parametrize(
+    ("feature_name", "transformation_name"),
+    (
+        ("fed_next_expected_move_bp", "next_expected_move"),
+        ("fed_path_slope_m3_bp", "path_slope"),
+        ("fed_next_uncertainty_bp", "next_uncertainty"),
+        ("fed_repricing_5obs_bp", "repricing"),
+    ),
+)
+def test_current_fed_transformations_have_structured_provenance(
+    feature_name: str, transformation_name: str
+) -> None:
+    row = build_feature_provenance(build_feature_role_contract((feature_name,)))[0]
+
+    assert row.transformation_name == transformation_name
+    assert row.family == "fed"
+    assert row.transformation_parameters
